@@ -1,4 +1,6 @@
-# 酷狗概念版客户端
+# BreezeMusic (微风音乐)
+
+> 优雅、轻量、纯粹的酷狗概念版第三方 Android 客户端。
 
 Android 客户端使用 Kotlin、Jetpack Compose 和 AndroidX Media3。账号、会员、在线播放与歌词协议深度移植自 [MakcRe/KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi) 并参考 [kgka_Music_hl](https://github.com/umr-xiaomai/kgka_Music_hl) 与 [md3Music](https://github.com/zzyoxml/md3Music)。Android 应用**全量直连酷狗官方接口，不依赖任何独立的 Node.js 或 Rust API 后端服务**。
 
