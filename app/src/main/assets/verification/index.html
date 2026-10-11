@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>酷狗安全验证</title>
+<style>body{font-family:system-ui,sans-serif;margin:16px;color:#20332b}button,input{box-sizing:border-box;width:100%;padding:14px;margin:10px 0;font-size:16px;border:1px solid #92ada0;border-radius:12px}button{background:#23674b;color:white}#status{line-height:1.6}</style>
+</head><body><p id="status">正在准备验证组件…</p><input id="sms" inputmode="numeric" placeholder="安全验证短信验证码" hidden><button id="start" disabled>开始验证</button>
+<script src="verifycode.js"></script>
+<script>
+'use strict';
+const params=new URLSearchParams(location.search), type=params.get('type'), appid=params.get('appid');
+const status=document.getElementById('status'), start=document.getElementById('start'), sms=document.getElementById('sms');
+let evidence;
+function fail(){status.textContent='验证组件加载失败，请取消后重试。';start.disabled=true;VerificationBridge.postMessage(JSON.stringify({error:true}));}
+function submit(code){try{const sid=evidence.get_sid(),edt=evidence.get_edt();if(!sid||!edt)throw Error();VerificationBridge.postMessage(JSON.stringify({code,sid,edt}));start.disabled=true;status.textContent='正在提交验证…';}catch(e){fail();}}
+(async()=>{try{
+ await wasm_bindgen('verifycode_bg_ios.wasm');wasm_bindgen.run();evidence=new wasm_bindgen.EData();
+ if(type==='32'){sms.hidden=false;start.textContent='提交验证码';start.onclick=()=>{if(/^\d{4,8}$/.test(sms.value.trim()))submit(sms.value.trim());else status.textContent='请输入有效的短信验证码';};}
+ else if(type==='23'){
+  await new Promise((resolve,reject)=>{const s=document.createElement('script');s.src='https://turing.captcha.qcloud.com/TCaptcha.js';s.onload=resolve;s.onerror=reject;document.head.appendChild(s);});
+  start.onclick=()=>{try{new TencentCaptcha(appid,res=>{if(res.ret===0)submit('KGCodeTX|'+JSON.stringify({ticket:res.ticket,randstr:res.randstr,txappid:appid}));else status.textContent='验证未完成，可点击重试';},{needFeedBack:false}).show();}catch(e){fail();}};
+ }else throw Error();
+ start.disabled=false;status.textContent=type==='32'?'请输入酷狗发送的安全验证短信。':'请点击按钮并完成滑块验证。';
+}catch(e){fail();}})();
+</script></body></html>

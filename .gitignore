@@ -1,0 +1,29 @@
+# Android & Gradle
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+
+# Module build directories
+app/build/
+
+# Reference sub-repos (cloned for study, keep outside git)
+repo_kgka/
+repo_kugou_api/
+repo_md3/
+repo_ecells/
+
+# Keystore & signing (keep secure)
+*.jks
+*.keystore
+
+# Google Services & secrets
+google-services.json
+
+# OS specific
+Thumbs.db

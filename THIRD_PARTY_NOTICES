@@ -1,0 +1,6 @@
+This application contains protocol-derived implementation based on MakcRe/KuGouMusicApi,
+licensed under the MIT License. The relevant upstream copy is in repo_kugou_api/ and is
+retained for reference. The Android implementation is an independent Kotlin port.
+
+The UI and account-flow design was studied from umr-xiaomai/kgka_Music_hl and
+zzyoxml/md3Music. Their source code and assets are not linked into the Android build.

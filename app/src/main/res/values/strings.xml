@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">概念音乐</string>
+    <string name="tab_recommend">推荐</string>
+    <string name="tab_library">我的</string>
+    <string name="daily_recommend_title">每日推荐</string>
+    <string name="daily_recommend_subtitle">根据你的口味，每日6点准时更新</string>
+    <string name="my_favorites">我喜欢</string>
+    <string name="recently_played">最近播放</string>
+    <string name="local_music">本地音乐</string>
+    <string name="download_manager">下载管理</string>
+    <string name="playlists_created">创建的歌单</string>
+    <string name="playlists_collected">收藏的歌单</string>
+    <string name="vip_card_title">酷狗概念版 畅听VIP</string>
+    <string name="vip_auto_checkin">每日静默自动续期</string>
+    <string name="vip_claim_now">立即补领</string>
+    <string name="search_hint">搜索音乐、歌手、歌单</string>
+</resources>
