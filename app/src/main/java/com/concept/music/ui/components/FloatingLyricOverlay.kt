@@ -1,0 +1,249 @@
+package com.concept.music.ui.components
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.LockOpen
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.concept.music.data.model.LyricData
+import com.concept.music.data.model.Song
+import com.concept.music.service.SystemLyricBridge
+import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.VipGold
+import kotlin.math.roundToInt
+
+/**
+ * 全局悬浮 KRC 逐字流光歌词胶囊 ([INNOV-05])
+ * 可在发现页、歌单页、搜索页、我的页等全场景顶层自由拖拽悬浮，
+ * 实时渲染毫秒级 KRC 卡拉 OK 字内流光染色与双语翻译，支持防误触锁定。
+ */
+@Composable
+fun FloatingLyricOverlay(
+    song: Song?,
+    lyricData: LyricData,
+    currentLyricIndex: Int,
+    currentPositionMs: Long,
+    onClickCapsule: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val state by SystemLyricBridge.state.collectAsState()
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(160f) }
+
+    AnimatedVisibility(
+        visible = state.floatingCapsuleEnabled && song != null,
+        enter = fadeIn(),
+        exit = fadeOut(),
+        modifier = modifier
+    ) {
+        val currentLine = lyricData.lines.getOrNull(currentLyricIndex)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                .padding(horizontal = 20.dp)
+                .pointerInput(state.floatingCapsuleLocked) {
+                    if (!state.floatingCapsuleLocked) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            offsetX = (offsetX + dragAmount.x).coerceIn(-80f, 80f)
+                            offsetY = (offsetY + dragAmount.y).coerceIn(60f, 1400f)
+                        }
+                    }
+                },
+            contentAlignment = Alignment.TopCenter
+        ) {
+            Surface(
+                onClick = {
+                    if (!state.floatingCapsuleLocked) {
+                        onClickCapsule()
+                    }
+                },
+                shape = RoundedCornerShape(22.dp),
+                color = Color(0xFF0E131A).copy(alpha = if (state.floatingCapsuleLocked) 0.72f else 0.88f),
+                border = BorderStroke(
+                    width = 1.dp,
+                    brush = Brush.horizontalGradient(
+                        listOf(
+                            ConceptPrimary.copy(alpha = 0.55f),
+                            VipGold.copy(alpha = 0.35f),
+                            Color.White.copy(alpha = 0.15f)
+                        )
+                    )
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .shadow(16.dp, RoundedCornerShape(22.dp))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(ConceptPrimary.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MusicNote,
+                            contentDescription = null,
+                            tint = ConceptPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        if (currentLine != null && currentLine.words.isNotEmpty()) {
+                            // KRC 毫秒级逐字流光渲染
+                            val annotated = buildAnnotatedString {
+                                currentLine.words.forEach { word ->
+                                    val wordEnd = word.startTimeMs + word.durationMs
+                                    when {
+                                        currentPositionMs >= wordEnd -> {
+                                            withStyle(
+                                                SpanStyle(
+                                                    color = ConceptPrimary,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            ) {
+                                                append(word.text)
+                                            }
+                                        }
+                                        currentPositionMs > word.startTimeMs -> {
+                                            val prog = ((currentPositionMs - word.startTimeMs).toFloat() /
+                                                word.durationMs.coerceAtLeast(1L)).coerceIn(0f, 1f)
+                                            val brush = Brush.horizontalGradient(
+                                                0.0f to ConceptPrimary,
+                                                (prog - 0.08f).coerceAtLeast(0f) to ConceptPrimary,
+                                                (prog + 0.08f).coerceAtMost(1f) to Color.White.copy(alpha = 0.5f),
+                                                1.0f to Color.White.copy(alpha = 0.5f)
+                                            )
+                                            withStyle(
+                                                SpanStyle(
+                                                    brush = brush,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            ) {
+                                                append(word.text)
+                                            }
+                                        }
+                                        else -> {
+                                            withStyle(
+                                                SpanStyle(
+                                                    color = Color.White.copy(alpha = 0.55f),
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            ) {
+                                                append(word.text)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Text(
+                                text = annotated,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center
+                            )
+                        } else {
+                            Text(
+                                text = currentLine?.text?.ifBlank { "${song?.title ?: ""} - ${song?.artist ?: ""}" }
+                                    ?: "${song?.title ?: ""} - ${song?.artist ?: ""}",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = ConceptPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+
+                        if (!currentLine?.translation.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = currentLine?.translation.orEmpty(),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = Color.White.copy(alpha = 0.68f),
+                                    fontSize = 11.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    // 锁定/解锁按钮
+                    IconButton(
+                        onClick = { SystemLyricBridge.setFloatingCapsuleLocked(!state.floatingCapsuleLocked) },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (state.floatingCapsuleLocked) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
+                            contentDescription = "锁定悬浮词",
+                            tint = if (state.floatingCapsuleLocked) VipGold else Color.White.copy(alpha = 0.6f),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+
+                    if (!state.floatingCapsuleLocked) {
+                        IconButton(
+                            onClick = { SystemLyricBridge.setFloatingCapsuleEnabled(false) },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "关闭悬浮词",
+                                tint = Color.White.copy(alpha = 0.5f),
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

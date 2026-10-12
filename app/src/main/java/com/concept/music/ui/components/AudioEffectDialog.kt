@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -104,9 +105,12 @@ fun AudioEffectDialog(
 
             val presets = listOf(
                 EffectPreset.VIPER_3D,
-                EffectPreset.VIPER_BASS,
                 EffectPreset.VIPER_VOCAL,
+                EffectPreset.VIPER_BASS,
                 EffectPreset.VIPER_HIFI,
+                EffectPreset.VIPER_VINYL,
+                EffectPreset.VIPER_SURROUND,
+                EffectPreset.VIPER_DYNAMIC,
                 EffectPreset.ROCK,
                 EffectPreset.POP,
                 EffectPreset.FLAT
@@ -152,7 +156,7 @@ fun AudioEffectDialog(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 动态低音与虚拟环绕滑块
+            // 详细声效调节推杆
             Card(
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF1E222A)),
@@ -214,6 +218,71 @@ fun AudioEffectDialog(
                             inactiveTrackColor = Color.White.copy(alpha = 0.15f)
                         )
                     )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // 响度增益 (LoudnessEnhancer)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "人声动态与响度增益 (Loudness)",
+                            style = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontWeight = FontWeight.SemiBold)
+                        )
+                        Text(
+                            text = "+${state.loudnessGainMb / 100} dB",
+                            style = MaterialTheme.typography.labelMedium.copy(color = ConceptPrimary, fontWeight = FontWeight.Bold)
+                        )
+                    }
+                    Slider(
+                        value = state.loudnessGainMb.toFloat(),
+                        onValueChange = { AudioEffectManager.setLoudnessGain(it.toInt()) },
+                        valueRange = 0f..1500f,
+                        enabled = state.isEnabled,
+                        colors = SliderDefaults.colors(
+                            thumbColor = ConceptPrimary,
+                            activeTrackColor = ConceptPrimary,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.15f)
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // 声场混响模式 (ReverbMode)
+                    Text(
+                        text = "声场混响模式 (Reverb)",
+                        style = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontWeight = FontWeight.SemiBold)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(com.concept.music.service.ReverbMode.values()) { mode ->
+                            val isModeSelected = state.reverbMode == mode
+                            Surface(
+                                color = if (isModeSelected) ConceptPrimary.copy(alpha = 0.25f) else Color(0xFF262A35),
+                                shape = RoundedCornerShape(12.dp),
+                                border = if (isModeSelected) androidx.compose.foundation.BorderStroke(1.dp, ConceptPrimary) else null,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable(enabled = state.isEnabled) {
+                                        AudioEffectManager.setReverbMode(mode)
+                                    }
+                            ) {
+                                Text(
+                                    text = mode.label,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = if (isModeSelected) ConceptPrimary else Color.White.copy(alpha = 0.7f),
+                                        fontWeight = if (isModeSelected) FontWeight.Bold else FontWeight.Normal
+                                    ),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -242,24 +311,33 @@ fun AudioEffectDialog(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.weight(1f)
                     ) {
+                        val dbVal = level / 100f
                         Text(
-                            text = if (level > 0) "+${level / 100}dB" else "${level / 100}dB",
+                            text = if (level > 0) String.format(java.util.Locale.getDefault(), "+%.1fdB", dbVal)
+                            else String.format(java.util.Locale.getDefault(), "%.1fdB", dbVal),
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = if (level != 0) ConceptPrimary else Color.White.copy(alpha = 0.4f),
-                                fontSize = 11.sp,
+                                color = if (level != 0) ConceptPrimary else Color.White.copy(alpha = 0.45f),
+                                fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        // 竖向简易控制滑块或刻度
+                        Spacer(modifier = Modifier.height(6.dp))
+                        // 竖向推杆控制滑块（-90度旋转映射为下负上正）
                         Box(
                             modifier = Modifier
-                                .height(110.dp)
-                                .width(28.dp)
-                                .clip(RoundedCornerShape(14.dp))
+                                .height(132.dp)
+                                .width(38.dp)
+                                .clip(RoundedCornerShape(19.dp))
                                 .background(Color(0xFF222631)),
                             contentAlignment = Alignment.Center
                         ) {
+                            // 0dB 中心参考刻度线
+                            Box(
+                                modifier = Modifier
+                                    .width(18.dp)
+                                    .height(1.dp)
+                                    .background(Color.White.copy(alpha = 0.16f))
+                            )
                             Slider(
                                 value = level.toFloat(),
                                 onValueChange = { AudioEffectManager.setCustomBandLevel(index, it.toInt()) },
@@ -268,12 +346,17 @@ fun AudioEffectDialog(
                                 colors = SliderDefaults.colors(
                                     thumbColor = ConceptPrimary,
                                     activeTrackColor = ConceptPrimary,
-                                    inactiveTrackColor = Color.Transparent
+                                    inactiveTrackColor = Color.White.copy(alpha = 0.14f),
+                                    disabledThumbColor = Color.White.copy(alpha = 0.3f),
+                                    disabledActiveTrackColor = Color.White.copy(alpha = 0.2f),
+                                    disabledInactiveTrackColor = Color.White.copy(alpha = 0.08f)
                                 ),
                                 modifier = Modifier
-                                    .requiredWidth(110.dp)
-                                    .requiredHeight(28.dp)
-                                    .offset(y = 0.dp)
+                                    .requiredWidth(116.dp)
+                                    .requiredHeight(36.dp)
+                                    .graphicsLayer {
+                                        rotationZ = -90f
+                                    }
                             )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
@@ -282,6 +365,148 @@ fun AudioEffectDialog(
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = Color.White.copy(alpha = 0.6f),
                                 fontSize = 10.sp
+                            )
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(22.dp))
+
+            // 4. 心流环境音混音舱 ([INNOV-04])
+            val ambientState by com.concept.music.service.AmbientSoundManager.state.collectAsState()
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E222A)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "心流环境音混音舱 (Ambient Mixer)",
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                            Text(
+                                text = "实时程序化 DSP 合成环境声，可与音乐叠加或独立助眠",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = Color.White.copy(alpha = 0.55f)
+                                )
+                            )
+                        }
+                        Switch(
+                            checked = ambientState.masterEnabled,
+                            onCheckedChange = { com.concept.music.service.AmbientSoundManager.setMasterEnabled(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = ConceptPrimary
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // 快捷声景胶囊
+                    val quickScenes = listOf(
+                        "rain_study" to "🌧️ 雨夜自习",
+                        "retro_vinyl" to "💿 黑胶茶歇",
+                        "camp_night" to "🔥 篝火露营",
+                        "deep_ocean" to "🌊 深海冥想"
+                    )
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(quickScenes) { (key, label) ->
+                            Surface(
+                                color = Color(0xFF282D3A),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        com.concept.music.service.AmbientSoundManager.applyQuickScene(key)
+                                    }
+                            ) {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        color = ConceptPrimary,
+                                        fontWeight = FontWeight.SemiBold
+                                    ),
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    com.concept.music.service.AmbientSoundChannel.entries.forEach { channel ->
+                        val lvl = ambientState.levelFor(channel)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = channel.title,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                )
+                                Text(
+                                    text = channel.subtitle,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = Color.White.copy(alpha = 0.45f),
+                                        fontSize = 10.sp
+                                    )
+                                )
+                            }
+                            Text(
+                                text = "${(lvl * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    color = if (lvl > 0.01f && ambientState.masterEnabled) ConceptPrimary else Color.White.copy(alpha = 0.4f),
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                        Slider(
+                            value = lvl,
+                            onValueChange = { com.concept.music.service.AmbientSoundManager.setChannelLevel(channel, it) },
+                            valueRange = 0f..1f,
+                            colors = SliderDefaults.colors(
+                                thumbColor = ConceptPrimary,
+                                activeTrackColor = ConceptPrimary,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.15f)
+                            )
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "仅在主音乐播放时叠加（关闭则暂停音乐后仍持续发声）",
+                            style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.65f)),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = ambientState.syncWithMusic,
+                            onCheckedChange = { com.concept.music.service.AmbientSoundManager.setSyncWithMusic(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = ConceptPrimary
                             )
                         )
                     }

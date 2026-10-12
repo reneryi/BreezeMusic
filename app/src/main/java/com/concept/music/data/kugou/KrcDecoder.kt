@@ -47,6 +47,7 @@ object KrcDecoder {
     fun parseKrcText(text: String): LyricData {
         if (text.isBlank()) return LyricData()
 
+        val translations = extractKrcTranslations(text)
         val lines = mutableListOf<LyricLine>()
         val rawLines = text.split("\r\n", "\n")
 
@@ -76,7 +77,9 @@ object KrcDecoder {
 
             val lineText = if (words.isNotEmpty()) lineTextBuilder.toString() else rest.replace(Regex("<[^>]+>"), "").trim()
             if (lineText.isNotEmpty()) {
-                lines.add(LyricLine(lineStart, lineDuration, lineText, words))
+                val lineIndex = lines.size
+                val translation = translations.getOrNull(lineIndex)?.ifBlank { null }
+                lines.add(LyricLine(lineStart, lineDuration, lineText, words, translation))
             }
         }
 
@@ -84,12 +87,75 @@ object KrcDecoder {
         return LyricData(lines = lines, rawText = text, isKrc = true)
     }
 
+    private fun extractKrcTranslations(text: String): List<String> {
+        val result = mutableListOf<String>()
+        val langRegex = Regex("""\[language:([^\]]*)\]""")
+        val langMatch = langRegex.find(text) ?: return result
+        val b64 = langMatch.groupValues[1].trim()
+        if (b64.isEmpty()) return result
+
+        try {
+            val padding = "=".repeat((4 - b64.length % 4) % 4)
+            val decodedBytes = Base64.getMimeDecoder().decode(b64 + padding)
+            val decodedStr = String(decodedBytes, Charsets.UTF_8)
+            val root = com.google.gson.JsonParser.parseString(decodedStr).asJsonObject
+            val contentArr = root.getAsJsonArray("content") ?: return result
+
+            var translationObj: com.google.gson.JsonObject? = null
+            // 优先查找含有汉字内容的对象，保证日韩欧美歌曲提取到的是中文翻译而非罗马音/假名
+            for (elem in contentArr) {
+                if (!elem.isJsonObject) continue
+                val obj = elem.asJsonObject
+                val lc = obj.getAsJsonArray("lyricContent") ?: continue
+                val hasChinese = lc.any { item ->
+                    if (item.isJsonArray) {
+                        item.asJsonArray.any { str -> str.asString.any { it in '\u4e00'..'\u9fff' } }
+                    } else {
+                        item.asString.any { it in '\u4e00'..'\u9fff' }
+                    }
+                }
+                if (hasChinese || obj.get("language")?.asInt == 0 || obj.get("type")?.asInt == 0) {
+                    translationObj = obj
+                    if (hasChinese) break
+                }
+            }
+            if (translationObj == null) {
+                for (elem in contentArr) {
+                    if (!elem.isJsonObject) continue
+                    val obj = elem.asJsonObject
+                    val lc = obj.getAsJsonArray("lyricContent") ?: continue
+                    if (lc.size() > 0) {
+                        translationObj = obj
+                        break
+                    }
+                }
+            }
+
+            if (translationObj != null) {
+                val lc = translationObj.getAsJsonArray("lyricContent")
+                if (lc != null) {
+                    for (lineItem in lc) {
+                        if (lineItem.isJsonArray) {
+                            val lineArr = lineItem.asJsonArray
+                            val joined = lineArr.joinToString(" ") { it.asString.trim() }.trim()
+                            result.add(joined)
+                        } else {
+                            result.add(lineItem.asString.trim())
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // 容错返回已提取部分
+        }
+        return result
+    }
+
     fun parseLrcText(text: String): LyricData {
         if (text.isBlank()) return LyricData()
 
-        val lines = mutableListOf<LyricLine>()
-        val rawLines = text.split("\r\n", "\n")
-
+        val rawLines = text.lines()
+        val rawParsed = mutableListOf<LyricLine>()
         for (rawLine in rawLines) {
             val line = rawLine.trim()
             if (line.isEmpty()) continue
@@ -108,7 +174,29 @@ object KrcDecoder {
             val startTimeMs = min * 60_000L + sec * 1000L + ms
             val lineText = match.groupValues[4].trim()
             if (lineText.isNotEmpty()) {
-                lines.add(LyricLine(startTimeMs, 0L, lineText))
+                // 检查是否为行内中英双语分割: "Hello world / 你好世界" 或 "Hello // 你好"
+                val slashParts = if (lineText.contains(" // ")) {
+                    lineText.split(" // ", limit = 2)
+                } else if (lineText.contains(" / ") && lineText.any { it in '\u4e00'..'\u9fff' }) {
+                    lineText.split(" / ", limit = 2)
+                } else null
+
+                if (slashParts != null && slashParts.size == 2 && slashParts[0].isNotBlank() && slashParts[1].isNotBlank()) {
+                    rawParsed.add(LyricLine(startTimeMs, 0L, slashParts[0].trim(), translation = slashParts[1].trim()))
+                } else {
+                    rawParsed.add(LyricLine(startTimeMs, 0L, lineText))
+                }
+            }
+        }
+
+        // 合并相同时间戳的翻译行 (例如重复时间戳: [00:10.00]English 与 [00:10.00]中文翻译)
+        val lines = mutableListOf<LyricLine>()
+        for (entry in rawParsed) {
+            val last = lines.lastOrNull()
+            if (last != null && kotlin.math.abs(last.startTimeMs - entry.startTimeMs) <= 100L && last.translation == null) {
+                lines[lines.size - 1] = last.copy(translation = entry.text)
+            } else {
+                lines.add(entry)
             }
         }
 

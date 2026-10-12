@@ -16,10 +16,10 @@ val ConceptBackgroundLight = Color(0xFFFBFDFA)
 val ConceptSurfaceLight = Color(0xFFF1F5F3)
 val ConceptSurfaceVariantLight = Color(0xFFDFE6E2)
 
-// Backgrounds & Surfaces (Dark)
-val ConceptBackgroundDark = Color(0xFF0F1413)
-val ConceptSurfaceDark = Color(0xFF181F1D)
-val ConceptSurfaceVariantDark = Color(0xFF232C29)
+// Backgrounds & Surfaces (Dark - 酷狗概念版深邃暗夜色系)
+val ConceptBackgroundDark = Color(0xFF0F1115)
+val ConceptSurfaceDark = Color(0xFF161922)
+val ConceptSurfaceVariantDark = Color(0xFF1E222A)
 
 // Accent / VIP Gold
 val VipGold = Color(0xFFE5A93B)
@@ -29,5 +29,5 @@ val VipGoldDark = Color(0xFF9E6E17)
 // Text Colors
 val TextPrimaryLight = Color(0xFF191C1B)
 val TextSecondaryLight = Color(0xFF5D6B66)
-val TextPrimaryDark = Color(0xFFE1E3DF)
-val TextSecondaryDark = Color(0xFFA0ACA7)
+val TextPrimaryDark = Color(0xFFF2F4F7)
+val TextSecondaryDark = Color(0xFF9EA6B2)

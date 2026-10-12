@@ -41,6 +41,8 @@ fun PlaylistDetailScreen(
     playlistId: String,
     onBack: () -> Unit,
     onSongClick: (Song, List<Song>) -> Unit,
+    currentSong: Song? = null,
+    onSongMoreClick: ((Song, (() -> Unit)?) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -81,6 +83,7 @@ fun PlaylistDetailScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             Row(
                 modifier = Modifier
@@ -140,7 +143,7 @@ fun PlaylistDetailScreen(
             modifier = modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(bottom = 24.dp)
+            contentPadding = PaddingValues(bottom = 96.dp)
         ) {
             // 1. 歌单头部 Header（封面、信息与操作栏）
             item {
@@ -210,8 +213,22 @@ fun PlaylistDetailScreen(
                 SongItemRow(
                     song = song,
                     orderIndex = index + 1,
+                    isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
                     onClick = { onSongClick(song, songs) },
-                    onMoreClick = { selectedSongForMenu = song }
+                    onMoreClick = {
+                        if (onSongMoreClick != null) {
+                            val removeAction: (() -> Unit)? = if (isCustomCreated && currentPlaylist != null) {
+                                {
+                                    viewModel.removeSongFromPlaylist(currentPlaylist.listId, song) { _, msg ->
+                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            } else null
+                            onSongMoreClick(song, removeAction)
+                        } else {
+                            selectedSongForMenu = song
+                        }
+                    }
                 )
             }
         }

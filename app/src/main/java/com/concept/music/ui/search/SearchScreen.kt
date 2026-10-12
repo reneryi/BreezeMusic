@@ -44,6 +44,8 @@ fun SearchScreen(
     onAlbumClick: (String) -> Unit = {},
     onPlaylistClick: (String) -> Unit = {},
     onArtistClick: (String) -> Unit = {},
+    currentSong: Song? = null,
+    onSongMoreClick: (Song) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val query by viewModel.query.collectAsState()
@@ -238,7 +240,9 @@ fun SearchScreen(
                         SearchTab.COMPLEX -> {
                             ComplexSearchResultView(
                                 result = complexResult,
+                                currentSong = currentSong,
                                 onSongClick = onSongClick,
+                                onSongMoreClick = onSongMoreClick,
                                 onAlbumClick = onAlbumClick,
                                 onPlaylistClick = onPlaylistClick,
                                 onArtistClick = onArtistClick,
@@ -251,7 +255,9 @@ fun SearchScreen(
                                     SongItemRow(
                                         song = song,
                                         orderIndex = index + 1,
-                                        onClick = { onSongClick(song, songResults) }
+                                        isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                                        onClick = { onSongClick(song, songResults) },
+                                        onMoreClick = { onSongMoreClick(song) }
                                     )
                                 }
                                 if (loadingMore) {
@@ -467,7 +473,9 @@ fun SearchScreen(
 @Composable
 private fun ComplexSearchResultView(
     result: ComplexSearchResult,
+    currentSong: Song?,
     onSongClick: (Song, List<Song>) -> Unit,
+    onSongMoreClick: (Song) -> Unit,
     onAlbumClick: (String) -> Unit,
     onPlaylistClick: (String) -> Unit,
     onArtistClick: (String) -> Unit,
@@ -549,7 +557,9 @@ private fun ComplexSearchResultView(
                         SongItemRow(
                             song = song,
                             orderIndex = index + 1,
-                            onClick = { onSongClick(song, result.songs) }
+                            isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                            onClick = { onSongClick(song, result.songs) },
+                            onMoreClick = { onSongMoreClick(song) }
                         )
                     }
                 }

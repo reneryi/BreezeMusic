@@ -38,6 +38,8 @@ fun ArtistDetailScreen(
     artistId: String,
     onBack: () -> Unit,
     onSongClick: (Song, List<Song>) -> Unit,
+    currentSong: Song? = null,
+    onSongMoreClick: (Song) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -70,6 +72,7 @@ fun ArtistDetailScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             Row(
                 modifier = Modifier
@@ -105,7 +108,7 @@ fun ArtistDetailScreen(
             modifier = modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(bottom = 24.dp)
+            contentPadding = PaddingValues(bottom = 96.dp)
         ) {
             // 1. 歌手头部信息卡片
             item {
@@ -218,11 +221,14 @@ fun ArtistDetailScreen(
 
                             Spacer(modifier = Modifier.width(12.dp))
 
-                            // 最热 / 最新排序切换
+                            // 最热 / 最新 / 百科 切换 ([FUNC-05])
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 FilterChip(
-                                    selected = sortMethod == "hot",
-                                    onClick = { sortMethod = "hot" },
+                                    selected = !isIntroExpanded && sortMethod == "hot",
+                                    onClick = {
+                                        isIntroExpanded = false
+                                        sortMethod = "hot"
+                                    },
                                     label = { Text("最热", fontSize = 11.sp) },
                                     colors = FilterChipDefaults.filterChipColors(
                                         selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
@@ -232,9 +238,23 @@ fun ArtistDetailScreen(
                                     shape = RoundedCornerShape(12.dp)
                                 )
                                 FilterChip(
-                                    selected = sortMethod == "new",
-                                    onClick = { sortMethod = "new" },
+                                    selected = !isIntroExpanded && sortMethod == "new",
+                                    onClick = {
+                                        isIntroExpanded = false
+                                        sortMethod = "new"
+                                    },
                                     label = { Text("最新", fontSize = 11.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
+                                        selectedLabelColor = ConceptPrimary
+                                    ),
+                                    border = null,
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                FilterChip(
+                                    selected = isIntroExpanded,
+                                    onClick = { isIntroExpanded = !isIntroExpanded },
+                                    label = { Text("百科", fontSize = 11.sp) },
                                     colors = FilterChipDefaults.filterChipColors(
                                         selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
                                         selectedLabelColor = ConceptPrimary
@@ -248,52 +268,98 @@ fun ArtistDetailScreen(
                 }
             }
 
-            // 2. 状态提示
-            if (loading && songs.isEmpty()) {
+            if (isIntroExpanded) {
+                // 歌手百科详情面板 ([FUNC-05])
                 item {
-                    LinearProgressIndicator(
+                    Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        color = ConceptPrimary
-                    )
-                }
-            }
-
-            if (error != null) {
-                item {
-                    Text(
-                        text = error ?: "加载失败",
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                    )
-                }
-            }
-
-            if (!loading && error == null && songs.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 40.dp),
-                        contentAlignment = Alignment.Center
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        )
                     ) {
-                        Text(
-                            text = "该歌手暂无单曲",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        Column(
+                            modifier = Modifier.padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = "歌手百科与艺术档案",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = ConceptPrimary
+                                )
+                            )
+                            Text(
+                                text = "收录单曲：${artist?.songCount ?: songs.size} 首  ·  发行专辑：${artist?.albumCount ?: 0} 张",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                            Text(
+                                text = artist?.intro?.ifBlank { "暂无该歌手的详细百科介绍。" } ?: "暂无该歌手的详细百科介绍。",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f),
+                                    lineHeight = 22.sp
+                                )
+                            )
+                        }
+                    }
+                }
+            } else {
+                // 2. 状态提示
+                if (loading && songs.isEmpty()) {
+                    item {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            color = ConceptPrimary
                         )
                     }
                 }
-            }
 
-            // 3. 歌曲列表
-            itemsIndexed(songs) { index, song ->
-                SongItemRow(
-                    song = song,
-                    orderIndex = index + 1,
-                    onClick = { onSongClick(song, songs) }
-                )
+                if (error != null) {
+                    item {
+                        Text(
+                            text = error ?: "加载失败",
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+
+                if (!loading && error == null && songs.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 40.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "该歌手暂无单曲",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                // 3. 歌曲列表
+                itemsIndexed(songs) { index, song ->
+                    SongItemRow(
+                        song = song,
+                        orderIndex = index + 1,
+                        isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                        onClick = { onSongClick(song, songs) },
+                        onMoreClick = { onSongMoreClick(song) }
+                    )
+                }
             }
         }
     }
 }
+

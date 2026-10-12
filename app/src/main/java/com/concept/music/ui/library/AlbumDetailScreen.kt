@@ -38,6 +38,8 @@ fun AlbumDetailScreen(
     albumId: String,
     onBack: () -> Unit,
     onSongClick: (Song, List<Song>) -> Unit,
+    currentSong: Song? = null,
+    onSongMoreClick: (Song) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -69,6 +71,7 @@ fun AlbumDetailScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             Row(
                 modifier = Modifier
@@ -104,7 +107,7 @@ fun AlbumDetailScreen(
             modifier = modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(bottom = 24.dp)
+            contentPadding = PaddingValues(bottom = 96.dp)
         ) {
             // 1. 专辑头部卡片
             item {
@@ -279,7 +282,9 @@ fun AlbumDetailScreen(
                 SongItemRow(
                     song = song,
                     orderIndex = index + 1,
-                    onClick = { onSongClick(song, songs) }
+                    isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                    onClick = { onSongClick(song, songs) },
+                    onMoreClick = { onSongMoreClick(song) }
                 )
             }
         }

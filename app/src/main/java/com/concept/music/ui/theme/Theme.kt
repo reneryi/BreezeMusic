@@ -8,14 +8,17 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
 private val DarkColorScheme = darkColorScheme(
     primary = ConceptPrimary,
-    onPrimary = ConceptOnPrimaryContainer,
-    primaryContainer = ConceptPrimaryDark,
-    onPrimaryContainer = ConceptPrimaryContainer,
+    onPrimary = Color(0xFF00201A),
+    primaryContainer = Color(0xFF00382E),
+    onPrimaryContainer = ConceptPrimary,
     secondary = ConceptSecondary,
+    secondaryContainer = Color(0xFF1F3530),
+    onSecondaryContainer = ConceptPrimaryContainer,
     background = ConceptBackgroundDark,
     surface = ConceptSurfaceDark,
     surfaceVariant = ConceptSurfaceVariantDark,
@@ -40,8 +43,8 @@ private val LightColorScheme = lightColorScheme(
 
 @Composable
 fun ConceptMusicTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    darkTheme: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {

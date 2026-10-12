@@ -14,6 +14,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -21,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -39,12 +42,15 @@ import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
     onSongClick: (Song, List<Song>) -> Unit,
     onLogin: () -> Unit,
     onSearchClick: () -> Unit = {},
+    currentSong: Song? = null,
+    onSongMoreClick: (Song) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val dailySongs by viewModel.dailyRecommendSongs.collectAsState()
@@ -63,8 +69,61 @@ fun HomeScreen(
 
     val currentSceneCategory = sceneCategories.find { it.id == selectedScene } ?: sceneCategories.first()
 
-    LazyColumn(
+    // [INT-03] 下拉刷新状态
+    val pullRefreshState = rememberPullToRefreshState()
+    if (pullRefreshState.isRefreshing) {
+        LaunchedEffect(true) {
+            viewModel.refresh()
+        }
+    }
+    LaunchedEffect(loading, sceneLoading) {
+        if (!loading && !sceneLoading) {
+            pullRefreshState.endRefresh()
+        }
+    }
+
+    // [FUNC-05] 榜单 / 电台详情抽屉状态
+    var detailSheetTitle by remember { mutableStateOf("") }
+    var detailSheetSubtitle by remember { mutableStateOf("") }
+    var detailSheetCover by remember { mutableStateOf("") }
+    var detailSheetSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
+    var detailSheetLoading by remember { mutableStateOf(false) }
+    var showDetailSheet by remember { mutableStateOf(false) }
+
+    fun openRankDetail(rank: RankItem) {
+        detailSheetTitle = rank.rankName
+        detailSheetSubtitle = rank.updateFrequency.ifBlank { "官方权威榜单" }
+        detailSheetCover = rank.coverUrl
+        detailSheetSongs = emptyList()
+        detailSheetLoading = true
+        showDetailSheet = true
+        coroutineScope.launch {
+            detailSheetSongs = viewModel.getRankSongs(rank.rankId)
+            detailSheetLoading = false
+        }
+    }
+
+    fun openChannelDetail(channel: YouthChannel) {
+        detailSheetTitle = channel.name
+        detailSheetSubtitle = channel.desc.ifBlank { channel.tag }
+        detailSheetCover = channel.coverUrl
+        detailSheetSongs = emptyList()
+        detailSheetLoading = true
+        showDetailSheet = true
+        coroutineScope.launch {
+            detailSheetSongs = viewModel.getYouthChannelSongs(channel.id)
+            detailSheetLoading = false
+        }
+    }
+
+    Box(
         modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF0F1115))
+            .nestedScroll(pullRefreshState.nestedScrollConnection)
+    ) {
+    LazyColumn(
+        modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .background(Color(0xFF0F1115)),
@@ -143,6 +202,7 @@ fun HomeScreen(
                             items(matchedChannels) { channel ->
                                 YouthChannelCard(
                                     channel = channel,
+                                    onCardClick = { openChannelDetail(channel) },
                                     onPlayClick = {
                                         coroutineScope.launch {
                                             Toast.makeText(context, "正在装载【${channel.name}】电台歌曲...", Toast.LENGTH_SHORT).show()
@@ -193,7 +253,9 @@ fun HomeScreen(
                 SongItemRow(
                     song = song,
                     orderIndex = index + 1,
-                    onClick = { onSongClick(song, sceneSongs) }
+                    isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                    onClick = { onSongClick(song, sceneSongs) },
+                    onMoreClick = { onSongMoreClick(song) }
                 )
             }
         } else {
@@ -296,6 +358,7 @@ fun HomeScreen(
                             items(youthChannels) { channel ->
                                 YouthChannelCard(
                                     channel = channel,
+                                    onCardClick = { openChannelDetail(channel) },
                                     onPlayClick = {
                                         coroutineScope.launch {
                                             Toast.makeText(context, "正在连接【${channel.name}】电台...", Toast.LENGTH_SHORT).show()
@@ -409,6 +472,7 @@ fun HomeScreen(
                             items(ranks) { rank ->
                                 RankCardView(
                                     rank = rank,
+                                    onCardClick = { openRankDetail(rank) },
                                     onPlayRank = {
                                         coroutineScope.launch {
                                             Toast.makeText(context, "正在装载【${rank.rankName}】...", Toast.LENGTH_SHORT).show()
@@ -457,8 +521,129 @@ fun HomeScreen(
                 SongItemRow(
                     song = song,
                     orderIndex = index + 1,
-                    onClick = { onSongClick(song, dailySongs) }
+                    isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                    onClick = { onSongClick(song, dailySongs) },
+                    onMoreClick = { onSongMoreClick(song) }
                 )
+            }
+        }
+    }
+
+        // [INT-03] 下拉刷新指示器
+        PullToRefreshContainer(
+            state = pullRefreshState,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding(),
+            containerColor = Color(0xFF1E222A),
+            contentColor = ConceptPrimary
+        )
+    }
+
+    // [FUNC-05] 榜单 / 概念版电台二级曲目浏览抽屉
+    if (showDetailSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showDetailSheet = false },
+            containerColor = Color(0xFF161922),
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AsyncImage(
+                        model = detailSheetCover,
+                        contentDescription = detailSheetTitle,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0xFF222733))
+                    )
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = detailSheetTitle,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = detailSheetSubtitle,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = Color.White.copy(alpha = 0.6f)
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            if (detailSheetSongs.isNotEmpty()) {
+                                onSongClick(detailSheetSongs.first(), detailSheetSongs)
+                                showDetailSheet = false
+                            }
+                        },
+                        enabled = detailSheetSongs.isNotEmpty(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = ConceptPrimary,
+                            contentColor = Color(0xFF0A1014)
+                        )
+                    ) {
+                        Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("播放全部", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (detailSheetLoading) {
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 16.dp),
+                        color = ConceptPrimary
+                    )
+                } else if (detailSheetSongs.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 36.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("暂无曲目数据", color = Color.White.copy(alpha = 0.45f))
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 460.dp)
+                    ) {
+                        itemsIndexed(detailSheetSongs) { index, song ->
+                            SongItemRow(
+                                song = song,
+                                orderIndex = index + 1,
+                                isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                                onClick = {
+                                    onSongClick(song, detailSheetSongs)
+                                    showDetailSheet = false
+                                },
+                                onMoreClick = { onSongMoreClick(song) }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
             }
         }
     }
@@ -608,6 +793,7 @@ private fun SceneHeroBanner(
 @Composable
 private fun YouthChannelCard(
     channel: YouthChannel,
+    onCardClick: () -> Unit = {},
     onPlayClick: () -> Unit
 ) {
     Card(
@@ -616,7 +802,7 @@ private fun YouthChannelCard(
         modifier = Modifier
             .width(160.dp)
             .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onPlayClick)
+            .clickable(onClick = onCardClick)
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
             Box(
@@ -651,7 +837,7 @@ private fun YouthChannelCard(
                     }
                 }
 
-                // 悬浮微播放按钮
+                // 悬浮微播放按钮（点击直接播放）
                 Surface(
                     color = Color.Black.copy(alpha = 0.55f),
                     shape = CircleShape,
@@ -659,6 +845,8 @@ private fun YouthChannelCard(
                         .align(Alignment.BottomEnd)
                         .padding(8.dp)
                         .size(32.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onPlayClick)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.PlayArrow,
@@ -883,6 +1071,7 @@ private fun QuickEntryTile(
 @Composable
 private fun RankCardView(
     rank: RankItem,
+    onCardClick: () -> Unit = {},
     onPlayRank: () -> Unit
 ) {
     Card(
@@ -891,7 +1080,7 @@ private fun RankCardView(
         modifier = Modifier
             .width(260.dp)
             .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onPlayRank)
+            .clickable(onClick = onCardClick)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(
@@ -919,12 +1108,17 @@ private fun RankCardView(
                         style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.45f))
                     )
                 }
-                Icon(
-                    imageVector = Icons.Rounded.PlayCircle,
-                    contentDescription = "播放",
-                    tint = ConceptPrimary,
-                    modifier = Modifier.size(28.dp)
-                )
+                IconButton(
+                    onClick = onPlayRank,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PlayCircle,
+                        contentDescription = "播放",
+                        tint = ConceptPrimary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -945,3 +1139,4 @@ private fun RankCardView(
         }
     }
 }
+

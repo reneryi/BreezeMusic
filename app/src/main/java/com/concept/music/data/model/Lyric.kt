@@ -21,6 +21,8 @@ data class LyricData(
     val rawText: String = "",
     val isKrc: Boolean = false
 ) {
+    val hasTranslation: Boolean get() = lines.any { !it.translation.isNullOrBlank() }
+
     fun getLineIndexAt(positionMs: Long): Int {
         if (lines.isEmpty()) return -1
         var low = 0

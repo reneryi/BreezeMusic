@@ -1,46 +1,71 @@
 package com.concept.music.ui.library
 
-import androidx.compose.animation.AnimatedVisibility
+import android.widget.Toast
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.widget.Toast
-import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
 import com.concept.music.data.kugou.AuthState
 import com.concept.music.data.model.*
 import com.concept.music.ui.components.CreatePlaylistDialog
-import com.concept.music.ui.components.PlaylistCard
-import com.concept.music.ui.components.VipCard
+import com.concept.music.ui.components.PlaylistGridItem
+import com.concept.music.ui.components.PlaylistListItem
+import com.concept.music.ui.components.VipBannerCard
+import com.concept.music.ui.components.VipCenterBottomSheet
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.viewmodel.LibraryViewModel
 
+/**
+ * 酷狗概念版第三方 - 我的页 (全新重构)
+ * 1. 沉浸式固定顶栏，自适应系统状态栏高度；
+ * 2. 向上滚动时大标题与用户头像+名字平滑过渡动效，右上角常驻扫码、搜索与设置按钮；
+ * 3. 饱满圆润的 VIP 领取二级界面入口胶囊；
+ * 4. 听歌等级与数据展示，支持双向同步酷狗官方云端；
+ * 5. 歌单与资产排版规范化，支持列表/网格切换、下拉刷新及关注歌手/已购专区浏览。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     viewModel: LibraryViewModel,
     onLogin: () -> Unit,
     onAccounts: () -> Unit,
     onOpenPlaylist: (String) -> Unit,
+    onOpenSearch: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
+    onOpenArtist: (String) -> Unit = {},
+    onOpenAlbum: (String) -> Unit = {},
+    onPlaySong: (Song, List<Song>) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -48,351 +73,809 @@ fun LibraryScreen(
     val vip by viewModel.vipState.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val userGrade by viewModel.userGrade.collectAsState()
+    val isGradeSyncing by viewModel.isGradeSyncing.collectAsState()
+    val libraryLoading by viewModel.libraryLoading.collectAsState()
+    val followedArtists by viewModel.followedArtists.collectAsState()
+    val purchasedSongs by viewModel.purchasedSongs.collectAsState()
+    val purchasedAlbums by viewModel.purchasedAlbums.collectAsState()
 
     val myPlaylists = remember(playlists) { playlists.filter { it.isCreatedByMe && !it.isLiked } }
     val favoritePlaylists = remember(playlists) { playlists.filter { it.isFavorite } }
     val likedPlaylist = remember(playlists) { playlists.firstOrNull { it.isLiked } }
     val historyCount = remember(account) { com.concept.music.data.vip.VipManager.history.get(account.currentId).size }
 
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: 我创建的, 1: 收藏的
+    var selectedTab by remember { mutableIntStateOf(0) } // 0: 我创建的, 1: 收藏的, 2: 关注歌手, 3: 已购音乐
+    var isGridView by remember { mutableStateOf(false) } // 歌单视图模式：false=列表视图, true=网格视图
     var showCreateDialog by remember { mutableStateOf(false) }
+    var showVipCenterSheet by remember { mutableStateOf(false) }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .background(Color(0xFF0F1115)),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        // 1. 用户头像与账号栏
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val profile = account.profile
-                if (profile?.avatarUrl.isNullOrEmpty()) {
-                    Surface(
-                        modifier = Modifier.size(62.dp),
-                        shape = CircleShape,
-                        color = Color(0xFF1E222A)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Rounded.Person,
-                                contentDescription = "账号头像",
-                                tint = Color.White.copy(alpha = 0.5f),
-                                modifier = Modifier.size(34.dp)
-                            )
-                        }
-                    }
-                } else {
-                    AsyncImage(
-                        model = profile?.avatarUrl,
-                        contentDescription = "账号头像",
-                        modifier = Modifier
-                            .size(62.dp)
-                            .clip(CircleShape),
-                        contentScale = ContentScale.Crop
-                    )
-                }
+    val listState = rememberLazyListState()
+    val pullRefreshState = rememberPullToRefreshState()
 
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(3.dp)
-                ) {
-                    Text(
-                        text = profile?.nickname ?: "登录酷狗账号",
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = if (account.auth == AuthState.READY) "酷狗概念版 VIP 权益已绑定" else "登录后同步我喜欢的音乐与专属VIP",
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            color = Color.White.copy(alpha = 0.55f)
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+    if (pullRefreshState.isRefreshing) {
+        LaunchedEffect(true) {
+            viewModel.refreshMusicLibrary()
+            viewModel.refreshAccount()
+        }
+    }
+    LaunchedEffect(libraryLoading) {
+        if (!libraryLoading) {
+            pullRefreshState.endRefresh()
+        }
+    }
 
-                FilledTonalButton(
-                    onClick = { if (account.auth == AuthState.READY) onAccounts() else onLogin() },
-                    shape = CircleShape,
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = Color(0xFF222733),
-                        contentColor = Color.White
-                    ),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Text(if (account.auth == AuthState.READY) "账号管理" else "立即登录", fontSize = 12.sp)
-                }
+    // 计算滑动过渡比例 (0f: 完全在顶部; 1f: 头像卡片滑出视野)
+    val scrollFraction by remember {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) {
+                1f
+            } else {
+                val offset = listState.firstVisibleItemScrollOffset.toFloat()
+                (offset / 140f).coerceIn(0f, 1f)
             }
         }
+    }
 
-        // 2. VIP 概念卡片
-        item {
-            VipCard(
-                state = vip,
-                loggedIn = account.auth == AuthState.READY,
-                autoClaim = account.current?.autoClaim ?: false,
-                onClaim = { viewModel.claimVip() },
-                onAutoChange = { viewModel.setAuto(it) },
-                onRefresh = { viewModel.refreshAccount() },
-                modifier = Modifier.fillMaxWidth()
-            )
-        }
+    val profile = account.profile
+    val isLoggedIn = account.auth == AuthState.READY
 
-        // 3. 听歌数据与等级仪表盘 (全新设计)
-        item {
-            Card(
-                shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF181B22)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF0E1015))
+            .nestedScroll(pullRefreshState.nestedScrollConnection)
+    ) {
+        // 主滚动内容流
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 60.dp,
+                bottom = 36.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // 1. 用户头像与账号主卡片 (饱满微光背景)
+            item {
+                Card(
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF161922)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        // 用户大头像 (64.dp)
+                        if (profile?.avatarUrl.isNullOrEmpty()) {
                             Surface(
-                                color = ConceptPrimary.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(8.dp)
+                                modifier = Modifier.size(64.dp),
+                                shape = CircleShape,
+                                color = Color(0xFF222734)
                             ) {
-                                Text(
-                                    text = "Lv.${userGrade.level}",
-                                    color = ConceptPrimary,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Black,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Person,
+                                        contentDescription = "账号头像",
+                                        tint = Color.White.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                }
                             }
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = "听歌等级与数据",
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
+                        } else {
+                            AsyncImage(
+                                model = profile?.avatarUrl,
+                                contentDescription = "账号头像",
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(CircleShape),
+                                contentScale = ContentScale.Crop
                             )
                         }
 
-                        // 同步云端时长按钮
-                        TextButton(
-                            onClick = { viewModel.refreshGradeInfo() },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = "同步",
-                                tint = Color.White.copy(alpha = 0.6f),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "同步云端",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = Color.White.copy(alpha = 0.6f)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = profile?.nickname ?: "登录酷狗账号",
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        fontSize = 18.sp
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+
+                                if (isLoggedIn) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = VipGold.copy(alpha = 0.2f)
+                                    ) {
+                                        Text(
+                                            text = "VIP",
+                                            color = VipGold,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Black,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Text(
+                                text = if (isLoggedIn) "酷狗概念版专属权益已同步" else "登录后同步我喜欢的音乐与专属VIP",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = Color.White.copy(alpha = 0.55f),
+                                    fontSize = 12.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        // 登录 / 账号管理胶囊按钮
+                        FilledTonalButton(
+                            onClick = { if (isLoggedIn) onAccounts() else onLogin() },
+                            shape = CircleShape,
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = Color(0xFF252B3A),
+                                contentColor = Color.White
+                            ),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = if (isLoggedIn) "账号管理" else "立即登录",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
                             )
                         }
                     }
+                }
+            }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+            // 2. VIP 概念版领取入口 (饱满圆润胶囊卡片，点击打开二级界面)
+            item {
+                VipBannerCard(
+                    state = vip,
+                    loggedIn = isLoggedIn,
+                    onClick = { showVipCenterSheet = true },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
 
-                    // 成长进度条
-                    LinearProgressIndicator(
-                        progress = { userGrade.progressPercent },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(CircleShape),
-                        color = ConceptPrimary,
-                        trackColor = Color.White.copy(alpha = 0.08f)
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(
-                                text = "累计时长 ${userGrade.totalHoursFormatted} 小时",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    color = Color.White.copy(alpha = 0.85f),
-                                    fontWeight = FontWeight.Medium
-                                )
-                            )
-                            if (userGrade.todayListenMinutes > 0) {
+            // 3. 听歌数据与等级仪表盘 (支持数据同步云端)
+            item {
+                Card(
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF161922)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(18.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    color = ConceptPrimary.copy(alpha = 0.2f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        text = "Lv.${userGrade.level}",
+                                        color = ConceptPrimary,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Black,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "今日 ${userGrade.todayListenMinutes} 分钟",
-                                    style = MaterialTheme.typography.labelMedium.copy(
-                                        color = ConceptPrimary.copy(alpha = 0.9f),
+                                    text = "听歌等级与数据",
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White,
+                                        fontSize = 15.sp
+                                    )
+                                )
+                            }
+
+                            // 同步云端时长按钮 (带旋转动效与明确反馈)
+                            val rotationAngle by animateFloatAsState(
+                                targetValue = if (isGradeSyncing) 360f else 0f,
+                                animationSpec = tween(durationMillis = 800),
+                                label = "syncRotation"
+                            )
+
+                            TextButton(
+                                onClick = {
+                                    viewModel.refreshGradeInfo { _, msg ->
+                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                enabled = !isGradeSyncing,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Refresh,
+                                    contentDescription = "同步",
+                                    tint = ConceptPrimary,
+                                    modifier = Modifier
+                                        .size(15.dp)
+                                        .rotate(rotationAngle)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isGradeSyncing) "同步中..." else "同步云端",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = ConceptPrimary,
                                         fontWeight = FontWeight.Medium
                                     )
                                 )
                             }
                         }
 
-                        val remainingScore = (userGrade.nextLevelScore - userGrade.score).coerceAtLeast(0L)
-                        Text(
-                            text = if (remainingScore > 0) "距 Lv.${userGrade.level + 1} 还差 $remainingScore" else "成长值已满",
-                            style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.45f))
-                        )
-                    }
-                }
-            }
-        }
-
-        // 4. 音乐核心资产双子卡 (我喜欢的音乐 + 最近播放，并列重新设计)
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // 我喜欢的音乐卡片
-                MediaShortcutCard(
-                    title = "我喜欢的音乐",
-                    subtitle = "${likedPlaylist?.trackCount ?: 0} 首歌曲",
-                    icon = Icons.Rounded.Favorite,
-                    iconTint = Color(0xFFFF5252),
-                    gradientColors = listOf(Color(0xFF281820), Color(0xFF1B1822)),
-                    onClick = { onOpenPlaylist("like") },
-                    modifier = Modifier.weight(1f)
-                )
-
-                // 最近播放卡片 (点击打开最近播放列表)
-                MediaShortcutCard(
-                    title = "最近播放",
-                    subtitle = "${historyCount} 首记录",
-                    icon = Icons.Rounded.History,
-                    iconTint = Color(0xFF448AFF),
-                    gradientColors = listOf(Color(0xFF152233), Color(0xFF181B24)),
-                    onClick = { onOpenPlaylist("history") },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-
-        // 5. 歌单分组选项栏 (我创建的 / 收藏的)
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text(
-                        text = "我创建的 (${myPlaylists.size})",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
-                            color = if (selectedTab == 0) Color.White else Color.White.copy(alpha = 0.45f)
-                        ),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { selectedTab = 0 }
-                            .padding(vertical = 4.dp)
-                    )
-
-                    Text(
-                        text = "收藏的歌单 (${favoritePlaylists.size})",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
-                            color = if (selectedTab == 1) Color.White else Color.White.copy(alpha = 0.45f)
-                        ),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { selectedTab = 1 }
-                            .padding(vertical = 4.dp)
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = { showCreateDialog = true },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Add,
-                            contentDescription = "新建歌单",
-                            tint = ConceptPrimary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(4.dp))
-                    IconButton(
-                        onClick = { viewModel.refreshMusicLibrary() },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "刷新歌单",
-                            tint = Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        // 6. 歌单列表项
-        val currentDisplayPlaylists = if (selectedTab == 0) myPlaylists else favoritePlaylists
-        if (currentDisplayPlaylists.isEmpty()) {
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 36.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = if (selectedTab == 0) "暂未创建自定义歌单" else "暂无收藏的歌单",
-                        style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.35f))
-                    )
-                    if (selectedTab == 0) {
                         Spacer(modifier = Modifier.height(14.dp))
-                        Button(
-                            onClick = { showCreateDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = ConceptPrimary),
-                            shape = RoundedCornerShape(18.dp),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+
+                        // 成长进度条
+                        LinearProgressIndicator(
+                            progress = { userGrade.progressPercent },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(CircleShape),
+                            color = ConceptPrimary,
+                            trackColor = Color.White.copy(alpha = 0.08f)
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Add,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(
+                                    text = "累计时长 ${userGrade.displayListenTimeText}",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        color = Color.White.copy(alpha = 0.85f),
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                )
+                                if (userGrade.todayListenMinutes > 0) {
+                                    Text(
+                                        text = "今日 ${userGrade.todayListenMinutes} 分钟",
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            color = ConceptPrimary.copy(alpha = 0.9f),
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    )
+                                }
+                            }
+
+                            val remainingScore = (userGrade.nextLevelScore - userGrade.score).coerceAtLeast(0L)
+                            Text(
+                                text = if (remainingScore > 0) "距 Lv.${userGrade.level + 1} 还差 $remainingScore" else "成长值已满",
+                                style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.45f))
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("新建歌单", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
-        } else {
-            items(currentDisplayPlaylists, key = { it.id }) { pl ->
-                PlaylistCard(
-                    playlist = pl,
-                    onClick = { onOpenPlaylist(pl.id) }
-                )
+
+            // 4. 核心快捷卡片 (我喜欢的音乐 + 最近播放)
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    MediaShortcutCard(
+                        title = "我喜欢的音乐",
+                        subtitle = "${likedPlaylist?.trackCount ?: 0} 首歌曲",
+                        icon = Icons.Rounded.Favorite,
+                        iconTint = Color(0xFFFF5252),
+                        gradientColors = listOf(Color(0xFF2E1922), Color(0xFF1B1724)),
+                        onClick = { onOpenPlaylist("like") },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    MediaShortcutCard(
+                        title = "最近播放",
+                        subtitle = "${historyCount} 首记录",
+                        icon = Icons.Rounded.History,
+                        iconTint = Color(0xFF448AFF),
+                        gradientColors = listOf(Color(0xFF152538), Color(0xFF171926)),
+                        onClick = { onOpenPlaylist("history") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            // 5. 歌单与音乐资产分组栏与视图切换 (支持列表/网格视图与歌手/已购专区切换)
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp, bottom = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 分组选项卡：自建歌单 / 收藏歌单 / 关注歌手 / 已购
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState())
+                    ) {
+                        val tabs = listOf(
+                            "自建 (${myPlaylists.size})",
+                            "收藏 (${favoritePlaylists.size})",
+                            "歌手 (${followedArtists.size})",
+                            "已购 (${purchasedSongs.size + purchasedAlbums.size})"
+                        )
+                        tabs.forEachIndexed { idx, label ->
+                            val isSelected = selectedTab == idx
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.45f),
+                                    fontSize = 15.sp
+                                ),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { selectedTab = idx }
+                                    .padding(vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    // 右侧功能按钮：新建歌单、视图切换 (列表/网格)、刷新
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        // 新建歌单
+                        IconButton(
+                            onClick = { showCreateDialog = true },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Add,
+                                contentDescription = "新建歌单",
+                                tint = ConceptPrimary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // 视图切换按钮 (列表视图 <-> 网格视图，仅歌单选项卡生效)
+                        if (selectedTab == 0 || selectedTab == 1) {
+                            IconButton(
+                                onClick = { isGridView = !isGridView },
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                @Suppress("DEPRECATION")
+                                Icon(
+                                    imageVector = if (isGridView) Icons.Rounded.ViewList else Icons.Rounded.GridView,
+                                    contentDescription = if (isGridView) "切换为列表视图" else "切换为网格视图",
+                                    tint = Color.White.copy(alpha = 0.75f),
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                        }
+
+                        // 刷新歌单
+                        IconButton(
+                            onClick = { viewModel.refreshMusicLibrary() },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = "刷新歌单",
+                                tint = Color.White.copy(alpha = 0.5f),
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 6. 音乐库内容列表 (自建歌单 / 收藏歌单 / 关注歌手 / 已购资产)
+            when (selectedTab) {
+                0, 1 -> {
+                    val currentDisplayPlaylists = if (selectedTab == 0) myPlaylists else favoritePlaylists
+                    if (currentDisplayPlaylists.isEmpty()) {
+                        item {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 36.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = if (selectedTab == 0) "暂未创建自定义歌单" else "暂无收藏的歌单",
+                                    style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.35f))
+                                )
+                                if (selectedTab == 0) {
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                    Button(
+                                        onClick = { showCreateDialog = true },
+                                        colors = ButtonDefaults.buttonColors(containerColor = ConceptPrimary),
+                                        shape = RoundedCornerShape(18.dp),
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Add,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("新建歌单", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    } else if (!isGridView) {
+                        items(currentDisplayPlaylists, key = { it.id }) { pl ->
+                            PlaylistListItem(
+                                playlist = pl,
+                                onClick = { onOpenPlaylist(pl.id) }
+                            )
+                        }
+                    } else {
+                        val chunked = currentDisplayPlaylists.chunked(2)
+                        items(chunked, key = { it.first().id }) { rowItems ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                rowItems.forEach { pl ->
+                                    PlaylistGridItem(
+                                        playlist = pl,
+                                        onClick = { onOpenPlaylist(pl.id) },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                if (rowItems.size == 1) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+                2 -> {
+                    // 关注歌手列表 ([FUNC-05])
+                    if (followedArtists.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 36.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (isLoggedIn) "暂未关注任何歌手" else "请先登录同步关注的歌手",
+                                    style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.35f))
+                                )
+                            }
+                        }
+                    } else {
+                        items(followedArtists, key = { it.id.ifBlank { it.name } }) { artist ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFF161922))
+                                    .clickable {
+                                        if (artist.id.isNotBlank()) onOpenArtist(artist.id)
+                                    }
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AsyncImage(
+                                    model = artist.avatarUrl,
+                                    contentDescription = artist.name,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(50.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF222734))
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = artist.name,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    val sub = buildString {
+                                        if (artist.songCount > 0) append("${artist.songCount} 首单曲")
+                                        if (artist.fansCount > 0) {
+                                            if (isNotEmpty()) append(" · ")
+                                            append("${artist.fansCount} 粉丝")
+                                        }
+                                    }.ifBlank { "进入歌手主页" }
+                                    Text(
+                                        text = sub,
+                                        color = Color.White.copy(alpha = 0.55f),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha = 0.35f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                3 -> {
+                    // 已购专辑与单曲列表 ([FUNC-05])
+                    if (purchasedAlbums.isEmpty() && purchasedSongs.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 36.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (isLoggedIn) "暂无已购数字专辑或单曲" else "请先登录同步已购音乐资产",
+                                    style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.35f))
+                                )
+                            }
+                        }
+                    } else {
+                        items(purchasedAlbums, key = { "album_${it.albumId}" }) { album ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFF161922))
+                                    .clickable {
+                                        if (album.albumId.isNotBlank()) onOpenAlbum(album.albumId)
+                                    }
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AsyncImage(
+                                    model = album.coverUrl,
+                                    contentDescription = album.albumName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(50.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0xFF222734))
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = album.albumName,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${album.singerName} · 数字专辑 (${album.songCount}首)",
+                                        color = VipGold.copy(alpha = 0.85f),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                        val allPurchasedSongs = purchasedSongs.mapNotNull { it.song }
+                        items(purchasedSongs, key = { "song_${it.songId}_${it.songName}" }) { item ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFF161922))
+                                    .clickable {
+                                        item.song?.let { s ->
+                                            onPlaySong(s, allPurchasedSongs.ifEmpty { listOf(s) })
+                                        }
+                                    }
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.MusicNote,
+                                    contentDescription = null,
+                                    tint = ConceptPrimary,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = item.songName,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = item.singerName,
+                                        color = Color.White.copy(alpha = 0.55f),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // [INT-03] 下拉刷新指示器
+        PullToRefreshContainer(
+            state = pullRefreshState,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding(),
+            containerColor = Color(0xFF1E222A),
+            contentColor = ConceptPrimary
+        )
+
+        // 7. 固定沉浸式顶栏 (随页面滚动平滑切换大标题与小头像+昵称)
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter),
+            color = Color(0xFF0E1015).copy(alpha = (scrollFraction * 0.96f).coerceIn(0f, 0.96f)),
+            tonalElevation = (scrollFraction * 6).dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // 左侧标题与用户小头像平滑联动切换
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        // 1. 顶部未滑动时的大标题 "我的"
+                        Text(
+                            text = "我的",
+                            style = MaterialTheme.typography.headlineMedium.copy(
+                                fontWeight = FontWeight.Black,
+                                color = Color.White,
+                                fontSize = 24.sp
+                            ),
+                            modifier = Modifier
+                                .alpha((1f - scrollFraction * 1.5f).coerceIn(0f, 1f))
+                                .offset(y = (-10 * scrollFraction).dp)
+                        )
+
+                        // 2. 向上滑动时平滑淡入并滑出的小头像 + 用户昵称
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier
+                                .alpha(((scrollFraction - 0.4f) * 1.67f).coerceIn(0f, 1f))
+                                .offset(y = (10 * (1f - scrollFraction)).dp)
+                        ) {
+                            if (profile?.avatarUrl.isNullOrEmpty()) {
+                                Surface(
+                                    modifier = Modifier.size(34.dp),
+                                    shape = CircleShape,
+                                    color = Color(0xFF222734)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Person,
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.5f),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                AsyncImage(
+                                    model = profile?.avatarUrl,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape),
+                                    contentScale = ContentScale.Crop
+                                )
+                            }
+
+                            Text(
+                                text = profile?.nickname ?: "我的",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    fontSize = 17.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    // 右侧功能按钮组：搜索、设置
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // 搜索按钮
+                        IconButton(
+                            onClick = onOpenSearch,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Search,
+                                contentDescription = "搜索",
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(21.dp)
+                            )
+                        }
+
+                        // 设置按钮 (当前重点添加)
+                        IconButton(
+                            onClick = onOpenSettings,
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Settings,
+                                contentDescription = "设置",
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(21.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
 
+    // 二级界面：VIP 权益中心抽屉
+    if (showVipCenterSheet) {
+        VipCenterBottomSheet(
+            state = vip,
+            loggedIn = isLoggedIn,
+            autoClaim = account.current?.autoClaim ?: false,
+            onDismiss = { showVipCenterSheet = false },
+            onClaim = { viewModel.claimVip() },
+            onAutoChange = { viewModel.setAuto(it) },
+            onRefresh = { viewModel.refreshAccount() },
+            onLogin = {
+                showVipCenterSheet = false
+                onLogin()
+            }
+        )
+    }
+
+    // 新建歌单对话框
     if (showCreateDialog) {
         CreatePlaylistDialog(
             onDismiss = { showCreateDialog = false },
@@ -470,7 +953,8 @@ private fun MediaShortcutCard(
                     text = title,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = Color.White,
+                        fontSize = 15.sp
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -479,7 +963,8 @@ private fun MediaShortcutCard(
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall.copy(
-                        color = Color.White.copy(alpha = 0.6f)
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 12.sp
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis

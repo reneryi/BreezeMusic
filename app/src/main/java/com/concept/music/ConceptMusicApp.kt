@@ -6,6 +6,9 @@ import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.concept.music.data.vip.VipManager
+import com.concept.music.service.AmbientSoundManager
+import com.concept.music.service.SystemLyricBridge
+import com.concept.music.service.VipGuardianManager
 import okhttp3.OkHttpClient
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -18,6 +21,9 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         VipManager.initialize(this)
+        AmbientSoundManager.init(this)
+        SystemLyricBridge.init(this)
+        VipGuardianManager.init(this)
     }
 
     override fun newImageLoader(): ImageLoader {

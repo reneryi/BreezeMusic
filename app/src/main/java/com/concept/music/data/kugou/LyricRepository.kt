@@ -25,26 +25,46 @@ class LyricRepository(
             }
         }
 
-        val candidate = searchLyricCandidate(song)
-        if (candidate == null) {
+        val candidates = searchLyricCandidates(song)
+        if (candidates.isEmpty()) {
             val empty = LyricData()
             if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = empty }
             return@withContext empty
         }
 
-        val krcData = downloadLyric(candidate.id, candidate.accesskey, fmt = "krc")
-        if (krcData != null && krcData.lines.isNotEmpty()) {
-            if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = krcData }
-            return@withContext krcData
+        // 1. 尝试首个最佳候选
+        val firstCandidate = candidates.first()
+        var bestData = downloadLyric(firstCandidate.id, firstCandidate.accesskey, fmt = "krc")
+
+        // 2. 若首个候选暂无翻译，且歌曲属于非中文歌曲，优先扩大候选搜索范围以获取含官方中文翻译的歌词
+        val isChineseSong = song.title.any { it in '\u4e00'..'\u9fff' }
+        val maxCandidatesToCheck = if (!isChineseSong) 6 else 4
+        if ((bestData == null || (!bestData.hasTranslation && !isChineseSong)) && candidates.size > 1) {
+            for (i in 1 until candidates.size.coerceAtMost(maxCandidatesToCheck)) {
+                val alt = candidates[i]
+                val altData = downloadLyric(alt.id, alt.accesskey, fmt = "krc")
+                if (altData != null && altData.hasTranslation) {
+                    bestData = altData
+                    break
+                } else if (bestData == null && altData != null && altData.lines.isNotEmpty()) {
+                    bestData = altData
+                }
+            }
         }
 
-        val lrcData = downloadLyric(candidate.id, candidate.accesskey, fmt = "lrc")
+        if (bestData != null && bestData.lines.isNotEmpty()) {
+            if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = bestData }
+            return@withContext bestData
+        }
+
+        // 3. KRC 不可用时降级 LRC
+        val lrcData = downloadLyric(firstCandidate.id, firstCandidate.accesskey, fmt = "lrc")
         val finalData = lrcData ?: LyricData()
         if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = finalData }
         finalData
     }
 
-    private suspend fun searchLyricCandidate(song: Song): LyricCandidate? {
+    private suspend fun searchLyricCandidates(song: Song): List<LyricCandidate> {
         val d = device()
         val clientTime = System.currentTimeMillis() / 1000
         val query = linkedMapOf(
@@ -79,12 +99,13 @@ class LyricRepository(
                 includeDefaultParams = false
             )
             val candidates = response.data.objects("candidates").ifEmpty { response.body.objects("candidates") }
-            val best = candidates.firstOrNull() ?: return null
-            val id = best.text("id") ?: return null
-            val accesskey = best.text("accesskey") ?: return null
-            LyricCandidate(id, accesskey)
+            candidates.mapNotNull {
+                val id = it.text("id") ?: return@mapNotNull null
+                val accesskey = it.text("accesskey") ?: return@mapNotNull null
+                LyricCandidate(id, accesskey)
+            }
         } catch (_: Exception) {
-            null
+            emptyList()
         }
     }
 

@@ -96,3 +96,12 @@ class ApiFailure(val code: Int?, message: String, val eventId: String? = null) :
     val invalidSession: Boolean get() = code == 20010
     override fun toString(): String = "${message ?: "请求失败"}${code?.let { "（$it）" }.orEmpty()}"
 }
+
+data class PlaybackResult(
+    val url: String,
+    val actualQuality: com.concept.music.data.model.AudioQuality,
+    val bitrateKbps: Int = 0,
+    val fileSizeByte: Long = 0L,
+    val climaxStartMs: Long = 0L,
+    val climaxEndMs: Long = 0L
+)

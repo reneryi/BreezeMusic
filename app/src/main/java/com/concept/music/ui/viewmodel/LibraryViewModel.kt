@@ -10,6 +10,7 @@ import com.concept.music.data.model.PurchasedAlbumItem
 import com.concept.music.data.model.PurchasedSongItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.model.UserGradeInfo
+import com.concept.music.data.vip.ListeningGradeManager
 import com.concept.music.data.vip.VipManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,6 +33,8 @@ class LibraryViewModel(
     val login = loginMutable.asStateFlow()
     private val _playlists = MutableStateFlow<List<Playlist>>(emptyList())
     val playlists = _playlists.asStateFlow()
+    private val _likedSongs = MutableStateFlow<List<Song>>(emptyList())
+    val likedSongs = _likedSongs.asStateFlow()
     private val _librarySongs = MutableStateFlow<List<Song>>(emptyList())
     val librarySongs = _librarySongs.asStateFlow()
     private val _libraryLoading = MutableStateFlow(false)
@@ -67,7 +70,28 @@ class LibraryViewModel(
     private var loginVersion = 0L
     private val autoAttempts = mutableMapOf<String, Long>()
 
-    init { viewModelScope.launch { accountState.collect { loadMusicLibrary() } } }
+    val isGradeSyncing = ListeningGradeManager.isSyncing
+
+    init {
+        viewModelScope.launch { accountState.collect { loadMusicLibrary() } }
+        viewModelScope.launch {
+            ListeningGradeManager.gradeInfo.collect { info ->
+                _userGrade.value = info
+            }
+        }
+    }
+
+    fun isSameSong(a: Song, b: Song): Boolean {
+        if (a.id.isNotBlank() && b.id.isNotBlank() && a.id == b.id) return true
+        if (a.hash.isNotBlank() && b.hash.isNotBlank() && a.hash.equals(b.hash, ignoreCase = true)) return true
+        if (a.albumAudioId > 0L && b.albumAudioId > 0L && a.albumAudioId == b.albumAudioId) return true
+        return false
+    }
+
+    fun isSongLiked(song: Song?, likedList: List<Song> = _likedSongs.value): Boolean {
+        if (song == null) return false
+        return likedList.any { isSameSong(it, song) }
+    }
 
     fun openLibrarySection(section: String) {
         _librarySection.value = section
@@ -112,7 +136,12 @@ class LibraryViewModel(
         _librarySongs.value = emptyList()
         if (userId == null || accountState.value.auth != AuthState.READY) {
             _playlists.value = emptyList()
+            _likedSongs.value = emptyList()
             _librarySongs.value = emptyList()
+            _followedArtists.value = emptyList()
+            _purchasedSongs.value = emptyList()
+            _purchasedAlbums.value = emptyList()
+            _favoriteAlbums.value = emptyList()
             return
         }
         musicLibraryJob?.cancel()
@@ -122,14 +151,21 @@ class LibraryViewModel(
                 val lists = VipManager.music.userPlaylists()
                 if (accounts.state.value.currentId != userId) return@launch
                 _playlists.value = lists
+                val likedPl = lists.firstOrNull { it.isLiked }
+                val likedTracks = if (likedPl != null) {
+                    runCatching { VipManager.music.playlistSongs(likedPl) }.getOrDefault(_likedSongs.value)
+                } else emptyList()
+                _likedSongs.value = likedTracks
+
                 val selected = when (section) {
-                    "我喜欢" -> lists.firstOrNull { it.isLiked }
+                    "我喜欢" -> likedPl
                     "我创建的歌单" -> null
                     "收藏的歌单" -> null
                     else -> section.removePrefix("歌单:").takeIf { section.startsWith("歌单:") }?.let { id -> lists.firstOrNull { it.id == id } }
                 }
                 when (section) {
                     "我创建的歌单", "收藏的歌单" -> _librarySongs.value = emptyList()
+                    "我喜欢" -> _librarySongs.value = likedTracks
                     else -> {
                         if (selected != null) {
                             _librarySongs.value = VipManager.music.playlistSongs(selected)
@@ -145,10 +181,23 @@ class LibraryViewModel(
                 }
                 if (accounts.state.value.currentId != userId) return@launch
 
-                // 异步拉取真实等级统计
+                // 异步拉取真实等级统计、关注歌手与已购资产 ([FUNC-05])
                 launch {
-                    val grade = runCatching { VipManager.music.userGradeInfo() }.getOrNull()
-                    if (grade != null) _userGrade.value = grade
+                    ListeningGradeManager.syncGrade(forceRefresh = false)
+                }
+                launch {
+                    val artists = runCatching { VipManager.music.followedArtists() }.getOrDefault(emptyList())
+                    if (accounts.state.value.currentId == userId) {
+                        _followedArtists.value = artists
+                    }
+                }
+                launch {
+                    val pSongs = runCatching { VipManager.music.userPurchasedSongs() }.getOrDefault(emptyList())
+                    val pAlbums = runCatching { VipManager.music.userPurchasedAlbums() }.getOrDefault(emptyList())
+                    if (accounts.state.value.currentId == userId) {
+                        _purchasedSongs.value = pSongs
+                        _purchasedAlbums.value = pAlbums
+                    }
                 }
             } catch (e: Exception) {
                 if (accounts.state.value.currentId == userId) _libraryError.value = e.message ?: "音乐库加载失败"
@@ -156,11 +205,20 @@ class LibraryViewModel(
         }
     }
 
-    fun refreshGradeInfo() {
-        if (accountState.value.auth != AuthState.READY) return
+    fun refreshGradeInfo(onResult: ((Boolean, String) -> Unit)? = null) {
+        if (accountState.value.auth != AuthState.READY) {
+            onResult?.invoke(false, "请先登录酷狗账号")
+            return
+        }
         viewModelScope.launch {
-            val grade = runCatching { VipManager.music.userGradeInfo() }.getOrNull()
-            if (grade != null) _userGrade.value = grade
+            val result = ListeningGradeManager.syncGrade(forceRefresh = true)
+            if (result.isSuccess) {
+                val grade = result.getOrNull()
+                if (grade != null) _userGrade.value = grade
+                onResult?.invoke(true, "听歌等级与数据已同步至官方云端")
+            } else {
+                onResult?.invoke(false, result.exceptionOrNull()?.message ?: "同步失败，请检查网络")
+            }
         }
     }
 
@@ -205,10 +263,82 @@ class LibraryViewModel(
         }
     }
 
+    fun toggleFavorite(song: Song, onResult: (Boolean, Boolean, String) -> Unit = { _, _, _ -> }) {
+        if (accountState.value.auth != AuthState.READY) {
+            onResult(false, false, "请先登录酷狗账号")
+            return
+        }
+        viewModelScope.launch {
+            val likedPl = _playlists.value.firstOrNull { it.isLiked }
+                ?: runCatching {
+                    VipManager.music.userPlaylists().also { _playlists.value = it }.firstOrNull { it.isLiked }
+                }.getOrNull()
+
+            if (likedPl == null || likedPl.listId <= 0L) {
+                onResult(false, false, "未找到「我喜欢」歌单，请稍后重试")
+                return@launch
+            }
+
+            val currentlyLiked = isSongLiked(song)
+            val prevLikedList = _likedSongs.value
+            if (currentlyLiked) {
+                val matchedInLiked = prevLikedList.firstOrNull { isSameSong(it, song) } ?: song
+                _likedSongs.value = prevLikedList.filterNot { isSameSong(it, song) }
+                if (_librarySection.value == "我喜欢") {
+                    _librarySongs.value = _librarySongs.value.filterNot { isSameSong(it, song) }
+                }
+                val success = runCatching { VipManager.music.removeSongFromPlaylist(likedPl.listId, matchedInLiked) }.getOrDefault(false)
+                if (success) {
+                    _playlists.value = _playlists.value.map {
+                        if (it.isLiked) it.copy(trackCount = (it.trackCount - 1).coerceAtLeast(0)) else it
+                    }
+                    onResult(true, false, "已从「我喜欢的音乐」中移除")
+                } else {
+                    _likedSongs.value = prevLikedList
+                    if (_librarySection.value == "我喜欢") {
+                        _librarySongs.value = prevLikedList
+                    }
+                    onResult(false, true, "取消喜欢失败，请稍后重试")
+                }
+            } else {
+                val addedSong = song.copy(isFavorite = true)
+                _likedSongs.value = listOf(addedSong) + prevLikedList
+                if (_librarySection.value == "我喜欢") {
+                    _librarySongs.value = listOf(addedSong) + _librarySongs.value
+                }
+                val success = runCatching { VipManager.music.addSongToPlaylist(likedPl.listId, song) }.getOrDefault(false)
+                if (success) {
+                    _playlists.value = _playlists.value.map {
+                        if (it.isLiked) it.copy(trackCount = it.trackCount + 1) else it
+                    }
+                    // 后台拉取最新我喜欢列表以补全云端生成的 fileId
+                    launch {
+                        runCatching { VipManager.music.playlistSongs(likedPl) }.getOrNull()?.let { fresh ->
+                            _likedSongs.value = fresh
+                            if (_librarySection.value == "我喜欢") {
+                                _librarySongs.value = fresh
+                            }
+                        }
+                    }
+                    onResult(true, true, "已收藏到「我喜欢的音乐」")
+                } else {
+                    _likedSongs.value = prevLikedList
+                    if (_librarySection.value == "我喜欢") {
+                        _librarySongs.value = prevLikedList
+                    }
+                    onResult(false, false, "收藏失败，请稍后重试")
+                }
+            }
+        }
+    }
+
     fun addSongToPlaylist(playlistId: Long, song: Song, playlistName: String = "", onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
             val success = runCatching { VipManager.music.addSongToPlaylist(playlistId, song) }.getOrDefault(false)
             if (success) {
+                _playlists.value = _playlists.value.map {
+                    if (it.listId == playlistId) it.copy(trackCount = it.trackCount + 1) else it
+                }
                 val tip = if (playlistName.isNotBlank()) "已成功添加到「$playlistName」" else "已成功添加到歌单"
                 onResult(true, tip)
             } else {
@@ -221,8 +351,10 @@ class LibraryViewModel(
         viewModelScope.launch {
             val success = runCatching { VipManager.music.removeSongFromPlaylist(playlistId, song) }.getOrDefault(false)
             if (success) {
-                _librarySongs.value = _librarySongs.value.filterNot {
-                    (song.fileId > 0 && it.fileId == song.fileId) || (song.hash.isNotBlank() && it.hash.equals(song.hash, ignoreCase = true)) || it.id == song.id
+                _librarySongs.value = _librarySongs.value.filterNot { isSameSong(it, song) }
+                _likedSongs.value = _likedSongs.value.filterNot { isSameSong(it, song) }
+                _playlists.value = _playlists.value.map {
+                    if (it.listId == playlistId) it.copy(trackCount = (it.trackCount - 1).coerceAtLeast(0)) else it
                 }
                 onResult(true, "已从歌单中移除")
             } else {

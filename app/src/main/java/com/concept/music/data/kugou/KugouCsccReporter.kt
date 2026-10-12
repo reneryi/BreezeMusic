@@ -1,0 +1,301 @@
+package com.concept.music.data.kugou
+
+import android.util.Log
+import com.concept.music.data.model.Song
+import com.concept.music.data.vip.VipManager
+import kotlinx.coroutines.*
+import okhttp3.*
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.ByteArrayOutputStream
+import java.security.KeyFactory
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.security.spec.X509EncodedKeySpec
+import java.util.Base64
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+import java.util.zip.Deflater
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
+
+/**
+ * 酷狗官方 CSCC 播放上报引擎 (d.kugou.com)
+ * 纯 Kotlin 端侧实现三段式真实播放事件上报 (qrydid -> gen -> post)。
+ * 酷狗官方服务器以此为准记入用户真实听歌时长与等级，不被判定为异常刷量。
+ */
+object KugouCsccReporter {
+    private const val TAG = "KugouCSCC"
+    private const val CSCC_HOST = "http://d.kugou.com"
+    private const val CSCC_VERSION = "10597"
+    private const val CSCC_APPKEY = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
+    private const val QRYDID_SALT = "pbKC7zn{4U*ydo2M1Rir"
+
+    // Lite 客户端公钥
+    private const val PUBLIC_KEY_LITE = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDECi0Np2UR87scwrvTr72L6oO01rBbbBPriSDFPxr3Z5syug0O24QyQO8bg27+0+4kBzTBTBOZ/WWU0WryL1JSXRTXLgFVxtzIY41Pe7lPOgsfTCn5kZcvKhYKJesKnnJDNr5/abvTGf+rHG3YRwsCHcQ08/q6ifSioBszvb3QiwIDAQAB"
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .build()
+
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    private data class CsccSession(
+        val cookie: String,
+        val clientTime: Long,
+        val serverStr: String,
+        val field2: String,
+        val expireTime: Long
+    )
+
+    private var cachedSession: CsccSession? = null
+    private var currentPlayingSongId: String? = null
+    private var songStartTimeMs: Long = 0L
+
+    /**
+     * 歌曲开始播放时上报 start 事件
+     */
+    fun onSongStart(song: Song) {
+        val songId = song.id
+        currentPlayingSongId = songId
+        songStartTimeMs = System.currentTimeMillis()
+
+        scope.launch {
+            val mixSongId = resolveMixSongId(song)
+            if (mixSongId > 0L) {
+                runCatching {
+                    sendEvent(mixSongId = mixSongId, isStart = true, durationMs = 0L)
+                }.onFailure { Log.e(TAG, "CSCC start 上报异常: ${it.message}") }
+            }
+        }
+    }
+
+    /**
+     * 歌曲切歌、暂停或结束时上报 end 事件 (真实播放时长大于 10 秒才计入)
+     */
+    fun onSongEnd(song: Song, playedDurationMs: Long = 0L) {
+        val actualPlayedMs = if (playedDurationMs > 0L) playedDurationMs else (System.currentTimeMillis() - songStartTimeMs).coerceAtLeast(0L)
+        songStartTimeMs = 0L
+
+        // 听歌小于 10 秒视为试听或误点，不发送 end 事件
+        if (actualPlayedMs < 10000L) {
+            Log.d(TAG, "跳过 CSCC end 事件，播放时长不足 10s ($actualPlayedMs ms)")
+            return
+        }
+
+        scope.launch {
+            val mixSongId = resolveMixSongId(song)
+            if (mixSongId > 0L) {
+                runCatching {
+                    sendEvent(mixSongId = mixSongId, isStart = false, durationMs = actualPlayedMs)
+                    Log.d(TAG, "CSCC end 上报成功: ${song.title}, 时长=${actualPlayedMs / 1000}秒")
+                }.onFailure { Log.e(TAG, "CSCC end 上报异常: ${it.message}") }
+            }
+        }
+    }
+
+    /**
+     * 解析真实的数字音频 ID (mxid / mixsongid)
+     */
+    suspend fun resolveMixSongId(song: Song): Long = withContext(Dispatchers.IO) {
+        if (song.albumAudioId > 0L) return@withContext song.albumAudioId
+        if (song.audioId > 0L) return@withContext song.audioId
+        val parsedId = song.id.toLongOrNull()
+        if (parsedId != null && parsedId > 0L) return@withContext parsedId
+
+        // 若为 Hash，向酷狗快速反查真实 audio_id
+        if (song.hash.isNotBlank()) {
+            return@withContext runCatching {
+                val url = "http://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash=${song.hash}".toHttpUrl()
+                val req = Request.Builder().url(url).build()
+                client.newCall(req).execute().use { resp ->
+                    val bodyStr = resp.body?.string().orEmpty()
+                    val json = com.google.gson.JsonParser.parseString(bodyStr).asJsonObject
+                    json.get("audio_id")?.asLong ?: json.get("songid")?.asLong ?: 0L
+                }
+            }.getOrDefault(0L)
+        }
+        0L
+    }
+
+    private suspend fun getOrCreateSession(device: DeviceIdentity): CsccSession = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val session = cachedSession
+        if (session != null && session.expireTime > now) {
+            return@withContext session
+        }
+
+        // 1. POST /v3/qrydid
+        val nowSec = (now / 1000).toString()
+        val didData = "{\"machine\":\"${device.dev}\",\"mid\":\"${device.mid}\",\"uuid\":\"${device.guid}\",\"wh\":[1080,2400]}"
+        val didSign = md5("_t${nowSec}appidand02${QRYDID_SALT}${didData}")
+        val qryUrl = "$CSCC_HOST/v3/qrydid".toHttpUrl().newBuilder()
+            .addQueryParameter("appid", "and02")
+            .addQueryParameter("_t", nowSec)
+            .addQueryParameter("sign", didSign)
+            .build()
+
+        val qryReq = Request.Builder()
+            .url(qryUrl)
+            .post(didData.toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .build()
+
+        val deviceId = client.newCall(qryReq).execute().use { resp ->
+            val json = com.google.gson.JsonParser.parseString(resp.body?.string().orEmpty()).asJsonObject
+            json.getAsJsonObject("data")?.get("deviceid")?.asString
+                ?: throw IllegalStateException("CSCC 未返回有效 deviceid")
+        }
+
+        // 2. GET /v2/gen
+        val field2 = randomHex(16)
+        val sPlain = "${device.guid}\t$field2\t$now\t$deviceId"
+        val sEncrypted = rsaEncryptPkcs1(sPlain, PUBLIC_KEY_LITE)
+        val sBase64 = Base64.getEncoder().encodeToString(sEncrypted)
+
+        val genTimeSec = (System.currentTimeMillis() / 1000).toString()
+        val genSign = md5("_t${genTimeSec}appid3116s${sBase64}${CSCC_APPKEY}")
+        val genUrl = "$CSCC_HOST/v2/gen".toHttpUrl().newBuilder()
+            .addQueryParameter("s", sBase64)
+            .addQueryParameter("appid", "3116")
+            .addQueryParameter("_t", genTimeSec)
+            .addQueryParameter("sign", genSign)
+            .build()
+
+        val genReq = Request.Builder().url(genUrl).build()
+        val newSession = client.newCall(genReq).execute().use { resp ->
+            val json = com.google.gson.JsonParser.parseString(resp.body?.string().orEmpty()).asJsonObject
+            val encDataB64 = json.get("data")?.asString ?: throw IllegalStateException("CSCC gen 响应数据无效")
+            val encDataBytes = Base64.getDecoder().decode(encDataB64)
+            val iv = device.guid.take(16).toByteArray(Charsets.UTF_8)
+            val key = field2.toByteArray(Charsets.UTF_8)
+            val decBytes = aesCbcDecrypt(encDataBytes, key, iv)
+            val decJson = com.google.gson.JsonParser.parseString(String(decBytes, Charsets.UTF_8)).asJsonObject
+
+            CsccSession(
+                cookie = decJson.get("cookie").asString,
+                clientTime = decJson.get("clienttime").asLong,
+                serverStr = decJson.get("serverstr").asString,
+                field2 = field2,
+                expireTime = now + 25 * 60 * 1000L
+            )
+        }
+
+        cachedSession = newSession
+        newSession
+    }
+
+    private suspend fun sendEvent(mixSongId: Long, isStart: Boolean, durationMs: Long) = withContext(Dispatchers.IO) {
+        val sessionContext = VipManager.accounts.context() ?: return@withContext
+        val session = sessionContext.session
+        val device = VipManager.device()
+        val userId = session.userId
+
+        val csccSession = getOrCreateSession(device)
+        val now = System.currentTimeMillis()
+        val nowSec = now / 1000
+
+        val fields = if (isStart) {
+            "type_id=20431&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&spt=0&sty=手动&mixsongid=$mixSongId&source=46&ivar1=1&fo=/专辑播放页&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$now&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
+        } else {
+            "type_id=4&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&duration=$durationMs&svar3=0&svar2=0&fo=我的音乐/主态/自建歌单/RU&sty=手动&state=完整播放&mixsongid=$mixSongId&source=46&ivar3=0&type=1&fs=1.0&ivar1=1&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$now&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
+        }
+
+        val eventBuffer = fields.toByteArray(Charsets.UTF_8)
+        val deflatedEvent = deflate(eventBuffer)
+
+        val line1 = "4\t1\t${device.guid}\t0\t3116\t$CSCC_VERSION\t18\t14\t${device.dev}\t${device.guid}\t${device.mid}\t0\t000000000000000000000000000000000000"
+        val line2 = "${eventBuffer.size}\t10048\t0\t$nowSec\t1\t$userId\t0\t0"
+        val headerBytes = "$line1\r\n$line2\r\n".toByteArray(Charsets.UTF_8)
+        val plain = headerBytes + deflatedEvent
+        val deflatedPlain = deflate(plain)
+
+        val aesKeyStr = md5("${device.guid}${csccSession.clientTime}${csccSession.field2}${csccSession.serverStr}")
+        val aesKey = aesKeyStr.toByteArray(Charsets.UTF_8)
+        val iv = device.guid.take(16).toByteArray(Charsets.UTF_8)
+        val encrypted = aesCbcEncrypt(deflatedPlain, aesKey, iv)
+
+        val queryParams = sortedMapOf(
+            "appid" to "3116",
+            "cookie" to csccSession.cookie,
+            "length" to plain.size.toString(),
+            "_t" to nowSec.toString()
+        )
+        val sortedString = queryParams.entries.joinToString("") { "${it.key}${it.value}" }
+        val sign = md5(sortedString.toByteArray(Charsets.UTF_8) + CSCC_APPKEY.toByteArray(Charsets.UTF_8) + encrypted)
+
+        val postUrl = "$CSCC_HOST/v2/post".toHttpUrl().newBuilder().apply {
+            queryParams.forEach { (k, v) -> addQueryParameter(k, v) }
+            addQueryParameter("sign", sign)
+        }.build()
+
+        val postReq = Request.Builder()
+            .url(postUrl)
+            .header("User-Agent", "Android14-1070-$CSCC_VERSION-18-0-CsccPost-wifi")
+            .header("KG-Rec", "1")
+            .header("Content-Type", "application/octet-stream")
+            .post(encrypted.toRequestBody("application/octet-stream".toMediaType()))
+            .build()
+
+        client.newCall(postReq).execute().use { resp ->
+            Log.d(TAG, "CSCC ${if (isStart) "start" else "end"} 响应码: ${resp.code}")
+        }
+    }
+
+    private fun deflate(data: ByteArray): ByteArray {
+        val deflater = Deflater()
+        deflater.setInput(data)
+        deflater.finish()
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(1024)
+        while (!deflater.finished()) {
+            val count = deflater.deflate(buffer)
+            out.write(buffer, 0, count)
+        }
+        deflater.end()
+        return out.toByteArray()
+    }
+
+    private fun aesCbcEncrypt(data: ByteArray, key: ByteArray, iv: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        val keySpec = SecretKeySpec(key, "AES")
+        val ivSpec = IvParameterSpec(iv)
+        cipher.init(Cipher.ENCRYPT_MODE, keySpec, ivSpec)
+        return cipher.doFinal(data)
+    }
+
+    private fun aesCbcDecrypt(data: ByteArray, key: ByteArray, iv: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        val keySpec = SecretKeySpec(key, "AES")
+        val ivSpec = IvParameterSpec(iv)
+        cipher.init(Cipher.DECRYPT_MODE, keySpec, ivSpec)
+        return cipher.doFinal(data)
+    }
+
+    private fun rsaEncryptPkcs1(plainText: String, publicKeyB64: String): ByteArray {
+        val keyBytes = Base64.getDecoder().decode(publicKeyB64)
+        val spec = X509EncodedKeySpec(keyBytes)
+        val keyFactory = KeyFactory.getInstance("RSA")
+        val key = keyFactory.generatePublic(spec)
+        val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, key)
+        return cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+    }
+
+    private fun randomHex(len: Int): String {
+        val random = SecureRandom()
+        val bytes = ByteArray(len / 2)
+        random.nextBytes(bytes)
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun md5(text: String): String = md5(text.toByteArray(Charsets.UTF_8))
+
+    private fun md5(bytes: ByteArray): String {
+        val md = MessageDigest.getInstance("MD5")
+        val digest = md.digest(bytes)
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+}

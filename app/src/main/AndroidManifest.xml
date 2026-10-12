@@ -41,6 +41,28 @@
             </intent-filter>
         </service>
 
+        <!-- Phase 3: 每日自动静默养号守护 JobService ([INNOV-03]) -->
+        <service
+            android:name=".service.VipGuardianJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <!-- Phase 3: 酷狗概念版流光桌面小组件 ([INNOV-03]) -->
+        <receiver
+            android:name=".service.ConceptMusicWidgetProvider"
+            android:exported="true"
+            android:label="酷狗概念版流光组件">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.concept.music.ACTION_WIDGET_TOGGLE_PLAY" />
+                <action android:name="com.concept.music.ACTION_WIDGET_NEXT" />
+                <action android:name="com.concept.music.ACTION_WIDGET_PREV" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/concept_music_widget_info" />
+        </receiver>
+
     </application>
 
 </manifest>

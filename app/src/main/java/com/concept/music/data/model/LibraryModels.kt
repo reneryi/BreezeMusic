@@ -6,10 +6,20 @@ data class UserGradeInfo(
     val totalListenMinutes: Long = 0L,
     val todayListenMinutes: Long = 0L,
     val nextLevelScore: Long = 100L,
-    val progressPercent: Float = 0f
+    val progressPercent: Float = 0f,
+    val totalListenSeconds: Long = 0L
 ) {
     val totalHoursFormatted: String
         get() = String.format(java.util.Locale.getDefault(), "%.1f", totalListenMinutes / 60.0)
+
+    val displayListenTimeText: String
+        get() = if (totalListenMinutes < 60) {
+            "${totalListenMinutes} 分钟"
+        } else {
+            val hours = totalListenMinutes / 60
+            val mins = totalListenMinutes % 60
+            if (mins > 0) "${hours} 小时 ${mins} 分" else "${hours} 小时"
+        }
 }
 
 data class FollowedArtist(
