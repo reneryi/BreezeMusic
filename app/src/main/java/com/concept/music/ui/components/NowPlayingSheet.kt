@@ -198,28 +198,22 @@ fun NowPlayingSheet(
         containerColor = Color(0xFF0F1115)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // 1. 沉浸式氛围背景（兼容 Android 8~11 降采样柔光模糊与 Android 12+ RenderEffect 高斯模糊）
-            val supportsRenderBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            // 1. 沉浸式氛围背景（统一采用 24x24 超轻量降采样柔光背景，彻底杜绝全屏 RenderEffect 高斯模糊引发的 Skia AGTM 解析风暴与 GPU 抢占）
             if (song.coverUrl.isNotEmpty()) {
-                val bgImageModel = remember(song.coverUrl, supportsRenderBlur) {
-                    if (supportsRenderBlur) {
-                        song.coverUrl
-                    } else {
-                        ImageRequest.Builder(context)
-                            .data(song.coverUrl)
-                            .size(16, 16)
-                            .crossfade(true)
-                            .build()
-                    }
+                val bgImageModel = remember(song.coverUrl) {
+                    ImageRequest.Builder(context)
+                        .data(song.coverUrl)
+                        .size(24, 24)
+                        .allowHardware(false)
+                        .crossfade(true)
+                        .build()
                 }
                 AsyncImage(
                     model = bgImageModel,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     filterQuality = FilterQuality.High,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .then(if (supportsRenderBlur) Modifier.blur(65.dp) else Modifier)
+                    modifier = Modifier.fillMaxSize()
                 )
             }
             // 渐变暗黑柔光遮罩 + [UI-01] 动态流光双核径向网格渐变
@@ -228,19 +222,11 @@ fun NowPlayingSheet(
                     .fillMaxSize()
                     .background(
                         Brush.verticalGradient(
-                            colors = if (supportsRenderBlur) {
-                                listOf(
-                                    Color(0xCC0F1115),
-                                    Color(0xE014181E),
-                                    Color(0xF20F1115)
-                                )
-                            } else {
-                                listOf(
-                                    Color(0xD90F1115),
-                                    Color(0xEB14181E),
-                                    Color(0xF70F1115)
-                                )
-                            }
+                            colors = listOf(
+                                Color(0xD40F1115),
+                                Color(0xE614181E),
+                                Color(0xF50F1115)
+                            )
                         )
                     )
                     .background(
@@ -454,14 +440,14 @@ fun NowPlayingSheet(
                                         VinylRecordView(
                                             coverUrl = song.coverUrl,
                                             isPlaying = isPlaying,
-                                            rotationDegrees = rotationAnim.value % 360f
+                                            rotationProvider = { rotationAnim.value % 360f }
                                         )
                                     }
                                     CoverStyle.CASSETTE -> {
                                         TransparentCassetteDeckView(
                                             song = song,
                                             isPlaying = isPlaying,
-                                            rotationDegrees = rotationAnim.value % 360f,
+                                            rotationProvider = { rotationAnim.value % 360f },
                                             currentPositionMs = currentPositionMs,
                                             durationMs = durationMs
                                         )
@@ -478,7 +464,7 @@ fun NowPlayingSheet(
                                     CoverStyle.CIRCLE -> {
                                         CircleCoverView(
                                             coverUrl = song.coverUrl,
-                                            rotationDegrees = rotationAnim.value % 360f
+                                            rotationProvider = { rotationAnim.value % 360f }
                                         )
                                     }
                                 }
@@ -888,7 +874,7 @@ private fun TopHeaderBar(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
             ) {
-                if (isHiRes) {
+                if (isHiRes && !qualityLabel.startsWith("Hi-Res", ignoreCase = true)) {
                     Text(
                         text = "Hi-Res",
                         color = VipGold,
@@ -915,7 +901,7 @@ private fun TopHeaderBar(
 private fun VinylRecordView(
     coverUrl: String,
     isPlaying: Boolean,
-    rotationDegrees: Float
+    rotationProvider: () -> Float
 ) {
     val armAngle by animateFloatAsState(
         targetValue = if (isPlaying) 24f else 0f,
@@ -946,7 +932,7 @@ private fun VinylRecordView(
                     )
                 )
                 .border(5.dp, Color(0xFF1B1B1E), CircleShape)
-                .rotate(rotationDegrees),
+                .graphicsLayer { rotationZ = rotationProvider() },
             contentAlignment = Alignment.Center
         ) {
             // 同心微纹
@@ -1049,7 +1035,7 @@ private fun VinylRecordView(
 @Composable
 private fun CircleCoverView(
     coverUrl: String,
-    rotationDegrees: Float
+    rotationProvider: () -> Float
 ) {
     Box(
         modifier = Modifier
@@ -1057,7 +1043,7 @@ private fun CircleCoverView(
             .shadow(24.dp, CircleShape)
             .clip(CircleShape)
             .border(3.dp, Color.White.copy(alpha = 0.15f), CircleShape)
-            .rotate(rotationDegrees),
+            .graphicsLayer { rotationZ = rotationProvider() },
         contentAlignment = Alignment.Center
     ) {
         if (coverUrl.isNotBlank()) {
@@ -1088,7 +1074,7 @@ private fun CircleCoverView(
 private fun TransparentCassetteDeckView(
     song: Song,
     isPlaying: Boolean,
-    rotationDegrees: Float,
+    rotationProvider: () -> Float,
     currentPositionMs: Long,
     durationMs: Long
 ) {
@@ -1279,8 +1265,9 @@ private fun TransparentCassetteDeckView(
                 drawCircle(color = Color(0xFF090B0E), radius = 6.dp.toPx(), center = center)
             }
 
-            drawSpool(leftCenter, leftTapeR, rotationDegrees)
-            drawSpool(rightCenter, rightTapeR, rotationDegrees)
+            val deg = rotationProvider()
+            drawSpool(leftCenter, leftTapeR, deg)
+            drawSpool(rightCenter, rightTapeR, deg)
         }
 
         // 顶部贴纸歌曲标题与 SIDE-A 铭牌文字层

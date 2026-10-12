@@ -66,25 +66,12 @@ fun VipCenterBottomSheet(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Surface(
-                        modifier = Modifier.size(36.dp),
-                        shape = CircleShape,
-                        color = Color(0xFFFFB300).copy(alpha = 0.18f)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Rounded.WorkspacePremium,
-                                contentDescription = null,
-                                tint = Color(0xFFFFC107),
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                    }
+                    VipCrownBadge(size = 38.dp)
                     Column {
                         Text(
-                            text = "概念版权益中心",
+                            text = "VIP 权益中心",
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White,
@@ -92,7 +79,7 @@ fun VipCenterBottomSheet(
                             )
                         )
                         Text(
-                            text = "畅享 SQ 无损听歌与专属特权",
+                            text = "畅享 SQ / Hi-Res 无损听歌与专属特权",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 color = Color.White.copy(alpha = 0.5f),
                                 fontSize = 12.sp

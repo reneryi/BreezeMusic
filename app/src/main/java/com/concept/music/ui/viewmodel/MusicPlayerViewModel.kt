@@ -62,8 +62,8 @@ data class PlayerUiState(
     val playlistQueue: List<Song> = emptyList(),
     val currentIndex: Int = 0,
     val playMode: PlayMode = PlayMode.REPEAT_ALL,
-    val preferredQuality: AudioQuality = AudioQuality.HI_RES,
-    val currentQualityLabel: String = "SQ 无损",
+    val preferredQuality: AudioQuality = AudioQuality.HIGH,
+    val currentQualityLabel: String = "高品 320K",
     val currentLyric: LyricData = LyricData(),
     val currentLyricIndex: Int = -1,
     val coverStyle: CoverStyle = CoverStyle.VINYL,
@@ -138,6 +138,17 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            // 当出现网络加载缓冲 (STATE_BUFFERING) 时立即将底层 AudioTrack 静音，彻底阻断模拟器/VirtIO 驱动重复输出残留 DMA 采样产生的电流声
+            when (playbackState) {
+                Player.STATE_BUFFERING -> {
+                    activePlayer?.volume = 0f
+                }
+                Player.STATE_READY -> {
+                    if (climaxFadeInJob?.isActive != true) {
+                        activePlayer?.volume = 1f
+                    }
+                }
+            }
             syncPlayer()
             if (playbackState == Player.STATE_ENDED) {
                 onTrackEnded()
@@ -280,8 +291,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             PlayMode.valueOf(prefs.getString("play_mode", PlayMode.REPEAT_ALL.name) ?: PlayMode.REPEAT_ALL.name)
         }.getOrDefault(PlayMode.REPEAT_ALL)
         val savedQuality = runCatching {
-            AudioQuality.valueOf(prefs.getString("preferred_quality", AudioQuality.HI_RES.name) ?: AudioQuality.HI_RES.name)
-        }.getOrDefault(AudioQuality.HI_RES)
+            AudioQuality.valueOf(prefs.getString("preferred_quality_v2", AudioQuality.HIGH.name) ?: AudioQuality.HIGH.name)
+        }.getOrDefault(AudioQuality.HIGH)
         val savedShowTrans = prefs.getBoolean("show_translation", true)
         val savedFontSize = prefs.getFloat("lyric_font_size", 18f).coerceIn(14f, 26f)
         val savedAlign = runCatching {
@@ -342,7 +353,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 prefs.edit()
                     .putString("cover_style", snapshot.coverStyle.name)
                     .putString("play_mode", snapshot.playMode.name)
-                    .putString("preferred_quality", snapshot.preferredQuality.name)
+                    .putString("preferred_quality_v2", snapshot.preferredQuality.name)
                     .putBoolean("show_translation", snapshot.showTranslation)
                     .putFloat("lyric_font_size", snapshot.lyricFontSize)
                     .putString("lyric_alignment", snapshot.lyricAlignment.name)
@@ -354,6 +365,14 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     .apply()
             }
         }
+    }
+
+    private fun persistPositionOnlyAsync() {
+        val snapshot = mutableState.value
+        prefs.edit()
+            .putInt("saved_current_index", snapshot.currentIndex)
+            .putLong("saved_position_ms", snapshot.currentPositionMs)
+            .apply()
     }
 
     fun playSong(song: Song, queue: List<Song> = emptyList(), seekToPositionMs: Long = 0L) {
@@ -443,14 +462,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 } else 0L
 
                 if (targetSeekMs > 0L) {
-                    player.pause() // 切换音质或定位时先暂停排空旧流音频缓冲区，杜绝混流爆音
+                    player.setMediaItem(item, targetSeekMs)
+                } else {
+                    player.setMediaItem(item)
                 }
-                player.setMediaItem(item)
                 player.repeatMode = if (mutableState.value.playMode == PlayMode.REPEAT_ONE) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
                 player.prepare()
-                if (targetSeekMs > 0L) {
-                    player.seekTo(targetSeekMs)
-                }
                 if (mutableState.value.climaxModeEnabled && seekToPositionMs == 0L) {
                     triggerClimaxSmoothFadeIn()
                 } else {
@@ -1044,8 +1061,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                                         .build()
                                 ).build()
 
-                            // 保持 ExoPlayer 队列紧凑：清理当前项之前的历史项与当前项之后的多余项
-                            while (player.currentMediaItemIndex > 0) {
+                            // 仅清理当前项之后的多余预载项，避免在播放中途移除 index 0 导致 ExoPlayer 时间线索引平移引发音频卡顿
+                            while (player.currentMediaItemIndex > 6) {
                                 player.removeMediaItem(0)
                             }
                             while (player.mediaItemCount > player.currentMediaItemIndex + 1) {
@@ -1222,7 +1239,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
                     if (now - lastPersistPosTimestamp >= 5_000L) {
                         lastPersistPosTimestamp = now
-                        persistPlaybackStateAsync()
+                        persistPositionOnlyAsync()
                     }
                 } else {
                     lastRecordTimestamp = 0L

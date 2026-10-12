@@ -84,6 +84,9 @@ object ListeningGradeManager {
         }
     }
 
+    private var consecutiveReportFailures: Int = 0
+    private const val MAX_CHUNK_SECONDS = 300L
+
     /**
      * 播放心跳调用：累加在线播放秒数（内存原子累加 + 3s 防抖异步落盘，避免主线程高频 IO）
      */
@@ -94,18 +97,20 @@ object ListeningGradeManager {
         pendingDiffSec += seconds
         saveUserData(immediate = false)
 
-        // 内存中乐观更新 UI 听歌时长，让用户看到实时增长
-        val currentTotalSec = syncedDsec + pendingDiffSec
-        val old = _gradeInfo.value
-        if (currentTotalSec > old.totalListenSeconds) {
-            _gradeInfo.value = old.copy(
-                totalListenSeconds = currentTotalSec,
-                totalListenMinutes = currentTotalSec / 60
-            )
+        // 仅在已取得云端权威基准 (syncedDsec > 0) 时乐观叠加待同步增量
+        if (syncedDsec > 0L) {
+            val currentTotalSec = syncedDsec + pendingDiffSec
+            val old = _gradeInfo.value
+            if (currentTotalSec != old.totalListenSeconds) {
+                _gradeInfo.value = old.copy(
+                    totalListenSeconds = currentTotalSec,
+                    totalListenMinutes = currentTotalSec / 60
+                )
+            }
         }
 
-        // 累计超过 30 秒自动触发一次增量上报
-        if (pendingDiffSec >= 30L) {
+        // 累计达到 60 秒自动触发一次云端增量上报 (对齐 repo_md3 60s 阈值)
+        if (pendingDiffSec >= 60L) {
             scope.launch {
                 syncGrade(forceRefresh = false)
             }
@@ -116,7 +121,7 @@ object ListeningGradeManager {
      * 单曲播放结束时调用
      */
     fun onSongCompleted(@Suppress("UNUSED_PARAMETER") song: Song? = null) {
-        if (pendingDiffSec > 0) {
+        if (pendingDiffSec > 0L) {
             scope.launch {
                 syncGrade(forceRefresh = false)
             }
@@ -124,7 +129,7 @@ object ListeningGradeManager {
     }
 
     /**
-     * 同步或查询云端听歌等级与数据
+     * 同步或查询云端听歌等级与数据（严格以云端权威 d_sec 为基准，对齐 repo_md3 listening_grade_service.dart）
      * @param forceRefresh 是否强制向云端刷新基准
      */
     suspend fun syncGrade(forceRefresh: Boolean = false): Result<UserGradeInfo> = withContext(Dispatchers.IO) {
@@ -135,42 +140,60 @@ object ListeningGradeManager {
 
         _isSyncing.value = true
         try {
-            // 如果本地基准从未同步过，先查一次服务器当前值作为基准
-            if (syncedDsec == 0L || forceRefresh) {
-                val query = runCatching { VipManager.music.userGradeInfo() }.getOrNull()
-                if (query != null && query.totalListenSeconds > 0L) {
-                    syncedDsec = maxOf(syncedDsec, query.totalListenSeconds)
-                    saveUserData()
-                    _gradeInfo.value = query
-                }
+            // 1. 始终先从云端拉取权威 d_sec 基准（修复旧版本本地缓存虚高导致与官方 App 时长不一致及上报被拒的问题）
+            val serverQuery = runCatching { VipManager.music.userGradeInfo() }.getOrNull()
+            if (serverQuery != null && (serverQuery.level > 0 || serverQuery.totalListenSeconds > 0L)) {
+                syncedDsec = serverQuery.totalListenSeconds
+                saveUserData(immediate = true)
+                val optimisticSec = syncedDsec + pendingDiffSec
+                _gradeInfo.value = serverQuery.copy(
+                    totalListenSeconds = optimisticSec,
+                    totalListenMinutes = optimisticSec / 60
+                )
             }
 
-            // 如果有增量秒数，发起增量记账上报
-            if (pendingDiffSec > 0L) {
-                val toReportDiff = pendingDiffSec
+            // 2. 若存在待上报增量且已拿到云端有效基准，按单次不超过 300 秒向云端增量上报
+            if (pendingDiffSec > 0L && syncedDsec > 0L) {
+                val toReportDiff = pendingDiffSec.coerceIn(1L, MAX_CHUNK_SECONDS)
                 val toReportDsec = syncedDsec + toReportDiff
                 val reportResult = VipManager.music.userGradeInfo(dSec = toReportDsec, diffSec = toReportDiff)
 
-                // 结转增量至已同步基准
-                val newDsec = maxOf(toReportDsec, reportResult.totalListenSeconds)
-                syncedDsec = newDsec
-                pendingDiffSec = (pendingDiffSec - toReportDiff).coerceAtLeast(0L)
-                saveUserData()
+                if (reportResult.level > 0 || reportResult.totalListenSeconds > 0L) {
+                    // 云端校验通过并采纳增量
+                    consecutiveReportFailures = 0
+                    val acceptedDsec = if (reportResult.totalListenSeconds >= toReportDsec) {
+                        reportResult.totalListenSeconds
+                    } else {
+                        toReportDsec
+                    }
+                    syncedDsec = acceptedDsec
+                    pendingDiffSec = (pendingDiffSec - toReportDiff).coerceAtLeast(0L)
+                    saveUserData(immediate = true)
 
-                _gradeInfo.value = reportResult.copy(
-                    totalListenSeconds = maxOf(newDsec, reportResult.totalListenSeconds),
-                    totalListenMinutes = maxOf(newDsec, reportResult.totalListenSeconds) / 60
-                )
-                android.util.Log.i("ListeningGrade", "增量同步成功: d_sec=$toReportDsec, diff_sec=$toReportDiff, 当前等级=Lv.${reportResult.level}")
-            } else if (!forceRefresh) {
-                // 没有增量时常规刷新一次
-                val query = runCatching { VipManager.music.userGradeInfo() }.getOrNull()
-                if (query != null) {
-                    val actualTotalSec = maxOf(syncedDsec, query.totalListenSeconds)
-                    _gradeInfo.value = query.copy(
-                        totalListenSeconds = actualTotalSec,
-                        totalListenMinutes = actualTotalSec / 60
+                    val displaySec = syncedDsec + pendingDiffSec
+                    _gradeInfo.value = reportResult.copy(
+                        totalListenSeconds = displaySec,
+                        totalListenMinutes = displaySec / 60
                     )
+                    android.util.Log.i(
+                        "ListeningGrade",
+                        "云端听歌时长同步成功: d_sec=$acceptedDsec, diff_sec=$toReportDiff, 剩余待报=$pendingDiffSec, 等级=Lv.${reportResult.level}"
+                    )
+                } else {
+                    consecutiveReportFailures += 1
+                    android.util.Log.w(
+                        "ListeningGrade",
+                        "云端拒绝本次增量上报 (failures=$consecutiveReportFailures): d_sec=$toReportDsec, diff_sec=$toReportDiff"
+                    )
+                    if (consecutiveReportFailures >= 3) {
+                        // 连续 3 次被拒则丢弃异常增量，恢复与云端权威时长严格一致
+                        consecutiveReportFailures = 0
+                        pendingDiffSec = 0L
+                        saveUserData(immediate = true)
+                        if (serverQuery != null && serverQuery.totalListenSeconds > 0L) {
+                            _gradeInfo.value = serverQuery
+                        }
+                    }
                 }
             }
 

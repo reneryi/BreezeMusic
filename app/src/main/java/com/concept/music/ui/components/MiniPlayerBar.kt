@@ -134,13 +134,16 @@ fun MiniPlayerBar(
                         },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 封面 (连续相位旋转唱盘样式)
+                    // 封面 (连续相位旋转唱盘样式，下推至 Draw 阶段避免 60fps 主线程重组)
                     Box(
                         modifier = Modifier
                             .size(46.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF282D37))
-                            .rotate(rotationAnim.value % 360f),
+                            .graphicsLayer {
+                                rotationZ = rotationAnim.value % 360f
+                                shape = CircleShape
+                                clip = true
+                            }
+                            .background(Color(0xFF282D37)),
                         contentAlignment = Alignment.Center
                     ) {
                         if (currentSong.coverUrl.isNotEmpty()) {

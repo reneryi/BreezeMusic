@@ -149,8 +149,8 @@ object KugouCsccReporter {
                 ?: throw IllegalStateException("CSCC 未返回有效 deviceid")
         }
 
-        // 2. GET /v2/gen
-        val field2 = randomHex(16)
+        // 2. GET /v2/gen (crypto.randomBytes(16).toString('hex') -> 32 个十六进制字符 = 32 字节 AES-256 密钥)
+        val field2 = randomHex(32)
         val sPlain = "${device.guid}\t$field2\t$now\t$deviceId"
         val sEncrypted = rsaEncryptPkcs1(sPlain, PUBLIC_KEY_LITE)
         val sBase64 = Base64.getEncoder().encodeToString(sEncrypted)
@@ -196,18 +196,38 @@ object KugouCsccReporter {
         val csccSession = getOrCreateSession(device)
         val now = System.currentTimeMillis()
         val nowSec = now / 1000
+        val durationSec = (durationMs / 1000L).coerceAtLeast(10L)
 
-        val fields = if (isStart) {
-            "type_id=20431&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&spt=0&sty=手动&mixsongid=$mixSongId&source=46&ivar1=1&fo=/专辑播放页&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$now&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
+        if (isStart) {
+            val startFields = "type_id=20431&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&spt=0&sty=手动&mixsongid=$mixSongId&source=46&ivar1=1&fo=/专辑播放页&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$now&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
+            postPacket(csccSession, device, userId, nowSec, 10048, startFields)
         } else {
-            "type_id=4&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&duration=$durationMs&svar3=0&svar2=0&fo=我的音乐/主态/自建歌单/RU&sty=手动&state=完整播放&mixsongid=$mixSongId&source=46&ivar3=0&type=1&fs=1.0&ivar1=1&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$now&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
-        }
+            // 1. 播放完成事件 (10048 / type_id=4)
+            val endFields = "type_id=4&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&duration=$durationMs&svar3=0&svar2=0&fo=我的音乐/主态/自建歌单/RU&sty=手动&state=完整播放&mixsongid=$mixSongId&source=46&ivar3=0&type=1&fs=1.0&ivar1=1&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$now&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
+            postPacket(csccSession, device, userId, nowSec, 10048, endFields)
 
+            // 2. 对齐 KuGouMusicApi (user_listen_report.js)：上报 30025 单曲听歌明细与 12904 听歌时长心跳
+            val songEventFields = "type_id=30025&time=$now&mid=${device.mid}&uuid=${device.guid}&Check=0&net=1&ver=$CSCC_VERSION&channelid=18&mod=${device.dev}&sys=14&userid=$userId&gitversion=8767fd9&ip=0.0.0.0&action=play&ivar1=1&ivar3=0&svar1=音频&svar2=0&svar3=0&svar6=正式播放&svar8=-1&svar9=否&svar10=未知&svar12=否&svar16=默认音质&svar20=音乐&svar21=否&svar22=无&svar24=2&svar28=-999&svar34=手动切歌&svar38=原始&svar39=关&svar40=0&svar41=主包&svar42=1&svar43=0&svar44=1&svar47=无效果&svar60=普通歌曲&svar61=关闭&svar66=0&svar81=否&svar86=0&svar93=0&svar102=${now - durationMs}&svar103=$now&svar106=1&svar128=否&svar133=已登录&svar138=长按&bvar1=$durationSec&bvar2=1&bvar5=$durationSec&bvar9=$durationSec&duration=$durationMs&mxid=$mixSongId&source=2&sty=手动&state=切换歌曲&play_Check=1&fo=搜索/搜索结果页&fo3=3149,3366,4455,6377&fs=1.0&ss1=1&ss2=1&ss3=${md5(UUID.randomUUID().toString())}"
+            postPacket(csccSession, device, userId, nowSec, 30025, songEventFields)
+
+            val hbFields = "type_id=12904&time=$now&mid=${device.mid}&uuid=${device.guid}&Check=0&net=1&ver=$CSCC_VERSION&channelid=18&mod=${device.dev}&sys=14&userid=$userId&gitversion=8767fd9&ip=0.0.0.0&ivar1=10&ivar2=1&ivar4=0&ivar5=${nowSec - 10}&ivar6=$nowSec&ivar7=$durationSec&ivar9=1&svar1=音频&svar3=音乐&svar4=概念版&svar5=手动播放&svar7=否&svar8=前台&svar9=主应用&svar10=扬声器&svar14=否&svar19=未知&mxid=$mixSongId&source=2&fo=搜索/搜索结果页&fo3=3149,3366,4455,6377&ss1=1&ss2=1&ss3=${md5(UUID.randomUUID().toString())}"
+            postPacket(csccSession, device, userId, nowSec, 12904, hbFields)
+        }
+    }
+
+    private fun postPacket(
+        csccSession: CsccSession,
+        device: DeviceIdentity,
+        userId: String,
+        nowSec: Long,
+        businessId: Int,
+        fields: String
+    ) {
         val eventBuffer = fields.toByteArray(Charsets.UTF_8)
         val deflatedEvent = deflate(eventBuffer)
 
         val line1 = "4\t1\t${device.guid}\t0\t3116\t$CSCC_VERSION\t18\t14\t${device.dev}\t${device.guid}\t${device.mid}\t0\t000000000000000000000000000000000000"
-        val line2 = "${eventBuffer.size}\t10048\t0\t$nowSec\t1\t$userId\t0\t0"
+        val line2 = "${eventBuffer.size}\t$businessId\t0\t$nowSec\t1\t$userId\t0\t0"
         val headerBytes = "$line1\r\n$line2\r\n".toByteArray(Charsets.UTF_8)
         val plain = headerBytes + deflatedEvent
         val deflatedPlain = deflate(plain)
@@ -240,7 +260,7 @@ object KugouCsccReporter {
             .build()
 
         client.newCall(postReq).execute().use { resp ->
-            Log.d(TAG, "CSCC ${if (isStart) "start" else "end"} 响应码: ${resp.code}")
+            Log.d(TAG, "CSCC businessId=$businessId 响应码: ${resp.code}")
         }
     }
 

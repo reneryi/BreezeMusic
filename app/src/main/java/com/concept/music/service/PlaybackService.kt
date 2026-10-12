@@ -36,12 +36,14 @@ class PlaybackService : MediaSessionService() {
             .setUsage(C.USAGE_MEDIA)
             .build()
 
-        // 2. 自定义 AudioTrack 缓冲区，防止底层时钟抖动/重采样造成的 Buffer Underrun（消除杂音与电流声）
+        // 2. 自定义 AudioTrack 环形缓冲区（扩容至 1.5s ~ 4.0s），防止高码率 FLAC 或模拟器 VirtIO 音频驱动欠载造成的哒哒声与电流声
         val bufferSizeProvider = DefaultAudioTrackBufferSizeProvider.Builder()
-            .setPcmBufferMultiplicationFactor(4) // 增大到 4 倍缓冲余量
+            .setMinPcmBufferDurationUs(1_500_000)
+            .setMaxPcmBufferDurationUs(4_000_000)
+            .setPcmBufferMultiplicationFactor(12)
             .build()
 
-        // 3. 自定义 RenderersFactory，输出 16-bit PCM，确保完美兼容系统 Equalizer、BassBoost 及 Virtualizer，杜绝不同音质切换时的爆音与重采样杂音
+        // 3. 自定义 RenderersFactory，输出 16-bit PCM 并固定软件倍速处理器，杜绝重采样/硬件倍速引发的哒哒爆音
         val renderersFactory = object : DefaultRenderersFactory(this) {
             override fun buildAudioSink(
                 context: Context,
@@ -50,18 +52,19 @@ class PlaybackService : MediaSessionService() {
             ): AudioSink {
                 return DefaultAudioSink.Builder(context)
                     .setAudioTrackBufferSizeProvider(bufferSizeProvider)
-                    .setEnableFloatOutput(false) // 禁用 Float 输出，稳定 16-bit PCM 消除格式切换爆音与系统音效兼容问题
+                    .setEnableFloatOutput(false)
+                    .setEnableAudioTrackPlaybackParams(false)
                     .build()
             }
-        }
+        }.setEnableDecoderFallback(true)
 
-        // 4. 配置平滑网络流的 LoadControl（支持在代理/TUN 模式下抗网络抖动）
+        // 4. 配置平滑网络流的 LoadControl（充足预缓冲再起播，避免边下边播初期欠载）
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 30_000,
+                /* minBufferMs = */ 35_000,
                 /* maxBufferMs = */ 120_000,
-                /* bufferForPlaybackMs = */ 2_500,
-                /* bufferForPlaybackAfterRebufferMs = */ 5_000
+                /* bufferForPlaybackMs = */ 3_500,
+                /* bufferForPlaybackAfterRebufferMs = */ 6_500
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()

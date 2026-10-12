@@ -61,8 +61,30 @@ object AudioCacheManager {
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(15_000)
 
+        // 剥离酷狗流媒体 URL 中每次动态变化的签名/时间戳与末尾 _s<随机数> 后缀，以稳定的哈希/资源名作为缓存 Key
+        val cacheKeyFactory = androidx.media3.datasource.cache.CacheKeyFactory { dataSpec ->
+            dataSpec.key?.takeIf { it.isNotBlank() } ?: run {
+                val uri = dataSpec.uri
+                val path = uri.path
+                if (!path.isNullOrBlank()) {
+                    val fileName = path.substringAfterLast('/')
+                        .replace(Regex("_s\\d+(\\.[a-zA-Z0-9]+)$"), "$1")
+                    "kg_audio_$fileName"
+                } else {
+                    uri.toString().substringBefore('?')
+                }
+            }
+        }
+
+        // 将单分片大小提升至 32MB，避免无损 FLAC 播放途中频繁触发 5MB 分片切分与 SQLite 同步落盘阻塞
+        val cacheWriteDataSinkFactory = androidx.media3.datasource.cache.CacheDataSink.Factory()
+            .setCache(cache)
+            .setFragmentSize(32L * 1024L * 1024L)
+
         return CacheDataSource.Factory()
             .setCache(cache)
+            .setCacheKeyFactory(cacheKeyFactory)
+            .setCacheWriteDataSinkFactory(cacheWriteDataSinkFactory)
             .setUpstreamDataSourceFactory(upstreamFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }

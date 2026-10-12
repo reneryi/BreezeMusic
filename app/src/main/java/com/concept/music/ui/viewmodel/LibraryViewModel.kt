@@ -108,6 +108,19 @@ class LibraryViewModel(
         }
     }
 
+    fun refreshPurchasedAssets() {
+        val userId = accountState.value.currentId ?: return
+        if (accountState.value.auth != AuthState.READY) return
+        viewModelScope.launch {
+            val pSongs = runCatching { VipManager.music.userPurchasedSongs() }.getOrDefault(emptyList())
+            val pAlbums = runCatching { VipManager.music.userPurchasedAlbums() }.getOrDefault(emptyList())
+            if (accounts.state.value.currentId == userId) {
+                _purchasedSongs.value = pSongs
+                _purchasedAlbums.value = pAlbums
+            }
+        }
+    }
+
     private fun loadMusicLibrary() {
         val userId = accountState.value.currentId
         val section = librarySection.value
@@ -127,6 +140,17 @@ class LibraryViewModel(
                     (cloudLatest + localHistory).distinctBy { it.hash.ifBlank { it.id } }
                 } else {
                     localHistory
+                }
+                if (userId != null && accountState.value.auth == AuthState.READY) {
+                    launch { ListeningGradeManager.syncGrade(forceRefresh = false) }
+                    launch {
+                        val pSongs = runCatching { VipManager.music.userPurchasedSongs() }.getOrDefault(emptyList())
+                        val pAlbums = runCatching { VipManager.music.userPurchasedAlbums() }.getOrDefault(emptyList())
+                        if (accounts.state.value.currentId == userId) {
+                            _purchasedSongs.value = pSongs
+                            _purchasedAlbums.value = pAlbums
+                        }
+                    }
                 }
                 _libraryLoading.value = false
             }
@@ -148,6 +172,19 @@ class LibraryViewModel(
         musicLibraryJob = viewModelScope.launch {
             _libraryLoading.value = true; _libraryError.value = null
             try {
+                // 并行启动听歌等级与已购资产查询，避免歌单详情慢请求阻塞已购与等级刷新
+                launch {
+                    ListeningGradeManager.syncGrade(forceRefresh = false)
+                }
+                launch {
+                    val pSongs = runCatching { VipManager.music.userPurchasedSongs() }.getOrDefault(emptyList())
+                    val pAlbums = runCatching { VipManager.music.userPurchasedAlbums() }.getOrDefault(emptyList())
+                    if (accounts.state.value.currentId == userId) {
+                        _purchasedSongs.value = pSongs
+                        _purchasedAlbums.value = pAlbums
+                    }
+                }
+
                 val lists = VipManager.music.userPlaylists()
                 if (accounts.state.value.currentId != userId) return@launch
                 _playlists.value = lists
@@ -179,26 +216,6 @@ class LibraryViewModel(
                         }
                     }
                 }
-                if (accounts.state.value.currentId != userId) return@launch
-
-                // 异步拉取真实等级统计、关注歌手与已购资产 ([FUNC-05])
-                launch {
-                    ListeningGradeManager.syncGrade(forceRefresh = false)
-                }
-                launch {
-                    val artists = runCatching { VipManager.music.followedArtists() }.getOrDefault(emptyList())
-                    if (accounts.state.value.currentId == userId) {
-                        _followedArtists.value = artists
-                    }
-                }
-                launch {
-                    val pSongs = runCatching { VipManager.music.userPurchasedSongs() }.getOrDefault(emptyList())
-                    val pAlbums = runCatching { VipManager.music.userPurchasedAlbums() }.getOrDefault(emptyList())
-                    if (accounts.state.value.currentId == userId) {
-                        _purchasedSongs.value = pSongs
-                        _purchasedAlbums.value = pAlbums
-                    }
-                }
             } catch (e: Exception) {
                 if (accounts.state.value.currentId == userId) _libraryError.value = e.message ?: "音乐库加载失败"
             } finally { if (accounts.state.value.currentId == userId) _libraryLoading.value = false }
@@ -215,7 +232,7 @@ class LibraryViewModel(
             if (result.isSuccess) {
                 val grade = result.getOrNull()
                 if (grade != null) _userGrade.value = grade
-                onResult?.invoke(true, "听歌等级与数据已同步至官方云端")
+                onResult?.invoke(true, "听歌等级与时长已同步至官方云端")
             } else {
                 onResult?.invoke(false, result.exceptionOrNull()?.message ?: "同步失败，请检查网络")
             }

@@ -1484,50 +1484,52 @@ class MusicApiRepository(
         return searchSongs("流行热歌", page = 1, pageSize = 20).songs
     }
 
-    // 听歌等级与时长统计 (直连 userinfo.user.kugou.com + Lite RSA 协议)
+    // 听歌等级与时长统计 (直连 userinfo.user.kugou.com + Lite RSA 协议，严格对齐 user_grade_info.js / repo_md3)
     suspend fun userGradeInfo(dSec: Long? = null, diffSec: Long? = null): UserGradeInfo {
         val session = accounts.context()?.session
             ?: return UserGradeInfo(level = 0, score = 0, totalListenMinutes = 0, todayListenMinutes = 0, nextLevelScore = 100, progressPercent = 0f, totalListenSeconds = 0L)
 
         return runCatching {
             val clientTime = System.currentTimeMillis() / 1000
-            val isReport = dSec != null && diffSec != null
+            val userIdNum = session.userId.toLongOrNull() ?: 0L
+            val isReport = dSec != null && diffSec != null && dSec > 0L && diffSec > 0L
             val p = if (isReport) {
                 val md5 = KugouSigner.md5("${dSec}${diffSec}00")
-                val reportJson = KugouSigner.gson.toJson(mapOf("token" to session.token, "md5" to md5))
+                val reportJson = "{\"token\":\"${session.token}\",\"md5\":\"$md5\"}"
                 KugouSigner.rsa(reportJson).uppercase()
             } else {
-                val innerJson = KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "userid" to (session.userId.toLongOrNull() ?: 0L)))
+                val innerJson = "{\"clienttime\":$clientTime,\"userid\":$userIdNum}"
                 KugouSigner.rsa(innerJson).uppercase()
             }
-            val key = KugouSigner.md5("${KugouSigner.APP_ID}LnT6xpN3khm36zse0QzvmgTZ3waWdRSA10597$clientTime")
+            val clientVer = 10597
+            val key = KugouSigner.md5("${KugouSigner.APP_ID}LnT6xpN3khm36zse0QzvmgTZ3waWdRSA${clientVer}$clientTime")
             val d = device()
 
             val requestBody = if (isReport) {
                 json(
                     "mid" to d.mid,
                     "type" to 1,
-                    "uuid" to d.guid,
-                    "userid" to (session.userId.toLongOrNull() ?: 0L),
-                    "p" to p,
-                    "appid" to "3116",
-                    "clientver" to "10597",
-                    "clienttime" to clientTime,
-                    "key" to key,
+                    "uuid" to "-",
+                    "userid" to userIdNum,
                     "d_sec" to dSec!!,
                     "diff_sec" to diffSec!!,
                     "y_type" to 0,
-                    "m_type" to 0
+                    "m_type" to 0,
+                    "p" to p,
+                    "appid" to 3116,
+                    "clientver" to clientVer,
+                    "clienttime" to clientTime,
+                    "key" to key
                 )
             } else {
                 json(
                     "mid" to d.mid,
                     "type" to 1,
-                    "uuid" to d.guid,
-                    "userid" to (session.userId.toLongOrNull() ?: 0L),
+                    "uuid" to "-",
+                    "userid" to userIdNum,
                     "p" to p,
-                    "appid" to "3116",
-                    "clientver" to "10597",
+                    "appid" to 3116,
+                    "clientver" to clientVer,
                     "clienttime" to clientTime,
                     "key" to key
                 )
@@ -1550,7 +1552,15 @@ class MusicApiRepository(
                 sign = false,
                 includeDefaultParams = false
             )
-            val data = response.data.getAsJsonObject("data") ?: response.data
+
+            // 严格校验业务状态码：若上报或查询被服务端拒绝 (status != 1 或 error_code != 0)，不解析伪数据
+            val status = response.data.number("status") ?: 1
+            val errorCode = response.data.number("error_code") ?: 0
+            if (status != 1 || errorCode != 0) {
+                throw IllegalStateException("get_grade_info business error: status=$status, error_code=$errorCode")
+            }
+
+            val data = response.data.obj("data") ?: response.data
             val level = data.number("p_grade") ?: data.number("pGrade")
                 ?: data.number("grade") ?: data.number("level") ?: 0
             val score = data.number("p_current_point")?.toLong() ?: data.number("pCurrentPoint")?.toLong()
@@ -1574,7 +1584,7 @@ class MusicApiRepository(
                 level = level,
                 score = score,
                 totalListenMinutes = totalMin,
-                todayListenMinutes = (totalMin % 60L).coerceAtLeast(0L),
+                todayListenMinutes = 0L,
                 nextLevelScore = nextScore,
                 progressPercent = progress,
                 totalListenSeconds = totalSec
@@ -1703,83 +1713,161 @@ class MusicApiRepository(
         }
     }
 
-    // 已购单曲 (携带 openapi 网关路由与签名)
+    /**
+     * 自适应提取已购接口返回的列表数组（兼容 data 直接为 JsonArray 或嵌套在 info/audio_list/list/lists/album_list/albums/goods_list/rows/records 中）
+     */
+    private fun extractPurchasedJsonArray(root: JsonObject): JsonArray? {
+        val dataElement = root.get("data")
+        if (dataElement != null && dataElement.isJsonArray) {
+            return dataElement.asJsonArray
+        }
+        val keys = listOf(
+            "goods", "info", "audio_list", "list", "lists", "songs",
+            "album_list", "albums", "goods_list", "rows", "records", "data"
+        )
+        val candidates = listOfNotNull(root.obj("data"), root)
+        for (obj in candidates) {
+            for (k in keys) {
+                val arr = obj.get(k)?.takeIf { it.isJsonArray }?.asJsonArray
+                if (arr != null && arr.size() > 0) return arr
+            }
+            for (entry in obj.entrySet()) {
+                val v = entry.value
+                if (v != null && v.isJsonArray && v.asJsonArray.size() > 0) return v.asJsonArray
+            }
+            for (k in keys) {
+                val arr = obj.get(k)?.takeIf { it.isJsonArray }?.asJsonArray
+                if (arr != null) return arr
+            }
+            for (entry in obj.entrySet()) {
+                val v = entry.value
+                if (v != null && v.isJsonArray) return v.asJsonArray
+            }
+        }
+        return null
+    }
+
+    // 已购单曲 (严格对齐 KuGouMusicApi: /openapi/copyright/v1/audio/get_goods，userid 必须为 int64 Number)
     suspend fun userPurchasedSongs(page: Int = 1, pageSize: Int = 50): List<PurchasedSongItem> {
         val session = accounts.context()?.session ?: return emptyList()
+        val userIdNum = session.userId.toLongOrNull() ?: return emptyList()
         return runCatching {
             val response = transport.callAdvanced(
                 path = "/openapi/copyright/v1/audio/get_goods",
                 method = "POST",
                 session = session,
                 body = json(
-                    "appid" to KugouSigner.APP_ID.toString(),
-                    "userid" to (session.userId.toLongOrNull() ?: 0L),
+                    "appid" to KugouSigner.APP_ID,
+                    "userid" to userIdNum,
                     "token" to session.token,
-                    "clientver" to KugouSigner.CLIENT_VERSION.toString(),
                     "page" to page,
                     "pagesize" to pageSize,
+                    "clientver" to KugouSigner.CLIENT_VERSION.toString(),
                     "deleted" to 0,
                     "need_audio_info" to 1,
                     "area_code" to "1"
                 ),
-                headers = mapOf(
-                    "x-router" to "openapi.kugou.com",
-                    "kg-tid" to "255"
-                ),
                 sign = true,
                 includeDefaultParams = true
             )
-            val dataObj = response.data.getAsJsonObject("data") ?: response.data
-            val list = listOf("lists", "list", "info", "data").asSequence()
-                .mapNotNull { dataObj.getAsJsonArray(it) ?: response.data.getAsJsonArray(it) }.firstOrNull() ?: return emptyList()
+            val list = extractPurchasedJsonArray(response.data) ?: return emptyList()
 
-            list.filter { it.isJsonObject }.map { it.asJsonObject }.map { o ->
-                val id = o.text("audio_id") ?: o.text("songid") ?: ""
-                val name = o.text("songname") ?: o.text("name") ?: "已购单曲"
-                val singer = o.text("singername") ?: o.text("singer_name") ?: "未知歌手"
-                val time = o.text("buy_time") ?: o.text("create_time") ?: ""
+            list.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull { rawObj ->
+                val o = rawObj.obj("audio_info") ?: rawObj.obj("song_info") ?: rawObj
                 val song = parseSong(o)
-                PurchasedSongItem(songId = id, songName = name, singerName = singer, buyTime = time, song = song)
+                val id = o.text("audio_id") ?: o.text("songid") ?: o.text("mixsongid")
+                    ?: rawObj.text("audio_id") ?: rawObj.text("goods_id") ?: song.id
+                if (id.isBlank() && song.hash.isBlank()) return@mapNotNull null
+
+                val name = o.text("songname") ?: o.text("song_name") ?: o.text("audio_name")
+                    ?: rawObj.text("goods_name") ?: song.title.ifBlank { "已购单曲" }
+                val singer = o.text("singername") ?: o.text("singer_name") ?: o.text("author_name")
+                    ?: rawObj.text("singer_name") ?: song.artist.ifBlank { "未知歌手" }
+                val time = rawObj.text("buy_time") ?: rawObj.text("create_time") ?: rawObj.text("pay_time")
+                    ?: rawObj.text("add_time") ?: o.text("buy_time") ?: ""
+
+                val mergedSong = if (song.title == "未知歌曲" && name.isNotBlank()) {
+                    song.copy(id = id.ifBlank { song.id }, title = name, artist = singer)
+                } else {
+                    song.copy(id = song.id.ifBlank { id })
+                }
+                PurchasedSongItem(
+                    songId = id.ifBlank { mergedSong.id },
+                    songName = mergedSong.title.ifBlank { name },
+                    singerName = mergedSong.artist.ifBlank { singer },
+                    buyTime = time,
+                    song = mergedSong
+                )
             }
         }.getOrDefault(emptyList())
     }
 
-    // 已购专辑 (携带 openapi 网关路由与签名)
+    // 已购专辑 (严格对齐 KuGouMusicApi: /openapi/v1/copyright/get_album_goods，userid 必须为 int64 Number)
     suspend fun userPurchasedAlbums(page: Int = 1, pageSize: Int = 20): List<PurchasedAlbumItem> {
         val session = accounts.context()?.session ?: return emptyList()
+        val userIdNum = session.userId.toLongOrNull() ?: return emptyList()
         return runCatching {
             val response = transport.callAdvanced(
                 path = "/openapi/v1/copyright/get_album_goods",
                 method = "POST",
                 session = session,
                 body = json(
-                    "appid" to KugouSigner.APP_ID.toString(),
-                    "userid" to (session.userId.toLongOrNull() ?: 0L),
+                    "appid" to KugouSigner.APP_ID,
+                    "userid" to userIdNum,
                     "token" to session.token,
-                    "clientver" to KugouSigner.CLIENT_VERSION.toString(),
                     "page" to page,
                     "pagesize" to pageSize,
+                    "clientver" to KugouSigner.CLIENT_VERSION.toString(),
                     "deleted" to 0
-                ),
-                headers = mapOf(
-                    "x-router" to "openapi.kugou.com",
-                    "kg-tid" to "255"
                 ),
                 sign = true,
                 includeDefaultParams = true
             )
-            val dataObj = response.data.getAsJsonObject("data") ?: response.data
-            val list = listOf("lists", "list", "info", "data").asSequence()
-                .mapNotNull { dataObj.getAsJsonArray(it) ?: response.data.getAsJsonArray(it) }.firstOrNull() ?: return emptyList()
+            val list = extractPurchasedJsonArray(response.data) ?: return emptyList()
 
-            list.filter { it.isJsonObject }.map { it.asJsonObject }.map { o ->
-                val id = o.text("album_id") ?: ""
-                val name = o.text("album_name") ?: "数字专辑"
-                val singer = o.text("author_name") ?: o.text("singer_name") ?: "群星"
-                val coverRaw = o.text("album_img") ?: o.text("pic") ?: o.text("img")
-                val count = o.number("song_count") ?: o.number("songcount") ?: 0
-                val time = o.text("buy_time") ?: ""
-                PurchasedAlbumItem(albumId = id, albumName = name, singerName = singer, coverUrl = imageUrl(coverRaw), songCount = count, buyTime = time)
+            list.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull { rawObj ->
+                val o = rawObj.obj("album_info") ?: rawObj.obj("goods_info") ?: rawObj
+                val id = o.text("album_id") ?: o.text("albumid") ?: o.text("AlbumID")
+                    ?: rawObj.text("album_id") ?: rawObj.text("albumid") ?: rawObj.text("target_id")
+                    ?: rawObj.text("res_id") ?: rawObj.text("goods_id") ?: rawObj.text("id") ?: ""
+                if (id.isBlank()) return@mapNotNull null
+
+                var name = o.text("album_name") ?: o.text("AlbumName") ?: o.text("albumname") ?: o.text("name")
+                    ?: rawObj.text("album_name") ?: rawObj.text("goods_name") ?: ""
+                var singer = o.text("author_name") ?: o.text("singer_name") ?: o.text("singername")
+                    ?: o.text("artist_name") ?: rawObj.text("author_name") ?: rawObj.text("singer_name") ?: ""
+                val coverRaw = o.text("sizable_cover") ?: o.text("album_img") ?: o.text("img")
+                    ?: o.text("imgurl") ?: o.text("cover") ?: o.text("pic") ?: o.text("cover_url")
+                    ?: rawObj.text("sizable_cover") ?: rawObj.text("album_img") ?: rawObj.text("img")
+                    ?: rawObj.text("cover")
+                var coverUrl = imageUrl(coverRaw)
+                var count = o.number("song_count") ?: o.number("songcount") ?: o.number("audio_count")
+                    ?: rawObj.number("song_count") ?: rawObj.number("audio_count") ?: 0
+                val time = rawObj.text("buy_time") ?: rawObj.text("create_time") ?: rawObj.text("pay_time")
+                    ?: rawObj.text("add_time") ?: o.text("buy_time") ?: ""
+
+                // 若已购列表仅返回专辑商品 ID 或缺少封面/曲目数，自动联立 albumDetail / albumSongs 补全详情
+                if (name.isBlank() || coverUrl.isBlank() || singer.isBlank()) {
+                    val detail = runCatching { albumDetail(id) }.getOrNull()
+                    if (detail != null) {
+                        if (name.isBlank() && detail.name.isNotBlank()) name = detail.name
+                        if (singer.isBlank() && detail.artist.isNotBlank()) singer = detail.artist
+                        if (coverUrl.isBlank() && detail.coverUrl.isNotBlank()) coverUrl = detail.coverUrl
+                        if (count <= 0 && detail.songCount > 0) count = detail.songCount
+                    }
+                }
+                if (count <= 0) {
+                    count = runCatching { albumSongs(id).size }.getOrDefault(0)
+                }
+
+                PurchasedAlbumItem(
+                    albumId = id,
+                    albumName = name.ifBlank { "数字专辑" },
+                    singerName = singer.ifBlank { "群星" },
+                    coverUrl = coverUrl,
+                    songCount = count,
+                    buyTime = time
+                )
             }
         }.getOrDefault(emptyList())
     }

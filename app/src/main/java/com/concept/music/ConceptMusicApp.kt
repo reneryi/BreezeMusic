@@ -53,6 +53,20 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
 
         return ImageLoader.Builder(this)
             .okHttpClient(okHttpClient)
+            .allowHardware(false)
+            .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
+            .components {
+                add(coil.intercept.Interceptor { chain ->
+                    val result = chain.proceed(chain.request)
+                    if (android.os.Build.VERSION.SDK_INT >= 34 && result is coil.request.SuccessResult) {
+                        val bmp = (result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                        if (bmp != null && bmp.hasGainmap()) {
+                            runCatching { bmp.gainmap = null }
+                        }
+                    }
+                    result
+                })
+            }
             .memoryCache {
                 MemoryCache.Builder(this)
                     .maxSizePercent(0.25)

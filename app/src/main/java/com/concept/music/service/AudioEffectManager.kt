@@ -36,13 +36,13 @@ enum class EffectPreset(val label: String, val desc: String) {
 }
 
 data class AudioEffectState(
-    val isEnabled: Boolean = true,
-    val currentPreset: EffectPreset = EffectPreset.VIPER_3D,
-    val bassBoostStrength: Int = 500,     // 0 ~ 1000
-    val virtualizerStrength: Int = 600,   // 0 ~ 1000
-    val loudnessGainMb: Int = 200,        // 0 ~ 1500 mB (0 ~ 15 dB)
+    val isEnabled: Boolean = false,
+    val currentPreset: EffectPreset = EffectPreset.OFF,
+    val bassBoostStrength: Int = 0,       // 0 ~ 1000
+    val virtualizerStrength: Int = 0,     // 0 ~ 1000
+    val loudnessGainMb: Int = 0,          // 0 ~ 1500 mB (0 ~ 15 dB)
     val reverbMode: ReverbMode = ReverbMode.NONE,
-    val bandLevels: List<Int> = listOf(200, 100, 0, 150, 300) // 5个频段增益 (保留不动)
+    val bandLevels: List<Int> = listOf(0, 0, 0, 0, 0)
 )
 
 object AudioEffectManager {
@@ -53,7 +53,6 @@ object AudioEffectManager {
     private var bassBoost: BassBoost? = null
     private var virtualizer: Virtualizer? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
-    private var presetReverb: PresetReverb? = null
 
     private val _state = MutableStateFlow(AudioEffectState())
     val state = _state.asStateFlow()
@@ -66,24 +65,41 @@ object AudioEffectManager {
 
     fun attachSession(sessionId: Int) {
         if (sessionId <= 0) return
-        if (sessionId == currentSessionId && equalizer != null && bassBoost != null && virtualizer != null) return
-        releaseEffects()
-        currentSessionId = sessionId
+        if (sessionId != currentSessionId) {
+            releaseEffects()
+            currentSessionId = sessionId
+        }
+        // 仅在用户显式开启音效时才向 AudioFlinger 注册硬件效果器；
+        // 默认关闭时不挂载任何 AudioEffect，保持 ExoPlayer AudioTrack 运行在 Android FastMixer (TRACK_FAST) 零抖动直通通路
+        applyCurrentState()
+    }
+
+    private fun ensureEffectsCreated() {
+        val sessionId = currentSessionId
+        if (sessionId <= 0) return
         try {
-            // 使用 priority = 100 获取优先音频效果器控制权，避免被系统默认效果器拦截
-            equalizer = Equalizer(100, sessionId)
-            bassBoost = BassBoost(100, sessionId)
-            virtualizer = Virtualizer(100, sessionId)
-            runCatching { loudnessEnhancer = LoudnessEnhancer(sessionId) }
-            runCatching { presetReverb = PresetReverb(100, sessionId) }
-            applyCurrentState()
+            if (equalizer == null) equalizer = Equalizer(0, sessionId)
+            if (bassBoost == null) bassBoost = BassBoost(0, sessionId)
+            if (virtualizer == null) virtualizer = Virtualizer(0, sessionId)
+            if (loudnessEnhancer == null) runCatching { loudnessEnhancer = LoudnessEnhancer(sessionId) }
         } catch (_: Exception) {
             // 部分定制 ROM 权限保护兜底
         }
     }
 
     fun setEnabled(enabled: Boolean) {
-        _state.value = _state.value.copy(isEnabled = enabled)
+        val nextPreset = if (enabled && _state.value.currentPreset == EffectPreset.OFF) {
+            EffectPreset.VIPER_3D
+        } else if (!enabled) {
+            EffectPreset.OFF
+        } else {
+            _state.value.currentPreset
+        }
+        if (enabled && _state.value.currentPreset == EffectPreset.OFF) {
+            setPreset(nextPreset)
+            return
+        }
+        _state.value = _state.value.copy(isEnabled = enabled, currentPreset = nextPreset)
         applyCurrentState()
         saveToPrefs()
     }
@@ -94,15 +110,15 @@ object AudioEffectManager {
         val (bass, virt, loudness, reverb, bands) = when (preset) {
             EffectPreset.OFF -> Tuple5(0, 0, 0, ReverbMode.NONE, listOf(0, 0, 0, 0, 0))
             EffectPreset.FLAT -> Tuple5(0, 0, 0, ReverbMode.NONE, listOf(0, 0, 0, 0, 0))
-            EffectPreset.VIPER_3D -> Tuple5(250, 450, 200, ReverbMode.SMALL_ROOM, listOf(100, 50, 0, 100, 150))
-            EffectPreset.VIPER_VOCAL -> Tuple5(50, 200, 100, ReverbMode.NONE, listOf(-100, 50, 200, 150, 50))
-            EffectPreset.VIPER_BASS -> Tuple5(400, 150, 300, ReverbMode.NONE, listOf(250, 150, 0, -50, 50))
-            EffectPreset.VIPER_HIFI -> Tuple5(150, 300, 150, ReverbMode.MEDIUM_ROOM, listOf(100, 50, 50, 100, 150))
-            EffectPreset.VIPER_VINYL -> Tuple5(200, 250, 120, ReverbMode.PLATE, listOf(150, 50, 50, 50, -50))
-            EffectPreset.VIPER_SURROUND -> Tuple5(300, 750, 250, ReverbMode.MEDIUM_HALL, listOf(100, 50, 0, 150, 200))
-            EffectPreset.VIPER_DYNAMIC -> Tuple5(450, 400, 400, ReverbMode.NONE, listOf(200, 100, 50, 100, 200))
-            EffectPreset.ROCK -> Tuple5(250, 250, 200, ReverbMode.NONE, listOf(150, 100, -50, 100, 150))
-            EffectPreset.POP -> Tuple5(150, 200, 100, ReverbMode.NONE, listOf(100, 100, 150, 100, 50))
+            EffectPreset.VIPER_3D -> Tuple5(180, 300, 80, ReverbMode.NONE, listOf(60, 20, -40, 60, 90))
+            EffectPreset.VIPER_VOCAL -> Tuple5(40, 150, 60, ReverbMode.NONE, listOf(-120, 40, 140, 100, 30))
+            EffectPreset.VIPER_BASS -> Tuple5(300, 100, 100, ReverbMode.NONE, listOf(160, 90, -40, -60, 20))
+            EffectPreset.VIPER_HIFI -> Tuple5(120, 220, 80, ReverbMode.NONE, listOf(60, 20, 20, 60, 100))
+            EffectPreset.VIPER_VINYL -> Tuple5(150, 180, 60, ReverbMode.NONE, listOf(100, 40, 20, 20, -80))
+            EffectPreset.VIPER_SURROUND -> Tuple5(200, 450, 100, ReverbMode.NONE, listOf(60, 20, -30, 90, 120))
+            EffectPreset.VIPER_DYNAMIC -> Tuple5(260, 260, 120, ReverbMode.NONE, listOf(120, 60, 0, 60, 120))
+            EffectPreset.ROCK -> Tuple5(200, 180, 100, ReverbMode.NONE, listOf(100, 60, -80, 60, 100))
+            EffectPreset.POP -> Tuple5(120, 150, 60, ReverbMode.NONE, listOf(60, 60, 100, 60, 30))
             EffectPreset.CUSTOM -> Tuple5(_state.value.bassBoostStrength, _state.value.virtualizerStrength, _state.value.loudnessGainMb, _state.value.reverbMode, _state.value.bandLevels)
         }
         _state.value = _state.value.copy(
@@ -123,6 +139,7 @@ object AudioEffectManager {
         if (bandIndex in currentBands.indices) {
             currentBands[bandIndex] = levelMb.coerceIn(-1000, 1000)
             _state.value = _state.value.copy(
+                isEnabled = true,
                 currentPreset = EffectPreset.CUSTOM,
                 bandLevels = currentBands
             )
@@ -134,6 +151,7 @@ object AudioEffectManager {
     fun setBassBoostStrength(strength: Int) {
         val s = strength.coerceIn(0, 1000)
         _state.value = _state.value.copy(
+            isEnabled = true,
             bassBoostStrength = s,
             currentPreset = if (_state.value.currentPreset != EffectPreset.CUSTOM) EffectPreset.CUSTOM else _state.value.currentPreset
         )
@@ -144,6 +162,7 @@ object AudioEffectManager {
     fun setVirtualizerStrength(strength: Int) {
         val s = strength.coerceIn(0, 1000)
         _state.value = _state.value.copy(
+            isEnabled = true,
             virtualizerStrength = s,
             currentPreset = if (_state.value.currentPreset != EffectPreset.CUSTOM) EffectPreset.CUSTOM else _state.value.currentPreset
         )
@@ -154,6 +173,7 @@ object AudioEffectManager {
     fun setLoudnessGain(gainMb: Int) {
         val g = gainMb.coerceIn(0, 1500)
         _state.value = _state.value.copy(
+            isEnabled = true,
             loudnessGainMb = g,
             currentPreset = if (_state.value.currentPreset != EffectPreset.CUSTOM) EffectPreset.CUSTOM else _state.value.currentPreset
         )
@@ -172,7 +192,15 @@ object AudioEffectManager {
 
     private fun applyCurrentState() {
         val s = _state.value
+        // 当音效关闭或处于原声模式时，彻底释放底层 AudioEffect 实例，让 AudioTrack 回到 FastMixer 硬件直通通道
+        if (!s.isEnabled || s.currentPreset == EffectPreset.OFF) {
+            releaseEffects()
+            return
+        }
 
+        ensureEffectsCreated()
+
+        val hasEqSignal = s.bandLevels.any { it != 0 }
         equalizer?.let { eq ->
             runCatching {
                 val numBands = eq.numberOfBands.toInt()
@@ -184,70 +212,77 @@ object AudioEffectManager {
                         eq.setBandLevel(index.toShort(), target)
                     }
                 }
-                eq.enabled = s.isEnabled
+                eq.enabled = hasEqSignal
             }
         }
 
         bassBoost?.let { bb ->
             runCatching {
-                if (bb.strengthSupported) {
+                val active = s.bassBoostStrength > 0
+                if (active && bb.strengthSupported) {
                     bb.setStrength(s.bassBoostStrength.toShort())
                 }
-                bb.enabled = s.isEnabled && s.bassBoostStrength > 0
+                bb.enabled = active
             }
         }
 
         virtualizer?.let { vz ->
             runCatching {
-                if (vz.strengthSupported) {
+                val active = s.virtualizerStrength > 0
+                if (active && vz.strengthSupported) {
                     vz.setStrength(s.virtualizerStrength.toShort())
                 }
-                vz.enabled = s.isEnabled && s.virtualizerStrength > 0
+                vz.enabled = active
             }
         }
 
         loudnessEnhancer?.let { le ->
             runCatching {
-                le.setTargetGain(s.loudnessGainMb)
-                le.enabled = s.isEnabled && s.loudnessGainMb > 0
-            }
-        }
-
-        presetReverb?.let { pr ->
-            runCatching {
-                pr.preset = s.reverbMode.preset
-                pr.enabled = s.isEnabled && s.reverbMode != ReverbMode.NONE
+                val active = s.loudnessGainMb > 0
+                le.setTargetGain(if (active) s.loudnessGainMb else 0)
+                le.enabled = active
             }
         }
     }
 
     private fun releaseEffects() {
-        runCatching { equalizer?.release() }
-        runCatching { bassBoost?.release() }
-        runCatching { virtualizer?.release() }
-        runCatching { loudnessEnhancer?.release() }
-        runCatching { presetReverb?.release() }
+        runCatching {
+            equalizer?.enabled = false
+            equalizer?.release()
+        }
+        runCatching {
+            bassBoost?.enabled = false
+            bassBoost?.release()
+        }
+        runCatching {
+            virtualizer?.enabled = false
+            virtualizer?.release()
+        }
+        runCatching {
+            loudnessEnhancer?.enabled = false
+            loudnessEnhancer?.release()
+        }
         equalizer = null
         bassBoost = null
         virtualizer = null
         loudnessEnhancer = null
-        presetReverb = null
     }
 
     private fun loadFromPrefs() {
         val p = prefs ?: return
-        val enabled = p.getBoolean("enabled", true)
-        val presetName = p.getString("preset", EffectPreset.VIPER_3D.name) ?: EffectPreset.VIPER_3D.name
-        val preset = runCatching { EffectPreset.valueOf(presetName) }.getOrDefault(EffectPreset.VIPER_3D)
-        val bass = p.getInt("bass", 400)
-        val virt = p.getInt("virt", 700)
-        val loudness = p.getInt("loudness", 200)
-        val reverbName = p.getString("reverb", ReverbMode.NONE.name) ?: ReverbMode.NONE.name
+        // 默认采用原生直通 (enabled = false, preset = OFF)，消除默认挂载音效引发的 AudioFlinger 欠载哒哒声
+        val enabled = p.getBoolean("effect_enabled_v2", false)
+        val presetName = p.getString("preset_v2", EffectPreset.OFF.name) ?: EffectPreset.OFF.name
+        val preset = runCatching { EffectPreset.valueOf(presetName) }.getOrDefault(EffectPreset.OFF)
+        val bass = p.getInt("bass_v2", 0)
+        val virt = p.getInt("virt_v2", 0)
+        val loudness = p.getInt("loudness_v2", 0)
+        val reverbName = p.getString("reverb_v2", ReverbMode.NONE.name) ?: ReverbMode.NONE.name
         val reverb = runCatching { ReverbMode.valueOf(reverbName) }.getOrDefault(ReverbMode.NONE)
 
         _state.value = AudioEffectState(
-            isEnabled = enabled,
-            currentPreset = preset,
+            isEnabled = enabled && preset != EffectPreset.OFF,
+            currentPreset = if (enabled) preset else EffectPreset.OFF,
             bassBoostStrength = bass,
             virtualizerStrength = virt,
             loudnessGainMb = loudness,
@@ -258,12 +293,12 @@ object AudioEffectManager {
     private fun saveToPrefs() {
         val p = prefs ?: return
         p.edit()
-            .putBoolean("enabled", _state.value.isEnabled)
-            .putString("preset", _state.value.currentPreset.name)
-            .putInt("bass", _state.value.bassBoostStrength)
-            .putInt("virt", _state.value.virtualizerStrength)
-            .putInt("loudness", _state.value.loudnessGainMb)
-            .putString("reverb", _state.value.reverbMode.name)
+            .putBoolean("effect_enabled_v2", _state.value.isEnabled)
+            .putString("preset_v2", _state.value.currentPreset.name)
+            .putInt("bass_v2", _state.value.bassBoostStrength)
+            .putInt("virt_v2", _state.value.virtualizerStrength)
+            .putInt("loudness_v2", _state.value.loudnessGainMb)
+            .putString("reverb_v2", _state.value.reverbMode.name)
             .apply()
     }
 }
