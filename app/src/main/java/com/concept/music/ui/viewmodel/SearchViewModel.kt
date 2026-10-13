@@ -58,6 +58,7 @@ class SearchViewModel : ViewModel() {
 
     private var currentPage = 1
     private val pageSize = 30
+    private var lastComplexKeyword = ""
     private var suggestJob: Job? = null
     private var searchJob: Job? = null
     private var loadMoreJob: Job? = null
@@ -83,7 +84,7 @@ class SearchViewModel : ViewModel() {
             return
         }
         suggestJob = viewModelScope.launch {
-            delay(300)
+            delay(180)
             try {
                 _suggestions.value = VipManager.music.searchSuggest(newQuery)
             } catch (_: Exception) {
@@ -95,8 +96,28 @@ class SearchViewModel : ViewModel() {
     fun selectTab(tab: SearchTab) {
         if (_selectedTab.value == tab) return
         _selectedTab.value = tab
-        if (_query.value.isNotBlank()) {
-            performSearchForCurrentTab(_query.value)
+        val currentKw = _query.value.trim()
+        if (currentKw.isNotBlank()) {
+            // 若刚刚在综合页搜索过同一关键词，直接复用已缓存结果实现 0ms 秒切，并在后台静默补齐更多分页数据
+            val hasWarmCache = lastComplexKeyword == currentKw && when (tab) {
+                SearchTab.COMPLEX -> _complexResult.value.songs.isNotEmpty() || _complexResult.value.artists.isNotEmpty()
+                SearchTab.SONG -> _songResults.value.isNotEmpty()
+                SearchTab.ALBUM -> _albumResults.value.isNotEmpty()
+                SearchTab.PLAYLIST -> _playlistResults.value.isNotEmpty()
+            }
+            if (hasWarmCache) {
+                currentPage = 1
+                _hasMore.value = tab != SearchTab.COMPLEX
+                if (tab == SearchTab.SONG && _songResults.value.size < pageSize) {
+                    performSearchForCurrentTab(currentKw, silent = true)
+                } else if (tab == SearchTab.ALBUM && _albumResults.value.size < pageSize) {
+                    performSearchForCurrentTab(currentKw, silent = true)
+                } else if (tab == SearchTab.PLAYLIST && _playlistResults.value.size < pageSize) {
+                    performSearchForCurrentTab(currentKw, silent = true)
+                }
+            } else {
+                performSearchForCurrentTab(currentKw, silent = false)
+            }
         }
     }
 
@@ -112,28 +133,32 @@ class SearchViewModel : ViewModel() {
         currentHistory.add(0, trimmed)
         _searchHistory.value = currentHistory.take(15)
 
-        performSearchForCurrentTab(trimmed)
+        performSearchForCurrentTab(trimmed, silent = false)
     }
 
-    private fun performSearchForCurrentTab(keyword: String) {
+    private fun performSearchForCurrentTab(keyword: String, silent: Boolean = false) {
         searchJob?.cancel()
         loadMoreJob?.cancel()
         currentPage = 1
 
         searchJob = viewModelScope.launch {
-            _loading.value = true
+            if (!silent) _loading.value = true
             try {
                 when (_selectedTab.value) {
                     SearchTab.COMPLEX -> {
                         val res = VipManager.music.searchComplex(keyword)
+                        lastComplexKeyword = keyword
                         _complexResult.value = res
                         _songResults.value = res.songs
+                        _albumResults.value = res.albums
+                        _playlistResults.value = res.playlists
+                        _artistResults.value = res.artists
                         _hasMore.value = false
                     }
                     SearchTab.SONG -> {
                         val res = VipManager.music.searchSongs(keyword, page = 1, pageSize = pageSize)
                         _songResults.value = res.songs
-                        _hasMore.value = res.hasMore
+                        _hasMore.value = res.hasMore || res.songs.size >= pageSize
                     }
                     SearchTab.ALBUM -> {
                         val res = VipManager.music.searchAlbums(keyword, page = 1, pageSize = pageSize)
@@ -143,11 +168,6 @@ class SearchViewModel : ViewModel() {
                     SearchTab.PLAYLIST -> {
                         val res = VipManager.music.searchPlaylists(keyword, page = 1, pageSize = pageSize)
                         _playlistResults.value = res
-                        _hasMore.value = res.size >= pageSize
-                    }
-                    SearchTab.ARTIST -> {
-                        val res = VipManager.music.searchArtists(keyword, page = 1, pageSize = pageSize)
-                        _artistResults.value = res
                         _hasMore.value = res.size >= pageSize
                     }
                 }
@@ -175,7 +195,7 @@ class SearchViewModel : ViewModel() {
                             currentPage = nextPage
                             val existingHashes = _songResults.value.map { it.hash.lowercase() }.toSet()
                             _songResults.value = _songResults.value + res.songs.filter { it.hash.lowercase() !in existingHashes }
-                            _hasMore.value = res.hasMore
+                            _hasMore.value = res.hasMore || res.songs.size >= pageSize
                         } else {
                             _hasMore.value = false
                         }
@@ -184,7 +204,8 @@ class SearchViewModel : ViewModel() {
                         val res = VipManager.music.searchAlbums(currentQuery, page = nextPage, pageSize = pageSize)
                         if (res.isNotEmpty()) {
                             currentPage = nextPage
-                            _albumResults.value = _albumResults.value + res
+                            val existingIds = _albumResults.value.map { it.id }.toSet()
+                            _albumResults.value = _albumResults.value + res.filter { it.id !in existingIds }
                             _hasMore.value = res.size >= pageSize
                         } else _hasMore.value = false
                     }
@@ -192,15 +213,8 @@ class SearchViewModel : ViewModel() {
                         val res = VipManager.music.searchPlaylists(currentQuery, page = nextPage, pageSize = pageSize)
                         if (res.isNotEmpty()) {
                             currentPage = nextPage
-                            _playlistResults.value = _playlistResults.value + res
-                            _hasMore.value = res.size >= pageSize
-                        } else _hasMore.value = false
-                    }
-                    SearchTab.ARTIST -> {
-                        val res = VipManager.music.searchArtists(currentQuery, page = nextPage, pageSize = pageSize)
-                        if (res.isNotEmpty()) {
-                            currentPage = nextPage
-                            _artistResults.value = _artistResults.value + res
+                            val existingIds = _playlistResults.value.map { it.id }.toSet()
+                            _playlistResults.value = _playlistResults.value + res.filter { it.id !in existingIds }
                             _hasMore.value = res.size >= pageSize
                         } else _hasMore.value = false
                     }
@@ -223,6 +237,7 @@ class SearchViewModel : ViewModel() {
 
     fun clearQuery() {
         _query.value = ""
+        lastComplexKeyword = ""
         _suggestions.value = emptyList()
         _complexResult.value = ComplexSearchResult()
         _songResults.value = emptyList()

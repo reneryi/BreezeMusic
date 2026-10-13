@@ -95,9 +95,13 @@ class SongPlaybackSwitchTest {
         val prefsProxy = Proxy.newProxyInstance(
             SharedPreferences::class.java.classLoader,
             arrayOf(SharedPreferences::class.java)
-        ) { _, method, _ ->
+        ) { _, method, args ->
             when (method.name) {
-                "getString" -> "VINYL"
+                "getString" -> args?.getOrNull(1) ?: "VINYL"
+                "getBoolean" -> (args?.getOrNull(1) as? Boolean) ?: false
+                "getFloat" -> (args?.getOrNull(1) as? Float) ?: 1.0f
+                "getInt" -> (args?.getOrNull(1) as? Int) ?: 0
+                "getLong" -> (args?.getOrNull(1) as? Long) ?: 0L
                 "edit" -> editorProxy
                 else -> null
             }
@@ -146,9 +150,12 @@ class SongPlaybackSwitchTest {
         @Suppress("UNCHECKED_CAST")
         val playbackCache = playbackCacheField.get(musicRepo) as MutableMap<String, PlaybackResult>
         playbackCache["hash_1_${AudioQuality.LOSSLESS.apiValue}"] = PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.LOSSLESS, 850, 20_000_000L)
+        playbackCache["hash_1_${AudioQuality.HIGH.apiValue}"] = PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.HIGH, 320, 10_000_000L)
         playbackCache["hash_1_${AudioQuality.STANDARD.apiValue}"] = PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.STANDARD, 128, 5_000_000L)
         playbackCache["hash_2_${AudioQuality.HI_RES.apiValue}"] = PlaybackResult("http://audio.kugou.com/2.mp3", AudioQuality.HI_RES, 1500, 40_000_000L)
+        playbackCache["hash_2_${AudioQuality.HIGH.apiValue}"] = PlaybackResult("http://audio.kugou.com/2.mp3", AudioQuality.HIGH, 320, 10_000_000L)
         playbackCache["hash_2_${AudioQuality.STANDARD.apiValue}"] = PlaybackResult("http://audio.kugou.com/2.mp3", AudioQuality.STANDARD, 128, 4_000_000L)
+        playbackCache["hash_3_${AudioQuality.HIGH.apiValue}"] = PlaybackResult("http://audio.kugou.com/3.mp3", AudioQuality.STANDARD, 128, 6_000_000L)
         playbackCache["hash_3_${AudioQuality.STANDARD.apiValue}"] = PlaybackResult("http://audio.kugou.com/3.mp3", AudioQuality.STANDARD, 128, 6_000_000L)
 
         val historyRepo = Proxy.newProxyInstance(

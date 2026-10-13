@@ -51,6 +51,7 @@ import com.concept.music.ui.components.MiniPlayerBar
 import com.concept.music.ui.components.NowPlayingSheet
 import com.concept.music.ui.components.SongActionBottomSheet
 import com.concept.music.ui.components.SongDetailSheet
+import com.concept.music.ui.home.DailyRecommendScreen
 import com.concept.music.ui.home.HomeScreen
 import com.concept.music.ui.library.AlbumDetailScreen
 import com.concept.music.ui.library.ArtistDetailScreen
@@ -145,6 +146,7 @@ fun MainContent(
                 val isSubDetail = currentRoute.startsWith("playlist_detail") ||
                         currentRoute.startsWith("album_detail") ||
                         currentRoute.startsWith("artist_detail") ||
+                        currentRoute == "daily_recommend" ||
                         currentRoute == "search" ||
                         currentRoute == "settings"
 
@@ -228,6 +230,25 @@ fun MainContent(
                     },
                     onSearchClick = {
                         navController.navigate("search") { launchSingleTop = true }
+                    },
+                    onOpenDailyRecommend = {
+                        navController.navigate("daily_recommend") { launchSingleTop = true }
+                    },
+                    currentSong = playerUiState.currentSong,
+                    onSongMoreClick = { song ->
+                        actionSheetSong = song
+                        actionSheetRemoveCallback = null
+                    }
+                )
+            }
+
+            // 每日推荐独立页
+            composable("daily_recommend") {
+                DailyRecommendScreen(
+                    viewModel = homeViewModel,
+                    onBack = { navController.popBackStack() },
+                    onSongClick = { song, list ->
+                        musicPlayerViewModel.playSong(song, list)
                     },
                     currentSong = playerUiState.currentSong,
                     onSongMoreClick = { song ->
@@ -315,6 +336,9 @@ fun MainContent(
                     onBack = { navController.popBackStack() },
                     onSongClick = { song, list ->
                         musicPlayerViewModel.playSong(song, list)
+                    },
+                    onAlbumClick = { albumId ->
+                        navController.navigate("album_detail/$albumId") { launchSingleTop = true }
                     },
                     currentSong = playerUiState.currentSong,
                     onSongMoreClick = { song ->

@@ -51,11 +51,18 @@ fun PlaylistDetailScreen(
     val loading by viewModel.libraryLoading.collectAsState()
     val error by viewModel.libraryError.collectAsState()
 
-    val currentPlaylist = remember(playlists, playlistId) {
-        when (playlistId) {
+    val currentPlaylist = remember(playlists, playlistId, songs) {
+        val matched = when (playlistId) {
             "like" -> playlists.firstOrNull { it.isLiked } ?: Playlist("like", "我喜欢的音乐", isLiked = true)
             "history" -> Playlist("history", "最近播放")
-            else -> playlists.firstOrNull { it.id == playlistId }
+            else -> playlists.firstOrNull {
+                it.id == playlistId || it.globalCollectionId == playlistId || it.listCreateListid == playlistId
+            }
+        }
+        if (matched != null && matched.coverUrl.isBlank() && songs.isNotEmpty()) {
+            matched.copy(coverUrl = songs.firstOrNull()?.coverUrl.orEmpty())
+        } else {
+            matched
         }
     }
 
@@ -454,6 +461,9 @@ private fun PlaylistHeaderCard(
     onPlayAll: () -> Unit,
     onCollectClick: () -> Unit = {}
 ) {
+    var isDescExpanded by remember { mutableStateOf(false) }
+    val displayCount = if (songCount > 0) songCount else (playlist?.trackCount ?: 0)
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -517,7 +527,7 @@ private fun PlaylistHeaderCard(
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "共 $songCount 首歌曲",
+                        text = "共 $displayCount 首歌曲",
                         style = MaterialTheme.typography.bodyMedium.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -542,7 +552,7 @@ private fun PlaylistHeaderCard(
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("播放", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("播放全部", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F1115))
                         }
 
                         // 外部/他人歌单提供收藏/取消收藏按钮
@@ -581,6 +591,20 @@ private fun PlaylistHeaderCard(
                         }
                     }
                 }
+            }
+
+            if (!playlist?.description.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = playlist!!.description,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                        lineHeight = 18.sp
+                    ),
+                    maxLines = if (isDescExpanded) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable { isDescExpanded = !isDescExpanded }
+                )
             }
         }
     }

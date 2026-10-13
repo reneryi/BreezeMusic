@@ -7,7 +7,8 @@ import java.time.format.DateTimeFormatter
 internal fun JsonObject.text(key: String): String? = get(key)?.takeIf { it.isJsonPrimitive }?.asString
 internal fun JsonObject.number(key: String): Int? = text(key)?.toIntOrNull()
 internal fun JsonObject.obj(key: String): JsonObject? = get(key)?.takeIf { it.isJsonObject }?.asJsonObject
-internal fun JsonObject.objects(key: String): List<JsonObject> = get(key)?.takeIf { it.isJsonArray }?.asJsonArray
+internal fun JsonObject.arr(key: String): com.google.gson.JsonArray? = get(key)?.takeIf { it.isJsonArray }?.asJsonArray
+internal fun JsonObject.objects(key: String): List<JsonObject> = arr(key)
     ?.filter { it.isJsonObject }?.map { it.asJsonObject }.orEmpty()
 internal fun json(vararg values: Pair<String, Any?>): JsonObject = JsonObject().apply {
     values.forEach { (key, value) -> when (value) {

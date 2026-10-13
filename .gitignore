@@ -11,6 +11,7 @@
 
 # Module build directories
 app/build/
+app/concept_audio_stream_cache/
 
 # Reference sub-repos (cloned for study, keep outside git)
 repo_kgka/

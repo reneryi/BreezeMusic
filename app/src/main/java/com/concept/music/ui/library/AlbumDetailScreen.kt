@@ -31,6 +31,8 @@ import com.concept.music.data.vip.VipManager
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptPrimaryDark
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 @Composable
@@ -54,10 +56,42 @@ fun AlbumDetailScreen(
             loading = true
             error = null
             try {
-                val detail = VipManager.music.albumDetail(albumId)
-                val songList = VipManager.music.albumSongs(albumId)
-                album = detail
-                songs = songList
+                val (detail, rawSongs) = coroutineScope {
+                    val detailDef = async { runCatching { VipManager.music.albumDetail(albumId) }.getOrNull() }
+                    val songsDef = async { runCatching { VipManager.music.albumSongs(albumId) }.getOrDefault(emptyList()) }
+                    detailDef.await() to songsDef.await()
+                }
+                val firstSong = rawSongs.firstOrNull()
+                val resolvedAlbum = when {
+                    detail != null -> detail.copy(
+                        name = detail.name.takeIf { it.isNotBlank() && it != "精选专辑" }
+                            ?: firstSong?.album?.takeIf { it.isNotBlank() && it != "单曲" }
+                            ?: detail.name.ifBlank { "精选专辑" },
+                        artist = detail.artist.takeIf { it.isNotBlank() && it != "群星" }
+                            ?: firstSong?.artist?.takeIf { it.isNotBlank() && it != "未知歌手" }
+                            ?: detail.artist.ifBlank { "群星" },
+                        coverUrl = detail.coverUrl.ifBlank { firstSong?.coverUrl.orEmpty() },
+                        songCount = if (rawSongs.isNotEmpty()) rawSongs.size else detail.songCount
+                    )
+                    firstSong != null -> AlbumItem(
+                        id = albumId,
+                        name = firstSong.album.takeIf { it.isNotBlank() && it != "单曲" } ?: "精选专辑",
+                        artist = firstSong.artist.ifBlank { "群星" },
+                        coverUrl = firstSong.coverUrl,
+                        songCount = rawSongs.size
+                    )
+                    else -> null
+                }
+                val enrichedSongs = rawSongs.map { s ->
+                    s.copy(
+                        album = s.album.takeIf { it.isNotBlank() && it != "单曲" } ?: resolvedAlbum?.name.orEmpty(),
+                        albumId = s.albumId.ifBlank { albumId },
+                        coverUrl = s.coverUrl.ifBlank { resolvedAlbum?.coverUrl.orEmpty() },
+                        artist = s.artist.takeIf { it.isNotBlank() && it != "未知歌手" } ?: resolvedAlbum?.artist.orEmpty()
+                    )
+                }
+                album = resolvedAlbum
+                songs = enrichedSongs
                 loading = false
             } catch (e: Exception) {
                 error = e.message ?: "加载专辑信息失败"

@@ -311,26 +311,15 @@ fun SearchScreen(
                                     items(playlistResults) { playlist ->
                                         PlaylistSearchCard(playlist = playlist, onClick = { onPlaylistClick(playlist.id) })
                                     }
-                                }
-                            }
-                        }
-                        SearchTab.ARTIST -> {
-                            if (artistResults.isEmpty()) {
-                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Text(
-                                        text = "未找到“$query”的相关歌手，可尝试更换关键词",
-                                        style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.45f))
-                                    )
-                                }
-                            } else {
-                                LazyColumn(
-                                    state = listState,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    items(artistResults) { artist ->
-                                        ArtistSearchCard(artist = artist, onClick = { onArtistClick(artist.id) })
+                                    if (loadingMore) {
+                                        item {
+                                            Box(
+                                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                CircularProgressIndicator(color = ConceptPrimary, modifier = Modifier.size(24.dp))
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -486,53 +475,98 @@ private fun ComplexSearchResultView(
         contentPadding = PaddingValues(vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        // 歌手专属卡片
+        // 综合页顶部：高精度歌手专属卡片
         if (result.artists.isNotEmpty()) {
             val artist = result.artists.first()
             item {
                 Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1D24)),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF181C26)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                         .clickable { onArtistClick(artist.id) }
                 ) {
                     Row(
-                        modifier = Modifier.padding(14.dp),
+                        modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        AsyncImage(
-                            model = artist.avatarUrl,
-                            contentDescription = artist.name,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(56.dp).clip(CircleShape)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF232936)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (artist.avatarUrl.isNotBlank()) {
+                                AsyncImage(
+                                    model = artist.avatarUrl,
+                                    contentDescription = artist.name,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.Person,
+                                    contentDescription = artist.name,
+                                    tint = ConceptPrimary,
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+                        }
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    color = ConceptPrimary.copy(alpha = 0.16f),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = "歌手",
+                                        color = ConceptPrimary,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = artist.name,
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = artist.name,
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = Color.White)
-                            )
-                            Text(
-                                text = "单曲 ${artist.songCount} · 专辑 ${artist.albumCount}",
-                                style = MaterialTheme.typography.bodySmall.copy(color = Color.White.copy(alpha = 0.5f))
+                                text = buildString {
+                                    if (artist.songCount > 0) append("单曲 ${artist.songCount}")
+                                    if (artist.albumCount > 0) {
+                                        if (isNotEmpty()) append(" · ")
+                                        append("专辑 ${artist.albumCount}")
+                                    }
+                                    if (isEmpty()) append("点击查看全部热门单曲与专辑")
+                                },
+                                style = MaterialTheme.typography.bodySmall.copy(color = Color.White.copy(alpha = 0.55f))
                             )
                         }
                         Button(
                             onClick = { onArtistClick(artist.id) },
                             colors = ButtonDefaults.buttonColors(containerColor = ConceptPrimary),
                             shape = CircleShape,
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
                         ) {
-                            Text("主页", color = Color(0xFF0F1115), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("歌手主页", color = Color(0xFF0F1115), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
         }
 
-        // 单曲精选（前4首）
+        // 单曲精选（前6首）
         if (result.songs.isNotEmpty()) {
             item {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -553,7 +587,7 @@ private fun ComplexSearchResultView(
                         )
                     }
 
-                    result.songs.take(4).forEachIndexed { index, song ->
+                    result.songs.take(6).forEachIndexed { index, song ->
                         SongItemRow(
                             song = song,
                             orderIndex = index + 1,

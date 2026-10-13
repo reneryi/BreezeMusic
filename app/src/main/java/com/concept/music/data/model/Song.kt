@@ -25,6 +25,7 @@ data class Song(
     val hashHiRes: String = "",
     val title: String,
     val artist: String,
+    val artistId: String = "",
     val album: String = "",
     val albumId: String = "",
     val coverUrl: String = "",

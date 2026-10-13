@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
@@ -20,27 +21,29 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.RankItem
-import com.concept.music.data.model.SceneCategory
 import com.concept.music.data.model.Song
-import com.concept.music.data.model.YouthChannel
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,40 +52,32 @@ fun HomeScreen(
     onSongClick: (Song, List<Song>) -> Unit,
     onLogin: () -> Unit,
     onSearchClick: () -> Unit = {},
+    onOpenDailyRecommend: () -> Unit = {},
     currentSong: Song? = null,
     onSongMoreClick: (Song) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val dailySongs by viewModel.dailyRecommendSongs.collectAsState()
-    val guessSongs by viewModel.guessSongs.collectAsState()
     val ranks by viewModel.ranks.collectAsState()
-    val youthChannels by viewModel.youthChannels.collectAsState()
-    val sceneCategories by viewModel.sceneCategories.collectAsState()
-    val selectedScene by viewModel.selectedScene.collectAsState()
-    val sceneSongs by viewModel.sceneSongs.collectAsState()
-    val sceneLoading by viewModel.sceneLoading.collectAsState()
     val loading by viewModel.loading.collectAsState()
     val vipStatus by viewModel.vipStatus.collectAsState(initial = com.concept.music.data.kugou.VipSnapshot())
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    val currentSceneCategory = sceneCategories.find { it.id == selectedScene } ?: sceneCategories.first()
-
-    // [INT-03] 下拉刷新状态
     val pullRefreshState = rememberPullToRefreshState()
     if (pullRefreshState.isRefreshing) {
         LaunchedEffect(true) {
             viewModel.refresh()
         }
     }
-    LaunchedEffect(loading, sceneLoading) {
-        if (!loading && !sceneLoading) {
+    LaunchedEffect(loading) {
+        if (!loading) {
             pullRefreshState.endRefresh()
         }
     }
 
-    // [FUNC-05] 榜单 / 电台详情抽屉状态
+    // 榜单详情抽屉状态
     var detailSheetTitle by remember { mutableStateOf("") }
     var detailSheetSubtitle by remember { mutableStateOf("") }
     var detailSheetCover by remember { mutableStateOf("") }
@@ -103,367 +98,82 @@ fun HomeScreen(
         }
     }
 
-    fun openChannelDetail(channel: YouthChannel) {
-        detailSheetTitle = channel.name
-        detailSheetSubtitle = channel.desc.ifBlank { channel.tag }
-        detailSheetCover = channel.coverUrl
-        detailSheetSongs = emptyList()
-        detailSheetLoading = true
-        showDetailSheet = true
-        coroutineScope.launch {
-            detailSheetSongs = viewModel.getYouthChannelSongs(channel.id)
-            detailSheetLoading = false
-        }
-    }
-
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFF0F1115))
             .nestedScroll(pullRefreshState.nestedScrollConnection)
     ) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .background(Color(0xFF0F1115)),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
-    ) {
-        if (loading || sceneLoading) {
-            item {
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().height(2.dp).clip(CircleShape),
-                    color = ConceptPrimary,
-                    trackColor = Color.Transparent
-                )
-            }
-        }
-
-        // 1. 顶部搜索胶囊
-        item {
-            DiscoverHeaderSearchBar(
-                vipActive = vipStatus.isVip,
-                onSearchClick = onSearchClick,
-                onLogin = onLogin
-            )
-        }
-
-        // 2. 场景化选择胶囊流 (全部推荐、沉浸学习、深夜助眠、燃动运动、自驾旅行、治愈微风)
-        item {
-            SceneFilterRow(
-                categories = sceneCategories,
-                selectedId = selectedScene,
-                onSelectCategory = { catId ->
-                    viewModel.selectScene(catId)
-                }
-            )
-        }
-
-        if (selectedScene != "ALL") {
-            // ================= 场景化专属沉浸流 =================
-            // 场景特色大 Banner
-            item {
-                SceneHeroBanner(
-                    category = currentSceneCategory,
-                    songCount = sceneSongs.size,
-                    isLoading = sceneLoading,
-                    onPlayAll = {
-                        if (sceneSongs.isNotEmpty()) {
-                            onSongClick(sceneSongs.first(), sceneSongs)
-                            Toast.makeText(context, "已开启【${currentSceneCategory.label}】场景沉浸播放", Toast.LENGTH_SHORT).show()
-                        } else {
-                            Toast.makeText(context, "场景音乐正在加载中...", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                )
-            }
-
-            // 该场景关联的概念版电台推荐
-            val matchedChannels = youthChannels.filter { it.tag.contains(currentSceneCategory.label) || it.desc.contains(currentSceneCategory.label) }
-                .ifEmpty { youthChannels.take(3) }
-
-            if (matchedChannels.isNotEmpty()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .background(Color(0xFF0F1115)),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            if (loading) {
                 item {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "${currentSceneCategory.label} · 推荐电台",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            ),
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        )
-
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            items(matchedChannels) { channel ->
-                                YouthChannelCard(
-                                    channel = channel,
-                                    onCardClick = { openChannelDetail(channel) },
-                                    onPlayClick = {
-                                        coroutineScope.launch {
-                                            Toast.makeText(context, "正在装载【${channel.name}】电台歌曲...", Toast.LENGTH_SHORT).show()
-                                            val songs = viewModel.getYouthChannelSongs(channel.id)
-                                            if (songs.isNotEmpty()) {
-                                                onSongClick(songs.first(), songs)
-                                            } else {
-                                                Toast.makeText(context, "电台加载失败，请重试", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 场景推荐歌曲列表
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "${currentSceneCategory.label}曲库 (${sceneSongs.size})",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
+                    LinearProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(2.dp)
+                            .clip(CircleShape),
+                        color = ConceptPrimary,
+                        trackColor = Color.Transparent
                     )
-                    if (sceneSongs.isNotEmpty()) {
-                        Text(
-                            text = "播放全部",
-                            color = ConceptPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable {
-                                onSongClick(sceneSongs.first(), sceneSongs)
-                            }
-                        )
-                    }
                 }
             }
 
-            itemsIndexed(sceneSongs, key = { index, song -> "scene_${song.id}_$index" }) { index, song ->
-                SongItemRow(
-                    song = song,
-                    orderIndex = index + 1,
-                    isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                    onClick = { onSongClick(song, sceneSongs) },
-                    onMoreClick = { onSongMoreClick(song) }
+            // 1. 顶部搜索胶囊
+            item {
+                DiscoverHeaderSearchBar(
+                    vipActive = vipStatus.isVip,
+                    onSearchClick = onSearchClick,
+                    onLogin = onLogin
                 )
             }
-        } else {
-            // ================= 默认全局推荐发现流 =================
-            // 3. 每日推荐精美 Banner
+
+            // 2. 每日推荐大卡片（加高设计 + 前三首封面错位重叠 + 点击进入独立界面）
             item {
                 DailyRecommendBanner(
-                    songCount = dailySongs.size,
+                    songs = dailySongs,
+                    onCardClick = onOpenDailyRecommend,
                     onPlayAll = {
                         if (dailySongs.isNotEmpty()) {
                             onSongClick(dailySongs.first(), dailySongs)
                         } else {
-                            Toast.makeText(context, "推荐歌曲正在加载中", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "每日推荐正在加载中", Toast.LENGTH_SHORT).show()
                         }
                     }
                 )
             }
 
-            // 4. 三大核心磁贴导航入口 (猜你喜欢、私人随心听、刷新发现)
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    QuickEntryTile(
-                        title = "猜你喜欢",
-                        subtitle = "AI 智能推荐",
-                        icon = Icons.Rounded.AutoAwesome,
-                        color = ConceptPrimary,
-                        onClick = {
-                            if (guessSongs.isNotEmpty()) {
-                                onSongClick(guessSongs.first(), guessSongs)
-                                Toast.makeText(context, "已开启【猜你喜欢】智能连播", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    QuickEntryTile(
-                        title = "随心听 FM",
-                        subtitle = "私人专属流",
-                        icon = Icons.Rounded.Radio,
-                        color = Color(0xFF64B5F6),
-                        onClick = {
-                            coroutineScope.launch {
-                                Toast.makeText(context, "正在接入【酷狗私人随心听】...", Toast.LENGTH_SHORT).show()
-                                val fmSongs = viewModel.getPersonalFmSongs()
-                                if (fmSongs.isNotEmpty()) {
-                                    onSongClick(fmSongs.first(), fmSongs)
-                                    Toast.makeText(context, "已开启【私人随心听】专属调频", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(context, "随心听连接失败，请稍后重试", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
-
-                    QuickEntryTile(
-                        title = "刷新发现",
-                        subtitle = "探索最新好歌",
-                        icon = Icons.Rounded.Refresh,
-                        color = VipGold,
-                        onClick = viewModel::refresh,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-
-            // 5. 【概念版专属电台 (Youth Channels)】卡片流
-            if (youthChannels.isNotEmpty()) {
+            // 3. 巅峰排行榜
+            if (ranks.isNotEmpty()) {
                 item {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    text = "概念版专属电台 · 青春频道",
-                                    style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White
-                                    )
-                                )
-                                Text(
-                                    text = "懂年轻人的心流空间与场景陪伴",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        color = Color.White.copy(alpha = 0.5f)
-                                    )
-                                )
-                            }
-                        }
-
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            items(youthChannels) { channel ->
-                                YouthChannelCard(
-                                    channel = channel,
-                                    onCardClick = { openChannelDetail(channel) },
-                                    onPlayClick = {
-                                        coroutineScope.launch {
-                                            Toast.makeText(context, "正在连接【${channel.name}】电台...", Toast.LENGTH_SHORT).show()
-                                            val songs = viewModel.getYouthChannelSongs(channel.id)
-                                            if (songs.isNotEmpty()) {
-                                                onSongClick(songs.first(), songs)
-                                            } else {
-                                                Toast.makeText(context, "电台加载失败，请重试", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 6. 【猜你喜欢】横向流
-            if (guessSongs.isNotEmpty()) {
-                item {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "猜你喜欢 · 智能推荐",
+                                text = "巅峰排行榜",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White
                                 )
                             )
                             Text(
-                                text = "播放全部",
-                                color = ConceptPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.clickable {
-                                    onSongClick(guessSongs.first(), guessSongs)
-                                }
+                                text = "官方实时热榜",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = Color.White.copy(alpha = 0.45f)
+                                )
                             )
                         }
-
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            items(guessSongs.take(8)) { song ->
-                                Card(
-                                    shape = RoundedCornerShape(18.dp),
-                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF181B22)),
-                                    modifier = Modifier
-                                        .width(135.dp)
-                                        .clickable { onSongClick(song, guessSongs) }
-                                ) {
-                                    Column(modifier = Modifier.padding(10.dp)) {
-                                        AsyncImage(
-                                            model = song.coverUrl,
-                                            contentDescription = song.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .size(115.dp)
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(Color(0xFF222733))
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = song.title,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = MaterialTheme.typography.bodyMedium.copy(
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color.White
-                                            )
-                                        )
-                                        Text(
-                                            text = song.artist,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                color = Color.White.copy(alpha = 0.5f)
-                                            )
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 7. 【巅峰排行榜】官方榜单横向大卡片
-            if (ranks.isNotEmpty()) {
-                item {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = "巅峰排行榜",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            ),
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        )
 
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -490,46 +200,9 @@ fun HomeScreen(
                     }
                 }
             }
-
-            // 8. 【今日专属推歌】精选曲目列表
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "今日专属推歌 (${dailySongs.size})",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    )
-                    Text(
-                        text = "播放全部",
-                        color = ConceptPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.clickable {
-                            if (dailySongs.isNotEmpty()) onSongClick(dailySongs.first(), dailySongs)
-                        }
-                    )
-                }
-            }
-
-            itemsIndexed(dailySongs, key = { index, song -> "daily_${song.id}_$index" }) { index, song ->
-                SongItemRow(
-                    song = song,
-                    orderIndex = index + 1,
-                    isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                    onClick = { onSongClick(song, dailySongs) },
-                    onMoreClick = { onSongMoreClick(song) }
-                )
-            }
         }
-    }
 
-        // [INT-03] 下拉刷新指示器
+        // 下拉刷新指示器
         PullToRefreshContainer(
             state = pullRefreshState,
             modifier = Modifier
@@ -540,7 +213,7 @@ fun HomeScreen(
         )
     }
 
-    // [FUNC-05] 榜单 / 概念版电台二级曲目浏览抽屉
+    // 榜单二级曲目浏览抽屉
     if (showDetailSheet) {
         ModalBottomSheet(
             onDismissRequest = { showDetailSheet = false },
@@ -649,238 +322,190 @@ fun HomeScreen(
     }
 }
 
-// ================= 子组件部分 =================
-
+/**
+ * 每日推荐独立详情页
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SceneFilterRow(
-    categories: List<SceneCategory>,
-    selectedId: String,
-    onSelectCategory: (String) -> Unit
+fun DailyRecommendScreen(
+    viewModel: HomeViewModel,
+    onBack: () -> Unit,
+    onSongClick: (Song, List<Song>) -> Unit,
+    currentSong: Song? = null,
+    onSongMoreClick: (Song) -> Unit = {}
 ) {
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        items(categories) { cat ->
-            val isSelected = cat.id == selectedId
-            val icon = when (cat.id) {
-                "ALL" -> Icons.Rounded.AutoAwesome
-                "STUDY" -> Icons.Rounded.School
-                "SLEEP" -> Icons.Rounded.NightsStay
-                "WORKOUT" -> Icons.Rounded.FitnessCenter
-                "DRIVE" -> Icons.Rounded.DirectionsCar
-                "HEALING" -> Icons.Rounded.Spa
-                else -> Icons.Rounded.Radio
+    val dailySongs by viewModel.dailyRecommendSongs.collectAsState()
+    val loading by viewModel.loading.collectAsState()
+    val today = remember { LocalDate.now() }
+    val monthStr = remember(today) { String.format("%02d", today.monthValue) }
+    val dayStr = remember(today) { String.format("%02d", today.dayOfMonth) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "每日推荐",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回", tint = Color.White)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { viewModel.refresh() }) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = "刷新推荐", tint = Color.White.copy(alpha = 0.8f))
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFF0F1115))
+            )
+        },
+        containerColor = Color(0xFF0F1115)
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+            contentPadding = PaddingValues(bottom = 100.dp)
+        ) {
+            // 顶部视觉头图区
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(
+                            Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFF144235),
+                                    Color(0xFF0F2D27),
+                                    Color(0xFF151922)
+                                )
+                            )
+                        )
+                        .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(26.dp))
+                        .padding(20.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StaggeredThreeCovers(
+                            songs = dailySongs.take(3),
+                            primarySize = 86.dp,
+                            secondarySize = 74.dp,
+                            tertiarySize = 64.dp
+                        )
+
+                        Spacer(modifier = Modifier.width(18.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(
+                                    text = dayStr,
+                                    color = ConceptPrimary,
+                                    fontSize = 32.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = " / $monthStr",
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(bottom = 4.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "私人定制 · 每日 6:00 更新",
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "根据你的听歌口味精选 ${dailySongs.size} 首好歌",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = Color.White.copy(alpha = 0.65f)
+                                )
+                            )
+                        }
+                    }
+                }
             }
 
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = if (isSelected) ConceptPrimary.copy(alpha = 0.2f) else Color(0xFF181B22),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .border(
-                        width = 1.dp,
-                        color = if (isSelected) ConceptPrimary.copy(alpha = 0.8f) else Color.Transparent,
-                        shape = RoundedCornerShape(16.dp)
-                    )
-                    .clickable { onSelectCategory(cat.id) }
-            ) {
+            // 播放全部操作栏
+            item {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = cat.label,
-                        tint = if (isSelected) ConceptPrimary else Color.White.copy(alpha = 0.6f),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = cat.label,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (isSelected) ConceptPrimary else Color.White.copy(alpha = 0.85f),
-                            fontSize = 13.sp
-                        )
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SceneHeroBanner(
-    category: SceneCategory,
-    songCount: Int,
-    isLoading: Boolean,
-    onPlayAll: () -> Unit
-) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            Color(0xFF163E32),
-                            Color(0xFF0D2520),
-                            Color(0xFF141A22)
-                        )
-                    )
-                )
-                .padding(20.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = ConceptPrimary.copy(alpha = 0.2f),
-                        modifier = Modifier.padding(bottom = 8.dp)
+                    Button(
+                        onClick = {
+                            if (dailySongs.isNotEmpty()) {
+                                onSongClick(dailySongs.first(), dailySongs)
+                            }
+                        },
+                        enabled = dailySongs.isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = ConceptPrimary,
+                            contentColor = Color(0xFF0A1014)
+                        ),
+                        shape = RoundedCornerShape(24.dp),
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp)
                     ) {
+                        Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "场景专属 · ${category.label}",
-                            color = ConceptPrimary,
-                            fontSize = 11.sp,
+                            text = "播放全部 (${dailySongs.size})",
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            fontSize = 14.sp
                         )
                     }
-                    Text(
-                        text = category.subtitle,
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.Black,
-                            color = Color.White
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = if (isLoading) "智能流挑选歌曲中..." else "已为您精选 $songCount 首沉浸曲目",
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            color = Color.White.copy(alpha = 0.7f)
-                        )
-                    )
-                }
 
-                Spacer(modifier = Modifier.width(12.dp))
-
-                FilledIconButton(
-                    onClick = onPlayAll,
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = ConceptPrimary),
-                    modifier = Modifier.size(52.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = "沉浸播放",
-                        tint = Color(0xFF0F1115),
-                        modifier = Modifier.size(30.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun YouthChannelCard(
-    channel: YouthChannel,
-    onCardClick: () -> Unit = {},
-    onPlayClick: () -> Unit
-) {
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF181B22)),
-        modifier = Modifier
-            .width(160.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onCardClick)
-    ) {
-        Column(modifier = Modifier.padding(10.dp)) {
-            Box(
-                modifier = Modifier
-                    .size(140.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF222733))
-            ) {
-                AsyncImage(
-                    model = channel.coverUrl,
-                    contentDescription = channel.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-
-                // 标签徽章
-                if (channel.tag.isNotBlank()) {
-                    Surface(
-                        color = Color.Black.copy(alpha = 0.6f),
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(8.dp)
-                    ) {
-                        Text(
-                            text = channel.tag,
+                    if (loading) {
+                        CircularProgressIndicator(
                             color = ConceptPrimary,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
-
-                // 悬浮微播放按钮（点击直接播放）
-                Surface(
-                    color = Color.Black.copy(alpha = 0.55f),
-                    shape = CircleShape,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp)
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .clickable(onClick = onPlayClick)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = "播放",
-                        tint = ConceptPrimary,
-                        modifier = Modifier
-                            .padding(6.dp)
-                            .fillMaxSize()
-                    )
-                }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Text(
-                text = channel.name,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            Text(
-                text = channel.desc,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    color = Color.White.copy(alpha = 0.5f),
-                    fontSize = 11.sp
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp)
-            )
+            if (dailySongs.isEmpty() && !loading) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 64.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("暂未获取到推荐歌曲，请下拉或点击右上角刷新", color = Color.White.copy(alpha = 0.5f))
+                    }
+                }
+            } else {
+                itemsIndexed(dailySongs, key = { index, song -> "daily_page_${song.id}_$index" }) { index, song ->
+                    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) {
+                        SongItemRow(
+                            song = song,
+                            orderIndex = index + 1,
+                            isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                            onClick = { onSongClick(song, dailySongs) },
+                            onMoreClick = { onSongMoreClick(song) }
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -913,7 +538,7 @@ private fun DiscoverHeaderSearchBar(
             )
             Spacer(modifier = Modifier.width(10.dp))
             Text(
-                text = "搜索周杰伦、热门歌曲、专辑、电台...",
+                text = "搜索歌曲、歌手、专辑、歌单...",
                 style = MaterialTheme.typography.bodyMedium.copy(
                     color = Color.White.copy(alpha = 0.45f),
                     fontSize = 14.sp
@@ -937,72 +562,159 @@ private fun DiscoverHeaderSearchBar(
     }
 }
 
+/**
+ * 重新设计的每日推荐大卡片：
+ * - 高度提升，视觉层次饱满
+ * - 左侧前三首歌曲封面错位重叠展示
+ * - 修正文案语病，改为“每日推荐”并展示日期与推荐曲目预览
+ * - 点击卡片进入独立每日推荐页，点击右侧播放按钮直接播放全部
+ */
 @Composable
 private fun DailyRecommendBanner(
-    songCount: Int,
+    songs: List<Song>,
+    onCardClick: () -> Unit,
     onPlayAll: () -> Unit
 ) {
+    val dateLabel = remember {
+        LocalDate.now().format(DateTimeFormatter.ofPattern("MM / dd"))
+    }
+    val previewSummary = remember(songs) {
+        if (songs.isNotEmpty()) {
+            val previewNames = songs.take(2).joinToString(" · ") { "${it.title}-${it.artist}" }
+            "含 $previewNames 等 ${songs.size} 首好歌"
+        } else {
+            "契合你的听歌品味 · 每日精选 30 首好歌"
+        }
+    }
+
     Card(
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(172.dp)
+            .clip(RoundedCornerShape(28.dp))
+            .clickable(onClick = onCardClick)
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxSize()
                 .background(
-                    Brush.horizontalGradient(
+                    Brush.linearGradient(
                         colors = listOf(
                             ConceptPrimaryDark,
-                            Color(0xFF0F3B32),
-                            Color(0xFF132029)
+                            Color(0xFF103F35),
+                            Color(0xFF13222C),
+                            Color(0xFF161A24)
                         )
                     )
                 )
-                .padding(20.dp)
+                .border(
+                    width = 1.dp,
+                    color = Color.White.copy(alpha = 0.10f),
+                    shape = RoundedCornerShape(28.dp)
+                )
+                .padding(horizontal = 20.dp, vertical = 18.dp)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxSize(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Rounded.CalendarToday,
-                            contentDescription = null,
-                            tint = ConceptPrimary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "今日每日推荐",
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Black,
-                                color = Color.White
+                // 左侧：前三首歌曲封面错位重叠显示
+                StaggeredThreeCovers(
+                    songs = songs.take(3),
+                    primarySize = 96.dp,
+                    secondarySize = 82.dp,
+                    tertiarySize = 70.dp
+                )
+
+                Spacer(modifier = Modifier.width(18.dp))
+
+                // 中间：标题、日期徽章与推荐语
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = ConceptPrimary.copy(alpha = 0.18f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CalendarToday,
+                                contentDescription = null,
+                                tint = ConceptPrimary,
+                                modifier = Modifier.size(12.dp)
                             )
-                        )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "$dateLabel · 个性化定制",
+                                color = ConceptPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
                     Text(
-                        text = "根据你的品味生成 · 共 ${songCount} 首专属好歌",
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            color = Color.White.copy(alpha = 0.7f)
+                        text = "每日推荐",
+                        style = MaterialTheme.typography.headlineSmall.copy(
+                            fontWeight = FontWeight.Black,
+                            color = Color.White,
+                            letterSpacing = 0.5.sp
                         )
                     )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Text(
+                        text = previewSummary,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = Color.White.copy(alpha = 0.72f),
+                            lineHeight = 17.sp
+                        ),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "进入歌单详情",
+                            color = ConceptPrimary.copy(alpha = 0.9f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Icon(
+                            imageVector = Icons.Rounded.ChevronRight,
+                            contentDescription = null,
+                            tint = ConceptPrimary.copy(alpha = 0.9f),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
                 }
 
-                // 播放全部悬浮按钮
+                Spacer(modifier = Modifier.width(10.dp))
+
+                // 右侧：独立快速播放按钮
                 FilledIconButton(
                     onClick = onPlayAll,
                     colors = IconButtonDefaults.filledIconButtonColors(containerColor = ConceptPrimary),
-                    modifier = Modifier.size(52.dp)
+                    modifier = Modifier
+                        .size(48.dp)
+                        .shadow(8.dp, CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.PlayArrow,
                         contentDescription = "播放全部",
-                        tint = Color(0xFF0F1115),
-                        modifier = Modifier.size(30.dp)
+                        tint = Color(0xFF0A1014),
+                        modifier = Modifier.size(28.dp)
                     )
                 }
             }
@@ -1010,60 +722,93 @@ private fun DailyRecommendBanner(
     }
 }
 
+/**
+ * 前三首歌曲封面错位重叠组件
+ */
 @Composable
-private fun QuickEntryTile(
-    title: String,
-    subtitle: String = "",
-    icon: ImageVector,
-    color: Color,
-    onClick: () -> Unit,
+private fun StaggeredThreeCovers(
+    songs: List<Song>,
+    primarySize: Dp = 94.dp,
+    secondarySize: Dp = 80.dp,
+    tertiarySize: Dp = 68.dp
+) {
+    val cover1 = songs.getOrNull(0)?.coverUrl.orEmpty()
+    val cover2 = songs.getOrNull(1)?.coverUrl.orEmpty()
+    val cover3 = songs.getOrNull(2)?.coverUrl.orEmpty()
+
+    Box(
+        modifier = Modifier
+            .width(primarySize + 36.dp)
+            .height(primarySize + 18.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        // 第 3 首封面（最底层，偏右下，微向右倾）
+        CoverStackLayer(
+            coverUrl = cover3,
+            size = tertiarySize,
+            modifier = Modifier
+                .offset(x = 36.dp, y = 10.dp)
+                .graphicsLayer {
+                    rotationZ = 9f
+                    alpha = 0.72f
+                }
+        )
+
+        // 第 2 首封面（中间层，居中偏右，微倾）
+        CoverStackLayer(
+            coverUrl = cover2,
+            size = secondarySize,
+            modifier = Modifier
+                .offset(x = 18.dp, y = 4.dp)
+                .graphicsLayer {
+                    rotationZ = 3.5f
+                    alpha = 0.88f
+                }
+        )
+
+        // 第 1 首封面（最顶层，偏左上，主视觉）
+        CoverStackLayer(
+            coverUrl = cover1,
+            size = primarySize,
+            modifier = Modifier
+                .offset(x = 0.dp, y = (-3).dp)
+                .graphicsLayer {
+                    rotationZ = -4f
+                }
+        )
+    }
+}
+
+@Composable
+private fun CoverStackLayer(
+    coverUrl: String,
+    size: Dp,
     modifier: Modifier = Modifier
 ) {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = Color(0xFF181B22),
+    val shape = RoundedCornerShape(16.dp)
+    Box(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick)
+            .size(size)
+            .shadow(8.dp, shape)
+            .clip(shape)
+            .background(Color(0xFF1E2631))
+            .border(1.2.dp, Color.White.copy(alpha = 0.22f), shape),
+        contentAlignment = Alignment.Center
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = color.copy(alpha = 0.15f),
-                modifier = Modifier.size(36.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = title,
-                        tint = color,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    fontSize = 13.sp
-                )
+        if (coverUrl.isNotBlank()) {
+            AsyncImage(
+                model = coverUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
             )
-            if (subtitle.isNotBlank()) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        color = Color.White.copy(alpha = 0.45f),
-                        fontSize = 10.sp
-                    ),
-                    maxLines = 1
-                )
-            }
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.MusicNote,
+                contentDescription = null,
+                tint = ConceptPrimary.copy(alpha = 0.6f),
+                modifier = Modifier.size(size * 0.42f)
+            )
         }
     }
 }
@@ -1139,4 +884,3 @@ private fun RankCardView(
         }
     }
 }
-

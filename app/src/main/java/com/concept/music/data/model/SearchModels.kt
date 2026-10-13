@@ -4,8 +4,7 @@ enum class SearchTab(val label: String) {
     COMPLEX("综合"),
     SONG("单曲"),
     ALBUM("专辑"),
-    PLAYLIST("歌单"),
-    ARTIST("歌手")
+    PLAYLIST("歌单")
 }
 
 data class AlbumItem(

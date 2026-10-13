@@ -159,6 +159,41 @@ class LibraryViewModel(
 
         _librarySongs.value = emptyList()
         if (userId == null || accountState.value.auth != AuthState.READY) {
+            if (section.startsWith("歌单:")) {
+                val targetPlaylistId = section.removePrefix("歌单:")
+                musicLibraryJob?.cancel()
+                musicLibraryJob = viewModelScope.launch {
+                    _libraryLoading.value = true
+                    _libraryError.value = null
+                    try {
+                        val infoDef = async { runCatching { VipManager.music.playlistInfo(targetPlaylistId) }.getOrNull() }
+                        val songsDef = async { runCatching { VipManager.music.fetchPlaylistSongsAll(targetPlaylistId) }.getOrDefault(emptyList()) }
+                        val extPlaylist = infoDef.await()
+                        val trackList = songsDef.await()
+                        val resolvedPl = (extPlaylist ?: Playlist(
+                            id = targetPlaylistId,
+                            title = "精选歌单",
+                            isCreatedByMe = false,
+                            globalCollectionId = targetPlaylistId
+                        )).let { pl ->
+                            pl.copy(
+                                coverUrl = pl.coverUrl.ifBlank { trackList.firstOrNull()?.coverUrl.orEmpty() },
+                                trackCount = if (trackList.isNotEmpty()) trackList.size else pl.trackCount,
+                                listCreateListid = pl.listCreateListid.ifBlank { targetPlaylistId }
+                            )
+                        }
+                        _playlists.value = (_playlists.value.filterNot {
+                            it.id == targetPlaylistId || it.id == resolvedPl.id || it.globalCollectionId == targetPlaylistId
+                        } + resolvedPl)
+                        _librarySongs.value = trackList
+                    } catch (e: Exception) {
+                        _libraryError.value = e.message ?: "歌单加载失败"
+                    } finally {
+                        _libraryLoading.value = false
+                    }
+                }
+                return
+            }
             _playlists.value = emptyList()
             _likedSongs.value = emptyList()
             _librarySongs.value = emptyList()
@@ -185,6 +220,14 @@ class LibraryViewModel(
                     }
                 }
 
+                val targetPlaylistId: String? = if (section.startsWith("歌单:")) section.removePrefix("歌单:") else null
+                val extInfoDef: Deferred<Playlist?>? = if (targetPlaylistId != null) {
+                    async<Playlist?> { runCatching { VipManager.music.playlistInfo(targetPlaylistId) }.getOrNull() }
+                } else null
+                val extSongsDef: Deferred<List<Song>>? = if (targetPlaylistId != null) {
+                    async<List<Song>> { runCatching { VipManager.music.fetchPlaylistSongsAll(targetPlaylistId) }.getOrDefault(emptyList()) }
+                } else null
+
                 val lists = VipManager.music.userPlaylists()
                 if (accounts.state.value.currentId != userId) return@launch
                 _playlists.value = lists
@@ -198,21 +241,36 @@ class LibraryViewModel(
                     "我喜欢" -> likedPl
                     "我创建的歌单" -> null
                     "收藏的歌单" -> null
-                    else -> section.removePrefix("歌单:").takeIf { section.startsWith("歌单:") }?.let { id -> lists.firstOrNull { it.id == id } }
+                    else -> targetPlaylistId?.let { id ->
+                        lists.firstOrNull { it.id == id || it.globalCollectionId == id || it.listCreateListid == id }
+                    }
                 }
                 when (section) {
                     "我创建的歌单", "收藏的歌单" -> _librarySongs.value = emptyList()
                     "我喜欢" -> _librarySongs.value = likedTracks
                     else -> {
                         if (selected != null) {
-                            _librarySongs.value = VipManager.music.playlistSongs(selected)
-                        } else if (section.startsWith("歌单:")) {
-                            val targetPlaylistId = section.removePrefix("歌单:")
-                            val extPlaylist = runCatching { VipManager.music.playlistInfo(targetPlaylistId) }.getOrNull()
-                            if (extPlaylist != null) {
-                                _playlists.value = (_playlists.value + extPlaylist).distinctBy { it.id }
+                            val tracks = runCatching { VipManager.music.playlistSongs(selected) }.getOrDefault(emptyList())
+                            _librarySongs.value = tracks.ifEmpty { extSongsDef?.await().orEmpty() }
+                        } else if (targetPlaylistId != null) {
+                            val extPlaylist = extInfoDef?.await()
+                            val trackList = extSongsDef?.await().orEmpty()
+                            val resolvedPl = (extPlaylist ?: Playlist(
+                                id = targetPlaylistId,
+                                title = "精选歌单",
+                                isCreatedByMe = false,
+                                globalCollectionId = targetPlaylistId
+                            )).let { pl ->
+                                pl.copy(
+                                    coverUrl = pl.coverUrl.ifBlank { trackList.firstOrNull()?.coverUrl.orEmpty() },
+                                    trackCount = if (trackList.isNotEmpty()) trackList.size else pl.trackCount,
+                                    listCreateListid = pl.listCreateListid.ifBlank { targetPlaylistId }
+                                )
                             }
-                            _librarySongs.value = runCatching { VipManager.music.fetchPlaylistSongsAll(targetPlaylistId) }.getOrDefault(emptyList())
+                            _playlists.value = (_playlists.value.filterNot {
+                                it.id == targetPlaylistId || it.id == resolvedPl.id || it.globalCollectionId == targetPlaylistId
+                            } + resolvedPl)
+                            _librarySongs.value = trackList
                         }
                     }
                 }
