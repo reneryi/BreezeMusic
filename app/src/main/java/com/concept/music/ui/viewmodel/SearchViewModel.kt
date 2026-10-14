@@ -8,6 +8,7 @@ import com.concept.music.data.model.ComplexSearchResult
 import com.concept.music.data.model.PlaylistItem
 import com.concept.music.data.model.SearchTab
 import com.concept.music.data.model.Song
+import com.concept.music.data.repository.SearchHistoryRepository
 import com.concept.music.data.vip.VipManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -15,7 +16,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class SearchViewModel : ViewModel() {
+class SearchViewModel(
+    private val historyRepo: SearchHistoryRepository = VipManager.searchHistoryRepo
+) : ViewModel() {
     private val _query = MutableStateFlow("")
     val query = _query.asStateFlow()
 
@@ -25,11 +28,18 @@ class SearchViewModel : ViewModel() {
     private val _hotKeywords = MutableStateFlow<List<String>>(emptyList())
     val hotKeywords = _hotKeywords.asStateFlow()
 
-    private val _searchHistory = MutableStateFlow<List<String>>(listOf("周杰伦", "林俊杰", "告五人"))
+    private val _searchHistory = MutableStateFlow<List<String>>(historyRepo.get())
     val searchHistory = _searchHistory.asStateFlow()
 
     private val _suggestions = MutableStateFlow<List<String>>(emptyList())
     val suggestions = _suggestions.asStateFlow()
+
+    // 搜索执行状态追踪（用于区分未搜索状态与0条匹配的空结果状态）
+    private val _hasSearched = MutableStateFlow(false)
+    val hasSearched = _hasSearched.asStateFlow()
+
+    private val _lastSearchedKeyword = MutableStateFlow("")
+    val lastSearchedKeyword = _lastSearchedKeyword.asStateFlow()
 
     // 搜索结果
     private val _complexResult = MutableStateFlow(ComplexSearchResult())
@@ -64,7 +74,7 @@ class SearchViewModel : ViewModel() {
     private var loadMoreJob: Job? = null
 
     init {
-        loadHotKeywords()
+        // 不在初始化时无谓触发已被页面移除的热搜请求
     }
 
     fun loadHotKeywords() {
@@ -124,14 +134,19 @@ class SearchViewModel : ViewModel() {
     fun search(targetQuery: String = _query.value) {
         val trimmed = targetQuery.trim()
         if (trimmed.isBlank()) return
-        _query.value = trimmed
+        suggestJob?.cancel()
         _suggestions.value = emptyList()
+        _query.value = trimmed
+        _lastSearchedKeyword.value = trimmed
+        _hasSearched.value = true
 
-        // 加入历史记录
+        // 加入历史记录并持久化
         val currentHistory = _searchHistory.value.toMutableList()
         currentHistory.remove(trimmed)
         currentHistory.add(0, trimmed)
-        _searchHistory.value = currentHistory.take(15)
+        val updated = currentHistory.take(15)
+        _searchHistory.value = updated
+        historyRepo.save(updated)
 
         performSearchForCurrentTab(trimmed, silent = false)
     }
@@ -227,17 +242,28 @@ class SearchViewModel : ViewModel() {
         }
     }
 
+    fun dismissSuggestions() {
+        suggestJob?.cancel()
+        _suggestions.value = emptyList()
+    }
+
     fun clearHistory() {
         _searchHistory.value = emptyList()
+        historyRepo.clear()
     }
 
     fun removeHistoryItem(item: String) {
-        _searchHistory.value = _searchHistory.value.filter { it != item }
+        val updated = _searchHistory.value.filter { it != item }
+        _searchHistory.value = updated
+        historyRepo.save(updated)
     }
 
     fun clearQuery() {
+        suggestJob?.cancel()
         _query.value = ""
         lastComplexKeyword = ""
+        _lastSearchedKeyword.value = ""
+        _hasSearched.value = false
         _suggestions.value = emptyList()
         _complexResult.value = ComplexSearchResult()
         _songResults.value = emptyList()

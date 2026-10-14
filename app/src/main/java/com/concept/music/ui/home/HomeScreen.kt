@@ -1,6 +1,7 @@
 package com.concept.music.ui.home
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -60,7 +61,6 @@ fun HomeScreen(
     val dailySongs by viewModel.dailyRecommendSongs.collectAsState()
     val ranks by viewModel.ranks.collectAsState()
     val loading by viewModel.loading.collectAsState()
-    val vipStatus by viewModel.vipStatus.collectAsState(initial = com.concept.music.data.kugou.VipSnapshot())
 
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -125,12 +125,10 @@ fun HomeScreen(
                 }
             }
 
-            // 1. 顶部搜索胶囊
+            // 1. 顶部标题与右上角搜索按钮
             item {
-                DiscoverHeaderSearchBar(
-                    vipActive = vipStatus.isVip,
-                    onSearchClick = onSearchClick,
-                    onLogin = onLogin
+                DiscoverTopHeader(
+                    onSearchClick = onSearchClick
                 )
             }
 
@@ -511,51 +509,51 @@ fun DailyRecommendScreen(
 }
 
 @Composable
-private fun DiscoverHeaderSearchBar(
-    vipActive: Boolean,
-    onSearchClick: () -> Unit,
-    onLogin: () -> Unit = {}
+private fun DiscoverTopHeader(
+    onSearchClick: () -> Unit
 ) {
-    Surface(
-        shape = CircleShape,
-        color = Color(0xFF1B1E26),
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(CircleShape)
-            .clickable(onClick = onSearchClick)
+            .padding(top = 8.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Search,
-                contentDescription = "搜索",
-                tint = ConceptPrimary,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
+        Column {
             Text(
-                text = "搜索歌曲、歌手、专辑、歌单...",
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    color = Color.White.copy(alpha = 0.45f),
-                    fontSize = 14.sp
-                ),
-                modifier = Modifier.weight(1f)
+                text = "发现",
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White,
+                    letterSpacing = 0.5.sp
+                )
             )
-            Surface(
-                color = if (vipActive) VipGold.copy(alpha = 0.2f) else ConceptPrimary.copy(alpha = 0.15f),
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.clickable { if (!vipActive) onLogin() }
-            ) {
-                Text(
-                    text = if (vipActive) "VIP" else "登录",
-                    color = if (vipActive) VipGold else ConceptPrimary,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "探索你的音乐世界",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color = Color.White.copy(alpha = 0.45f),
+                    letterSpacing = 0.3.sp
+                )
+            )
+        }
+
+        // 右上角搜索触发按钮（精致圆润胶囊，去除原有全宽搜索框与右侧VIP标识）
+        Surface(
+            shape = CircleShape,
+            color = Color(0xFF1B1E26),
+            border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.08f)),
+            modifier = Modifier
+                .size(42.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onSearchClick)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Rounded.Search,
+                    contentDescription = "搜索",
+                    tint = ConceptPrimary,
+                    modifier = Modifier.size(22.dp)
                 )
             }
         }

@@ -6,9 +6,16 @@ import com.concept.music.ui.viewmodel.CoverStyle
 import com.concept.music.ui.viewmodel.LyricAlignment
 import com.concept.music.ui.viewmodel.PlayerUiState
 import com.google.gson.JsonObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import org.junit.Assert.*
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class UiAlignmentRegressionTest {
 
     @Test
@@ -201,5 +208,80 @@ class UiAlignmentRegressionTest {
         assertEquals("root_1", comment.parentId)
         assertEquals("原评主", comment.replyUserName)
         assertEquals("刚刚", comment.timeFormatted)
+    }
+
+    @Test
+    fun testSearchViewModelHistoryInitiallyEmptyAndCleanable() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = com.concept.music.ui.viewmodel.SearchViewModel()
+            // 验证已彻底清除写死的模拟搜索记录
+            assertTrue(vm.searchHistory.value.isEmpty())
+
+            // 验证搜索后历史记录正常追加与去重
+            vm.search("夜曲")
+            assertEquals(listOf("夜曲"), vm.searchHistory.value)
+
+            vm.search("晴天")
+            assertEquals(listOf("晴天", "夜曲"), vm.searchHistory.value)
+
+            // 验证单项移除与清空
+            vm.removeHistoryItem("夜曲")
+            assertEquals(listOf("晴天"), vm.searchHistory.value)
+
+            vm.clearHistory()
+            assertTrue(vm.searchHistory.value.isEmpty())
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun testSearchExecutionStateAndEmptyResultBehavior() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = com.concept.music.ui.viewmodel.SearchViewModel()
+            assertFalse(vm.hasSearched.value)
+            assertEquals("", vm.lastSearchedKeyword.value)
+
+            // 执行搜索
+            vm.search("冷门未收录歌曲")
+            assertTrue(vm.hasSearched.value)
+            assertEquals("冷门未收录歌曲", vm.lastSearchedKeyword.value)
+
+            // 清空搜索重置
+            vm.clearQuery()
+            assertFalse(vm.hasSearched.value)
+            assertEquals("", vm.lastSearchedKeyword.value)
+            assertEquals("", vm.query.value)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun testSearchSuggestionCancellationAndDismissal() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = com.concept.music.ui.viewmodel.SearchViewModel()
+            vm.dismissSuggestions()
+            assertTrue(vm.suggestions.value.isEmpty())
+
+            vm.search("七里香")
+            assertTrue(vm.suggestions.value.isEmpty())
+            assertTrue(vm.hasSearched.value)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun testSearchHistoryRepository() {
+        val repo = com.concept.music.data.repository.SearchHistoryRepository(null)
+        assertTrue(repo.get().isEmpty())
+        repo.save(listOf("稻香", "花海"))
+        assertEquals(listOf("稻香", "花海"), repo.get())
+        repo.clear()
+        assertTrue(repo.get().isEmpty())
     }
 }

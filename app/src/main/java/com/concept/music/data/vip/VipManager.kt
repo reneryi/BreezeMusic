@@ -3,6 +3,7 @@ package com.concept.music.data.vip
 import android.content.Context
 import com.concept.music.data.kugou.*
 import com.concept.music.data.repository.PlaybackHistoryRepository
+import com.concept.music.data.repository.SearchHistoryRepository
 
 /** Application-scoped dependencies. Account actions are owned by LibraryViewModel. */
 object VipManager {
@@ -13,6 +14,7 @@ object VipManager {
     lateinit var music: MusicApiRepository; private set
     lateinit var lyric: LyricRepository; private set
     lateinit var history: PlaybackHistoryRepository; private set
+    var searchHistoryRepo: SearchHistoryRepository = SearchHistoryRepository(null); private set
     lateinit var device: () -> DeviceIdentity; private set
 
     fun initialize(context: Context) {
@@ -27,6 +29,7 @@ object VipManager {
         music = MusicApiRepository(transport, accounts, store::device)
         lyric = LyricRepository(transport, store::device)
         history = PlaybackHistoryRepository(context.applicationContext)
+        searchHistoryRepo = SearchHistoryRepository(context.applicationContext)
         ListeningGradeManager.initialize(context.applicationContext)
     }
 

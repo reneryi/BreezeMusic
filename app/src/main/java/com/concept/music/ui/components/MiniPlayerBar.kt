@@ -7,6 +7,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
@@ -23,8 +24,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -40,6 +41,13 @@ import com.concept.music.ui.theme.VipGold
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/**
+ * 重新设计的现代流体悬浮播放条（Floating Island MiniPlayer）：
+ * - 纯净现代浮岛胶囊形态，大圆角搭配双层微光描边与氛围阴影
+ * - 连续旋转黑胶微唱盘与手势平滑横滑切歌
+ * - 极简一体化主色高光控制按键组
+ * - 底部无缝内嵌渐变流光播放进度条
+ */
 @Composable
 fun MiniPlayerBar(
     currentSong: Song?,
@@ -73,27 +81,27 @@ fun MiniPlayerBar(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
             .shadow(
-                elevation = 16.dp,
-                shape = RoundedCornerShape(24.dp),
-                ambientColor = Color.Black.copy(alpha = 0.6f),
-                spotColor = ConceptPrimary.copy(alpha = 0.25f)
+                elevation = 18.dp,
+                shape = RoundedCornerShape(26.dp),
+                ambientColor = Color.Black.copy(alpha = 0.65f),
+                spotColor = ConceptPrimary.copy(alpha = 0.28f)
             )
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(26.dp))
             .clickable(onClick = onBarClick),
-        color = Color(0xE8181C24),
-        border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.09f)),
-        tonalElevation = 8.dp
+        color = Color(0xF2131620),
+        border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.12f)),
+        tonalElevation = 6.dp
     ) {
         Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 左侧封面与歌曲信息区域：支持左右滑动手势切歌 ([INT-01])
+                // 左侧封面与歌曲信息区域：支持左右滑动手势切歌与点击展开播放页
                 Row(
                     modifier = Modifier
                         .weight(1f)
@@ -101,6 +109,7 @@ fun MiniPlayerBar(
                             translationX = dragOffsetX.value * 0.45f
                             alpha = (1f - (kotlin.math.abs(dragOffsetX.value) / 360f)).coerceIn(0.4f, 1f)
                         }
+                        .clickable(onClick = onBarClick)
                         .pointerInput(currentSong.id) {
                             detectHorizontalDragGestures(
                                 onDragEnd = {
@@ -134,16 +143,17 @@ fun MiniPlayerBar(
                         },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 封面 (连续相位旋转唱盘样式，下推至 Draw 阶段避免 60fps 主线程重组)
+                    // 黑胶微唱盘封面 (Draw 阶段旋转)
                     Box(
                         modifier = Modifier
-                            .size(46.dp)
+                            .size(44.dp)
                             .graphicsLayer {
                                 rotationZ = rotationAnim.value % 360f
                                 shape = CircleShape
                                 clip = true
                             }
-                            .background(Color(0xFF282D37)),
+                            .background(Color(0xFF222631))
+                            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         if (currentSong.coverUrl.isNotEmpty()) {
@@ -158,12 +168,12 @@ fun MiniPlayerBar(
                                 imageVector = Icons.Rounded.MusicNote,
                                 contentDescription = null,
                                 tint = ConceptPrimary,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
 
                     // 歌曲与歌手
                     Column(
@@ -174,28 +184,29 @@ fun MiniPlayerBar(
                                 text = currentSong.title,
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                                    color = Color.White,
+                                    fontSize = 14.sp
                                 ),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f, fill = false)
                             )
                             if (currentSong.isHiRes) {
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
                                 Surface(
-                                    color = VipGold.copy(alpha = 0.2f),
+                                    color = VipGold.copy(alpha = 0.18f),
                                     shape = RoundedCornerShape(4.dp)
                                 ) {
                                     Text(
                                         text = "Hi-Res",
                                         color = VipGold,
-                                        fontSize = 9.sp,
+                                        fontSize = 8.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                     )
                                 }
                             } else if (currentSong.isLossless) {
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
                                 Surface(
                                     color = ConceptPrimary.copy(alpha = 0.16f),
                                     shape = RoundedCornerShape(4.dp)
@@ -203,7 +214,7 @@ fun MiniPlayerBar(
                                     Text(
                                         text = "SQ",
                                         color = ConceptPrimary,
-                                        fontSize = 9.sp,
+                                        fontSize = 8.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                     )
@@ -216,7 +227,8 @@ fun MiniPlayerBar(
                         Text(
                             text = "${currentSong.artist} · 左右轻滑切歌",
                             style = MaterialTheme.typography.bodySmall.copy(
-                                color = Color.White.copy(alpha = 0.58f)
+                                color = Color.White.copy(alpha = 0.55f),
+                                fontSize = 11.sp
                             ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -226,12 +238,12 @@ fun MiniPlayerBar(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // 播放/暂停实心圆按钮
+                // 控制按键组：播放/暂停
                 Surface(
                     color = ConceptPrimary,
                     shape = CircleShape,
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(38.dp)
                         .clip(CircleShape)
                         .clickable(onClick = onTogglePlay)
                 ) {
@@ -239,36 +251,42 @@ fun MiniPlayerBar(
                         Icon(
                             imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                             contentDescription = if (isPlaying) "暂停" else "播放",
-                            tint = Color(0xFF0A1014),
+                            tint = Color(0xFF091215),
                             modifier = Modifier.size(22.dp)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.width(4.dp))
+                Spacer(modifier = Modifier.width(2.dp))
 
                 // 下一曲
-                IconButton(onClick = onNextClick) {
+                IconButton(
+                    onClick = onNextClick,
+                    modifier = Modifier.size(38.dp)
+                ) {
                     Icon(
                         imageVector = Icons.Rounded.SkipNext,
                         contentDescription = "下一首",
                         tint = Color.White.copy(alpha = 0.85f),
-                        modifier = Modifier.size(26.dp)
+                        modifier = Modifier.size(24.dp)
                     )
                 }
 
                 // 播放列表
-                IconButton(onClick = onQueueClick) {
+                IconButton(
+                    onClick = onQueueClick,
+                    modifier = Modifier.size(36.dp)
+                ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
                         contentDescription = "播放列表",
-                        tint = Color.White.copy(alpha = 0.7f),
-                        modifier = Modifier.size(24.dp)
+                        tint = Color.White.copy(alpha = 0.65f),
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
 
-            // 细微播放进度条
+            // 底部内嵌极细流光播放进度条
             val progressFraction = if (durationMs > 0L) {
                 (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
             } else 0f
@@ -277,9 +295,9 @@ fun MiniPlayerBar(
                 progress = { progressFraction },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(2.5.dp),
+                    .height(2.dp),
                 color = ConceptPrimary,
-                trackColor = Color.White.copy(alpha = 0.08f)
+                trackColor = Color.White.copy(alpha = 0.06f)
             )
         }
     }
