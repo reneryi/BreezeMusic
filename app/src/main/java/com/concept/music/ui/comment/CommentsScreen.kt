@@ -582,9 +582,9 @@ private fun RootCommentCard(
                         .padding(horizontal = 6.dp, vertical = 3.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.Favorite,
+                        imageVector = if (comment.isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                         contentDescription = "点赞",
-                        tint = if (comment.likeCount > 50) Color(0xFFFF5252) else Color.White.copy(alpha = 0.45f),
+                        tint = if (comment.isLiked) Color(0xFFFF5252) else Color.White.copy(alpha = 0.45f),
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(3.dp))

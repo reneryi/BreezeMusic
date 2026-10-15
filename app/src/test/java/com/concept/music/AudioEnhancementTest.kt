@@ -303,4 +303,54 @@ class AudioEnhancementTest {
         assertEquals("22222222222222222222222222222222", songLosslessOnly.hashForQuality(AudioQuality.HI_RES))
         assertEquals("33333333333333333333333333333333", songLosslessOnly.hashForQuality(AudioQuality.HIGH))
     }
+
+    @Test
+    fun testAudioEffectBandsSerializationAndPresetFallback() {
+        val customBands = listOf(120, -40, 80, 150, -90)
+        val serialized = com.concept.music.service.AudioEffectManager.serializeBands(customBands)
+        assertEquals("120,-40,80,150,-90", serialized)
+        val restored = com.concept.music.service.AudioEffectManager.parseBandsString(serialized, EffectPreset.CUSTOM)
+        assertEquals(customBands, restored)
+
+        val viper3dBands = com.concept.music.service.AudioEffectManager.parseBandsString(null, EffectPreset.VIPER_3D)
+        assertEquals(listOf(60, 20, -40, 60, 90), viper3dBands)
+    }
+
+    @Test
+    fun testAccompanyHashAndFreePrivilegeExtraction() {
+        val store = MemoryStore()
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ) = ApiResponse(JsonObject())
+        }
+        val repo = MusicApiRepository(transport, AccountRepository(store, AuthRepository(transport, store), transport))
+        val json = JsonObject().apply {
+            addProperty("songname", "晴天")
+            addProperty("singername", "周杰伦")
+            addProperty("FileHash", "44444444444444444444444444444444")
+            addProperty("AccompanyFileHash", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            addProperty("privilege", 0)
+        }
+        val parsed = repo.parseSong(json)
+        assertTrue(parsed.hasAccompaniment)
+        assertEquals("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", parsed.accompanyHash)
+        assertTrue(parsed.isFreePrivilege)
+    }
+
+    @Test
+    fun testEmptySongCommentsReturnsEmptyInsteadOfFakeComments() = kotlinx.coroutines.test.runTest {
+        val store = MemoryStore()
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ) = ApiResponse(JsonObject())
+        }
+        val repo = MusicApiRepository(transport, AccountRepository(store, AuthRepository(transport, store), transport))
+        val song = Song(id = "999", albumAudioId = 999L, title = "无评论新歌", artist = "独立音乐人")
+        val comments = repo.songComments(song, type = "hot", page = 1)
+        assertTrue("无评论歌曲不应注入伪造评论", comments.isEmpty())
+    }
 }

@@ -23,6 +23,7 @@ data class Song(
     val hash320: String = "",
     val hashFlac: String = "",
     val hashHiRes: String = "",
+    val accompanyHash: String = "",
     val title: String,
     val artist: String,
     val artistId: String = "",
@@ -31,6 +32,7 @@ data class Song(
     val coverUrl: String = "",
     val durationMs: Long = 0,
     val isVip: Boolean = false,
+    val isFreePrivilege: Boolean = false,
     val isLossless: Boolean = false,
     val playUrl: String = "",
     val albumAudioId: Long = 0L,
@@ -46,6 +48,9 @@ data class Song(
     val climaxStartMs: Long = 0L,
     val climaxEndMs: Long = 0L
 ) {
+    val hasAccompaniment: Boolean
+        get() = accompanyHash.isNotBlank()
+
     /**
      * 有效副歌（高潮）起点毫秒数 ([INNOV-01])
      * 若服务端返回了有效的 climax_info 则优先使用；否则智能截取黄金副歌区间（30% 处起播，持续 28 秒）

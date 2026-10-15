@@ -78,6 +78,7 @@ data class PlayerUiState(
     val sleepStopAfterCurrentSong: Boolean = false,
     val climaxModeEnabled: Boolean = false,
     val climaxUnlockedForCurrentSong: Boolean = false,
+    val accompanyModeEnabled: Boolean = false,
     val comments: List<SongComment> = emptyList(),
     val commentsLoading: Boolean = false,
     val commentsPage: Int = 1,
@@ -383,11 +384,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         val list = (queue.ifEmpty { listOf(song) }).distinctBy { it.id }
         val index = list.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
+        // [P0-4] 解除游客态强制禁播拦截：允许未登录用户正常解析并播放免费曲目与试听流
         val userId = VipManager.accounts.state.value.currentId
-        if (userId == null) {
-            mutableState.value = mutableState.value.copy(error = "请先登录后播放")
-            return
-        }
 
         resolveJob?.cancel()
         prefetchJob?.cancel()
@@ -411,10 +409,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         resolveJob = viewModelScope.launch {
             try {
                 val prefQuality = mutableState.value.preferredQuality
+                val useAccompany = mutableState.value.accompanyModeEnabled
                 // 默认采用音源实际拥有的最高音质或首选音质
                 val playQuality = if (prefQuality in song.effectiveQualities) prefQuality else song.highestQuality
-                val playbackResult = VipManager.music.resolvePlayback(song, playQuality)
-                val url = song.playUrl.takeIf { it.startsWith("http") } ?: playbackResult.url
+                val playbackResult = VipManager.music.resolvePlayback(song, playQuality, useAccompaniment = useAccompany)
+                val url = if (useAccompany) playbackResult.url else (song.playUrl.takeIf { it.startsWith("http") } ?: playbackResult.url)
 
                 if (VipManager.accounts.state.value.currentId != userId) return@launch
 
@@ -912,6 +911,18 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         )
     }
 
+    /**
+     * [P1-3] 一键切换「原唱 / 伴奏 (KTV 消音模式)」，保持当前播放进度无缝重连
+     */
+    fun toggleAccompanyMode() {
+        val nextAccompany = !mutableState.value.accompanyModeEnabled
+        mutableState.value = mutableState.value.copy(accompanyModeEnabled = nextAccompany)
+        val currentSong = mutableState.value.currentSong ?: return
+        val currentPosition = mutableState.value.currentPositionMs
+        val updatedSong = currentSong.copy(playUrl = "")
+        playSong(updatedSong, mutableState.value.playlistQueue, seekToPositionMs = currentPosition)
+    }
+
     private fun triggerClimaxSmoothFadeIn() {
         climaxFadeInJob?.cancel()
         val player = activePlayer ?: return
@@ -1007,19 +1018,39 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun likeComment(commentId: String) {
+        var targetNewLikeState: Boolean? = null
         val currentList = mutableState.value.comments.map { comment ->
             if (comment.id == commentId) {
-                comment.copy(likeCount = comment.likeCount + 1)
+                val nextLiked = !comment.isLiked
+                targetNewLikeState = nextLiked
+                val delta = if (nextLiked) 1 else -1
+                comment.copy(
+                    isLiked = nextLiked,
+                    likeCount = (comment.likeCount + delta).coerceAtLeast(0)
+                )
             } else {
                 val updatedReplies = comment.replies.map { reply ->
                     if (reply.id == commentId) {
-                        reply.copy(likeCount = reply.likeCount + 1)
+                        val nextLiked = !reply.isLiked
+                        targetNewLikeState = nextLiked
+                        val delta = if (nextLiked) 1 else -1
+                        reply.copy(
+                            isLiked = nextLiked,
+                            likeCount = (reply.likeCount + delta).coerceAtLeast(0)
+                        )
                     } else reply
                 }
                 comment.copy(replies = updatedReplies)
             }
         }
         mutableState.value = mutableState.value.copy(comments = currentList)
+        val song = mutableState.value.currentSong
+        val liked = targetNewLikeState
+        if (song != null && liked != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { VipManager.music.likeSongComment(song, commentId, liked) }
+            }
+        }
     }
 
     private fun prefetchNextSong(queue: List<Song>, currentIndex: Int) {
@@ -1129,9 +1160,13 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             // 2. 官方 CSCC 播放 start 事件上报
             KugouCsccReporter.onSongStart(song)
 
-            // 3. 官方云端播放历史同步上报 (/playhistory/v1/upload_songs)
+            // 3. 官方云端播放历史同步上报 (/playhistory/v1/upload_songs) + [P0-3] 概念版听歌打卡上报 (/youth/v2/report/listen_song)
             viewModelScope.launch(Dispatchers.IO) {
                 runCatching { VipManager.music.uploadPlayHistory(song) }
+                runCatching {
+                    val mxid = song.albumAudioId.takeIf { it > 0L } ?: song.audioId.takeIf { it > 0L } ?: 0L
+                    if (mxid > 0L) VipManager.music.reportListenSong(mxid)
+                }
             }
 
             // 4. 刷新缓存统计

@@ -126,20 +126,29 @@ object VipGuardianManager {
                 if (accountCtx == null) {
                     "未登录酷狗账号，待登录后自动守护"
                 } else {
-                    val claimRes = VipManager.vip.claim(accountCtx, automatic = !isManual)
+                    // [P0-3] 先执行概念版专属听歌打卡任务 (/youth/v2/report/listen_song)，确保满足领取/升级前置听歌条件
                     if (_state.value.autoReportEightSongs) {
                         runCatching {
                             val dailySongs = VipManager.music.dailyRecommend().take(8)
-                            dailySongs.forEach { song ->
-                                VipManager.music.uploadPlayHistory(song)
-                                ListeningGradeManager.onSongCompleted(song)
+                            if (dailySongs.isNotEmpty()) {
+                                dailySongs.forEach { song ->
+                                    val mxid = song.albumAudioId.takeIf { it > 0L }
+                                        ?: song.audioId.takeIf { it > 0L }
+                                        ?: 666075191L
+                                    VipManager.music.reportListenSong(mxid)
+                                    VipManager.music.uploadPlayHistory(song)
+                                    ListeningGradeManager.onSongCompleted(song)
+                                }
+                            } else {
+                                VipManager.music.reportListenSong(666075191L)
                             }
                         }
                     }
+                    val claimRes = VipManager.vip.claim(accountCtx, automatic = !isManual)
                     when (claimRes.outcome) {
                         ClaimOutcome.SUCCESS, ClaimOutcome.ALREADY_DONE -> {
                             prefs?.edit()?.putString("last_run_day", currentDay)?.apply()
-                            "今日概念版 VIP 已激活 · 听歌满级任务已同步"
+                            "今日概念版 VIP 已激活 · 听歌打卡与满级任务已同步"
                         }
                         else -> claimRes.message
                     }

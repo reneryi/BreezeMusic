@@ -35,4 +35,73 @@ class KugouProtocolTest {
         assertFalse(response.success)
         try { response.requireSuccess(); fail("missing status must fail") } catch (expected: ApiFailure) { assertNull(expected.code) }
     }
+
+    @Test fun registerDeviceSavesDfidWhenCurrentDfidIsPlaceholder() = kotlinx.coroutines.test.runTest {
+        var savedDfid = "-"
+        val store = object : SessionStore by MemoryStore() {
+            override fun device() = DeviceIdentity("fixture-guid", "1234", "dev", dfid = savedDfid)
+            override fun saveDfid(dfid: String) { savedDfid = dfid }
+        }
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+
+            override suspend fun callAdvanced(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?,
+                sign: Boolean, includeDefaultParams: Boolean
+            ): ApiResponse {
+                assertEquals("/v1/register_dev", path)
+                return ApiResponse(com.google.gson.JsonParser.parseString("{\"status\":1,\"data\":{\"dfid\":\"dfid_concept_2026\"}}").asJsonObject)
+            }
+        }
+        val auth = AuthRepository(transport, store)
+        val dfid = auth.registerDevice()
+        assertEquals("dfid_concept_2026", dfid)
+        assertEquals("dfid_concept_2026", savedDfid)
+    }
+
+    @Test fun resolvePlaybackUsesPrivUrlEvenWhenVipTokenIsNull() = kotlinx.coroutines.test.runTest {
+        val store = MemoryStore()
+        var privUrlCalled = false
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+
+            override suspend fun callAdvanced(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?,
+                sign: Boolean, includeDefaultParams: Boolean
+            ): ApiResponse {
+                if (path == "/v6/priv_url") {
+                    privUrlCalled = true
+                    assertEquals(6, body?.get("vip")?.asInt)
+                    assertEquals("a", body?.getAsJsonObject("tracker_param")?.get("viptoken")?.asString)
+                    val mockPriv = "{\"status\":1,\"priv_status\":1,\"file_size\":28000000,\"bitrate\":920,\"extname\":\"flac\",\"url\":[\"http://vip.kugou.com/lossless.flac\"]}"
+                    return ApiResponse(com.google.gson.JsonParser.parseString(mockPriv).asJsonObject)
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+        val song = com.concept.music.data.model.Song(
+            id = "s1",
+            hash = "11111111111111111111111111111111",
+            hashFlac = "22222222222222222222222222222222",
+            title = "概念版无损测试",
+            artist = "歌手",
+            durationMs = 240_000L,
+            isLossless = true
+        )
+        val res = repo.resolvePlayback(song, com.concept.music.data.model.AudioQuality.LOSSLESS)
+        assertTrue(privUrlCalled)
+        assertEquals("http://vip.kugou.com/lossless.flac", res.url)
+        assertEquals(com.concept.music.data.model.AudioQuality.LOSSLESS, res.actualQuality)
+    }
 }

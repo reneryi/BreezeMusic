@@ -10,7 +10,7 @@ import java.time.Clock
 
 class VipRepository(private val transport: KugouTransport, private val accounts: AccountRepository,
     private val verification: VerificationCoordinator, private val clock: Clock = Clock.systemUTC(),
-    private val settleDelayMs: Long = 1_000) {
+    private val settleDelayMs: Long = 1_000, private val onVipActivated: () -> Unit = {}) {
     private val locks = mutableMapOf<String, Mutex>()
     private val mutable = MutableStateFlow(VipUiState())
     val state = mutable.asStateFlow()
@@ -32,6 +32,7 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
             val vip = snapshot(context)
             accounts.ensureCurrent(context)
             mutable.value = state.value.copy(snapshot = vip, fresh = true, error = null)
+            if (vip.isVip) onVipActivated()
             val history = records(context)
             accounts.ensureCurrent(context)
             mutable.value = state.value.copy(records = history)
@@ -53,6 +54,7 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
             if (confirmed(day, vip, history)) {
                 accounts.completed(context, day)
                 mutable.value = state.value.copy(snapshot = vip, records = history, fresh = true)
+                onVipActivated()
                 return publish(context, ClaimOutcome.ALREADY_DONE, "今日已完成，概念版权益有效")
             }
             var received = history.any { it.day == day && it.received }
@@ -78,9 +80,11 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
                 mutable.value = state.value.copy(snapshot = vip, records = history, fresh = true)
                 if (confirmed(day, vip, history)) {
                     accounts.completed(context, day)
+                    onVipActivated()
                     return publish(context, ClaimOutcome.SUCCESS, "领取并升级成功，已核实今日记录与概念版权益")
                 }
             }
+            if (vip.isVip) onVipActivated()
             return if (upgradeFailure != null) publish(context, ClaimOutcome.UPGRADE_FAILED, "已领取畅听权益，但升级失败：${upgradeFailure.message}")
             else publish(context, ClaimOutcome.PENDING, "请求已处理，权益尚未同步确认，请稍后刷新")
         } catch (e: CancellationException) { throw e }
@@ -90,6 +94,7 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
             val day = today(clock)
             if (state.value.fresh && confirmed(day, state.value.snapshot, state.value.records)) {
                 accounts.completed(context, day)
+                onVipActivated()
                 return publish(context, ClaimOutcome.SUCCESS, "已通过服务端记录确认今日权益")
             }
             return publish(context, ClaimOutcome.PENDING, "网络中断，领取结果待确认；请先刷新状态")

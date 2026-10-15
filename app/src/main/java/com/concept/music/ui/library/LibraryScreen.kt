@@ -87,6 +87,9 @@ fun LibraryScreen(
     var selectedTab by remember { mutableIntStateOf(0) } // 0: 我创建的, 1: 收藏的, 2: 关注歌手, 3: 已购音乐
     var isGridView by remember { mutableStateOf(false) } // 歌单视图模式：false=列表视图, true=网格视图
     var showCreateDialog by remember { mutableStateOf(false) }
+    var showImportDialog by remember { mutableStateOf(false) }
+    var importPlaylistName by remember { mutableStateOf("") }
+    var importRawText by remember { mutableStateOf("") }
     var showVipCenterSheet by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
@@ -388,6 +391,7 @@ fun LibraryScreen(
                         val tabs = listOf(
                             "自建 (${myPlaylists.size})",
                             "收藏 (${favoritePlaylists.size})",
+                            "关注 (${followedArtists.size})",
                             "已购 (${purchasedSongs.size + purchasedAlbums.size})"
                         )
                         tabs.forEachIndexed { idx, label ->
@@ -404,6 +408,8 @@ fun LibraryScreen(
                                     .clickable {
                                         selectedTab = idx
                                         if (idx == 2 && isLoggedIn) {
+                                            viewModel.refreshFollowedArtists()
+                                        } else if (idx == 3 && isLoggedIn) {
                                             viewModel.refreshPurchasedAssets()
                                         }
                                     }
@@ -427,6 +433,19 @@ fun LibraryScreen(
                                 contentDescription = "新建歌单",
                                 tint = ConceptPrimary,
                                 modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // [P1-3] 导入外部歌单
+                        IconButton(
+                            onClick = { showImportDialog = true },
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.FileUpload,
+                                contentDescription = "导入歌单",
+                                tint = Color.White.copy(alpha = 0.75f),
+                                modifier = Modifier.size(18.dp)
                             )
                         }
 
@@ -529,6 +548,91 @@ fun LibraryScreen(
                     }
                 }
                 2 -> {
+                    // [P1-2] 关注歌手列表
+                    if (followedArtists.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 36.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (isLoggedIn) "暂未关注任何歌手" else "请先登录同步关注的歌手",
+                                    style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.35f))
+                                )
+                            }
+                        }
+                    } else {
+                        items(followedArtists, key = { "artist_${it.id}_${it.name}" }) { artist ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(Color(0xFF161922))
+                                    .clickable {
+                                        if (artist.id.isNotBlank()) onOpenArtist(artist.id)
+                                    }
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (artist.avatarUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = artist.avatarUrl,
+                                        contentDescription = artist.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(50.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFF222734))
+                                    )
+                                } else {
+                                    Surface(
+                                        modifier = Modifier.size(50.dp),
+                                        shape = CircleShape,
+                                        color = Color(0xFF222734)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Person,
+                                                contentDescription = null,
+                                                tint = ConceptPrimary,
+                                                modifier = Modifier.size(26.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = artist.name,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    val subText = buildList {
+                                        if (artist.songCount > 0) add("单曲 ${artist.songCount} 首")
+                                        if (artist.fansCount > 0) add("粉丝 ${artist.fansCount}")
+                                    }.joinToString(" · ").ifBlank { "已关注歌手" }
+                                    Text(
+                                        text = subText,
+                                        color = Color.White.copy(alpha = 0.55f),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha = 0.35f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                3 -> {
                     // 已购专辑与单曲列表 ([FUNC-05])
                     if (purchasedAlbums.isEmpty() && purchasedSongs.isEmpty()) {
                         item {
@@ -840,6 +944,57 @@ fun LibraryScreen(
                         showCreateDialog = false
                         selectedTab = 0
                     }
+                }
+            }
+        )
+    }
+
+    // [P1-3] 导入外部歌单弹窗
+    if (showImportDialog) {
+        AlertDialog(
+            onDismissRequest = { showImportDialog = false },
+            title = { Text("导入外部歌单", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = importPlaylistName,
+                        onValueChange = { importPlaylistName = it },
+                        singleLine = true,
+                        label = { Text("新歌单名称") },
+                        placeholder = { Text("例如：我的精选导入") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = importRawText,
+                        onValueChange = { importRawText = it },
+                        minLines = 4,
+                        maxLines = 8,
+                        label = { Text("曲目列表（每行一首：歌名 - 歌手）") },
+                        placeholder = { Text("晴天 - 周杰伦\n江南 - 林俊杰") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.importExternalPlaylist(importPlaylistName, importRawText) { ok, msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            if (ok) {
+                                showImportDialog = false
+                                importPlaylistName = ""
+                                importRawText = ""
+                                selectedTab = 0
+                            }
+                        }
+                    }
+                ) {
+                    Text("开始匹配导入", color = ConceptPrimary, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showImportDialog = false }) {
+                    Text("取消")
                 }
             }
         )

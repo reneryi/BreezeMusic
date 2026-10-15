@@ -3,9 +3,80 @@ package com.concept.music.data.kugou
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.time.Clock
+import java.util.Base64
 
 class AuthRepository(private val transport: KugouTransport, private val store: SessionStore,
     private val clock: Clock = Clock.systemUTC()) {
+
+    /**
+     * [P0-1] 概念版设备注册 (对齐 MakcRe/KuGouMusicApi register_dev.js)
+     * 当本地 dfid 尚未初始化 ("-") 时，向 usersdfid.kugou.com 注册设备获取真实 dfid 并持久化。
+     */
+    suspend fun registerDevice(): String? {
+        val current = store.device()
+        if (current.dfid.isNotBlank() && current.dfid != "-") {
+            return current.dfid
+        }
+        val nowSec = clock.instant().epochSecond
+        val pPlain = KugouSigner.gson.toJson(json("uuid" to current.guid, "plat" to 1, "clienttime" to nowSec))
+        val pEncrypted = runCatching { KugouSigner.rsa(pPlain).uppercase() }.getOrDefault("")
+        val payloadJson = KugouSigner.gson.toJson(
+            json(
+                "mid" to current.mid,
+                "uuid" to current.guid,
+                "appid" to KugouSigner.APP_ID.toString(),
+                "userid" to (store.activeId() ?: "0")
+            )
+        )
+        val encodedPayload = Base64.getEncoder().encodeToString(payloadJson.toByteArray(Charsets.UTF_8))
+
+        val registeredDfid = runCatching {
+            val resp = transport.callAdvanced(
+                path = "/v1/register_dev",
+                host = "https://usersdfid.kugou.com",
+                method = "POST",
+                query = mapOf(
+                    "plat" to "1",
+                    "clientver" to KugouSigner.CLIENT_VERSION.toString(),
+                    "clienttime" to nowSec.toString(),
+                    "appid" to KugouSigner.APP_ID.toString(),
+                    "mid" to current.mid,
+                    "uuid" to current.guid,
+                    "userid" to (store.activeId() ?: "0"),
+                    "p" to pEncrypted
+                ),
+                body = json("data" to encodedPayload),
+                sign = true,
+                includeDefaultParams = false
+            )
+            resp.data.text("dfid")?.takeIf { it.isNotBlank() && it != "-" }
+        }.getOrNull() ?: runCatching {
+            val resp = transport.callAdvanced(
+                path = "/risk/v1/r_register_dev",
+                host = "https://usersdfid.kugou.com",
+                method = "POST",
+                query = mapOf(
+                    "plat" to "1",
+                    "clientver" to KugouSigner.CLIENT_VERSION.toString(),
+                    "clienttime" to nowSec.toString(),
+                    "appid" to KugouSigner.APP_ID.toString(),
+                    "mid" to current.mid,
+                    "uuid" to current.guid,
+                    "userid" to (store.activeId() ?: "0"),
+                    "p" to pEncrypted
+                ),
+                sign = true,
+                includeDefaultParams = false
+            )
+            resp.data.text("dfid")?.takeIf { it.isNotBlank() && it != "-" }
+        }.getOrNull()
+
+        if (!registeredDfid.isNullOrBlank()) {
+            store.saveDfid(registeredDfid)
+        }
+        return registeredDfid
+    }
+
     suspend fun sendCode(mobile: String): ApiResponse {
         require(mobile.matches(Regex("1[3-9][0-9]{9}"))) { "请输入有效的中国大陆手机号" }
         // The upstream captcha module deliberately uses the default dfid '-'.

@@ -110,6 +110,7 @@ fun NowPlayingSheet(
     sleepStopAfterCurrentSong: Boolean = false,
     climaxModeEnabled: Boolean = false,
     climaxUnlockedForCurrentSong: Boolean = false,
+    accompanyModeEnabled: Boolean = false,
     onDismiss: () -> Unit,
     onTogglePlay: () -> Unit,
     onPrevious: () -> Unit,
@@ -134,6 +135,7 @@ fun NowPlayingSheet(
     onCancelSleepTimer: () -> Unit = {},
     onToggleClimaxMode: () -> Unit = {},
     onUnlockFullTrack: () -> Unit = {},
+    onToggleAccompanyMode: () -> Unit = {},
     onPlayQueueSong: (Song) -> Unit,
     onRemoveFromQueue: (Song) -> Unit,
     onClearQueue: () -> Unit
@@ -343,6 +345,45 @@ fun NowPlayingSheet(
                                     fontWeight = FontWeight.Bold
                                 )
                             }
+                        }
+                    }
+
+                    // [P1-3] 原唱 / 伴奏 (KTV 模式) 胶囊切换
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (accompanyModeEnabled) ConceptPrimary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.08f),
+                        border = BorderStroke(
+                            0.6.dp,
+                            if (accompanyModeEnabled) ConceptPrimary.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.16f)
+                        ),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable {
+                                onToggleAccompanyMode()
+                                Toast.makeText(
+                                    context,
+                                    if (!accompanyModeEnabled) "已切换至伴奏模式 (KTV)" else "已恢复原唱模式",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Mic,
+                                contentDescription = "伴奏切换",
+                                tint = if (accompanyModeEnabled) ConceptPrimary else Color.White.copy(alpha = 0.65f),
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text(
+                                text = if (accompanyModeEnabled) "伴奏中" else "伴奏",
+                                color = if (accompanyModeEnabled) ConceptPrimary else Color.White.copy(alpha = 0.72f),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
 

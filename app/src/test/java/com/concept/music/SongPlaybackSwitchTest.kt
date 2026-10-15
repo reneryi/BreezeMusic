@@ -181,6 +181,7 @@ class SongPlaybackSwitchTest {
     @After
     fun tearDown() {
         Dispatchers.resetMain()
+        runCatching { VipManager.accounts.select("user_1") }
     }
 
     @Test
@@ -317,6 +318,22 @@ class SongPlaybackSwitchTest {
         assertEquals("第二首歌", state.currentSong?.title)
         assertEquals(1, state.currentIndex)
         assertEquals("第二首歌歌词 第一行", state.currentLyric.lines.firstOrNull()?.text)
+    }
+
+    @Test
+    fun testGuestModePlayback_AllowedWithoutLoginBlock() = runTest(testDispatcher) {
+        VipManager.accounts.select(null)
+        testScheduler.advanceUntilIdle()
+        assertNull(VipManager.accounts.state.value.currentId)
+
+        val queue = listOf(song1, song2)
+        viewModel.playSong(song1, queue)
+        testScheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertNull(state.error)
+        assertEquals("第一首歌", state.currentSong?.title)
+        assertEquals("song_1", fakePlayerHolder.currentMediaItem?.mediaId)
     }
 
     private class TestSessionStore : SessionStore {

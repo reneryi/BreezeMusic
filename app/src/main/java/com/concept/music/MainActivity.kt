@@ -107,6 +107,7 @@ fun MainContent(
     val playerUiState by musicPlayerViewModel.uiState.collectAsState()
     val likedSongs by libraryViewModel.likedSongs.collectAsState()
     val playlists by libraryViewModel.playlists.collectAsState()
+    val followedArtists by libraryViewModel.followedArtists.collectAsState()
 
     var showNowPlaying by remember { mutableStateOf(false) }
     var showCommentsScreen by remember { mutableStateOf(false) }
@@ -333,6 +334,7 @@ fun MainContent(
             // 歌手详情页
             composable("artist_detail/{artistId}") { backStackEntry ->
                 val artistId = backStackEntry.arguments?.getString("artistId") ?: ""
+                val isArtistFollowed = libraryViewModel.isArtistFollowed(artistId, followedArtists)
                 ArtistDetailScreen(
                     artistId = artistId,
                     onBack = { navController.popBackStack() },
@@ -346,6 +348,12 @@ fun MainContent(
                     onSongMoreClick = { song ->
                         actionSheetSong = song
                         actionSheetRemoveCallback = null
+                    },
+                    isFollowed = isArtistFollowed,
+                    onToggleFollow = { artistItem ->
+                        libraryViewModel.toggleFollowArtist(artistItem) { _, _, msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        }
                     }
                 )
             }
@@ -438,6 +446,7 @@ fun MainContent(
             sleepStopAfterCurrentSong = playerUiState.sleepStopAfterCurrentSong,
             climaxModeEnabled = playerUiState.climaxModeEnabled,
             climaxUnlockedForCurrentSong = playerUiState.climaxUnlockedForCurrentSong,
+            accompanyModeEnabled = playerUiState.accompanyModeEnabled,
             isFavorite = isCurrentSongLiked,
             onToggleFavorite = {
                 libraryViewModel.toggleFavorite(currentSong) { _, _, msg ->
@@ -462,6 +471,7 @@ fun MainContent(
             onCancelSleepTimer = { musicPlayerViewModel.cancelSleepTimer() },
             onToggleClimaxMode = { musicPlayerViewModel.toggleClimaxMode() },
             onUnlockFullTrack = { musicPlayerViewModel.unlockFullTrackForCurrentSong() },
+            onToggleAccompanyMode = { musicPlayerViewModel.toggleAccompanyMode() },
             songDetail = playerUiState.songDetail,
             onDismiss = { showNowPlaying = false },
             onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
@@ -542,6 +552,12 @@ fun MainContent(
                 }
                 showCommentsScreen = true
             },
+            onOpenArtist = if (targetSong.artistId.isNotBlank() && targetSong.artistId != "0") {
+                {
+                    showNowPlaying = false
+                    navController.navigate("artist_detail/${targetSong.artistId}") { launchSingleTop = true }
+                }
+            } else null,
             onOpenAlbum = if (targetSong.albumId.isNotBlank() && targetSong.albumId != "0") {
                 {
                     showNowPlaying = false

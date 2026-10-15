@@ -14,7 +14,9 @@ data class FmChannel(
     val name: String,
     val coverUrl: String,
     val desc: String = ""
-)
+) {
+    val description: String get() = desc
+}
 
 data class YouthChannel(
     val id: String,
@@ -23,7 +25,9 @@ data class YouthChannel(
     val desc: String = "",
     val songCount: Int = 0,
     val tag: String = ""
-)
+) {
+    val description: String get() = desc
+}
 
 data class SceneCategory(
     val id: String,

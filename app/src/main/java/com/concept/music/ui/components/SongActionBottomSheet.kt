@@ -37,6 +37,7 @@ fun SongActionBottomSheet(
     onToggleFavorite: () -> Unit,
     onAddToPlaylist: () -> Unit,
     onOpenComments: (() -> Unit)? = null,
+    onOpenArtist: (() -> Unit)? = null,
     onOpenAlbum: (() -> Unit)? = null,
     onOpenSongDetail: (() -> Unit)? = null,
     onRemoveFromCurrentPlaylist: (() -> Unit)? = null
@@ -194,6 +195,17 @@ fun SongActionBottomSheet(
                     onClick = {
                         onDismiss()
                         onOpenComments()
+                    }
+                )
+            }
+
+            if (onOpenArtist != null && song.artist.isNotBlank()) {
+                SongActionMenuItem(
+                    icon = Icons.Rounded.Person,
+                    title = "查看歌手：${song.artist}",
+                    onClick = {
+                        onDismiss()
+                        onOpenArtist()
                     }
                 )
             }

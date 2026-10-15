@@ -525,16 +525,31 @@ class MusicApiRepository(
 
     suspend fun resolvePlayback(
         song: Song,
-        preferredQuality: AudioQuality = song.highestQuality
+        preferredQuality: AudioQuality = song.highestQuality,
+        useAccompaniment: Boolean = false
     ): PlaybackResult {
-        val targetHash = song.hashForQuality(preferredQuality).ifBlank { song.hash }
-        val cacheKey = "${targetHash.lowercase()}_${preferredQuality.apiValue}"
+        val effectiveSong = if (useAccompaniment) {
+            val accHash = song.accompanyHash.ifBlank { runCatching { matchAccompanyHash(song) }.getOrDefault("") }
+            if (accHash.isNotBlank()) {
+                song.copy(
+                    hash = accHash,
+                    hash128 = accHash,
+                    hash320 = accHash,
+                    hashFlac = "",
+                    hashHiRes = ""
+                )
+            } else song
+        } else song
+
+        val targetHash = effectiveSong.hashForQuality(preferredQuality).ifBlank { effectiveSong.hash }
+        val modeSuffix = if (useAccompaniment) "_acc" else ""
+        val cacheKey = "${targetHash.lowercase()}_${preferredQuality.apiValue}$modeSuffix"
         playbackResultCache[cacheKey]?.let { return it }
 
         val session = accounts.context()?.session
-        // 1. 若拥有 vipToken，尝试请求概念版 VIP /v6/priv_url 获取无损/高品音源
-        if (session != null && !session.vipToken.isNullOrBlank()) {
-            val vipResult = runCatching { resolveVipPrivResult(song, session, preferredQuality) }.getOrNull()
+        // 1. [P0-2] 修复概念版 VIP 音源短路 Bug：只要存在有效登录会话 (session.token 非空)，均优先尝试概念版 /v6/priv_url
+        if (session != null && session.token.isNotBlank()) {
+            val vipResult = runCatching { resolveVipPrivResult(effectiveSong, session, preferredQuality) }.getOrNull()
             if (vipResult != null && vipResult.url.isNotBlank()) {
                 playbackResultCache[cacheKey] = vipResult
                 return vipResult
@@ -542,13 +557,33 @@ class MusicApiRepository(
         }
 
         // 2. 降级走 /v5/url
-        val fallbackResult = resolveFallbackResult(song, session, preferredQuality)
+        val fallbackResult = resolveFallbackResult(effectiveSong, session, preferredQuality)
         playbackResultCache[cacheKey] = fallbackResult
         return fallbackResult
     }
 
-    suspend fun resolveUrl(song: Song, preferredQuality: AudioQuality = song.highestQuality): String {
-        return resolvePlayback(song, preferredQuality).url
+    suspend fun resolveUrl(
+        song: Song,
+        preferredQuality: AudioQuality = song.highestQuality,
+        useAccompaniment: Boolean = false
+    ): String {
+        return resolvePlayback(song, preferredQuality, useAccompaniment).url
+    }
+
+    /**
+     * [P1-3] 伴奏音源匹配：优先返回曲目自带伴奏 hash，若无则通过概念版搜索接口匹配同曲伴奏
+     */
+    suspend fun matchAccompanyHash(song: Song): String {
+        if (isValidHash(song.accompanyHash)) return song.accompanyHash
+        val keyword = "${song.artist} ${song.title} 伴奏".trim()
+        val matched = runCatching {
+            val res = searchSongs(keyword, page = 1, pageSize = 8)
+            res.songs.firstOrNull { candidate ->
+                candidate.title.contains("伴奏") || candidate.title.contains("Instrumental", ignoreCase = true) ||
+                    candidate.accompanyHash.isNotBlank()
+            }?.let { it.accompanyHash.ifBlank { it.hash320.ifBlank { it.hash } } }
+        }.getOrNull().orEmpty()
+        return matched
     }
 
     fun deduceQuality(
@@ -625,6 +660,7 @@ class MusicApiRepository(
             addProperty("type", "audio")
         }
 
+        val effectiveVipToken = session.vipToken?.takeIf { it.isNotBlank() } ?: session.token
         val trackerParam = JsonObject().apply {
             addProperty("all_m", 1)
             addProperty("auth", "")
@@ -637,7 +673,7 @@ class MusicApiRepository(
             addProperty("pid", "411")
             addProperty("pidversion", "3001")
             addProperty("priv_vip_type", "6")
-            addProperty("viptoken", session.vipToken.orEmpty())
+            addProperty("viptoken", effectiveVipToken)
         }
 
         val body = JsonObject().apply {
@@ -648,7 +684,7 @@ class MusicApiRepository(
             addProperty("token", session.token)
             add("tracker_param", trackerParam)
             addProperty("userid", session.userId)
-            addProperty("vip", if (!session.vipToken.isNullOrBlank()) 6 else 1)
+            addProperty("vip", 6)
         }
 
         val query = linkedMapOf(
@@ -814,13 +850,11 @@ class MusicApiRepository(
                 "clienttime" to clientTime.toString(),
                 "key" to key
             )
-            if (session != null) {
+            if (session != null && session.token.isNotBlank()) {
                 query["token"] = session.token
                 query["userid"] = session.userId
-                if (!session.vipToken.isNullOrBlank()) {
-                    query["vipType"] = "6"
-                    query["vipToken"] = session.vipToken
-                }
+                query["vipType"] = "6"
+                query["vipToken"] = session.vipToken?.takeIf { it.isNotBlank() } ?: session.token
             }
 
             val sortedParams = query.toSortedMap().entries.joinToString("") { "${it.key}=${it.value}" }
@@ -2450,12 +2484,97 @@ class MusicApiRepository(
         }.getOrDefault(emptyList())
     }
 
+    // [P1-2] 关注歌手 (对齐 KuGouMusicApi artist_follow.js)
+    suspend fun followArtist(artistId: String): Boolean = auth { ctx ->
+        val targetId = artistId.toLongOrNull() ?: return@auth false
+        val session = ctx.session
+        val clientTime = System.currentTimeMillis() / 1000
+        val pJson = KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "token" to session.token))
+        val pEncrypted = runCatching { KugouSigner.rsa(pJson).uppercase() }.getOrDefault("")
+        val response = runCatching {
+            transport.callAdvanced(
+                path = "/v4/follow",
+                method = "POST",
+                session = session,
+                body = json(
+                    "userid" to (session.userId.toLongOrNull() ?: 0L),
+                    "target_userid" to targetId,
+                    "singerid" to targetId,
+                    "type" to 1,
+                    "id_type" to 1,
+                    "source" to 13,
+                    "p" to pEncrypted
+                ),
+                headers = mapOf("x-router" to "relationuser.kugou.com"),
+                sign = true,
+                includeDefaultParams = true
+            )
+        }.getOrNull()
+        response != null && (response.status == 1 || response.code == 0)
+    }
+
+    // [P1-2] 取消关注歌手 (对齐 KuGouMusicApi artist_unfollow.js)
+    suspend fun unfollowArtist(artistId: String): Boolean = auth { ctx ->
+        val targetId = artistId.toLongOrNull() ?: return@auth false
+        val session = ctx.session
+        val clientTime = System.currentTimeMillis() / 1000
+        val pJson = KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "token" to session.token))
+        val pEncrypted = runCatching { KugouSigner.rsa(pJson).uppercase() }.getOrDefault("")
+        val response = runCatching {
+            transport.callAdvanced(
+                path = "/v4/unfollow",
+                method = "POST",
+                session = session,
+                body = json(
+                    "userid" to (session.userId.toLongOrNull() ?: 0L),
+                    "target_userid" to targetId,
+                    "singerid" to targetId,
+                    "type" to 1,
+                    "id_type" to 1,
+                    "source" to 13,
+                    "p" to pEncrypted
+                ),
+                headers = mapOf("x-router" to "relationuser.kugou.com"),
+                sign = true,
+                includeDefaultParams = true
+            )
+        }.getOrNull()
+        response != null && (response.status == 1 || response.code == 0)
+    }
+
+    // [P1-3] 外部歌单文本批量匹配导入 (对齐 KuGouMusicApi playlist_import 能力)
+    suspend fun importExternalPlaylist(name: String, rawLines: List<String>): Int = auth { _ ->
+        val cleanName = name.trim().ifBlank { "导入歌单" }
+        val cleanLines = rawLines.map { it.trim() }.filter { it.isNotBlank() }.take(100)
+        if (cleanLines.isEmpty()) return@auth 0
+
+        createPlaylist(cleanName)
+        val targetPlaylist = runCatching {
+            userPlaylists().firstOrNull { it.isCreatedByMe && it.title == cleanName }
+        }.getOrNull() ?: return@auth 0
+
+        var importedCount = 0
+        for (line in cleanLines) {
+            val matchedSong = runCatching {
+                searchSongs(line, page = 1, pageSize = 3).songs.firstOrNull()
+            }.getOrNull()
+            if (matchedSong != null) {
+                val added = runCatching { addSongToPlaylist(targetPlaylist.listId, matchedSong) }.getOrDefault(false)
+                if (added) importedCount++
+            }
+        }
+        importedCount
+    }
+
     @Volatile
     var lastSongCommentCount: Int = 0
         private set
 
     // 歌曲真实评论 (支持 hot/new 双流分类及无限滚动分页)
     suspend fun songComments(song: Song, type: String = "hot", page: Int = 1, pageSize: Int = 30): List<SongComment> {
+        if (page == 1) {
+            lastSongCommentCount = 0
+        }
         var mixSongId = song.albumAudioId.takeIf { it > 0 } ?: song.audioId.takeIf { it > 0 } ?: 0L
 
         // 如果 mixSongId 为 0，尝试从歌曲哈希快速解析实际 mixsongid / audio_id
@@ -2532,13 +2651,30 @@ class MusicApiRepository(
             parseCommentList(response.data, isHotDefault = (type == "hot"))
         }.getOrDefault(emptyList())
 
-        if (fallbackComments.isNotEmpty()) return fallbackComments
+        return fallbackComments
+    }
 
-        val defaultList = generateDefaultMusicalComments(song, type)
-        if (lastSongCommentCount <= 0) {
-            lastSongCommentCount = defaultList.size
-        }
-        return defaultList
+    // [P0-6] 评论真实点赞/取消点赞接口
+    suspend fun likeSongComment(song: Song, commentId: String, like: Boolean): Boolean {
+        val session = accounts.context()?.session ?: return false
+        if (session.token.isBlank() || commentId.isBlank()) return false
+        val mixSongId = song.albumAudioId.takeIf { it > 0 } ?: song.audioId.takeIf { it > 0 } ?: song.id.toLongOrNull() ?: 0L
+        return runCatching {
+            val response = transport.call(
+                path = "/mcomment/v1/cmt_like",
+                method = "POST",
+                query = mapOf(
+                    "mixsongid" to mixSongId.toString(),
+                    "cmtid" to commentId,
+                    "action" to (if (like) "1" else "0"),
+                    "code" to "fc4be23b4e972707f36b8a828a93ba8a",
+                    "token" to session.token,
+                    "userid" to session.userId
+                ),
+                session = session
+            )
+            response.status == 1 || response.code == 0
+        }.getOrDefault(false)
     }
 
     private fun parseCommentList(root: JsonObject, isHotDefault: Boolean): List<SongComment> {
@@ -2557,6 +2693,7 @@ class MusicApiRepository(
             val uAvatar = imageUrl(o.text("user_pic") ?: o.text("avatar") ?: o.text("pic") ?: uDetail?.text("user_pic") ?: uDetail?.text("avatar"))
             val time = o.text("addtime") ?: o.text("time") ?: "近期"
             val likes = o.number("like_count") ?: o.obj("like")?.number("like_count") ?: o.number("praisecount") ?: 0
+            val isLiked = o.number("is_like") == 1 || o.obj("like")?.number("is_like") == 1
             val isHot = isHotDefault || o.number("is_hot") == 1 || likes >= 10
             val ipLocation = o.text("location") ?: o.text("ip_location") ?: o.text("province") ?: uDetail?.text("location") ?: "广东"
 
@@ -2571,6 +2708,7 @@ class MusicApiRepository(
                     val rAvatar = imageUrl(r.text("user_pic") ?: r.text("avatar") ?: rUdetail?.text("user_pic"))
                     val rTime = r.text("addtime") ?: r.text("time") ?: "近期"
                     val rLikes = r.number("like_count") ?: 0
+                    val rIsLiked = r.number("is_like") == 1 || r.obj("like")?.number("is_like") == 1
                     val rIp = r.text("location") ?: r.text("ip_location") ?: "浙江"
                     val rReplyUser = r.text("reply_user_name") ?: r.text("reply_username") ?: uName
                     SongComment(
@@ -2581,6 +2719,7 @@ class MusicApiRepository(
                         content = rContent,
                         timeFormatted = rTime,
                         likeCount = rLikes,
+                        isLiked = rIsLiked,
                         ipLocation = rIp,
                         parentId = id,
                         rootId = id,
@@ -2599,6 +2738,7 @@ class MusicApiRepository(
                 content = content,
                 timeFormatted = time,
                 likeCount = likes,
+                isLiked = isLiked,
                 isHot = isHot,
                 ipLocation = ipLocation,
                 replyCount = replyCount,
@@ -2773,6 +2913,7 @@ class MusicApiRepository(
         var relateSqHash = ""
         var relateHqHash = ""
         var relateStdHash = ""
+        var relateAccHash = ""
         var relateResSize = 0L
         var relateSqSize = 0L
         var relateHqSize = 0L
@@ -2782,6 +2923,9 @@ class MusicApiRepository(
             val q = (rg.text("quality") ?: rg.text("level") ?: "").lowercase()
             val sz = (rg.number("size") ?: rg.number("filesize") ?: 0).toLong()
             when {
+                q.contains("accompany") || q.contains("伴奏") -> {
+                    if (relateAccHash.isBlank()) relateAccHash = h
+                }
                 q.contains("high") || q.contains("super") || q.contains("hires") || q == "4" || q == "5" -> {
                     if (relateResHash.isBlank()) relateResHash = h
                     if (relateResSize <= 0L && sz > 0L) relateResSize = sz
@@ -2905,6 +3049,18 @@ class MusicApiRepository(
             else -> 0L
         }
 
+        val accHash = o.text("AccompanyFileHash")?.takeIf { isValidHash(it) }
+            ?: o.text("accompany_hash")?.takeIf { isValidHash(it) }
+            ?: audioInfo?.text("accompany_hash")?.takeIf { isValidHash(it) }
+            ?: transParam?.text("ogg_320_accompany_hash")?.takeIf { isValidHash(it) }
+            ?: transParam?.text("accompany_hash")?.takeIf { isValidHash(it) }
+            ?: relateAccHash
+
+        val isFreePrivilege = !isVip && (
+            o.number("privilege") == 0 || o.number("Privilege") == 0 ||
+                transParam?.number("free_for_vip") == 1 || o.number("fail_process") == 0
+            )
+
         val fileId = o.text("fileid")?.toLongOrNull() ?: o.text("file_id")?.toLongOrNull() ?: 0L
 
         return Song(
@@ -2914,6 +3070,7 @@ class MusicApiRepository(
             hash320 = hqHash,
             hashFlac = sqHash,
             hashHiRes = resHash,
+            accompanyHash = accHash,
             title = title,
             artist = artist,
             artistId = artistId,
@@ -2922,6 +3079,7 @@ class MusicApiRepository(
             coverUrl = cover,
             durationMs = durationMs,
             isVip = isVip,
+            isFreePrivilege = isFreePrivilege,
             isLossless = isLossless,
             isHiRes = hasHiRes,
             playUrl = o.text("url") ?: "",

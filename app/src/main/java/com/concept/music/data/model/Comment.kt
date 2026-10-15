@@ -8,6 +8,7 @@ data class SongComment(
     val content: String,
     val timeFormatted: String,
     val likeCount: Int = 0,
+    val isLiked: Boolean = false,
     val isHot: Boolean = false,
     val vipLevel: Int = 0,
     val ipLocation: String = "",

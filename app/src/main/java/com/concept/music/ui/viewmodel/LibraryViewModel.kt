@@ -121,6 +121,89 @@ class LibraryViewModel(
         }
     }
 
+    // [P1-2] 刷新关注歌手列表
+    fun refreshFollowedArtists() {
+        val userId = accountState.value.currentId ?: return
+        if (accountState.value.auth != AuthState.READY) return
+        viewModelScope.launch {
+            val artists = runCatching { VipManager.music.followedArtists() }.getOrDefault(emptyList())
+            if (accounts.state.value.currentId == userId) {
+                _followedArtists.value = artists
+            }
+        }
+    }
+
+    fun isArtistFollowed(artistId: String, list: List<FollowedArtist> = _followedArtists.value): Boolean {
+        if (artistId.isBlank() || artistId == "0") return false
+        return list.any { it.id == artistId }
+    }
+
+    fun toggleFollowArtist(
+        artist: com.concept.music.data.model.ArtistItem,
+        onResult: (Boolean, Boolean, String) -> Unit = { _, _, _ -> }
+    ) {
+        if (accountState.value.auth != AuthState.READY) {
+            onResult(false, false, "请先登录酷狗账号")
+            return
+        }
+        val artistId = artist.id.trim()
+        if (artistId.isBlank() || artistId == "0") {
+            onResult(false, false, "无效的歌手 ID")
+            return
+        }
+        viewModelScope.launch {
+            val currentlyFollowed = isArtistFollowed(artistId)
+            val prevList = _followedArtists.value
+            if (currentlyFollowed) {
+                _followedArtists.value = prevList.filterNot { it.id == artistId }
+                val ok = runCatching { VipManager.music.unfollowArtist(artistId) }.getOrDefault(false)
+                if (ok) {
+                    onResult(true, false, "已取消关注 ${artist.name}")
+                } else {
+                    _followedArtists.value = prevList
+                    onResult(false, true, "取消关注失败，请稍后重试")
+                }
+            } else {
+                val added = FollowedArtist(
+                    id = artistId,
+                    name = artist.name,
+                    avatarUrl = artist.avatarUrl,
+                    songCount = artist.songCount
+                )
+                _followedArtists.value = listOf(added) + prevList
+                val ok = runCatching { VipManager.music.followArtist(artistId) }.getOrDefault(false)
+                if (ok) {
+                    onResult(true, true, "已关注歌手 ${artist.name}")
+                } else {
+                    _followedArtists.value = prevList
+                    onResult(false, false, "关注失败，请稍后重试")
+                }
+            }
+        }
+    }
+
+    // [P1-3] 外部歌单文本批量导入
+    fun importExternalPlaylist(name: String, rawText: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        if (accountState.value.auth != AuthState.READY) {
+            onResult(false, "请先登录酷狗账号")
+            return
+        }
+        val lines = rawText.lines().map { it.trim() }.filter { it.isNotBlank() }
+        if (lines.isEmpty()) {
+            onResult(false, "请输入至少一首歌曲名称（格式：歌名 - 歌手）")
+            return
+        }
+        viewModelScope.launch {
+            val count = runCatching { VipManager.music.importExternalPlaylist(name, lines) }.getOrDefault(0)
+            if (count > 0) {
+                loadMusicLibrary()
+                onResult(true, "成功导入 $count 首歌曲至歌单「${name.ifBlank { "导入歌单" }}」")
+            } else {
+                onResult(false, "未能匹配或导入歌曲，请检查格式后重试")
+            }
+        }
+    }
+
     private fun loadMusicLibrary() {
         val userId = accountState.value.currentId
         val section = librarySection.value
@@ -217,6 +300,12 @@ class LibraryViewModel(
                     if (accounts.state.value.currentId == userId) {
                         _purchasedSongs.value = pSongs
                         _purchasedAlbums.value = pAlbums
+                    }
+                }
+                launch {
+                    val artists = runCatching { VipManager.music.followedArtists() }.getOrDefault(emptyList())
+                    if (accounts.state.value.currentId == userId) {
+                        _followedArtists.value = artists
                     }
                 }
 

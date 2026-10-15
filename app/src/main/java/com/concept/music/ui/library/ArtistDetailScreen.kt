@@ -47,6 +47,8 @@ fun ArtistDetailScreen(
     onAlbumClick: (String) -> Unit = {},
     currentSong: Song? = null,
     onSongMoreClick: (Song) -> Unit = {},
+    isFollowed: Boolean = false,
+    onToggleFollow: ((ArtistItem) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -204,12 +206,38 @@ fun ArtistDetailScreen(
                             Spacer(modifier = Modifier.width(16.dp))
 
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = artist?.name ?: "歌手",
-                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = artist?.name ?: "歌手",
+                                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (onToggleFollow != null && artist != null) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        FilledTonalButton(
+                                            onClick = { artist?.let { onToggleFollow(it) } },
+                                            shape = CircleShape,
+                                            colors = ButtonDefaults.filledTonalButtonColors(
+                                                containerColor = if (isFollowed) MaterialTheme.colorScheme.surface else ConceptPrimary,
+                                                contentColor = if (isFollowed) MaterialTheme.colorScheme.onSurfaceVariant else Color(0xFF0A1014)
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                                            modifier = Modifier.height(32.dp)
+                                        ) {
+                                            Text(
+                                                text = if (isFollowed) "已关注" else "+ 关注",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
                                 Spacer(modifier = Modifier.height(6.dp))
                                 val displaySongCount = artist?.songCount?.takeIf { it > 0 } ?: songs.size
                                 val displayAlbumCount = artist?.albumCount?.takeIf { it > 0 } ?: albums.size

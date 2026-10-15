@@ -35,8 +35,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.concept.music.data.model.FmChannel
 import com.concept.music.data.model.RankItem
 import com.concept.music.data.model.Song
+import com.concept.music.data.model.YouthChannel
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptPrimaryDark
@@ -59,6 +61,9 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val dailySongs by viewModel.dailyRecommendSongs.collectAsState()
+    val personalFmSongs by viewModel.personalFmSongs.collectAsState()
+    val youthChannels by viewModel.youthChannels.collectAsState()
+    val fmChannels by viewModel.fmChannels.collectAsState()
     val ranks by viewModel.ranks.collectAsState()
     val loading by viewModel.loading.collectAsState()
 
@@ -77,7 +82,7 @@ fun HomeScreen(
         }
     }
 
-    // 榜单详情抽屉状态
+    // 二级曲目抽屉状态（共用：榜单 / 概念版频道 / 场景电台）
     var detailSheetTitle by remember { mutableStateOf("") }
     var detailSheetSubtitle by remember { mutableStateOf("") }
     var detailSheetCover by remember { mutableStateOf("") }
@@ -98,6 +103,32 @@ fun HomeScreen(
         }
     }
 
+    fun openYouthChannelDetail(channel: YouthChannel) {
+        detailSheetTitle = channel.name
+        detailSheetSubtitle = channel.description.ifBlank { "概念版专属频道" }
+        detailSheetCover = channel.coverUrl
+        detailSheetSongs = emptyList()
+        detailSheetLoading = true
+        showDetailSheet = true
+        coroutineScope.launch {
+            detailSheetSongs = viewModel.getYouthChannelSongs(channel.id)
+            detailSheetLoading = false
+        }
+    }
+
+    fun openFmChannelDetail(channel: FmChannel) {
+        detailSheetTitle = channel.name
+        detailSheetSubtitle = channel.description.ifBlank { "全天候场景电台" }
+        detailSheetCover = channel.coverUrl
+        detailSheetSongs = emptyList()
+        detailSheetLoading = true
+        showDetailSheet = true
+        coroutineScope.launch {
+            detailSheetSongs = viewModel.getFmChannelSongs(channel.id)
+            detailSheetLoading = false
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -109,7 +140,7 @@ fun HomeScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .background(Color(0xFF0F1115)),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 28.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             if (loading) {
@@ -147,7 +178,133 @@ fun HomeScreen(
                 )
             }
 
-            // 3. 巅峰排行榜
+            // 3. [P1-1] 私人随心听 (Personal FM) 漫游卡片
+            item {
+                PersonalFmCard(
+                    songs = personalFmSongs.ifEmpty { dailySongs },
+                    onPlayFm = {
+                        val pool = personalFmSongs.ifEmpty { dailySongs }
+                        if (pool.isNotEmpty()) {
+                            onSongClick(pool.first(), pool)
+                        } else {
+                            viewModel.refreshPersonalFm { loaded ->
+                                if (loaded.isNotEmpty()) onSongClick(loaded.first(), loaded)
+                            }
+                        }
+                    },
+                    onRefreshFm = {
+                        viewModel.refreshPersonalFm { loaded ->
+                            if (loaded.isNotEmpty()) {
+                                Toast.makeText(context, "已换一批随心听推荐 (${loaded.size}首)", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                )
+            }
+
+            // 4. [P1-1] 概念版专属年轻频道 (Youth Channels)
+            if (youthChannels.isNotEmpty()) {
+                item {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "概念专属频道",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            )
+                            Text(
+                                text = "心流 · 自愈 · 场景漫游",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = ConceptPrimary.copy(alpha = 0.85f)
+                                )
+                            )
+                        }
+
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(youthChannels, key = { it.id }) { channel ->
+                                YouthChannelCardView(
+                                    channel = channel,
+                                    onCardClick = { openYouthChannelDetail(channel) },
+                                    onPlayChannel = {
+                                        coroutineScope.launch {
+                                            Toast.makeText(context, "正在装载【${channel.name}】...", Toast.LENGTH_SHORT).show()
+                                            val songs = viewModel.getYouthChannelSongs(channel.id)
+                                            if (songs.isNotEmpty()) {
+                                                onSongClick(songs.first(), songs)
+                                            } else {
+                                                Toast.makeText(context, "频道歌曲加载失败", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 5. [P1-1] 全天候场景电台 (FM Channels)
+            if (fmChannels.isNotEmpty()) {
+                item {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "精选场景电台",
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            )
+                            Text(
+                                text = "全天候智能伴听",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = Color.White.copy(alpha = 0.45f)
+                                )
+                            )
+                        }
+
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(fmChannels, key = { it.id }) { channel ->
+                                FmChannelCardView(
+                                    channel = channel,
+                                    onCardClick = { openFmChannelDetail(channel) },
+                                    onPlayFmChannel = {
+                                        coroutineScope.launch {
+                                            Toast.makeText(context, "正在开启【${channel.name}】...", Toast.LENGTH_SHORT).show()
+                                            val songs = viewModel.getFmChannelSongs(channel.id)
+                                            if (songs.isNotEmpty()) {
+                                                onSongClick(songs.first(), songs)
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 6. 巅峰排行榜
             if (ranks.isNotEmpty()) {
                 item {
                     Column(modifier = Modifier.fillMaxWidth()) {
@@ -211,7 +368,7 @@ fun HomeScreen(
         )
     }
 
-    // 榜单二级曲目浏览抽屉
+    // 榜单/频道/电台二级曲目浏览抽屉
     if (showDetailSheet) {
         ModalBottomSheet(
             onDismissRequest = { showDetailSheet = false },
@@ -315,6 +472,277 @@ fun HomeScreen(
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PersonalFmCard(
+    songs: List<Song>,
+    onPlayFm: () -> Unit,
+    onRefreshFm: () -> Unit
+) {
+    val leadSong = songs.firstOrNull()
+    Card(
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF171B24)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .clickable(onClick = onPlayFm)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.horizontalGradient(
+                        colors = listOf(
+                            Color(0xFF1A2535),
+                            Color(0xFF171B24)
+                        )
+                    )
+                )
+                .border(0.8.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(22.dp))
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF232936)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!leadSong?.coverUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = leadSong!!.coverUrl,
+                        contentDescription = leadSong.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.Radio,
+                        contentDescription = null,
+                        tint = ConceptPrimary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        color = ConceptPrimary.copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = "私人随心听 FM",
+                            color = ConceptPrimary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "不间断契合口味漫游",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 11.sp
+                    )
+                }
+                Spacer(modifier = Modifier.height(5.dp))
+                Text(
+                    text = if (leadSong != null) "${leadSong.title} - ${leadSong.artist}" else "点击开启你的专属私人电台",
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            IconButton(
+                onClick = onRefreshFm,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Refresh,
+                    contentDescription = "换一批",
+                    tint = Color.White.copy(alpha = 0.65f),
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(4.dp))
+
+            FilledIconButton(
+                onClick = onPlayFm,
+                colors = IconButtonDefaults.filledIconButtonColors(containerColor = ConceptPrimary),
+                modifier = Modifier.size(38.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PlayArrow,
+                    contentDescription = "播放随心听",
+                    tint = Color(0xFF0A1014),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun YouthChannelCardView(
+    channel: YouthChannel,
+    onCardClick: () -> Unit,
+    onPlayChannel: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF181B22)),
+        modifier = Modifier
+            .width(164.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(onClick = onCardClick)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(112.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF222733))
+            ) {
+                AsyncImage(
+                    model = channel.coverUrl,
+                    contentDescription = channel.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                if (channel.tag.isNotBlank()) {
+                    Surface(
+                        color = Color(0xAA0F1115),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(8.dp)
+                    ) {
+                        Text(
+                            text = channel.tag,
+                            color = ConceptPrimary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+                FilledIconButton(
+                    onClick = onPlayChannel,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = ConceptPrimary.copy(alpha = 0.92f)
+                    ),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = "播放频道",
+                        tint = Color(0xFF0A1014),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = channel.name,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = channel.description,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = Color.White.copy(alpha = 0.55f),
+                    fontSize = 11.sp
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun FmChannelCardView(
+    channel: FmChannel,
+    onCardClick: () -> Unit,
+    onPlayFmChannel: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF181B22)),
+        modifier = Modifier
+            .width(210.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onCardClick)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AsyncImage(
+                model = channel.coverUrl,
+                contentDescription = channel.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF222733))
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = channel.name,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = channel.description,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = Color.White.copy(alpha = 0.5f)
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(
+                onClick = onPlayFmChannel,
+                modifier = Modifier.size(30.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PlayCircle,
+                    contentDescription = "播放电台",
+                    tint = ConceptPrimary,
+                    modifier = Modifier.size(26.dp)
+                )
             }
         }
     }
