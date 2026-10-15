@@ -43,6 +43,7 @@ import com.concept.music.ui.components.PlaylistListItem
 import com.concept.music.ui.components.VipBannerCard
 import com.concept.music.ui.components.VipCenterBottomSheet
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.viewmodel.LibraryViewModel
 

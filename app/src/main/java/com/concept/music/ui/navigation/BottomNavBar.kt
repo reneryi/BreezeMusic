@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -16,11 +17,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.LocalIsDarkTheme
 
 /**
- * 紧凑轻量底栏：
- * - 大幅降低高度（由 80.dp 缩减至精致的 50.dp）
- * - 去除冗余文字标识，纯粹现代流体图标与激活态微胶囊
+ * 紧凑轻量底栏（自适应「幽邃微蓝」深色与「水彩浸润」浅色主题）：
+ * - 高度 50.dp，纯粹现代流体图标与激活态微胶囊
  */
 @Composable
 fun BottomNavBar(
@@ -28,15 +29,19 @@ fun BottomNavBar(
     onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isDark = LocalIsDarkTheme.current
+    val barBg = if (isDark) Color(0xF20B101B) else Color(0xF2ECF4FF)
+    val dividerColor = if (isDark) Color(0x223B82F6) else Color(0x262B8CFF)
+
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color(0xF2101319))
+            .background(barBg)
             .navigationBarsPadding()
     ) {
         HorizontalDivider(
             thickness = 0.6.dp,
-            color = Color.White.copy(alpha = 0.06f)
+            color = dividerColor
         )
 
         Row(
@@ -55,7 +60,7 @@ fun BottomNavBar(
                     label = "nav_item_bg"
                 )
                 val animatedIconColor by animateColorAsState(
-                    targetValue = if (isSelected) ConceptPrimary else Color.White.copy(alpha = 0.45f),
+                    targetValue = if (isSelected) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f),
                     animationSpec = tween(durationMillis = 200),
                     label = "nav_item_icon"
                 )

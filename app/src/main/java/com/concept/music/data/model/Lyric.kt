@@ -11,7 +11,8 @@ data class LyricLine(
     val durationMs: Long,
     val text: String,
     val words: List<LyricWord> = emptyList(),
-    val translation: String? = null
+    val translation: String? = null,
+    val phonetic: String? = null
 ) {
     val hasWordTiming: Boolean get() = words.isNotEmpty()
 }
@@ -22,6 +23,7 @@ data class LyricData(
     val isKrc: Boolean = false
 ) {
     val hasTranslation: Boolean get() = lines.any { !it.translation.isNullOrBlank() }
+    val hasPhonetic: Boolean get() = lines.any { !it.phonetic.isNullOrBlank() }
 
     fun getLineIndexAt(positionMs: Long): Int {
         if (lines.isEmpty()) return -1

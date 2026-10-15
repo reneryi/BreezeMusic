@@ -1,5 +1,6 @@
 package com.concept.music.ui.components
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -10,23 +11,25 @@ import androidx.compose.material.icons.automirrored.rounded.Comment
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.Song
+import com.concept.music.service.AudioCacheManager
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SongActionBottomSheet(
     song: Song,
@@ -42,9 +45,14 @@ fun SongActionBottomSheet(
     onOpenSongDetail: (() -> Unit)? = null,
     onRemoveFromCurrentPlaylist: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    var isPinned by remember(song.id, song.hash) {
+        mutableStateOf(AudioCacheManager.isSongPinned(context, song))
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF161922),
+        containerColor = MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
         dragHandle = {
             Surface(
@@ -53,7 +61,7 @@ fun SongActionBottomSheet(
                     .width(40.dp)
                     .height(4.dp),
                 shape = CircleShape,
-                color = Color.White.copy(alpha = 0.2f)
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
             ) {}
         }
     ) {
@@ -74,7 +82,7 @@ fun SongActionBottomSheet(
                     modifier = Modifier
                         .size(54.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF222733)),
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
                     contentAlignment = Alignment.Center
                 ) {
                     if (song.coverUrl.isNotEmpty()) {
@@ -88,7 +96,7 @@ fun SongActionBottomSheet(
                         Icon(
                             imageVector = Icons.Rounded.MusicNote,
                             contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.5f),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(26.dp)
                         )
                     }
@@ -101,7 +109,7 @@ fun SongActionBottomSheet(
                         text = song.title,
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = MaterialTheme.colorScheme.onSurface,
                             fontSize = 16.sp
                         ),
                         maxLines = 1,
@@ -123,7 +131,7 @@ fun SongActionBottomSheet(
                         Text(
                             text = if (song.album.isNotBlank()) "${song.artist} · ${song.album}" else song.artist,
                             style = MaterialTheme.typography.bodySmall.copy(
-                                color = Color.White.copy(alpha = 0.6f)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             ),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -141,12 +149,12 @@ fun SongActionBottomSheet(
                     Icon(
                         imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                         contentDescription = if (isFavorite) "取消喜欢" else "我喜欢",
-                        tint = if (isFavorite) Color(0xFFFF5252) else Color.White.copy(alpha = 0.7f)
+                        tint = if (isFavorite) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
             Spacer(modifier = Modifier.height(6.dp))
 
             // 2. 操作菜单项
@@ -172,7 +180,7 @@ fun SongActionBottomSheet(
             SongActionMenuItem(
                 icon = if (isFavorite) Icons.Rounded.HeartBroken else Icons.Rounded.FavoriteBorder,
                 title = if (isFavorite) "从「我喜欢的音乐」移除" else "收藏到「我喜欢的音乐」",
-                tint = if (isFavorite) Color(0xFFFF5252) else Color.White.copy(alpha = 0.85f),
+                tint = if (isFavorite) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
                 onClick = {
                     onDismiss()
                     onToggleFavorite()
@@ -188,6 +196,22 @@ fun SongActionBottomSheet(
                 }
             )
 
+            // [维度6] 固定离线收藏（免受 LRU 淘汰与一键清缓存影响）
+            SongActionMenuItem(
+                icon = if (isPinned) Icons.Rounded.PushPin else Icons.Rounded.OfflinePin,
+                title = if (isPinned) "已固定离线保护（点击解除）" else "固定离线收藏（清理缓存时不删除）",
+                tint = if (isPinned) VipGold else ConceptPrimary,
+                onClick = {
+                    val nowPinned = AudioCacheManager.togglePinSong(context, song)
+                    isPinned = nowPinned
+                    Toast.makeText(
+                        context,
+                        if (nowPinned) "已开启「${song.title}」固定离线保护" else "已解除固定离线保护",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            )
+
             if (onOpenComments != null) {
                 SongActionMenuItem(
                     icon = Icons.AutoMirrored.Rounded.Comment,
@@ -199,10 +223,18 @@ fun SongActionBottomSheet(
                 )
             }
 
+            // [维度2] 多歌手拆分展示与歌手详情页跳转
             if (onOpenArtist != null && song.artist.isNotBlank()) {
+                val artistNames = song.artist.split("、", "/", "&", "，", ",")
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
                 SongActionMenuItem(
                     icon = Icons.Rounded.Person,
-                    title = "查看歌手：${song.artist}",
+                    title = if (artistNames.size > 1) {
+                        "查看歌手：${artistNames.joinToString(" / ")}"
+                    } else {
+                        "查看歌手：${song.artist}"
+                    },
                     onClick = {
                         onDismiss()
                         onOpenArtist()
@@ -234,7 +266,7 @@ fun SongActionBottomSheet(
 
             if (onRemoveFromCurrentPlaylist != null) {
                 HorizontalDivider(
-                    color = Color.White.copy(alpha = 0.06f),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
                     modifier = Modifier.padding(vertical = 4.dp)
                 )
                 SongActionMenuItem(
@@ -258,8 +290,8 @@ fun SongActionBottomSheet(
 private fun SongActionMenuItem(
     icon: ImageVector,
     title: String,
-    tint: Color = Color.White.copy(alpha = 0.85f),
-    textColor: Color = Color.White,
+    tint: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+    textColor: Color = MaterialTheme.colorScheme.onSurface,
     onClick: () -> Unit
 ) {
     Row(
@@ -267,7 +299,7 @@ private fun SongActionMenuItem(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 13.dp),
+            .padding(horizontal = 8.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(

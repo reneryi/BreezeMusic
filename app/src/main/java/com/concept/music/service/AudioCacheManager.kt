@@ -1,6 +1,7 @@
 package com.concept.music.service
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.annotation.OptIn
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -9,6 +10,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
+import com.concept.music.data.model.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,12 +21,14 @@ import java.io.File
 import java.util.Locale
 
 /**
- * 边听边存音频缓存管理器 ([FUNC-02])
- * 基于 Media3 SimpleCache + LRU 淘汰策略，实现流媒体自动落盘缓存与秒开重播
+ * 边听边存音频缓存管理器 ([FUNC-02] + [维度6：固定离线收藏 Pin Offline])
+ * 基于 Media3 SimpleCache + LRU 淘汰策略，实现流媒体自动落盘缓存、秒开重播与固定离线免清理保护
  */
 @OptIn(UnstableApi::class)
 object AudioCacheManager {
     private const val CACHE_DIR_NAME = "concept_audio_stream_cache"
+    private const val PREFS_NAME = "concept_audio_cache_prefs"
+    private const val KEY_PINNED_SONGS = "pinned_song_hashes"
     private const val DEFAULT_MAX_CACHE_BYTES = 1024L * 1024L * 1024L // 默认 1 GB 上限
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -35,13 +39,53 @@ object AudioCacheManager {
     @Volatile
     private var cacheDir: File? = null
 
+    private var prefs: SharedPreferences? = null
+
     private val _cacheSizeBytes = MutableStateFlow(0L)
     val cacheSizeBytes = _cacheSizeBytes.asStateFlow()
+
+    private val _pinnedSongIds = MutableStateFlow<Set<String>>(emptySet())
+    val pinnedSongIds = _pinnedSongIds.asStateFlow()
+
+    private fun ensurePrefs(context: Context): SharedPreferences {
+        return prefs ?: context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).also {
+            prefs = it
+            _pinnedSongIds.value = it.getStringSet(KEY_PINNED_SONGS, emptySet())?.toSet() ?: emptySet()
+        }
+    }
+
+    fun isSongPinned(context: Context, song: Song): Boolean {
+        ensurePrefs(context)
+        val key = songPinKey(song)
+        return key.isNotBlank() && _pinnedSongIds.value.contains(key)
+    }
+
+    fun togglePinSong(context: Context, song: Song): Boolean {
+        val sp = ensurePrefs(context)
+        val key = songPinKey(song)
+        if (key.isBlank()) return false
+        val current = _pinnedSongIds.value.toMutableSet()
+        val nowPinned = if (current.contains(key)) {
+            current.remove(key)
+            false
+        } else {
+            current.add(key)
+            true
+        }
+        _pinnedSongIds.value = current
+        sp.edit().putStringSet(KEY_PINNED_SONGS, current).apply()
+        return nowPinned
+    }
+
+    private fun songPinKey(song: Song): String {
+        return song.hash.ifBlank { song.id }.lowercase()
+    }
 
     @Synchronized
     fun getCache(context: Context): SimpleCache {
         simpleCache?.let { return it }
         val appContext = context.applicationContext
+        ensurePrefs(appContext)
         val dir = File(appContext.cacheDir, CACHE_DIR_NAME).apply {
             if (!exists()) mkdirs()
         }
@@ -100,17 +144,29 @@ object AudioCacheManager {
         }
     }
 
-    fun clearCache(context: Context, onComplete: (Boolean) -> Unit = {}) {
+    /**
+     * 清理缓存时默认保留用户手动标记「固定离线收藏 (Pin Offline)」的曲目缓存分片
+     */
+    fun clearCache(context: Context, keepPinned: Boolean = true, onComplete: (Boolean) -> Unit = {}) {
         scope.launch {
             val ok = runCatching {
+                ensurePrefs(context)
+                val pinned = if (keepPinned) _pinnedSongIds.value else emptySet()
                 val cache = getCache(context)
                 val keys = cache.keys.toList()
                 keys.forEach { key ->
-                    runCatching { cache.removeResource(key) }
+                    val isProtected = pinned.any { pinHash ->
+                        pinHash.isNotBlank() && key.lowercase().contains(pinHash)
+                    }
+                    if (!isProtected) {
+                        runCatching { cache.removeResource(key) }
+                    }
                 }
-                cacheDir?.listFiles()?.forEach { file ->
-                    if (file.isFile && !file.name.endsWith(".uid")) {
-                        runCatching { file.delete() }
+                if (pinned.isEmpty()) {
+                    cacheDir?.listFiles()?.forEach { file ->
+                        if (file.isFile && !file.name.endsWith(".uid")) {
+                            runCatching { file.delete() }
+                        }
                     }
                 }
                 _cacheSizeBytes.value = cache.cacheSpace.coerceAtLeast(0L)

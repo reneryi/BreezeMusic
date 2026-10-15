@@ -42,6 +42,7 @@ import coil.compose.AsyncImage
 import com.concept.music.data.model.*
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.viewmodel.SearchViewModel
 
@@ -106,12 +107,12 @@ fun SearchScreen(
         }
     }
 
+    ConceptStageBackground(modifier = modifier.fillMaxSize()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .background(Color(0xFF0F1115))
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
                     onDragStart = { offset ->
@@ -530,6 +531,7 @@ fun SearchScreen(
             }
         }
     }
+}
 }
 
 /**

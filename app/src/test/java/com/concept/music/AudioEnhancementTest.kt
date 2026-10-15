@@ -353,4 +353,29 @@ class AudioEnhancementTest {
         val comments = repo.songComments(song, type = "hot", page = 1)
         assertTrue("无评论歌曲不应注入伪造评论", comments.isEmpty())
     }
+
+    @Test
+    fun testKrcPhoneticAndTranslationDualLayerExtraction() {
+        val langJson = "{\"content\":[{\"type\":0,\"lyricContent\":[[\"穿过夜空\"],[\"追逐星光\"]]},{\"type\":1,\"lyricContent\":[[\"ka \",\"ke \",\"nu \",\"ke\"],[\"ho \",\"shi \",\"wo \",\"o \",\"u\"]]}]}"
+        val b64 = java.util.Base64.getEncoder().encodeToString(langJson.toByteArray(Charsets.UTF_8))
+        val rawKrc = "[ti:夜に駆ける]\n[language:$b64]\n[1000,2000]<0,500,0>夜<500,500,0>に<1000,1000,0>駆ける\n[3500,2000]<0,800,0>星<800,1200,0>を追う"
+
+        val parsed = com.concept.music.data.kugou.KrcDecoder.parseKrcText(rawKrc)
+        assertEquals(2, parsed.lines.size)
+        assertEquals("穿过夜空", parsed.lines[0].translation)
+        assertEquals("ka ke nu ke", parsed.lines[0].phonetic)
+        assertEquals("追逐星光", parsed.lines[1].translation)
+        assertEquals("ho shi wo o u", parsed.lines[1].phonetic)
+    }
+
+    @Test
+    fun testThemeModesAndPlaylistSortModesExist() {
+        val modes = com.concept.music.ui.theme.AppThemeMode.entries
+        assertEquals(3, modes.size)
+        assertTrue(modes.contains(com.concept.music.ui.theme.AppThemeMode.DARK_ABYSS_BLUE))
+        assertTrue(modes.contains(com.concept.music.ui.theme.AppThemeMode.LIGHT_WATERCOLOR))
+
+        val sortModes = com.concept.music.ui.library.PlaylistSortMode.entries
+        assertEquals(4, sortModes.size)
+    }
 }

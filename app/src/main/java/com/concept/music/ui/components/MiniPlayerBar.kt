@@ -25,7 +25,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -37,15 +36,15 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.Song
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * 重新设计的现代流体悬浮播放条（Floating Island MiniPlayer）：
- * - 纯净现代浮岛胶囊形态，大圆角搭配双层微光描边与氛围阴影
+ * 现代流体悬浮播放条（Floating Island MiniPlayer）：
+ * - 自适应「幽邃微蓝（深色）」与「水彩浸润（浅色）」双主题
  * - 连续旋转黑胶微唱盘与手势平滑横滑切歌
- * - 极简一体化主色高光控制按键组
  * - 底部无缝内嵌渐变流光播放进度条
  */
 @Composable
@@ -62,6 +61,12 @@ fun MiniPlayerBar(
     modifier: Modifier = Modifier
 ) {
     if (currentSong == null) return
+
+    val isDark = LocalIsDarkTheme.current
+    val containerColor = if (isDark) Color(0xF2101726) else Color(0xF5EBF4FF)
+    val borderColor = if (isDark) Color(0x285C9DFF) else Color(0x382B8CFF)
+    val primaryTextColor = MaterialTheme.colorScheme.onSurface
+    val subTextColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     val scope = rememberCoroutineScope()
     val rotationAnim = remember { Animatable(0f) }
@@ -83,15 +88,15 @@ fun MiniPlayerBar(
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .shadow(
-                elevation = 18.dp,
+                elevation = if (isDark) 18.dp else 10.dp,
                 shape = RoundedCornerShape(26.dp),
-                ambientColor = Color.Black.copy(alpha = 0.65f),
+                ambientColor = if (isDark) Color.Black.copy(alpha = 0.65f) else ConceptPrimary.copy(alpha = 0.25f),
                 spotColor = ConceptPrimary.copy(alpha = 0.28f)
             )
             .clip(RoundedCornerShape(26.dp))
             .clickable(onClick = onBarClick),
-        color = Color(0xF2131620),
-        border = BorderStroke(0.8.dp, Color.White.copy(alpha = 0.12f)),
+        color = containerColor,
+        border = BorderStroke(0.8.dp, borderColor),
         tonalElevation = 6.dp
     ) {
         Column {
@@ -152,8 +157,8 @@ fun MiniPlayerBar(
                                 shape = CircleShape
                                 clip = true
                             }
-                            .background(Color(0xFF222631))
-                            .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape),
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .border(1.dp, borderColor, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         if (currentSong.coverUrl.isNotEmpty()) {
@@ -184,7 +189,7 @@ fun MiniPlayerBar(
                                 text = currentSong.title,
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White,
+                                    color = primaryTextColor,
                                     fontSize = 14.sp
                                 ),
                                 maxLines = 1,
@@ -227,7 +232,7 @@ fun MiniPlayerBar(
                         Text(
                             text = "${currentSong.artist} · 左右轻滑切歌",
                             style = MaterialTheme.typography.bodySmall.copy(
-                                color = Color.White.copy(alpha = 0.55f),
+                                color = subTextColor,
                                 fontSize = 11.sp
                             ),
                             maxLines = 1,
@@ -251,7 +256,7 @@ fun MiniPlayerBar(
                         Icon(
                             imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                             contentDescription = if (isPlaying) "暂停" else "播放",
-                            tint = Color(0xFF091215),
+                            tint = Color.White,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -267,7 +272,7 @@ fun MiniPlayerBar(
                     Icon(
                         imageVector = Icons.Rounded.SkipNext,
                         contentDescription = "下一首",
-                        tint = Color.White.copy(alpha = 0.85f),
+                        tint = primaryTextColor.copy(alpha = 0.85f),
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -280,7 +285,7 @@ fun MiniPlayerBar(
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
                         contentDescription = "播放列表",
-                        tint = Color.White.copy(alpha = 0.65f),
+                        tint = subTextColor,
                         modifier = Modifier.size(22.dp)
                     )
                 }
@@ -297,7 +302,7 @@ fun MiniPlayerBar(
                     .fillMaxWidth()
                     .height(2.dp),
                 color = ConceptPrimary,
-                trackColor = Color.White.copy(alpha = 0.06f)
+                trackColor = ConceptPrimary.copy(alpha = 0.12f)
             )
         }
     }

@@ -47,7 +47,7 @@ object KrcDecoder {
     fun parseKrcText(text: String): LyricData {
         if (text.isBlank()) return LyricData()
 
-        val translations = extractKrcTranslations(text)
+        val (translations, phonetics) = extractKrcLanguageLayers(text)
         val lines = mutableListOf<LyricLine>()
         val rawLines = text.split("\r\n", "\n")
 
@@ -79,7 +79,8 @@ object KrcDecoder {
             if (lineText.isNotEmpty()) {
                 val lineIndex = lines.size
                 val translation = translations.getOrNull(lineIndex)?.ifBlank { null }
-                lines.add(LyricLine(lineStart, lineDuration, lineText, words, translation))
+                val phonetic = phonetics.getOrNull(lineIndex)?.ifBlank { null }
+                lines.add(LyricLine(lineStart, lineDuration, lineText, words, translation, phonetic))
             }
         }
 
@@ -87,26 +88,34 @@ object KrcDecoder {
         return LyricData(lines = lines, rawText = text, isKrc = true)
     }
 
-    private fun extractKrcTranslations(text: String): List<String> {
-        val result = mutableListOf<String>()
+    /**
+     * [创新3] 同时提取 KRC `[language:...]` 中的中文翻译层 (translations) 与音译注音层 (phonetics: 罗马音/粤拼/韩文音译)
+     */
+    internal fun extractKrcLanguageLayers(text: String): Pair<List<String>, List<String>> {
+        val translations = mutableListOf<String>()
+        val phonetics = mutableListOf<String>()
         val langRegex = Regex("""\[language:([^\]]*)\]""")
-        val langMatch = langRegex.find(text) ?: return result
+        val langMatch = langRegex.find(text) ?: return translations to phonetics
         val b64 = langMatch.groupValues[1].trim()
-        if (b64.isEmpty()) return result
+        if (b64.isEmpty()) return translations to phonetics
 
         try {
             val padding = "=".repeat((4 - b64.length % 4) % 4)
             val decodedBytes = Base64.getMimeDecoder().decode(b64 + padding)
             val decodedStr = String(decodedBytes, Charsets.UTF_8)
             val root = com.google.gson.JsonParser.parseString(decodedStr).asJsonObject
-            val contentArr = root.getAsJsonArray("content") ?: return result
+            val contentArr = root.getAsJsonArray("content") ?: return translations to phonetics
 
             var translationObj: com.google.gson.JsonObject? = null
-            // 优先查找含有汉字内容的对象，保证日韩欧美歌曲提取到的是中文翻译而非罗马音/假名
+            var phoneticObj: com.google.gson.JsonObject? = null
+
             for (elem in contentArr) {
                 if (!elem.isJsonObject) continue
                 val obj = elem.asJsonObject
                 val lc = obj.getAsJsonArray("lyricContent") ?: continue
+                if (lc.size() == 0) continue
+
+                val typeVal = obj.get("type")?.asInt ?: -1
                 val hasChinese = lc.any { item ->
                     if (item.isJsonArray) {
                         item.asJsonArray.any { str -> str.asString.any { it in '\u4e00'..'\u9fff' } }
@@ -114,41 +123,46 @@ object KrcDecoder {
                         item.asString.any { it in '\u4e00'..'\u9fff' }
                     }
                 }
-                if (hasChinese || obj.get("language")?.asInt == 0 || obj.get("type")?.asInt == 0) {
-                    translationObj = obj
-                    if (hasChinese) break
-                }
-            }
-            if (translationObj == null) {
-                for (elem in contentArr) {
-                    if (!elem.isJsonObject) continue
-                    val obj = elem.asJsonObject
-                    val lc = obj.getAsJsonArray("lyricContent") ?: continue
-                    if (lc.size() > 0) {
+
+                if (typeVal == 0 || (hasChinese && typeVal != 1)) {
+                    if (translationObj == null || hasChinese) {
                         translationObj = obj
-                        break
+                    }
+                } else if (typeVal == 1 || !hasChinese) {
+                    if (phoneticObj == null) {
+                        phoneticObj = obj
                     }
                 }
             }
 
-            if (translationObj != null) {
-                val lc = translationObj.getAsJsonArray("lyricContent")
-                if (lc != null) {
-                    for (lineItem in lc) {
-                        if (lineItem.isJsonArray) {
-                            val lineArr = lineItem.asJsonArray
-                            val joined = lineArr.joinToString(" ") { it.asString.trim() }.trim()
-                            result.add(joined)
-                        } else {
-                            result.add(lineItem.asString.trim())
-                        }
+            if (translationObj == null && contentArr.size() == 1 && phoneticObj != null) {
+                // 若仅有一个语言层且未标记 type=1，兼容旧测试将其作为默认翻译层，同时若非纯中文也可供音译使用
+                val onlyObj = contentArr[0].asJsonObject
+                val onlyType = onlyObj.get("type")?.asInt
+                if (onlyType == null || onlyType == 0) {
+                    translationObj = onlyObj
+                }
+            }
+
+            fun parseLayerLines(obj: com.google.gson.JsonObject?, target: MutableList<String>) {
+                val lc = obj?.getAsJsonArray("lyricContent") ?: return
+                for (lineItem in lc) {
+                    if (lineItem.isJsonArray) {
+                        val lineArr = lineItem.asJsonArray
+                        val joined = lineArr.joinToString(" ") { it.asString.trim() }.replace(Regex("\\s+"), " ").trim()
+                        target.add(joined)
+                    } else {
+                        target.add(lineItem.asString.trim())
                     }
                 }
             }
+
+            parseLayerLines(translationObj, translations)
+            parseLayerLines(phoneticObj, phonetics)
         } catch (_: Exception) {
             // 容错返回已提取部分
         }
-        return result
+        return translations to phonetics
     }
 
     fun parseLrcText(text: String): LyricData {
@@ -174,14 +188,17 @@ object KrcDecoder {
             val startTimeMs = min * 60_000L + sec * 1000L + ms
             val lineText = match.groupValues[4].trim()
             if (lineText.isNotEmpty()) {
-                // 检查是否为行内中英双语分割: "Hello world / 你好世界" 或 "Hello // 你好"
-                val slashParts = if (lineText.contains(" // ")) {
-                    lineText.split(" // ", limit = 2)
-                } else if (lineText.contains(" / ") && lineText.any { it in '\u4e00'..'\u9fff' }) {
-                    lineText.split(" / ", limit = 2)
+                // 检查是否为行内中英/音译分割: "原文 // 音译 // 翻译" 或 "Hello // 你好"
+                val doubleSlashParts = if (lineText.contains(" // ")) {
+                    lineText.split(" // ", limit = 3).map { it.trim() }.filter { it.isNotBlank() }
                 } else null
 
-                if (slashParts != null && slashParts.size == 2 && slashParts[0].isNotBlank() && slashParts[1].isNotBlank()) {
+                if (doubleSlashParts != null && doubleSlashParts.size == 3) {
+                    rawParsed.add(LyricLine(startTimeMs, 0L, doubleSlashParts[0], translation = doubleSlashParts[2], phonetic = doubleSlashParts[1]))
+                } else if (doubleSlashParts != null && doubleSlashParts.size == 2) {
+                    rawParsed.add(LyricLine(startTimeMs, 0L, doubleSlashParts[0], translation = doubleSlashParts[1]))
+                } else if (lineText.contains(" / ") && lineText.any { it in '\u4e00'..'\u9fff' }) {
+                    val slashParts = lineText.split(" / ", limit = 2)
                     rawParsed.add(LyricLine(startTimeMs, 0L, slashParts[0].trim(), translation = slashParts[1].trim()))
                 } else {
                     rawParsed.add(LyricLine(startTimeMs, 0L, lineText))
@@ -189,12 +206,18 @@ object KrcDecoder {
             }
         }
 
-        // 合并相同时间戳的翻译行 (例如重复时间戳: [00:10.00]English 与 [00:10.00]中文翻译)
+        // 合并相同时间戳的翻译/音译行
         val lines = mutableListOf<LyricLine>()
         for (entry in rawParsed) {
             val last = lines.lastOrNull()
-            if (last != null && kotlin.math.abs(last.startTimeMs - entry.startTimeMs) <= 100L && last.translation == null) {
-                lines[lines.size - 1] = last.copy(translation = entry.text)
+            if (last != null && kotlin.math.abs(last.startTimeMs - entry.startTimeMs) <= 100L) {
+                if (last.translation == null) {
+                    lines[lines.size - 1] = last.copy(translation = entry.text)
+                } else if (last.phonetic == null) {
+                    lines[lines.size - 1] = last.copy(phonetic = last.translation, translation = entry.text)
+                } else {
+                    lines.add(entry)
+                }
             } else {
                 lines.add(entry)
             }

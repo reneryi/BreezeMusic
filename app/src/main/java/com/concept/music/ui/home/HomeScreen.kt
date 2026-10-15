@@ -39,7 +39,11 @@ import com.concept.music.data.model.FmChannel
 import com.concept.music.data.model.RankItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.model.YouthChannel
+import com.concept.music.service.FocusPodManager
+import com.concept.music.ui.components.FocusPodBottomSheet
 import com.concept.music.ui.components.SongItemRow
+import com.concept.music.ui.theme.ConceptStageBackground
+import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.VipGold
@@ -89,6 +93,8 @@ fun HomeScreen(
     var detailSheetSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
     var detailSheetLoading by remember { mutableStateOf(false) }
     var showDetailSheet by remember { mutableStateOf(false) }
+    var showFocusPodSheet by remember { mutableStateOf(false) }
+    val focusPodState by FocusPodManager.state.collectAsState()
 
     fun openRankDetail(rank: RankItem) {
         detailSheetTitle = rank.rankName
@@ -129,17 +135,15 @@ fun HomeScreen(
         }
     }
 
-    Box(
+    ConceptStageBackground(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF0F1115))
             .nestedScroll(pullRefreshState.nestedScrollConnection)
     ) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                .background(Color(0xFF0F1115)),
+                .statusBarsPadding(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
@@ -202,6 +206,96 @@ fun HomeScreen(
                 )
             }
 
+            // 3.5 [创新点1] 概念胶囊工作台 (Concept Focus Pod：番茄钟 × 概念频道 × 环境白噪音)
+            item {
+                val isDark = LocalIsDarkTheme.current
+                Card(
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isDark) Color(0xFF131C2E) else Color(0xFFEAF3FF)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .clickable { showFocusPodSheet = true }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(
+                                0.8.dp,
+                                ConceptPrimary.copy(alpha = if (isDark) 0.28f else 0.35f),
+                                RoundedCornerShape(22.dp)
+                            )
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = ConceptPrimary.copy(alpha = 0.16f),
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Rounded.SelfImprovement,
+                                    contentDescription = "概念胶囊工作台",
+                                    tint = ConceptPrimary,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "概念胶囊工作台 · Focus Pod",
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                if (focusPodState.isRunning) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = ConceptPrimary.copy(alpha = 0.2f)
+                                    ) {
+                                        Text(
+                                            text = "专注中 ${focusPodState.remainingSec / 60}:${String.format("%02d", focusPodState.remainingSec % 60)}",
+                                            color = ConceptPrimary,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = "25分钟心流番茄钟 × 概念版频道 × 4路白噪音混音 · 自动累计听歌等级",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = { showFocusPodSheet = true },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text(
+                                text = if (focusPodState.isRunning) "控制台" else "开启心流",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
             // 4. [P1-1] 概念版专属年轻频道 (Youth Channels)
             if (youthChannels.isNotEmpty()) {
                 item {
@@ -217,7 +311,7 @@ fun HomeScreen(
                                 text = "概念专属频道",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             )
                             Text(
@@ -269,7 +363,7 @@ fun HomeScreen(
                                 text = "精选场景电台",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             )
                             Text(
@@ -319,7 +413,7 @@ fun HomeScreen(
                                 text = "巅峰排行榜",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             )
                             Text(
@@ -474,6 +568,21 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(20.dp))
             }
         }
+    }
+
+    if (showFocusPodSheet) {
+        FocusPodBottomSheet(
+            youthChannels = youthChannels,
+            onPlayYouthChannel = { channelId ->
+                coroutineScope.launch {
+                    val songs = viewModel.getYouthChannelSongs(channelId)
+                    if (songs.isNotEmpty()) {
+                        onSongClick(songs.first(), songs)
+                    }
+                }
+            },
+            onDismiss = { showFocusPodSheet = false }
+        )
     }
 }
 
@@ -952,7 +1061,7 @@ private fun DiscoverTopHeader(
                 text = "发现",
                 style = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.ExtraBold,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     letterSpacing = 0.5.sp
                 )
             )
