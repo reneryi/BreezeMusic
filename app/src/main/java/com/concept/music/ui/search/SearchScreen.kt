@@ -742,27 +742,34 @@ private fun ComplexSearchResultView(
                     ) {
                         items(result.playlists.take(6)) { pl ->
                             Surface(
-                                shape = RoundedCornerShape(16.dp),
-                                color = Color(0xFF181C26),
+                                shape = RoundedCornerShape(18.dp),
+                                color = Color(0xFF151C2C),
                                 border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.08f)),
                                 modifier = Modifier
-                                    .width(136.dp)
-                                    .clip(RoundedCornerShape(16.dp))
+                                    .width(142.dp)
+                                    .height(190.dp)
+                                    .clip(RoundedCornerShape(18.dp))
                                     .clickable { onPlaylistClick(pl.id) }
                             ) {
-                                Column(modifier = Modifier.padding(9.dp)) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.SpaceBetween
+                                ) {
                                     Box {
                                         AsyncImage(
                                             model = pl.coverUrl,
                                             contentDescription = pl.name,
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier
-                                                .size(118.dp)
+                                                .size(122.dp)
                                                 .clip(RoundedCornerShape(12.dp))
+                                                .background(Color(0xFF1E2638))
                                         )
                                         if (pl.trackCount > 0) {
                                             Surface(
-                                                color = Color.Black.copy(alpha = 0.55f),
+                                                color = Color.Black.copy(alpha = 0.65f),
                                                 shape = RoundedCornerShape(6.dp),
                                                 modifier = Modifier
                                                     .align(Alignment.BottomEnd)
@@ -771,17 +778,17 @@ private fun ComplexSearchResultView(
                                                 Text(
                                                     text = "${pl.trackCount}首",
                                                     color = Color.White,
-                                                    fontSize = 9.sp,
-                                                    fontWeight = FontWeight.Medium,
-                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                    fontSize = 9.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                 )
                                             }
                                         }
                                     }
-                                    Spacer(modifier = Modifier.height(8.dp))
                                     Text(
                                         text = pl.name,
                                         maxLines = 2,
+                                        minLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                         style = MaterialTheme.typography.bodySmall.copy(
                                             fontWeight = FontWeight.SemiBold,
@@ -833,8 +840,12 @@ private fun ComplexSearchResultView(
                             .padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        result.albums.take(3).forEach { alb ->
-                            AlbumCardItem(album = alb, onClick = { onAlbumClick(alb.id) })
+                        val primaryArtistName = result.artists.firstOrNull()?.name.orEmpty()
+                        result.albums.take(4).forEach { alb ->
+                            val fixedAlb = if ((alb.artist.isBlank() || alb.artist == "未知歌手" || alb.artist == "群星") && primaryArtistName.isNotBlank()) {
+                                alb.copy(artist = primaryArtistName)
+                            } else alb
+                            AlbumCardItem(album = fixedAlb, onClick = { onAlbumClick(alb.id) })
                         }
                     }
                 }
@@ -847,7 +858,7 @@ private fun ComplexSearchResultView(
 private fun AlbumCardItem(album: AlbumItem, onClick: () -> Unit = {}) {
     Surface(
         shape = RoundedCornerShape(18.dp),
-        color = Color(0xFF181C26),
+        color = Color(0xFF151C2C),
         border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.08f)),
         modifier = Modifier
             .fillMaxWidth()
@@ -860,9 +871,9 @@ private fun AlbumCardItem(album: AlbumItem, onClick: () -> Unit = {}) {
         ) {
             Box(
                 modifier = Modifier
-                    .size(62.dp)
+                    .size(64.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFF222631)),
+                    .background(Color(0xFF1E2638)),
                 contentAlignment = Alignment.Center
             ) {
                 AsyncImage(
@@ -885,20 +896,32 @@ private fun AlbumCardItem(album: AlbumItem, onClick: () -> Unit = {}) {
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(4.dp))
+                val meta = buildList {
+                    if (album.artist.isNotBlank() && album.artist != "未知歌手") add(album.artist)
+                    if (album.songCount > 1) add("${album.songCount}首曲目") else add("录音室专辑")
+                    if (album.publishDate.isNotBlank()) add(album.publishDate)
+                }.joinToString(" · ")
                 Text(
-                    text = "${album.artist} · ${if (album.songCount > 0) "${album.songCount}首曲目" else "专辑"}",
-                    style = MaterialTheme.typography.bodySmall.copy(color = Color.White.copy(alpha = 0.58f)),
+                    text = meta,
+                    style = MaterialTheme.typography.bodySmall.copy(color = Color.White.copy(alpha = 0.65f)),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (album.publishDate.isNotBlank()) {
+                if (album.intro.isNotBlank()) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "发行时间：${album.publishDate}",
-                        style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.35f))
+                        text = album.intro.replace("\n", " "),
+                        style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.42f)),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
+            Icon(
+                imageVector = Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.35f)
+            )
         }
     }
 }
@@ -907,7 +930,7 @@ private fun AlbumCardItem(album: AlbumItem, onClick: () -> Unit = {}) {
 private fun PlaylistSearchCard(playlist: PlaylistItem, onClick: () -> Unit = {}) {
     Surface(
         shape = RoundedCornerShape(18.dp),
-        color = Color(0xFF181C26),
+        color = Color(0xFF151C2C),
         border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.08f)),
         modifier = Modifier
             .fillMaxWidth()
@@ -923,8 +946,9 @@ private fun PlaylistSearchCard(playlist: PlaylistItem, onClick: () -> Unit = {})
                 contentDescription = playlist.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
-                    .size(62.dp)
+                    .size(64.dp)
                     .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF1E2638))
             )
             Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -941,11 +965,25 @@ private fun PlaylistSearchCard(playlist: PlaylistItem, onClick: () -> Unit = {})
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "创建者：${playlist.creatorName} · ${playlist.trackCount}首",
-                    style = MaterialTheme.typography.bodySmall.copy(color = Color.White.copy(alpha = 0.58f)),
+                    style = MaterialTheme.typography.bodySmall.copy(color = Color.White.copy(alpha = 0.65f)),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (playlist.intro.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = playlist.intro.replace("\n", " "),
+                        style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.42f)),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
+            Icon(
+                imageVector = Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.35f)
+            )
         }
     }
 }

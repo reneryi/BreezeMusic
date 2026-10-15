@@ -36,7 +36,6 @@ import com.concept.music.ui.theme.VipGold
 @Composable
 fun FocusPodBottomSheet(
     onDismiss: () -> Unit,
-    youthChannels: List<com.concept.music.data.model.YouthChannel> = emptyList(),
     onPlayYouthChannel: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -303,7 +302,7 @@ fun FocusPodBottomSheet(
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = if (state.isRunning) VipGold else ConceptPrimary,
-                    contentColor = Color(0xFF061320)
+                    contentColor = Color.White
                 )
             ) {
                 Icon(

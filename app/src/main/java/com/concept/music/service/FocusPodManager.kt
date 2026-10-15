@@ -52,9 +52,6 @@ data class FocusPodState(
             val secs = remainingSeconds % 60L
             return String.format(java.util.Locale.getDefault(), "%02d:%02d", mins, secs)
         }
-
-    val remainingSec: Long
-        get() = remainingSeconds
 }
 
 object FocusPodManager {

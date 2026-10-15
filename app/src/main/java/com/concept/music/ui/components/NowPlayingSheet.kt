@@ -13,7 +13,11 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -168,6 +172,7 @@ fun NowPlayingSheet(
     var showLyricPosterDialog by remember { mutableStateOf(false) }
     var showFocusPodSheet by remember { mutableStateOf(false) }
     var showDoubleTapHeart by remember { mutableStateOf(false) }
+    var showMoreControlSheet by remember { mutableStateOf(false) }
 
     // [MOT-02] 状态提升：将唱片/封面旋转角度状态提升至 NowPlayingSheet 顶层，切换歌词/封面不重置相位
     val rotationAnim = remember(song.id) { Animatable(0f) }
@@ -499,339 +504,218 @@ fun NowPlayingSheet(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                // 主舞台区（[INNOV-02] 四大多态机芯封面 VS 全屏沉浸歌词）
+                // 主舞台区（丝滑 AnimatedContent 3D 缩放转场：四大多态机芯封面 VS 全屏沉浸歌词）
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (!showLyricView) {
-                        // 居中封面与双行预览歌词
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
-                        ) {
-                            var dragDeltaX by remember { mutableFloatStateOf(0f) }
-                            LaunchedEffect(showDoubleTapHeart) {
-                                if (showDoubleTapHeart) {
-                                    delay(750L)
-                                    showDoubleTapHeart = false
-                                }
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .pointerInput(song.id, isFavorite) {
-                                        detectTapGestures(
-                                            onTap = { showLyricView = true },
-                                            onDoubleTap = {
-                                                showDoubleTapHeart = true
-                                                if (!isFavorite) {
-                                                    onToggleFavorite()
-                                                }
-                                            }
-                                        )
-                                    }
-                                    .pointerInput(song.id) {
-                                        detectHorizontalDragGestures(
-                                            onDragStart = { dragDeltaX = 0f },
-                                            onHorizontalDrag = { change, dragAmount ->
-                                                change.consume()
-                                                dragDeltaX += dragAmount
-                                            },
-                                            onDragEnd = {
-                                                if (dragDeltaX < -110f) {
-                                                    onNext()
-                                                } else if (dragDeltaX > 110f) {
-                                                    onPrevious()
-                                                }
-                                                dragDeltaX = 0f
-                                            }
-                                        )
-                                    },
-                                contentAlignment = Alignment.Center
+                    AnimatedContent(
+                        targetState = showLyricView,
+                        transitionSpec = {
+                            (fadeIn(tween(260)) + scaleIn(initialScale = 0.94f, animationSpec = tween(260))) togetherWith
+                                (fadeOut(tween(180)) + scaleOut(targetScale = 0.96f, animationSpec = tween(180)))
+                        },
+                        label = "stageSwitch"
+                    ) { isLyricStage ->
+                        if (!isLyricStage) {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
                             ) {
-                                when (coverStyle) {
-                                    CoverStyle.VINYL -> {
-                                        VinylRecordView(
-                                            coverUrl = song.coverUrl,
-                                            isPlaying = isPlaying,
-                                            rotationProvider = { rotationAnim.value % 360f }
-                                        )
-                                    }
-                                    CoverStyle.CASSETTE -> {
-                                        TransparentCassetteDeckView(
-                                            song = song,
-                                            isPlaying = isPlaying,
-                                            rotationProvider = { rotationAnim.value % 360f },
-                                            currentPositionMs = currentPositionMs,
-                                            durationMs = durationMs
-                                        )
-                                    }
-                                    CoverStyle.POSTER -> {
-                                        MagazinePosterCoverView(
-                                            song = song,
-                                            lyricData = lyricData,
-                                            currentLyricIndex = currentLyricIndex,
-                                            currentPositionMs = currentPositionMs,
-                                            showTranslation = showTranslation
-                                        )
-                                    }
-                                    CoverStyle.CIRCLE -> {
-                                        CircleCoverView(
-                                            coverUrl = song.coverUrl,
-                                            rotationProvider = { rotationAnim.value % 360f }
-                                        )
+                                var dragDeltaX by remember { mutableFloatStateOf(0f) }
+                                LaunchedEffect(showDoubleTapHeart) {
+                                    if (showDoubleTapHeart) {
+                                        delay(750L)
+                                        showDoubleTapHeart = false
                                     }
                                 }
-                                androidx.compose.animation.AnimatedVisibility(
-                                    visible = showDoubleTapHeart,
-                                    enter = fadeIn(tween(120)),
-                                    exit = fadeOut(tween(320))
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Favorite,
-                                        contentDescription = null,
-                                        tint = Color(0xFFFF5252).copy(alpha = 0.92f),
-                                        modifier = Modifier.size(92.dp)
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            // 封面下方双行歌词预览条 (在杂志海报模式下隐藏以避免重复，或保持紧凑控制条)
-                            if (coverStyle != CoverStyle.POSTER) {
-                                LyricPreviewBar(
-                                    lyricData = lyricData,
-                                    currentLyricIndex = currentLyricIndex,
-                                    showTranslation = showTranslation,
-                                    onClick = { showLyricView = true }
-                                )
-                            } else {
-                                Surface(
-                                    color = Color.White.copy(alpha = 0.08f),
-                                    shape = RoundedCornerShape(14.dp),
+                                Box(
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .clickable { showLyricView = true }
-                                ) {
-                                    Text(
-                                        text = "杂志海报机芯 · 轻触展开全屏歌词",
-                                        color = Color.White.copy(alpha = 0.65f),
-                                        fontSize = 11.sp,
-                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        // 封面右侧纵向快捷操作按钮栏 (参考图一：心形【我喜欢】、三个点【更多操作】)
-                        Column(
-                            modifier = Modifier
-                                .align(Alignment.CenterEnd)
-                                .padding(end = 4.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            // 我喜欢（真实云端同步）
-                            IconButton(
-                                onClick = onToggleFavorite,
-                                modifier = Modifier
-                                    .size(42.dp)
-                                    .background(Color.White.copy(alpha = 0.08f), CircleShape)
-                            ) {
-                                Icon(
-                                    imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                    contentDescription = "喜欢",
-                                    tint = if (isFavorite) Color(0xFFFF5252) else Color.White.copy(alpha = 0.85f),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-
-                            // 更多操作 (三个点按钮)
-                            Box {
-                                var showCoverMoreMenu by remember { mutableStateOf(false) }
-                                val systemLyricState by SystemLyricBridge.state.collectAsState()
-                                val floatingLyricEnabled = systemLyricState.floatingCapsuleEnabled
-                                IconButton(
-                                    onClick = { showCoverMoreMenu = true },
-                                    modifier = Modifier
-                                        .size(42.dp)
-                                        .background(Color.White.copy(alpha = 0.08f), CircleShape)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.MoreVert,
-                                        contentDescription = "更多",
-                                        tint = Color.White.copy(alpha = 0.85f),
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                }
-
-                                DropdownMenu(
-                                    expanded = showCoverMoreMenu,
-                                    onDismissRequest = { showCoverMoreMenu = false },
-                                    modifier = Modifier.background(Color(0xFF1E222A))
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("添加到歌单...", color = Color.White) },
-                                        leadingIcon = {
-                                            Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, tint = ConceptPrimary)
-                                        },
-                                        onClick = {
-                                            showCoverMoreMenu = false
-                                            onAddToPlaylist()
-                                        }
-                                    )
-                                    HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
-                                    // [INNOV-02] 四大概念多态机芯切换
-                                    CoverStyle.entries.forEach { style ->
-                                        val styleIcon = when (style) {
-                                            CoverStyle.VINYL -> Icons.Rounded.Album
-                                            CoverStyle.CASSETTE -> Icons.Rounded.Radio
-                                            CoverStyle.POSTER -> Icons.Rounded.Style
-                                            CoverStyle.CIRCLE -> Icons.Rounded.Circle
-                                        }
-                                        DropdownMenuItem(
-                                            text = {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Text(
-                                                        text = "机芯皮肤：${style.label}",
-                                                        color = if (coverStyle == style) ConceptPrimary else Color.White
-                                                    )
-                                                    if (coverStyle == style) {
-                                                        Spacer(modifier = Modifier.width(6.dp))
-                                                        Icon(
-                                                            imageVector = Icons.Rounded.Check,
-                                                            contentDescription = null,
-                                                            tint = ConceptPrimary,
-                                                            modifier = Modifier.size(16.dp)
-                                                        )
+                                        .pointerInput(song.id, isFavorite) {
+                                            detectTapGestures(
+                                                onTap = { showLyricView = true },
+                                                onDoubleTap = {
+                                                    showDoubleTapHeart = true
+                                                    if (!isFavorite) {
+                                                        onToggleFavorite()
                                                     }
                                                 }
-                                            },
-                                            leadingIcon = {
-                                                Icon(styleIcon, contentDescription = null, tint = ConceptPrimary)
-                                            },
-                                            onClick = {
-                                                onSelectCoverStyle(style)
-                                                showCoverMoreMenu = false
-                                            }
+                                            )
+                                        }
+                                        .pointerInput(song.id) {
+                                            detectHorizontalDragGestures(
+                                                onDragStart = { dragDeltaX = 0f },
+                                                onHorizontalDrag = { change, dragAmount ->
+                                                    change.consume()
+                                                    dragDeltaX += dragAmount
+                                                },
+                                                onDragEnd = {
+                                                    if (dragDeltaX < -110f) {
+                                                        onNext()
+                                                    } else if (dragDeltaX > 110f) {
+                                                        onPrevious()
+                                                    }
+                                                    dragDeltaX = 0f
+                                                }
+                                            )
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    when (coverStyle) {
+                                        CoverStyle.VINYL -> {
+                                            VinylRecordView(
+                                                coverUrl = song.coverUrl,
+                                                isPlaying = isPlaying,
+                                                rotationProvider = { rotationAnim.value % 360f }
+                                            )
+                                        }
+                                        CoverStyle.CASSETTE -> {
+                                            TransparentCassetteDeckView(
+                                                song = song,
+                                                isPlaying = isPlaying,
+                                                rotationProvider = { rotationAnim.value % 360f },
+                                                currentPositionMs = currentPositionMs,
+                                                durationMs = durationMs
+                                            )
+                                        }
+                                        CoverStyle.POSTER -> {
+                                            MagazinePosterCoverView(
+                                                song = song,
+                                                lyricData = lyricData,
+                                                currentLyricIndex = currentLyricIndex,
+                                                currentPositionMs = currentPositionMs,
+                                                showTranslation = showTranslation
+                                            )
+                                        }
+                                        CoverStyle.CIRCLE -> {
+                                            CircleCoverView(
+                                                coverUrl = song.coverUrl,
+                                                rotationProvider = { rotationAnim.value % 360f }
+                                            )
+                                        }
+                                    }
+                                    androidx.compose.animation.AnimatedVisibility(
+                                        visible = showDoubleTapHeart,
+                                        enter = fadeIn(tween(120)),
+                                        exit = fadeOut(tween(320))
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Favorite,
+                                            contentDescription = null,
+                                            tint = Color(0xFFFF5252).copy(alpha = 0.92f),
+                                            modifier = Modifier.size(92.dp)
                                         )
                                     }
-                                    HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
-                                    // [INNOV-01] 副歌刷刷模式快捷开关
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = if (climaxModeEnabled) "🔥 副歌刷刷模式 (已开启)" else "🔥 副歌刷刷模式 (高潮速听)",
-                                                color = if (climaxModeEnabled) VipGold else Color.White
-                                            )
-                                        },
-                                        leadingIcon = {
-                                            Icon(Icons.Rounded.Whatshot, contentDescription = null, tint = VipGold)
-                                        },
-                                        onClick = {
-                                            onToggleClimaxMode()
-                                            showCoverMoreMenu = false
-                                        }
+                                }
+
+                                Spacer(modifier = Modifier.height(16.dp))
+
+                                if (coverStyle != CoverStyle.POSTER) {
+                                    LyricPreviewBar(
+                                        lyricData = lyricData,
+                                        currentLyricIndex = currentLyricIndex,
+                                        showTranslation = showTranslation,
+                                        onClick = { showLyricView = true }
                                     )
-                                    // [INNOV-05] 全局悬浮逐字歌词快捷开关
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                text = if (floatingLyricEnabled) "关闭全局悬浮逐字歌词" else "开启全局悬浮逐字歌词",
-                                                color = if (floatingLyricEnabled) ConceptPrimary else Color.White
-                                            )
-                                        },
-                                        leadingIcon = {
-                                            Icon(Icons.Rounded.Lyrics, contentDescription = null, tint = ConceptPrimary)
-                                        },
-                                        onClick = {
-                                            SystemLyricBridge.setFloatingCapsuleEnabled(!floatingLyricEnabled)
-                                            showCoverMoreMenu = false
-                                        }
-                                    )
-                                    HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
-                                    DropdownMenuItem(
-                                        text = { Text("倍速与变调 (${String.format(java.util.Locale.getDefault(), "%.2f", playbackSpeed)}x)", color = Color.White) },
-                                        leadingIcon = {
-                                            Icon(Icons.Rounded.Speed, contentDescription = null, tint = ConceptPrimary)
-                                        },
-                                        onClick = {
-                                            showCoverMoreMenu = false
-                                            showSpeedPitchDialog = true
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = {
-                                            val suffix = if (sleepTimerRemainingSec > 0) " (${formatDuration(sleepTimerRemainingSec * 1000L)})" else ""
-                                            Text("睡眠定时器$suffix", color = Color.White)
-                                        },
-                                        leadingIcon = {
-                                            Icon(Icons.Rounded.Bedtime, contentDescription = null, tint = ConceptPrimary)
-                                        },
-                                        onClick = {
-                                            showCoverMoreMenu = false
-                                            showSleepTimerDialog = true
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("音效与心流白噪音舱", color = Color.White) },
-                                        leadingIcon = {
-                                            Icon(Icons.Rounded.GraphicEq, contentDescription = null, tint = ConceptPrimary)
-                                        },
-                                        onClick = {
-                                            showCoverMoreMenu = false
-                                            showAudioEffectDialog = true
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("音质规格选择", color = Color.White) },
-                                        leadingIcon = {
-                                            Icon(Icons.Rounded.HighQuality, contentDescription = null, tint = ConceptPrimary)
-                                        },
-                                        onClick = {
-                                            showCoverMoreMenu = false
-                                            showQualityDialog = true
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("技术参数与属性", color = Color.White) },
-                                        leadingIcon = {
-                                            Icon(Icons.Rounded.Info, contentDescription = null, tint = Color.White.copy(alpha = 0.7f))
-                                        },
-                                        onClick = {
-                                            showCoverMoreMenu = false
-                                            showDetailSheet = true
-                                        }
-                                    )
+                                } else {
+                                    Surface(
+                                        color = Color.White.copy(alpha = 0.08f),
+                                        shape = RoundedCornerShape(14.dp),
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .clickable { showLyricView = true }
+                                    ) {
+                                        Text(
+                                            text = "杂志海报机芯 · 轻触展开全屏歌词",
+                                            color = Color.White.copy(alpha = 0.65f),
+                                            fontSize = 11.sp,
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                        )
+                                    }
                                 }
                             }
+                        } else {
+                            ImmersiveLyricView(
+                                lyricData = lyricData,
+                                currentLyricIndex = currentLyricIndex,
+                                currentPositionMs = currentPositionMs,
+                                showTranslation = showTranslation,
+                                showPhonetic = showPhonetic,
+                                lyricFontSize = lyricFontSize,
+                                lyricAlignment = lyricAlignment,
+                                lyricWordByWord = lyricWordByWord,
+                                onLineClick = onSeekToLyricLine,
+                                onToggleTranslation = onToggleTranslation,
+                                onTogglePhonetic = onTogglePhonetic,
+                                onOpenPoster = { showLyricPosterDialog = true },
+                                onOpenSettings = { showLyricSettingsDialog = true },
+                                onCloseLyric = { showLyricView = false }
+                            )
                         }
-                    } else {
-                        // 全屏沉浸歌词视图 (居中双行滚动，右侧悬浮纵向药丸【译】与【歌词设置】按钮，参考图二)
-                        ImmersiveLyricView(
-                            lyricData = lyricData,
-                            currentLyricIndex = currentLyricIndex,
-                            currentPositionMs = currentPositionMs,
-                            showTranslation = showTranslation,
-                            showPhonetic = showPhonetic,
-                            lyricFontSize = lyricFontSize,
-                            lyricAlignment = lyricAlignment,
-                            lyricWordByWord = lyricWordByWord,
-                            onLineClick = onSeekToLyricLine,
-                            onToggleTranslation = onToggleTranslation,
-                            onTogglePhonetic = onTogglePhonetic,
-                            onOpenPoster = { showLyricPosterDialog = true },
-                            onOpenSettings = { showLyricSettingsDialog = true },
-                            onCloseLyric = { showLyricView = false }
-                        )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                // 现代对称式五键快捷功能船坞（取代原先压在封面右侧的突兀双圆按钮）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 1. 喜欢收藏
+                    IconButton(onClick = onToggleFavorite) {
+                        Icon(
+                            imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                            contentDescription = "我喜欢",
+                            tint = if (isFavorite) Color(0xFFFF5252) else Color.White.copy(alpha = 0.8f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    // 2. 音效与白噪音混音舱
+                    IconButton(onClick = { showAudioEffectDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Rounded.GraphicEq,
+                            contentDescription = "蝰蛇音效与白噪音",
+                            tint = ConceptPrimary,
+                            modifier = Modifier.size(23.dp)
+                        )
+                    }
+
+                    // 3. 加入其他歌单
+                    IconButton(onClick = onAddToPlaylist) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                            contentDescription = "加入歌单",
+                            tint = Color.White.copy(alpha = 0.8f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    // 4. 歌词金句黑胶海报
+                    IconButton(onClick = { showLyricPosterDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Rounded.PhotoFilter,
+                            contentDescription = "歌词黑胶海报",
+                            tint = Color.White.copy(alpha = 0.8f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    // 5. 更多功能 Bento 控制台
+                    IconButton(onClick = { showMoreControlSheet = true }) {
+                        Icon(
+                            imageVector = Icons.Rounded.GridView,
+                            contentDescription = "更多功能控制台",
+                            tint = Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
 
                 // 底部播放控制台 (进度条Slider + 高潮区间金标、中层三键控制、最底栏：循环模式、XX评论⌃、队列)
                 PlayerControlsSection(
@@ -857,11 +741,13 @@ fun NowPlayingSheet(
         }
     }
 
-    // 播放队列弹窗 ([维度2 + 创新点2] 自动居中定位 + AI 情绪漫游重排 + 顺序调整)
+    // 播放队列弹窗 ([维度2 + 创新点2] 自动居中定位 + AI 情绪漫游重排 + 封面与音质高定美化)
     if (showQueueSheet) {
         QueueBottomSheet(
             queue = queue,
             currentIndex = currentIndex,
+            playMode = playMode,
+            onCyclePlayMode = onCyclePlayMode,
             onDismiss = { showQueueSheet = false },
             onSongClick = {
                 onPlayQueueSong(it)
@@ -874,12 +760,58 @@ fun NowPlayingSheet(
         )
     }
 
+    // 全新设计的 Bento 网格化「更多功能控制台」抽屉（替代原先简陋的 DropdownMenu）
+    if (showMoreControlSheet) {
+        PlayerMoreControlSheet(
+            song = song,
+            coverStyle = coverStyle,
+            currentQualityLabel = currentQualityLabel,
+            climaxModeEnabled = climaxModeEnabled,
+            accompanyModeEnabled = accompanyModeEnabled,
+            playbackSpeed = playbackSpeed,
+            sleepTimerRemainingSec = sleepTimerRemainingSec,
+            sleepStopAfterCurrentSong = sleepStopAfterCurrentSong,
+            onSelectCoverStyle = onSelectCoverStyle,
+            onToggleClimaxMode = onToggleClimaxMode,
+            onToggleAccompanyMode = onToggleAccompanyMode,
+            onOpenFocusPod = {
+                showMoreControlSheet = false
+                showFocusPodSheet = true
+            },
+            onOpenAudioEffect = {
+                showMoreControlSheet = false
+                showAudioEffectDialog = true
+            },
+            onOpenSpeedPitch = {
+                showMoreControlSheet = false
+                showSpeedPitchDialog = true
+            },
+            onOpenSleepTimer = {
+                showMoreControlSheet = false
+                showSleepTimerDialog = true
+            },
+            onOpenQualitySelect = {
+                showMoreControlSheet = false
+                showQualityDialog = true
+            },
+            onOpenSongDetail = {
+                showMoreControlSheet = false
+                showDetailSheet = true
+            },
+            onAddToPlaylist = {
+                showMoreControlSheet = false
+                onAddToPlaylist()
+            },
+            onDismiss = { showMoreControlSheet = false }
+        )
+    }
+
     // [创新点5] 歌词金句黑胶海报生成器弹窗
     if (showLyricPosterDialog) {
         LyricPosterDialog(
             song = song,
-            lines = lyricData.lines,
-            currentIndex = currentLyricIndex,
+            lyricData = lyricData,
+            currentLyricIndex = currentLyricIndex,
             onDismiss = { showLyricPosterDialog = false }
         )
     }
@@ -1036,9 +968,14 @@ private fun TopHeaderBar(
             }
         }
 
-        // 真实音质胶囊 (可点击切换)
+        // 真实音质胶囊 (严格与当前实际解析/可用音质同步，杜绝假 Hi-Res 显示)
+        val isGoldQuality = qualityLabel.startsWith("Hi-Res", ignoreCase = true)
         Surface(
-            color = if (isHiRes) VipGold.copy(alpha = 0.25f) else ConceptPrimary.copy(alpha = 0.2f),
+            color = if (isGoldQuality) VipGold.copy(alpha = 0.22f) else ConceptPrimary.copy(alpha = 0.18f),
+            border = BorderStroke(
+                0.6.dp,
+                if (isGoldQuality) VipGold.copy(alpha = 0.5f) else ConceptPrimary.copy(alpha = 0.45f)
+            ),
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .clip(RoundedCornerShape(12.dp))
@@ -1046,22 +983,20 @@ private fun TopHeaderBar(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
             ) {
-                if (isHiRes && !qualityLabel.startsWith("Hi-Res", ignoreCase = true)) {
-                    Text(
-                        text = "Hi-Res",
-                        color = VipGold,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Black
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                }
                 Text(
                     text = qualityLabel,
-                    color = if (isHiRes) VipGold else ConceptPrimary,
+                    color = if (isGoldQuality) VipGold else ConceptPrimary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.width(2.dp))
+                Icon(
+                    imageVector = Icons.Rounded.ExpandMore,
+                    contentDescription = null,
+                    tint = if (isGoldQuality) VipGold else ConceptPrimary,
+                    modifier = Modifier.size(13.dp)
                 )
             }
         }
@@ -2567,13 +2502,15 @@ private fun PlayerControlsSection(
 }
 
 /**
- * 播放队列 BottomSheet
+ * 播放队列 BottomSheet（高定视觉升级版：含封面缩略图、动态音波、音质标签、循环模式切换与 AI 漫游重排）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QueueBottomSheet(
     queue: List<Song>,
     currentIndex: Int,
+    playMode: PlayMode = PlayMode.REPEAT_ALL,
+    onCyclePlayMode: () -> Unit = {},
     onDismiss: () -> Unit,
     onSongClick: (Song) -> Unit,
     onRemoveSong: (Song) -> Unit,
@@ -2583,8 +2520,8 @@ private fun QueueBottomSheet(
 ) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
+    var activeMoodMode by remember { mutableStateOf("") }
 
-    // [维度2] 打开队列抽屉时自动居中定位当前播放曲目
     LaunchedEffect(currentIndex) {
         if (currentIndex in queue.indices) {
             listState.scrollToItem((currentIndex - 1).coerceAtLeast(0))
@@ -2593,150 +2530,621 @@ private fun QueueBottomSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF111725),
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+        containerColor = Color(0xFF0E1422),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .navigationBarsPadding()
         ) {
+            // 顶部标题栏 + 循环模式切换胶囊 + 清空按钮
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "当前播放队列 (${queue.size})",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                )
-                TextButton(onClick = onClear) {
-                    Text("清空队列", color = MaterialTheme.colorScheme.error)
-                }
-            }
-
-            // [创新点2] AI 情绪与声学漫游过渡 (Harmonic & Mood DJ) 一键重排栏
-            if (queue.size > 2) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = "AI 漫游重排:",
-                        color = Color.White.copy(alpha = 0.6f),
-                        fontSize = 11.sp
+                        text = "播放队列",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            fontSize = 18.sp
+                        )
                     )
-                    listOf(
-                        "sleep" to "🌙 睡前渐缓",
-                        "commute" to "⚡ 通勤渐燃",
-                        "harmonic" to "🌊 声学漫游"
-                    ).forEach { (modeKey, label) ->
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = ConceptPrimary.copy(alpha = 0.16f),
-                            border = BorderStroke(0.6.dp, ConceptPrimary.copy(alpha = 0.45f)),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    val msg = onReorderQueueByMood(modeKey)
-                                    if (msg.isNotBlank()) {
-                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                    }
-                                }
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = ConceptPrimary.copy(alpha = 0.16f)
+                    ) {
+                        Text(
+                            text = "${currentIndex + 1} / ${queue.size}",
+                            color = ConceptPrimary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                    // 循环模式快捷切换胶囊
+                    val (modeIcon, modeName) = when (playMode) {
+                        PlayMode.REPEAT_ALL -> Icons.Rounded.Repeat to "列表循环"
+                        PlayMode.REPEAT_ONE -> Icons.Rounded.RepeatOne to "单曲循环"
+                        PlayMode.SHUFFLE -> Icons.Rounded.Shuffle to "随机漫游"
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color.White.copy(alpha = 0.07f),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onCyclePlayMode)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
-                            Text(
-                                text = label,
-                                color = ConceptPrimary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
-                            )
+                            Icon(modeIcon, contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(13.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(modeName, color = Color.White.copy(alpha = 0.8f), fontSize = 11.sp)
                         }
                     }
                 }
+
+                TextButton(
+                    onClick = onClear,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.DeleteSweep,
+                        contentDescription = null,
+                        tint = Color(0xFFFF6B6B),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("清空", color = Color(0xFFFF6B6B), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.heightIn(max = 420.dp)
-            ) {
-                itemsIndexed(queue, key = { idx, item -> "${item.id}_$idx" }) { index, item ->
-                    val isPlayingThis = index == currentIndex
+            // [创新点2] AI 情绪与声学漫游过渡 (Harmonic & Mood DJ) 玻璃卡片重排栏
+            if (queue.size > 2) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xFF151E31),
+                    border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.08f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(if (isPlayingThis) ConceptPrimary.copy(alpha = 0.12f) else Color.Transparent)
-                            .clickable { onSongClick(item) }
-                            .padding(vertical = 10.dp, horizontal = 8.dp),
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = (index + 1).toString().padStart(2, '0'),
-                            color = if (isPlayingThis) ConceptPrimary else Color.White.copy(alpha = 0.4f),
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.width(28.dp)
+                        Icon(
+                            imageVector = Icons.Rounded.AutoAwesome,
+                            contentDescription = null,
+                            tint = ConceptPrimary,
+                            modifier = Modifier.size(15.dp)
                         )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = item.title,
-                                color = if (isPlayingThis) ConceptPrimary else Color.White,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = if (isPlayingThis) FontWeight.Bold else FontWeight.Normal
+                        Text(
+                            text = "AI 漫游:",
+                            color = Color.White.copy(alpha = 0.72f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        listOf(
+                            "sleep" to "🌙 睡前渐缓",
+                            "commute" to "⚡ 通勤渐燃",
+                            "harmonic" to "🌊 声学漫游"
+                        ).forEach { (modeKey, label) ->
+                            val isSelected = activeMoodMode == modeKey
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isSelected) ConceptPrimary else ConceptPrimary.copy(alpha = 0.14f),
+                                border = BorderStroke(
+                                    0.6.dp,
+                                    if (isSelected) ConceptPrimary else ConceptPrimary.copy(alpha = 0.38f)
                                 ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                text = item.artist,
-                                color = Color.White.copy(alpha = 0.5f),
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        // [维度2] 一键置顶至下一首播放
-                        if (!isPlayingThis && index != currentIndex + 1) {
-                            IconButton(
-                                onClick = {
-                                    val targetIdx = (currentIndex + 1).coerceIn(0, queue.lastIndex)
-                                    onMoveQueueItem(index, targetIdx)
-                                    Toast.makeText(context, "已将「${item.title}」移至下一首播放", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        activeMoodMode = modeKey
+                                        val msg = onReorderQueueByMood(modeKey)
+                                        if (msg.isNotBlank()) {
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.VerticalAlignTop,
-                                    contentDescription = "置顶至下一首",
-                                    tint = Color.White.copy(alpha = 0.5f),
-                                    modifier = Modifier.size(17.dp)
-                                )
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.padding(vertical = 5.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        color = if (isSelected) Color.White else ConceptPrimary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1
+                                    )
+                                }
                             }
-                        }
-                        IconButton(
-                            onClick = { onRemoveSong(item) },
-                            modifier = Modifier.size(32.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Close,
-                                contentDescription = "移除",
-                                tint = Color.White.copy(alpha = 0.4f),
-                                modifier = Modifier.size(18.dp)
-                            )
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.heightIn(max = 440.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                itemsIndexed(queue, key = { idx, item -> "${item.id}_$idx" }) { index, item ->
+                    val isPlayingThis = index == currentIndex
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isPlayingThis) ConceptPrimary.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.03f),
+                        border = if (isPlayingThis) BorderStroke(0.8.dp, ConceptPrimary.copy(alpha = 0.45f)) else null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { onSongClick(item) }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier.width(28.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (isPlayingThis) {
+                                    PlayingAudioWaveIndicator()
+                                } else {
+                                    Text(
+                                        text = (index + 1).toString().padStart(2, '0'),
+                                        color = Color.White.copy(alpha = 0.42f),
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+
+                            // 歌曲圆角小封面
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0xFF1C2436)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (item.coverUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = item.coverUrl,
+                                        contentDescription = item.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.MusicNote,
+                                        contentDescription = null,
+                                        tint = Color.White.copy(alpha = 0.4f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(10.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.title,
+                                    color = if (isPlayingThis) ConceptPrimary else Color.White,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = if (isPlayingThis) FontWeight.Bold else FontWeight.Medium,
+                                        fontSize = 14.sp
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (item.isHiRes) {
+                                        BadgeTag(text = "Hi-Res", color = VipGold)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                    } else if (item.isLossless) {
+                                        BadgeTag(text = "SQ", color = ConceptPrimary)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                    }
+                                    Text(
+                                        text = item.artist,
+                                        color = if (isPlayingThis) ConceptPrimary.copy(alpha = 0.78f) else Color.White.copy(alpha = 0.55f),
+                                        fontSize = 11.5.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            if (!isPlayingThis && index != currentIndex + 1) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color.White.copy(alpha = 0.06f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            val targetIdx = (currentIndex + 1).coerceIn(0, queue.lastIndex)
+                                            onMoveQueueItem(index, targetIdx)
+                                            Toast.makeText(context, "已将「${item.title}」移至下一首播放", Toast.LENGTH_SHORT).show()
+                                        }
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.VerticalAlignTop,
+                                            contentDescription = "下一首播",
+                                            tint = Color.White.copy(alpha = 0.65f),
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(2.dp))
+                                        Text("置顶", color = Color.White.copy(alpha = 0.65f), fontSize = 10.sp)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(4.dp))
+                            }
+
+                            IconButton(
+                                onClick = { onRemoveSong(item) },
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "移除",
+                                    tint = Color.White.copy(alpha = 0.42f),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+}
+
+/**
+ * 全新 Bento 网格化播放页「更多功能控制台」抽屉（彻底取代简陋的文字 DropdownMenu）
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlayerMoreControlSheet(
+    song: Song,
+    coverStyle: CoverStyle,
+    currentQualityLabel: String,
+    climaxModeEnabled: Boolean,
+    accompanyModeEnabled: Boolean,
+    playbackSpeed: Float,
+    sleepTimerRemainingSec: Long,
+    sleepStopAfterCurrentSong: Boolean,
+    onSelectCoverStyle: (CoverStyle) -> Unit,
+    onToggleClimaxMode: () -> Unit,
+    onToggleAccompanyMode: () -> Unit,
+    onOpenFocusPod: () -> Unit,
+    onOpenAudioEffect: () -> Unit,
+    onOpenSpeedPitch: () -> Unit,
+    onOpenSleepTimer: () -> Unit,
+    onOpenQualitySelect: () -> Unit,
+    onOpenSongDetail: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val systemLyricState by SystemLyricBridge.state.collectAsState()
+    val floatingLyricEnabled = systemLyricState.floatingCapsuleEnabled
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0E1422),
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 6.dp)
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // 1. 顶部当前曲目名片与快捷操作
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(50.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1B2436)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (song.coverUrl.isNotBlank()) {
+                        AsyncImage(
+                            model = song.coverUrl,
+                            contentDescription = song.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = ConceptPrimary)
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = song.title,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "${song.artist} · ${song.album.ifBlank { "单曲" }}",
+                        color = Color.White.copy(alpha = 0.58f),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                FilledTonalButton(
+                    onClick = onAddToPlaylist,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = ConceptPrimary.copy(alpha = 0.18f),
+                        contentColor = ConceptPrimary
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("收藏歌单", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // 2. 四大概念多态机芯皮肤视觉切换卡
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "概念多态机芯皮肤",
+                    color = Color.White.copy(alpha = 0.72f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CoverStyle.entries.forEach { style ->
+                        val selected = coverStyle == style
+                        val icon = when (style) {
+                            CoverStyle.VINYL -> Icons.Rounded.Album
+                            CoverStyle.CASSETTE -> Icons.Rounded.Radio
+                            CoverStyle.POSTER -> Icons.Rounded.Style
+                            CoverStyle.CIRCLE -> Icons.Rounded.Circle
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (selected) ConceptPrimary.copy(alpha = 0.20f) else Color(0xFF161F31),
+                            border = BorderStroke(
+                                if (selected) 1.2.dp else 0.6.dp,
+                                if (selected) ConceptPrimary else Color.White.copy(alpha = 0.08f)
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable { onSelectCoverStyle(style) }
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = style.label,
+                                    tint = if (selected) ConceptPrimary else Color.White.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Text(
+                                    text = style.label,
+                                    color = if (selected) ConceptPrimary else Color.White.copy(alpha = 0.85f),
+                                    fontSize = 11.sp,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Bento 双行多功能矩阵卡片
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "音频实验室与播放工具",
+                    color = Color.White.copy(alpha = 0.72f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    BentoControlTile(
+                        icon = Icons.Rounded.Whatshot,
+                        title = "副歌刷刷",
+                        subtitle = if (climaxModeEnabled) "高潮连播已开" else "30秒黄金高潮",
+                        active = climaxModeEnabled,
+                        activeColor = VipGold,
+                        onClick = onToggleClimaxMode,
+                        modifier = Modifier.weight(1f)
+                    )
+                    BentoControlTile(
+                        icon = Icons.Rounded.Mic,
+                        title = "KTV 伴奏",
+                        subtitle = if (accompanyModeEnabled) "伴奏模式中" else "切换纯伴奏",
+                        active = accompanyModeEnabled,
+                        onClick = onToggleAccompanyMode,
+                        modifier = Modifier.weight(1f)
+                    )
+                    BentoControlTile(
+                        icon = Icons.Rounded.SelfImprovement,
+                        title = "心流番茄舱",
+                        subtitle = "番茄钟×白噪音",
+                        active = false,
+                        onClick = onOpenFocusPod,
+                        modifier = Modifier.weight(1f)
+                    )
+                    BentoControlTile(
+                        icon = Icons.Rounded.Lyrics,
+                        title = "全局悬浮词",
+                        subtitle = if (floatingLyricEnabled) "已开启胶囊" else "跨页逐字词",
+                        active = floatingLyricEnabled,
+                        onClick = { SystemLyricBridge.setFloatingCapsuleEnabled(!floatingLyricEnabled) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    BentoControlTile(
+                        icon = Icons.Rounded.GraphicEq,
+                        title = "蝰蛇音效舱",
+                        subtitle = "5段EQ/混响",
+                        active = false,
+                        onClick = onOpenAudioEffect,
+                        modifier = Modifier.weight(1f)
+                    )
+                    BentoControlTile(
+                        icon = Icons.Rounded.Speed,
+                        title = "倍速与变调",
+                        subtitle = "${String.format(java.util.Locale.getDefault(), "%.2f", playbackSpeed)}x 播放",
+                        active = playbackSpeed != 1.0f,
+                        onClick = onOpenSpeedPitch,
+                        modifier = Modifier.weight(1f)
+                    )
+                    val sleepDesc = when {
+                        sleepTimerRemainingSec > 0L -> formatDuration(sleepTimerRemainingSec * 1000L)
+                        sleepStopAfterCurrentSong -> "播完本首停"
+                        else -> "定时渐弱"
+                    }
+                    BentoControlTile(
+                        icon = Icons.Rounded.Bedtime,
+                        title = "睡眠定时",
+                        subtitle = sleepDesc,
+                        active = sleepTimerRemainingSec > 0L || sleepStopAfterCurrentSong,
+                        onClick = onOpenSleepTimer,
+                        modifier = Modifier.weight(1f)
+                    )
+                    BentoControlTile(
+                        icon = Icons.Rounded.HighQuality,
+                        title = "音质规格",
+                        subtitle = currentQualityLabel,
+                        active = true,
+                        onClick = onOpenQualitySelect,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            // 4. 底部音频技术参数按钮
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFF161F31),
+                border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.08f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(onClick = onOpenSongDetail)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Info, contentDescription = null, tint = ConceptPrimary, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text("查看音频技术参数、采样率与文件特征码 (Hash)", color = Color.White.copy(alpha = 0.88f), fontSize = 12.5.sp)
+                    }
+                    Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(18.dp))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun BentoControlTile(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    active: Boolean,
+    activeColor: Color = ConceptPrimary,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = if (active) activeColor.copy(alpha = 0.18f) else Color(0xFF161F31),
+        border = BorderStroke(
+            if (active) 1.dp else 0.6.dp,
+            if (active) activeColor.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.07f)
+        ),
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Column(
+            modifier = Modifier.padding(vertical = 12.dp, horizontal = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = title,
+                tint = if (active) activeColor else Color.White.copy(alpha = 0.8f),
+                modifier = Modifier.size(21.dp)
+            )
+            Text(
+                text = title,
+                color = if (active) activeColor else Color.White.copy(alpha = 0.9f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+            Text(
+                text = subtitle,
+                color = if (active) activeColor.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.48f),
+                fontSize = 9.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

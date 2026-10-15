@@ -31,16 +31,20 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.concept.music.data.model.Song
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
@@ -54,13 +58,25 @@ fun SongItemRow(
     orderIndex: Int? = null,
     onMoreClick: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    // 列表小图固定 144x144 采样与内存缓存 Key，大幅降低长列表快速滑动时的解码开销，保障 120Hz 满帧流畅度
+    val imageModel = remember(song.coverUrl) {
+        if (song.coverUrl.isNotBlank()) {
+            ImageRequest.Builder(context)
+                .data(song.coverUrl)
+                .size(144, 144)
+                .crossfade(false)
+                .build()
+        } else null
+    }
+
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clip(RoundedCornerShape(14.dp))
             .background(
-                if (isPlaying) ConceptPrimary.copy(alpha = 0.08f) else Color.Transparent
+                if (isPlaying) ConceptPrimary.copy(alpha = 0.10f) else Color.Transparent
             )
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 8.dp),
@@ -74,11 +90,12 @@ fun SongItemRow(
                 if (isPlaying) {
                     PlayingAudioWaveIndicator()
                 } else {
+                    val isTopThree = orderIndex in 1..3
                     Text(
                         text = orderIndex.toString().padStart(2, '0'),
                         style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            fontWeight = if (isTopThree) FontWeight.Bold else FontWeight.SemiBold,
+                            color = if (isTopThree) ConceptPrimary.copy(alpha = 0.88f) else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     )
                 }
@@ -93,11 +110,12 @@ fun SongItemRow(
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center
         ) {
-            if (song.coverUrl.isNotEmpty()) {
+            if (imageModel != null) {
                 AsyncImage(
-                    model = song.coverUrl,
+                    model = imageModel,
                     contentDescription = song.title,
                     contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.Medium,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
@@ -108,7 +126,6 @@ fun SongItemRow(
                 )
             }
 
-            // 若未显示序号列但正在播放，在封面上叠加半透明动态音波遮罩
             if (orderIndex == null && isPlaying) {
                 Box(
                     modifier = Modifier
@@ -164,7 +181,6 @@ fun SongItemRow(
             }
         }
 
-        // 更多操作按钮
         if (onMoreClick != null) {
             IconButton(onClick = onMoreClick) {
                 Icon(

@@ -864,16 +864,35 @@ private fun PlaylistHeaderCard(
 
             if (!playlist?.description.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = playlist!!.description,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                        lineHeight = 18.sp
-                    ),
-                    maxLines = if (isDescExpanded) Int.MAX_VALUE else 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable { isDescExpanded = !isDescExpanded }
-                )
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { isDescExpanded = !isDescExpanded }
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = playlist!!.description.trim(),
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f),
+                                lineHeight = 19.sp
+                            ),
+                            maxLines = if (isDescExpanded) Int.MAX_VALUE else 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (playlist.description.length > 45) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (isDescExpanded) "收起歌单简介 ▲" else "展开完整歌单简介 ▼",
+                                color = ConceptPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
             }
         }
     }

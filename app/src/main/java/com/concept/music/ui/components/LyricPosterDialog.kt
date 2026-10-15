@@ -50,6 +50,22 @@ import kotlinx.coroutines.withContext
  * [创新5] 「歌词金句黑胶海报生成器 (Lyric Vinyl Poster Card)」
  * 支持勾选 1~4 句双语/音译歌词，一键切换「幽邃微蓝黑胶卡」与「水彩浸润漫游卡」并导出高清海报至系统相册
  */
+
+@Composable
+fun LyricPosterDialog(
+    song: Song,
+    lyricData: com.concept.music.data.model.LyricData,
+    currentLyricIndex: Int,
+    onDismiss: () -> Unit
+) {
+    LyricPosterDialog(
+        song = song,
+        lines = lyricData.lines,
+        currentIndex = currentLyricIndex,
+        onDismiss = onDismiss
+    )
+}
+
 @Composable
 fun LyricPosterDialog(
     song: Song,

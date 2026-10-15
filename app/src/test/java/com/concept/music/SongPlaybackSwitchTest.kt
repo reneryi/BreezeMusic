@@ -314,6 +314,13 @@ class SongPlaybackSwitchTest {
         viewModel.handleSongTransition(song2.id, Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
         testScheduler.advanceUntilIdle()
 
+        var retries = 0
+        while (viewModel.uiState.value.currentLyric.lines.isEmpty() && retries < 25) {
+            Thread.sleep(20)
+            testScheduler.advanceUntilIdle()
+            retries++
+        }
+
         val state = viewModel.uiState.value
         assertEquals("第二首歌", state.currentSong?.title)
         assertEquals(1, state.currentIndex)

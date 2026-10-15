@@ -340,7 +340,17 @@ class LibraryViewModel(
                     else -> {
                         if (selected != null) {
                             val tracks = runCatching { VipManager.music.playlistSongs(selected) }.getOrDefault(emptyList())
-                            _librarySongs.value = tracks.ifEmpty { extSongsDef?.await().orEmpty() }
+                            val finalTracks = tracks.ifEmpty { extSongsDef?.await().orEmpty() }
+                            _librarySongs.value = finalTracks
+                            val extInfo = extInfoDef?.await()
+                            if (extInfo != null && (selected.description.isBlank() || selected.coverUrl.isBlank())) {
+                                val enriched = selected.copy(
+                                    description = selected.description.ifBlank { extInfo.description },
+                                    coverUrl = selected.coverUrl.ifBlank { extInfo.coverUrl.ifBlank { finalTracks.firstOrNull()?.coverUrl.orEmpty() } },
+                                    trackCount = if (finalTracks.isNotEmpty()) finalTracks.size else selected.trackCount
+                                )
+                                _playlists.value = _playlists.value.map { if (it.id == selected.id) enriched else it }
+                            }
                         } else if (targetPlaylistId != null) {
                             val extPlaylist = extInfoDef?.await()
                             val trackList = extSongsDef?.await().orEmpty()

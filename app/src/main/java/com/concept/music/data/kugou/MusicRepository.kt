@@ -341,9 +341,12 @@ class MusicApiRepository(
         }
 
         val allSongs = mutableListOf<Song>()
+        val seenKeys = mutableSetOf<String>()
         var beginIdx = 0
         val pageSize = 200
-        while (true) {
+        var pageCount = 0
+        var expectedTotal = 0
+        while (pageCount < 25) {
             val response = runCatching {
                 transport.call(
                     "/pubsongs/v2/get_other_list_file_nofilt",
@@ -361,54 +364,96 @@ class MusicApiRepository(
                 ).requireSuccess()
             }.getOrNull() ?: break
 
+            val dataObj = response.data.obj("data") ?: response.data
+            if (expectedTotal <= 0) {
+                expectedTotal = dataObj.number("total") ?: dataObj.number("count")
+                    ?: response.data.number("total") ?: response.data.number("count") ?: 0
+            }
             val batch = parseSongs(response.data)
             if (batch.isEmpty()) break
-            allSongs.addAll(batch)
-            if (batch.size < pageSize) break
-            beginIdx += batch.size
+            var addedInBatch = 0
+            for (song in batch) {
+                val key = song.hash.ifBlank { song.id }.lowercase()
+                if (seenKeys.add(key)) {
+                    allSongs.add(song)
+                    addedInBatch++
+                }
+            }
+            pageCount++
+            // 始终按请求的 pageSize 推进 begin_idx（或当服务端实际返回超过 pageSize 时按实际推进），避免因单页内 1~2 首无版权/空 hash 曲目被过滤而提前 break！
+            beginIdx += pageSize
+            if (addedInBatch == 0) break
+            if (expectedTotal > 0 && allSongs.size >= expectedTotal) break
+            if (expectedTotal <= 0 && batch.size < 30) break
         }
         if (allSongs.isNotEmpty()) return allSongs
 
-        // 备用 1：/v4/get_other_list_file 网关接口
-        val v4Songs = runCatching {
-            val response = transport.callAdvanced(
-                path = "/v4/get_other_list_file",
-                session = session,
-                query = mapOf(
-                    "global_collection_id" to effectiveGid,
-                    "page" to "1",
-                    "pagesize" to "100",
-                    "is_publish" to "1"
-                ),
-                headers = mapOf("x-router" to "pubsongs.kugou.com"),
-                sign = true,
-                includeDefaultParams = true
-            ).requireSuccess()
-            parseSongs(response.data)
-        }.getOrDefault(emptyList())
-        if (v4Songs.isNotEmpty()) return v4Songs
-
-        // 备用 2：提取 specialid 走 CDN 歌单曲目接口 (/api/v3/special/song)
-        val numericSpecialId = collectionId.takeIf { it.all { ch -> ch.isDigit() } }
-            ?: effectiveGid.split("_").getOrNull(3)?.takeIf { it.all { ch -> ch.isDigit() } }
-        if (!numericSpecialId.isNullOrBlank()) {
-            val cdnSongs = runCatching {
+        // 备用 1：/v4/get_other_list_file 网关多页拉取
+        val v4Songs = mutableListOf<Song>()
+        val v4Seen = mutableSetOf<String>()
+        for (page in 1..15) {
+            val batch = runCatching {
                 val response = transport.callAdvanced(
-                    path = "/api/v3/special/song",
-                    host = "http://mobilecdnbj.kugou.com",
+                    path = "/v4/get_other_list_file",
+                    session = session,
                     query = mapOf(
-                        "version" to "9108",
-                        "specialid" to numericSpecialId,
-                        "plat" to "0",
+                        "global_collection_id" to effectiveGid,
+                        "page" to page.toString(),
                         "pagesize" to "100",
-                        "page" to "1",
-                        "area_code" to "1"
+                        "is_publish" to "1"
                     ),
-                    sign = false,
-                    includeDefaultParams = false
+                    headers = mapOf("x-router" to "pubsongs.kugou.com"),
+                    sign = true,
+                    includeDefaultParams = true
                 ).requireSuccess()
                 parseSongs(response.data)
             }.getOrDefault(emptyList())
+            if (batch.isEmpty()) break
+            var added = 0
+            for (s in batch) {
+                if (v4Seen.add(s.hash.ifBlank { s.id }.lowercase())) {
+                    v4Songs.add(s)
+                    added++
+                }
+            }
+            if (added == 0 || batch.size < 20) break
+        }
+        if (v4Songs.isNotEmpty()) return v4Songs
+
+        // 备用 2：提取 specialid 走 CDN 歌单曲目接口 (/api/v3/special/song) 多页拉取
+        val numericSpecialId = collectionId.takeIf { it.all { ch -> ch.isDigit() } }
+            ?: effectiveGid.split("_").getOrNull(3)?.takeIf { it.all { ch -> ch.isDigit() } }
+        if (!numericSpecialId.isNullOrBlank()) {
+            val cdnSongs = mutableListOf<Song>()
+            val cdnSeen = mutableSetOf<String>()
+            for (page in 1..15) {
+                val batch = runCatching {
+                    val response = transport.callAdvanced(
+                        path = "/api/v3/special/song",
+                        host = "http://mobilecdnbj.kugou.com",
+                        query = mapOf(
+                            "version" to "9108",
+                            "specialid" to numericSpecialId,
+                            "plat" to "0",
+                            "pagesize" to "100",
+                            "page" to page.toString(),
+                            "area_code" to "1"
+                        ),
+                        sign = false,
+                        includeDefaultParams = false
+                    ).requireSuccess()
+                    parseSongs(response.data)
+                }.getOrDefault(emptyList())
+                if (batch.isEmpty()) break
+                var added = 0
+                for (s in batch) {
+                    if (cdnSeen.add(s.hash.ifBlank { s.id }.lowercase())) {
+                        cdnSongs.add(s)
+                        added++
+                    }
+                }
+                if (added == 0 || batch.size < 20) break
+            }
             if (cdnSongs.isNotEmpty()) return cdnSongs
         }
 
@@ -476,7 +521,7 @@ class MusicApiRepository(
             }
         }.getOrNull()
 
-        if (gatewayPlaylist != null) return gatewayPlaylist
+        if (gatewayPlaylist != null && gatewayPlaylist.description.isNotBlank()) return gatewayPlaylist
 
         // 备用：CDN 歌单详情接口 (/api/v3/special/info)
         val numericSpecialId = playlistId.takeIf { it.all { ch -> ch.isDigit() } }
@@ -517,10 +562,18 @@ class MusicApiRepository(
                     listCreateGid = gid.ifBlank { playlistId }
                 )
             }.getOrNull()
-            if (cdnPlaylist != null) return cdnPlaylist
+            if (cdnPlaylist != null) {
+                return if (gatewayPlaylist != null) {
+                    gatewayPlaylist.copy(
+                        description = gatewayPlaylist.description.ifBlank { cdnPlaylist.description },
+                        coverUrl = gatewayPlaylist.coverUrl.ifBlank { cdnPlaylist.coverUrl },
+                        trackCount = if (gatewayPlaylist.trackCount > 0) gatewayPlaylist.trackCount else cdnPlaylist.trackCount
+                    )
+                } else cdnPlaylist
+            }
         }
 
-        return null
+        return gatewayPlaylist
     }
 
     suspend fun resolvePlayback(
@@ -1207,13 +1260,20 @@ class MusicApiRepository(
             if (id.isBlank() || id == "0") return@mapNotNull null
             val name = (o.text("albumname") ?: o.text("album_name") ?: o.text("AlbumName") ?: o.text("name") ?: "精选专辑")
                 .replace("<em>", "").replace("</em>", "").trim()
-            val artist = (o.text("singername") ?: o.text("author_name") ?: o.text("SingerName")
-                ?: o.objects("authors").firstOrNull()?.text("author_name")
-                ?: o.objects("Singers").firstOrNull()?.text("name")
-                ?: "群星")
+            val singersJoined = listOfNotNull(
+                o.objects("authors").takeIf { it.isNotEmpty() },
+                o.objects("singers").takeIf { it.isNotEmpty() },
+                o.objects("Singers").takeIf { it.isNotEmpty() }
+            ).firstOrNull()?.mapNotNull {
+                it.text("author_name") ?: it.text("name") ?: it.text("singername")
+            }?.filter { it.isNotBlank() }?.joinToString("、")
+            val artist = (o.text("singername") ?: o.text("singer") ?: o.text("author_name")
+                ?: o.text("SingerName") ?: o.text("singer_name")
+                ?: singersJoined?.takeIf { it.isNotBlank() }
+                ?: "未知歌手")
                 .replace("<em>", "").replace("</em>", "").trim()
             val coverRaw = o.text("img") ?: o.text("pic") ?: o.text("imgurl") ?: o.text("sizable_cover") ?: o.text("album_img") ?: o.text("cover")
-            val count = o.number("songcount") ?: o.number("song_count") ?: o.number("audio_count") ?: o.number("total") ?: 0
+            val count = o.number("songcount") ?: o.number("song_count") ?: o.number("audio_count") ?: 0
             val pubDate = (o.text("publishtime") ?: o.text("publish_date") ?: o.text("publish_time") ?: "").take(10)
             val intro = (o.text("intro") ?: "").replace("<em>", "").replace("</em>", "").trim()
             val company = o.text("publish_company") ?: o.text("company") ?: ""
@@ -1419,11 +1479,13 @@ class MusicApiRepository(
         if (albumId.isBlank()) return emptyList()
         val session = accounts.context()?.session
         val allSongs = mutableListOf<Song>()
+        val seenKeys = mutableSetOf<String>()
         var page = 1
-        val pageSize = 100
-        while (page <= 5) {
-            val batch = runCatching {
-                val response = transport.callAdvanced(
+        val pageSize = 50
+        var expectedTotal = 0
+        while (page <= 10) {
+            val response = runCatching {
+                transport.callAdvanced(
                     path = "/v1/album_audio/lite",
                     method = "POST",
                     session = session,
@@ -1441,34 +1503,60 @@ class MusicApiRepository(
                     sign = true,
                     includeDefaultParams = true
                 ).requireSuccess()
-                parseSongs(response.data)
-            }.getOrDefault(emptyList())
+            }.getOrNull() ?: break
 
+            val dataObj = response.data.obj("data") ?: response.data
+            if (expectedTotal <= 0) {
+                expectedTotal = dataObj.number("total") ?: response.data.number("total") ?: 0
+            }
+            val batch = parseSongs(response.data)
             if (batch.isEmpty()) break
-            allSongs.addAll(batch)
-            if (batch.size < pageSize) break
+            var added = 0
+            for (s in batch) {
+                if (seenKeys.add(s.hash.ifBlank { s.id }.lowercase())) {
+                    allSongs.add(s)
+                    added++
+                }
+            }
+            if (added == 0) break
+            if (expectedTotal > 0 && allSongs.size >= expectedTotal) break
+            if (expectedTotal <= 0 && batch.size < 15) break
             page++
         }
         if (allSongs.isNotEmpty()) return allSongs
 
-        // 备用：CDN 专辑歌曲接口 (/api/v3/album/song)
-        return runCatching {
-            val response = transport.callAdvanced(
-                path = "/api/v3/album/song",
-                host = "http://mobilecdnbj.kugou.com",
-                query = mapOf(
-                    "version" to "9108",
-                    "albumid" to albumId,
-                    "plat" to "0",
-                    "pagesize" to "100",
-                    "page" to "1",
-                    "area_code" to "1"
-                ),
-                sign = false,
-                includeDefaultParams = false
-            ).requireSuccess()
-            parseSongs(response.data)
-        }.getOrDefault(emptyList())
+        // 备用：CDN 专辑歌曲接口 (/api/v3/album/song) 多页拉取
+        val cdnSongs = mutableListOf<Song>()
+        val cdnSeen = mutableSetOf<String>()
+        for (p in 1..10) {
+            val batch = runCatching {
+                val response = transport.callAdvanced(
+                    path = "/api/v3/album/song",
+                    host = "http://mobilecdnbj.kugou.com",
+                    query = mapOf(
+                        "version" to "9108",
+                        "albumid" to albumId,
+                        "plat" to "0",
+                        "pagesize" to "50",
+                        "page" to p.toString(),
+                        "area_code" to "1"
+                    ),
+                    sign = false,
+                    includeDefaultParams = false
+                ).requireSuccess()
+                parseSongs(response.data)
+            }.getOrDefault(emptyList())
+            if (batch.isEmpty()) break
+            var added = 0
+            for (s in batch) {
+                if (cdnSeen.add(s.hash.ifBlank { s.id }.lowercase())) {
+                    cdnSongs.add(s)
+                    added++
+                }
+            }
+            if (added == 0 || batch.size < 15) break
+        }
+        return cdnSongs
     }
 
     // 专辑元数据与详细信息 (/kmr/v2/albums + CDN 备用双通道)
@@ -1526,7 +1614,7 @@ class MusicApiRepository(
             }
         }.getOrNull()
 
-        if (gatewayDetail != null) return gatewayDetail
+        if (gatewayDetail != null && gatewayDetail.intro.length >= 30 && gatewayDetail.artist != "群星") return gatewayDetail
 
         // 备用：CDN 专辑详情接口 (/api/v3/album/info)
         return runCatching {
@@ -1550,7 +1638,7 @@ class MusicApiRepository(
             val pubDate = (obj.text("publishtime") ?: obj.text("publish_date") ?: "").take(10)
             val count = obj.number("songcount") ?: obj.number("song_count") ?: 0
             val company = obj.text("company") ?: obj.text("publish_company") ?: ""
-            AlbumItem(
+            val cdnItem = AlbumItem(
                 id = id,
                 name = name,
                 artist = author,
@@ -1560,7 +1648,16 @@ class MusicApiRepository(
                 intro = intro,
                 company = company
             )
-        }.getOrNull()
+            if (gatewayDetail != null) {
+                gatewayDetail.copy(
+                    artist = if (gatewayDetail.artist.isBlank() || gatewayDetail.artist == "群星") cdnItem.artist else gatewayDetail.artist,
+                    intro = if (cdnItem.intro.length > gatewayDetail.intro.length) cdnItem.intro else gatewayDetail.intro,
+                    publishDate = gatewayDetail.publishDate.ifBlank { cdnItem.publishDate },
+                    company = gatewayDetail.company.ifBlank { cdnItem.company },
+                    songCount = maxOf(gatewayDetail.songCount, cdnItem.songCount)
+                )
+            } else cdnItem
+        }.getOrNull() ?: gatewayDetail
     }
 
     // 歌手详细主页信息 (/kmr/v3/author + CDN /api/v3/singer/info 双通道)
@@ -1619,7 +1716,7 @@ class MusicApiRepository(
             }
         }.getOrNull()
 
-        if (gatewayArtist != null && (gatewayArtist.songCount > 0 || gatewayArtist.intro.isNotBlank())) {
+        if (gatewayArtist != null && gatewayArtist.songCount > 0 && gatewayArtist.intro.length >= 200) {
             return gatewayArtist
         }
 
@@ -1641,10 +1738,17 @@ class MusicApiRepository(
             val name = dataObj.text("singername") ?: dataObj.text("author_name") ?: gatewayArtist?.name ?: "歌手"
             val avatar = imageUrl(dataObj.text("imgurl") ?: dataObj.text("avatar") ?: dataObj.text("pic"))
                 .ifBlank { gatewayArtist?.avatarUrl.orEmpty() }
-            val intro = (dataObj.text("intro") ?: dataObj.text("profile") ?: "")
-                .ifBlank { gatewayArtist?.intro.orEmpty() }
-            val songCount = dataObj.number("songcount") ?: dataObj.number("audio_count") ?: gatewayArtist?.songCount ?: 0
-            val albumCount = dataObj.number("albumcount") ?: dataObj.number("album_count") ?: gatewayArtist?.albumCount ?: 0
+            val rawIntro = dataObj.text("intro") ?: ""
+            val rawProfile = dataObj.text("profile") ?: ""
+            val combinedCdnIntro = when {
+                rawIntro.isNotBlank() && rawProfile.isNotBlank() && !rawIntro.contains(rawProfile.take(20)) -> "$rawIntro\n\n$rawProfile"
+                rawIntro.isNotBlank() -> rawIntro
+                else -> rawProfile
+            }.trim()
+            val gwIntro = gatewayArtist?.intro.orEmpty()
+            val intro = if (combinedCdnIntro.length > gwIntro.length) combinedCdnIntro else gwIntro
+            val songCount = maxOf(dataObj.number("songcount") ?: dataObj.number("audio_count") ?: 0, gatewayArtist?.songCount ?: 0)
+            val albumCount = maxOf(dataObj.number("albumcount") ?: dataObj.number("album_count") ?: 0, gatewayArtist?.albumCount ?: 0)
             ArtistItem(
                 id = id,
                 name = name,
@@ -1819,12 +1923,14 @@ class MusicApiRepository(
         }.getOrElse { defaultRanks() }
     }
 
-    // 排行榜曲目
-    suspend fun rankSongs(rankId: Int, page: Int = 1, pageSize: Int = 50): List<Song> {
-        return runCatching {
+    // 排行榜曲目 (网关签名 /openapi/kmr/v2/rank/audio + 官方 CDN /api/v3/rank/song 双通道保障)
+    suspend fun rankSongs(rankId: Int, page: Int = 1, pageSize: Int = 100): List<Song> {
+        val session = accounts.context()?.session
+        val gatewayList = runCatching {
             val response = transport.callAdvanced(
                 path = "/openapi/kmr/v2/rank/audio",
                 method = "POST",
+                session = session,
                 body = json(
                     "rank_id" to rankId,
                     "page" to page,
@@ -1832,47 +1938,111 @@ class MusicApiRepository(
                     "area_code" to 1,
                     "type" to 1
                 ),
-                headers = mapOf("kg-tid" to "369"),
-                sign = false,
+                headers = mapOf(
+                    "x-router" to "openapi.kugou.com",
+                    "kg-tid" to "369"
+                ),
+                sign = true,
                 includeDefaultParams = true
             ).requireSuccess()
             parseSongs(response.data)
+        }.getOrNull()
+        if (!gatewayList.isNullOrEmpty()) return gatewayList
+
+        // 备用 1：移动端 CDN 榜单曲目接口 (/api/v3/rank/song)
+        val cdnList = runCatching {
+            val response = transport.callAdvanced(
+                path = "/api/v3/rank/song",
+                host = "http://mobilecdnbj.kugou.com",
+                query = mapOf(
+                    "version" to "9108",
+                    "rankid" to rankId.toString(),
+                    "page" to page.toString(),
+                    "pagesize" to pageSize.toString(),
+                    "plat" to "0",
+                    "area_code" to "1"
+                ),
+                sign = false,
+                includeDefaultParams = false
+            ).requireSuccess()
+            parseSongs(response.data)
+        }.getOrNull()
+        if (!cdnList.isNullOrEmpty()) return cdnList
+
+        // 备用 2：m.kugou.com 榜单详情接口
+        return runCatching {
+            val response = transport.callAdvanced(
+                path = "/rank/info/",
+                host = "http://m.kugou.com",
+                query = mapOf(
+                    "rankid" to rankId.toString(),
+                    "page" to page.toString(),
+                    "json" to "true"
+                ),
+                sign = false,
+                includeDefaultParams = false
+            ).requireSuccess()
+            val songsObj = response.data.obj("songs") ?: response.data
+            parseSongs(songsObj)
         }.getOrDefault(emptyList())
     }
 
-    // 概念版专属频道列表 (Youth Channel)
+    // 概念版专属频道列表 (Youth Channel，支持签名请求 + 真实歌单/曲目封面动态赋能)
     suspend fun youthChannels(page: Int = 1, pageSize: Int = 30): List<YouthChannel> {
+        val session = accounts.context()?.session
         val remoteList = runCatching {
             val response = transport.callAdvanced(
                 path = "/youth/v2/channel/channel_all_list",
                 method = "GET",
+                session = session,
                 query = mapOf("page" to page.toString(), "pagesize" to pageSize.toString(), "type" to "1"),
-                sign = false,
+                sign = true,
                 includeDefaultParams = true
             ).requireSuccess()
-            val list = response.data.objects("data")
+            val dataNode = response.data.obj("data") ?: response.data
+            val list = response.data.objects("data").ifEmpty { dataNode.objects("list").ifEmpty { dataNode.objects("channels") } }
             list.mapNotNull { ch ->
                 val id = ch.text("global_collection_id") ?: ch.text("channel_id") ?: ch.text("id") ?: return@mapNotNull null
                 val name = ch.text("channel_name") ?: ch.text("name") ?: "概念频道"
-                val img = imageUrl(ch.text("cover") ?: ch.text("pic") ?: ch.text("icon") ?: ch.text("img"))
+                val img = imageUrl(
+                    ch.text("cover") ?: ch.text("pic") ?: ch.text("img")
+                        ?: ch.text("icon") ?: ch.text("bg_pic") ?: ch.text("sizable_cover")
+                )
                 val desc = ch.text("desc") ?: ch.text("intro") ?: ch.text("content") ?: "懂你的年轻专属空间"
-                val songCount = ch.number("song_count") ?: ch.number("count") ?: 0
-                val tag = ch.text("tag") ?: ch.text("category") ?: ""
+                val songCount = ch.number("song_count") ?: ch.number("count") ?: 30
+                val tag = ch.text("tag") ?: ch.text("category") ?: "概念精选"
                 YouthChannel(id, name, img, desc, songCount, tag)
             }
         }.getOrNull()
 
-        if (!remoteList.isNullOrEmpty()) return remoteList
-        return defaultYouthChannels()
+        val baseList = if (!remoteList.isNullOrEmpty()) remoteList else defaultYouthChannels()
+        // 若频道缺少有效封面（或为旧版失效黑胶占位图），并发从对应场景搜索真实高分歌单/曲目封面注入
+        return coroutineScope {
+            baseList.map { ch ->
+                async {
+                    if (ch.coverUrl.isNotBlank() && !ch.coverUrl.contains("20210519")) {
+                        ch
+                    } else {
+                        val realCover = runCatching {
+                            searchPlaylists(ch.name.take(4), page = 1, pageSize = 3)
+                                .firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl
+                                ?: youthChannelSongs(ch.id, page = 1, pageSize = 5)
+                                    .firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl
+                        }.getOrNull().orEmpty()
+                        if (realCover.isNotBlank()) ch.copy(coverUrl = realCover) else ch
+                    }
+                }
+            }.map { it.await() }
+        }
     }
 
     private fun defaultYouthChannels(): List<YouthChannel> = listOf(
-        YouthChannel("ch_healing", "放空自愈所", "http://imge.kugou.com/soft/collection/400/20210519/20210519150435133604.jpg", "温柔与慢调，抚平一整天的疲惫", 30, "治愈微风"),
-        YouthChannel("ch_study", "深度心流舱", "http://imge.kugou.com/soft/collection/400/20210519/20210519150348705359.jpg", "专注白噪音与轻音乐，进入沉浸学习", 42, "沉浸学习"),
-        YouthChannel("ch_sleep", "晚安梦游记", "http://imge.kugou.com/soft/collection/400/20210519/20210519150209673429.jpg", "轻柔钢琴与助眠雨声，一夜好眠", 28, "深夜助眠"),
-        YouthChannel("ch_workout", "律动多巴胺", "http://imge.kugou.com/soft/collection/400/20210519/20210519150302396181.jpg", "燃动节奏与潮流电子，激发无限能量", 35, "燃动运动"),
-        YouthChannel("ch_drive", "落日公路漫游", "http://imge.kugou.com/soft/collection/400/20210519/20210519150117469680.jpg", "车载慢摇与微风旋律，开向远方", 50, "自驾旅行"),
-        YouthChannel("ch_cafe", "街角黑胶咖啡", "http://imge.kugou.com/soft/collection/400/20210519/20210519150005167683.jpg", "爵士与小众独立流行，慵懒午后", 33, "治愈微风")
+        YouthChannel("ch_healing", "放空自愈所", "", "温柔与慢调，抚平一整天的疲惫", 30, "治愈微风"),
+        YouthChannel("ch_study", "深度心流舱", "", "专注白噪音与轻音乐，进入沉浸学习", 42, "沉浸学习"),
+        YouthChannel("ch_sleep", "晚安梦游记", "", "轻柔钢琴与助眠雨声，一夜好眠", 28, "深夜助眠"),
+        YouthChannel("ch_workout", "律动多巴胺", "", "燃动节奏与潮流电子，激发无限能量", 35, "燃动运动"),
+        YouthChannel("ch_drive", "落日公路漫游", "", "车载慢摇与微风旋律，开向远方", 50, "自驾旅行"),
+        YouthChannel("ch_cafe", "街角黑胶咖啡", "", "爵士与小众独立流行，慵懒午后", 33, "独立爵士")
     )
 
     // 概念版频道歌曲
@@ -2018,16 +2188,33 @@ class MusicApiRepository(
             }
         }.getOrNull()
 
-        return if (!youthList.isNullOrEmpty()) youthList else defaultFmChannels()
+        val baseFm = if (!youthList.isNullOrEmpty()) youthList else defaultFmChannels()
+        return coroutineScope {
+            baseFm.map { fm ->
+                async {
+                    if (fm.coverUrl.isNotBlank() && !fm.coverUrl.contains("20210519")) {
+                        fm
+                    } else {
+                        val realCover = runCatching {
+                            searchPlaylists(fm.name, page = 1, pageSize = 3)
+                                .firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl
+                                ?: fmSongs(fm.id, size = 5)
+                                    .firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl
+                        }.getOrNull().orEmpty()
+                        if (realCover.isNotBlank()) fm.copy(coverUrl = realCover) else fm
+                    }
+                }
+            }.map { it.await() }
+        }
     }
 
     private fun defaultFmChannels(): List<FmChannel> = listOf(
-        FmChannel("hot", "流行风向标", "http://imge.kugou.com/soft/collection/400/20210519/20210519150005167683.jpg", "当下最热门流行金曲"),
-        FmChannel("classics", "华语经典", "http://imge.kugou.com/soft/collection/400/20210519/20210519150117469680.jpg", "岁月沉淀的时代金曲"),
-        FmChannel("canton", "粤语情怀", "http://imge.kugou.com/soft/collection/400/20210519/20210519150209673429.jpg", "经典港乐与粤语新潮"),
-        FmChannel("rock", "摇滚力量", "http://imge.kugou.com/soft/collection/400/20210519/20210519150302396181.jpg", "释放激情与热血"),
-        FmChannel("folk", "民谣物语", "http://imge.kugou.com/soft/collection/400/20210519/20210519150348705359.jpg", "一把吉他与诗和远方"),
-        FmChannel("sleep", "治愈睡眠", "http://imge.kugou.com/soft/collection/400/20210519/20210519150435133604.jpg", "轻柔纯音伴你入眠")
+        FmChannel("hot", "流行风向标", "", "当下最热门流行金曲"),
+        FmChannel("classics", "华语经典", "", "岁月沉淀的时代金曲"),
+        FmChannel("canton", "粤语情怀", "", "经典港乐与粤语新潮"),
+        FmChannel("rock", "摇滚力量", "", "释放激情与热血"),
+        FmChannel("folk", "民谣物语", "", "一把吉他与诗和远方"),
+        FmChannel("sleep", "治愈睡眠", "", "轻柔纯音伴你入眠")
     )
 
     // 电台歌曲
@@ -2570,30 +2757,50 @@ class MusicApiRepository(
     var lastSongCommentCount: Int = 0
         private set
 
-    // 歌曲真实评论 (支持 hot/new 双流分类及无限滚动分页)
+    // 歌曲真实评论 (支持 hot/new 双流分类、哈希容错解析 mixsongid 及总评论数精准提取)
     suspend fun songComments(song: Song, type: String = "hot", page: Int = 1, pageSize: Int = 30): List<SongComment> {
         if (page == 1) {
             lastSongCommentCount = 0
         }
         var mixSongId = song.albumAudioId.takeIf { it > 0 } ?: song.audioId.takeIf { it > 0 } ?: 0L
+        val cleanHash = song.hash.trim().lowercase()
 
-        // 如果 mixSongId 为 0，尝试从歌曲哈希快速解析实际 mixsongid / audio_id
-        if (mixSongId <= 0 && song.hash.isNotBlank()) {
+        // 如果 mixSongId 为 0 或仅是 audioId，尝试从歌曲哈希快速解析实际 album_audio_id (mixsongid)
+        if (mixSongId <= 0 && cleanHash.isNotBlank()) {
             runCatching {
                 val infoResp = transport.callAdvanced(
                     path = "/app/i/getSongInfo.php",
                     host = "http://m.kugou.com",
-                    query = mapOf("cmd" to "playInfo", "hash" to song.hash.lowercase()),
+                    query = mapOf("cmd" to "playInfo", "hash" to cleanHash),
                     sign = false,
                     includeDefaultParams = false
                 )
-                val audioId = infoResp.data.number("audio_id")?.toLong()
+                val resolvedMixId = infoResp.data.number("album_audio_id")?.toLong()
+                    ?: infoResp.data.number("mixsongid")?.toLong()
+                    ?: infoResp.data.number("audio_id")?.toLong()
                     ?: infoResp.data.number("songid")?.toLong() ?: 0L
-                if (audioId > 0) mixSongId = audioId
+                if (resolvedMixId > 0) mixSongId = resolvedMixId
             }
         }
 
-        if (mixSongId <= 0) return emptyList()
+        if (mixSongId <= 0 && cleanHash.isBlank()) return emptyList()
+        val extData = cleanHash.ifBlank { "0" }
+
+        fun extractTotalCount(root: JsonObject): Int {
+            val d = root.obj("data")
+            return listOfNotNull(
+                root.number("count"),
+                root.number("total"),
+                root.number("total_count"),
+                root.number("all_count"),
+                root.number("comments_count"),
+                d?.number("count"),
+                d?.number("total"),
+                d?.number("total_count"),
+                d?.number("all_count"),
+                d?.number("weight_count")
+            ).maxOrNull() ?: 0
+        }
 
         // 1. 优先调用分类列表（sort_method: 1 最热, 2 最新）
         val classifyComments = runCatching {
@@ -2605,53 +2812,53 @@ class MusicApiRepository(
                     "need_show_image" to "1",
                     "p" to page.toString(),
                     "pagesize" to pageSize.toString(),
-                    "extdata" to "0",
+                    "extdata" to extData,
                     "code" to "fc4be23b4e972707f36b8a828a93ba8a",
                     "sort_method" to (if (type == "new") "2" else "1")
                 )
             )
-            val parsedCount = response.data.number("count")
-                ?: response.data.number("total")
-                ?: response.data.number("total_count")
-                ?: response.data.obj("data")?.number("count")
-                ?: response.data.obj("data")?.number("total")
-            if (parsedCount != null && parsedCount > 0) {
-                lastSongCommentCount = parsedCount
+            val parsedCount = extractTotalCount(response.data)
+            val list = parseCommentList(response.data, isHotDefault = (type == "hot"))
+            if (parsedCount > 0) {
+                lastSongCommentCount = maxOf(lastSongCommentCount, parsedCount)
+            } else if (list.isNotEmpty()) {
+                lastSongCommentCount = maxOf(lastSongCommentCount, list.size)
             }
-            parseCommentList(response.data, isHotDefault = (type == "hot"))
+            list
         }.getOrNull()
 
-        if (!classifyComments.isNullOrEmpty()) return classifyComments
-
-        // 2. 备用通用评论接口 /mcomment/v1/cmtlist
-        val fallbackComments = runCatching {
-            val response = transport.call(
-                path = "/mcomment/v1/cmtlist",
-                method = "POST",
-                query = mapOf(
-                    "ver" to "6",
-                    "mixsongid" to mixSongId.toString(),
-                    "need_show_image" to "1",
-                    "p" to page.toString(),
-                    "pagesize" to pageSize.toString(),
-                    "show_classify" to "1",
-                    "show_hotword_list" to "1",
-                    "extdata" to "0",
-                    "code" to "fc4be23b4e972707f36b8a828a93ba8a"
+        // 2. 调用通用评论接口 /mcomment/v1/cmtlist（既做列表兜底，又在分类接口未返回总数时补全总评论数）
+        if (classifyComments.isNullOrEmpty() || lastSongCommentCount <= classifyComments.size) {
+            val fallbackComments = runCatching {
+                val response = transport.call(
+                    path = "/mcomment/v1/cmtlist",
+                    method = "POST",
+                    query = mapOf(
+                        "ver" to "6",
+                        "mixsongid" to mixSongId.toString(),
+                        "need_show_image" to "1",
+                        "p" to page.toString(),
+                        "pagesize" to pageSize.toString(),
+                        "show_classify" to "1",
+                        "show_hotword_list" to "1",
+                        "extdata" to extData,
+                        "code" to "fc4be23b4e972707f36b8a828a93ba8a"
+                    )
                 )
-            )
-            val parsedCount = response.data.number("count")
-                ?: response.data.number("total")
-                ?: response.data.number("total_count")
-                ?: response.data.obj("data")?.number("count")
-                ?: response.data.obj("data")?.number("total")
-            if (parsedCount != null && parsedCount > 0) {
-                lastSongCommentCount = parsedCount
-            }
-            parseCommentList(response.data, isHotDefault = (type == "hot"))
-        }.getOrDefault(emptyList())
+                val parsedCount = extractTotalCount(response.data)
+                val list = parseCommentList(response.data, isHotDefault = (type == "hot"))
+                if (parsedCount > 0) {
+                    lastSongCommentCount = maxOf(lastSongCommentCount, parsedCount)
+                } else if (list.isNotEmpty()) {
+                    lastSongCommentCount = maxOf(lastSongCommentCount, list.size)
+                }
+                list
+            }.getOrDefault(emptyList())
 
-        return fallbackComments
+            if (classifyComments.isNullOrEmpty()) return fallbackComments
+        }
+
+        return classifyComments ?: emptyList()
     }
 
     // [P0-6] 评论真实点赞/取消点赞接口
@@ -2679,8 +2886,8 @@ class MusicApiRepository(
 
     private fun parseCommentList(root: JsonObject, isHotDefault: Boolean): List<SongComment> {
         val dataObj = root.obj("data") ?: root
-        val list = listOf("list", "lists", "comments", "info").asSequence()
-            .mapNotNull { dataObj.arr(it) ?: root.arr(it) }.firstOrNull() ?: return emptyList()
+        val list = listOf("list", "weight_list", "hot_list", "lists", "comments", "info").asSequence()
+            .mapNotNull { key -> (dataObj.arr(key) ?: root.arr(key))?.takeIf { it.size() > 0 } }.firstOrNull() ?: return emptyList()
 
         return list.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull { o ->
             val id = o.text("id") ?: o.text("cmtid") ?: ""
@@ -2926,15 +3133,21 @@ class MusicApiRepository(
                 q.contains("accompany") || q.contains("伴奏") -> {
                     if (relateAccHash.isBlank()) relateAccHash = h
                 }
-                q.contains("high") || q.contains("super") || q.contains("hires") || q == "4" || q == "5" -> {
-                    if (relateResHash.isBlank()) relateResHash = h
-                    if (relateResSize <= 0L && sz > 0L) relateResSize = sz
+                // 注意：酷狗协议中 quality="high" 代表 320kbps HQ，只有 hires / res / super (且体积符合母带规格) 才是真 Hi-Res！
+                q.contains("hires") || q.contains("hi-res") || q == "res" || q.contains("super") || q == "5" || q == "6" -> {
+                    if (sz <= 0L || sz >= 16_000_000L) {
+                        if (relateResHash.isBlank()) relateResHash = h
+                        if (relateResSize <= 0L && sz > 0L) relateResSize = sz
+                    } else if (sz >= 9_000_000L && relateSqHash.isBlank()) {
+                        relateSqHash = h
+                        relateSqSize = sz
+                    }
                 }
-                q.contains("flac") || q.contains("sq") || q.contains("lossless") || q == "3" -> {
+                q.contains("flac") || q.contains("sq") || q.contains("lossless") || q == "3" || q == "4" -> {
                     if (relateSqHash.isBlank()) relateSqHash = h
                     if (relateSqSize <= 0L && sz > 0L) relateSqSize = sz
                 }
-                q.contains("320") || q.contains("hq") || q == "2" -> {
+                q.contains("320") || q.contains("hq") || q == "high" || q == "2" -> {
                     if (relateHqHash.isBlank()) relateHqHash = h
                     if (relateHqSize <= 0L && sz > 0L) relateHqSize = sz
                 }
@@ -2945,17 +3158,18 @@ class MusicApiRepository(
             }
         }
 
-        // 提取全格式品质特征码与文件大小 (涵盖 complexsearch, song_search_v2, 专辑, 歌单, 歌手, 榜单等多协议)
-        val resHash = o.text("ResFileHash")?.takeIf { isValidHash(it) }
+        // 提取全格式品质特征码与文件大小（严格区分 Hi-Res 母带与 320K HQ，杜绝 hash_high 误标为 Hi-Res）
+        val rawResSize = (o.number("ResFileSize") ?: o.number("HiResFileSize") ?: o.number("SuperFileSize")
+            ?: o.number("filesize_super") ?: o.number("hiresfilesize")
+            ?: audioInfo?.number("filesize_super") ?: audioInfo?.number(" filesize_res")
+            ?: relateResSize.takeIf { it > 0 } ?: 0).toLong()
+
+        val resHashCandidate = o.text("ResFileHash")?.takeIf { isValidHash(it) }
             ?: o.text("HiResFileHash")?.takeIf { isValidHash(it) }
             ?: o.text("SuperFileHash")?.takeIf { isValidHash(it) }
-            ?: o.text("hash_high")?.takeIf { isValidHash(it) }
-            ?: o.text("high_hash")?.takeIf { isValidHash(it) }
             ?: o.text("hash_super")?.takeIf { isValidHash(it) }
             ?: o.text("super_hash")?.takeIf { isValidHash(it) }
-            ?: audioInfo?.text("hash_high")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("hash_super")?.takeIf { isValidHash(it) }
-            ?: audioInfo?.text("high_hash")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("super_hash")?.takeIf { isValidHash(it) }
             ?: relateResHash
 
@@ -2974,9 +3188,13 @@ class MusicApiRepository(
             ?: o.text("hqhash")?.takeIf { isValidHash(it) }
             ?: o.text("hq_hash")?.takeIf { isValidHash(it) }
             ?: o.text("hash_320")?.takeIf { isValidHash(it) }
+            ?: o.text("hash_high")?.takeIf { isValidHash(it) }
+            ?: o.text("high_hash")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("hash_320")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("320hash")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("hqhash")?.takeIf { isValidHash(it) }
+            ?: audioInfo?.text("hash_high")?.takeIf { isValidHash(it) }
+            ?: audioInfo?.text("high_hash")?.takeIf { isValidHash(it) }
             ?: transParam?.text("ogg_320_hash")?.takeIf { isValidHash(it) }
             ?: relateHqHash
 
@@ -2990,10 +3208,7 @@ class MusicApiRepository(
             ?: transParam?.text("ogg_128_hash")?.takeIf { isValidHash(it) }
             ?: relateStdHash
 
-        val resSize = (o.number("ResFileSize") ?: o.number("HiResFileSize") ?: o.number("SuperFileSize")
-            ?: o.number("filesize_high") ?: o.number("filesize_super") ?: o.number("hiresfilesize")
-            ?: audioInfo?.number("filesize_high") ?: audioInfo?.number("filesize_super")
-            ?: relateResSize.takeIf { it > 0 } ?: 0).toLong()
+        val resSize = rawResSize
 
         val sqSize = (o.number("SQFileSize") ?: o.number("sqfilesize") ?: o.number("filesize_flac")
             ?: o.number("filesize_sq")
@@ -3001,17 +3216,20 @@ class MusicApiRepository(
             ?: relateSqSize.takeIf { it > 0 } ?: 0).toLong()
 
         val hqSize = (o.number("HQFileSize") ?: o.number("320filesize") ?: o.number("filesize_320")
-            ?: o.number("filesize_hq")
-            ?: audioInfo?.number("filesize_320") ?: audioInfo?.number("320filesize")
+            ?: o.number("filesize_hq") ?: o.number("filesize_high")
+            ?: audioInfo?.number("filesize_320") ?: audioInfo?.number("320filesize") ?: audioInfo?.number("filesize_high")
             ?: relateHqSize.takeIf { it > 0 } ?: 0).toLong()
 
         val stdSize = (o.number("FileSize") ?: o.number("filesize") ?: o.number("filesize_128")
             ?: audioInfo?.number("filesize_128") ?: audioInfo?.number("filesize")
             ?: relateStdSize.takeIf { it > 0 } ?: 0).toLong()
 
-        val hasHiRes = resHash.isNotBlank() || resSize > 0L || o.number("is_hires") == 1 || o.number("is_super") == 1
-            || o.text("has_high") == "1" || o.text("songname")?.contains("Hi-Res", ignoreCase = true) == true
-            || o.text("filename")?.contains("Hi-Res", ignoreCase = true) == true
+        // 仅当存在真实的 ResFileHash/SuperFileHash（且不同于 320/128/FLAC hash）或明确标记 is_hires 时才判定为 Hi-Res
+        val resHash = resHashCandidate.takeIf {
+            it.isNotBlank() && !it.equals(hqHash, ignoreCase = true) && !it.equals(stdHash, ignoreCase = true)
+        }.orEmpty()
+
+        val hasHiRes = resHash.isNotBlank() || resSize >= 18_000_000L || o.number("is_hires") == 1
 
         val hasFlac = sqHash.isNotBlank() || sqSize > 0L || o.number("is_flac") == 1 || o.number("is_lossless") == 1
             || o.text("has_flac") == "1" || o.text("quality")?.contains("flac") == true

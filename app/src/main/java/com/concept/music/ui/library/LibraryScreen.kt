@@ -123,10 +123,9 @@ fun LibraryScreen(
     val profile = account.profile
     val isLoggedIn = account.auth == AuthState.READY
 
-    Box(
+    ConceptStageBackground(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF0E1015))
             .nestedScroll(pullRefreshState.nestedScrollConnection)
     ) {
         // 主滚动内容流
@@ -373,113 +372,113 @@ fun LibraryScreen(
                 }
             }
 
-            // 5. 歌单与音乐资产分组栏与视图切换 (自建歌单 / 收藏歌单 / 已购)
+            // 5. 歌单与音乐资产分组栏（现代胶囊分段栏 + 右侧紧凑工具组，彻底解决「已购」文字截断问题）
             item {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp, bottom = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(top = 6.dp, bottom = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // 分组选项卡：自建歌单 / 收藏歌单 / 已购
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .horizontalScroll(rememberScrollState())
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val tabs = listOf(
-                            "自建 (${myPlaylists.size})",
-                            "收藏 (${favoritePlaylists.size})",
-                            "关注 (${followedArtists.size})",
-                            "已购 (${purchasedSongs.size + purchasedAlbums.size})"
-                        )
-                        tabs.forEachIndexed { idx, label ->
-                            val isSelected = selectedTab == idx
-                            Text(
-                                text = label,
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.45f),
-                                    fontSize = 15.sp
-                                ),
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        selectedTab = idx
-                                        if (idx == 2 && isLoggedIn) {
-                                            viewModel.refreshFollowedArtists()
-                                        } else if (idx == 3 && isLoggedIn) {
-                                            viewModel.refreshPurchasedAssets()
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            val tabs = listOf(
+                                "自建 ${myPlaylists.size}",
+                                "收藏 ${favoritePlaylists.size}",
+                                "关注 ${followedArtists.size}",
+                                "已购 ${purchasedSongs.size + purchasedAlbums.size}"
+                            )
+                            tabs.forEachIndexed { idx, label ->
+                                val isSelected = selectedTab == idx
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (isSelected) ConceptPrimary.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.05f),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .clickable {
+                                            selectedTab = idx
+                                            if (idx == 2 && isLoggedIn) {
+                                                viewModel.refreshFollowedArtists()
+                                            } else if (idx == 3 && isLoggedIn) {
+                                                viewModel.refreshPurchasedAssets()
+                                            }
                                         }
-                                    }
-                                    .padding(vertical = 4.dp)
-                            )
-                        }
-                    }
-
-                    // 右侧功能按钮：新建歌单、视图切换 (列表/网格)、刷新
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        // 新建歌单
-                        IconButton(
-                            onClick = { showCreateDialog = true },
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Add,
-                                contentDescription = "新建歌单",
-                                tint = ConceptPrimary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        // [P1-3] 导入外部歌单
-                        IconButton(
-                            onClick = { showImportDialog = true },
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.FileUpload,
-                                contentDescription = "导入歌单",
-                                tint = Color.White.copy(alpha = 0.75f),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
-                        // 视图切换按钮 (列表视图 <-> 网格视图，仅歌单选项卡生效)
-                        if (selectedTab == 0 || selectedTab == 1) {
-                            IconButton(
-                                onClick = { isGridView = !isGridView },
-                                modifier = Modifier.size(34.dp)
-                            ) {
-                                @Suppress("DEPRECATION")
-                                Icon(
-                                    imageVector = if (isGridView) Icons.Rounded.ViewList else Icons.Rounded.GridView,
-                                    contentDescription = if (isGridView) "切换为列表视图" else "切换为网格视图",
-                                    tint = Color.White.copy(alpha = 0.75f),
-                                    modifier = Modifier.size(19.dp)
-                                )
+                                ) {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelLarge.copy(
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 13.sp
+                                        ),
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
                             }
                         }
 
-                        // 刷新歌单与已购资产
-                        IconButton(
-                            onClick = {
-                                viewModel.refreshMusicLibrary()
-                                viewModel.refreshPurchasedAssets()
-                            },
-                            modifier = Modifier.size(34.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = "刷新",
-                                tint = Color.White.copy(alpha = 0.5f),
-                                modifier = Modifier.size(17.dp)
-                            )
+                            IconButton(
+                                onClick = { showCreateDialog = true },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Add,
+                                    contentDescription = "新建歌单",
+                                    tint = ConceptPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = { showImportDialog = true },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.FileUpload,
+                                    contentDescription = "导入歌单",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            if (selectedTab == 0 || selectedTab == 1) {
+                                IconButton(
+                                    onClick = { isGridView = !isGridView },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    @Suppress("DEPRECATION")
+                                    Icon(
+                                        imageVector = if (isGridView) Icons.Rounded.ViewList else Icons.Rounded.GridView,
+                                        contentDescription = if (isGridView) "切换为列表视图" else "切换为网格视图",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = {
+                                    viewModel.refreshMusicLibrary()
+                                    viewModel.refreshPurchasedAssets()
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Refresh,
+                                    contentDescription = "刷新",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -785,15 +784,17 @@ fun LibraryScreen(
             }
         }
 
-        // [INT-03] 下拉刷新指示器
-        PullToRefreshContainer(
-            state = pullRefreshState,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding(),
-            containerColor = Color(0xFF1E222A),
-            contentColor = ConceptPrimary
-        )
+        // [INT-03] 下拉刷新指示器（仅在下拉或刷新时显示，杜绝静止状态下顶部突兀圆圈）
+        if (pullRefreshState.progress > 0.05f || pullRefreshState.isRefreshing) {
+            PullToRefreshContainer(
+                state = pullRefreshState,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding(),
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = ConceptPrimary
+            )
+        }
 
         // 7. 固定沉浸式顶栏 (随页面滚动平滑切换大标题与小头像+昵称)
         Surface(

@@ -80,6 +80,11 @@ data class PlayerUiState(
     val climaxModeEnabled: Boolean = false,
     val climaxUnlockedForCurrentSong: Boolean = false,
     val accompanyModeEnabled: Boolean = false,
+    val crossfadeSeconds: Int = 2,
+    val volumeNormalization: Boolean = true,
+    val wifiOnlyLossless: Boolean = false,
+    val pauseOnHeadsetDisconnect: Boolean = true,
+    val autoPlayOnStartup: Boolean = false,
     val comments: List<SongComment> = emptyList(),
     val commentsLoading: Boolean = false,
     val commentsPage: Int = 1,
@@ -303,6 +308,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }.getOrDefault(LyricAlignment.CENTER)
         val savedWordByWord = prefs.getBoolean("lyric_word_by_word", true)
         val savedClimaxMode = prefs.getBoolean("climax_mode_enabled", false)
+        val savedCrossfade = prefs.getInt("crossfade_seconds", 2).coerceIn(0, 8)
+        val savedVolNorm = prefs.getBoolean("volume_normalization", true)
+        val savedWifiOnly = prefs.getBoolean("wifi_only_lossless", false)
+        val savedPauseHeadset = prefs.getBoolean("pause_on_headset_disconnect", true)
+        val savedAutoPlay = prefs.getBoolean("auto_play_on_startup", false)
 
         val queueJson = prefs.getString("saved_queue_json", null)
         val restoredQueue: List<Song> = if (!queueJson.isNullOrBlank()) {
@@ -314,20 +324,36 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         val savedIndex = prefs.getInt("saved_current_index", 0)
             .coerceIn(0, (restoredQueue.size - 1).coerceAtLeast(0))
-        val restoredSong = restoredQueue.getOrNull(savedIndex)
+        val restoredSong = restoredQueue.getOrNull(savedIndex)?.let { s ->
+            // 净化旧持久化队列中因早期 hash_high 误标产生的假 Hi-Res 标记
+            val realHiRes = s.hashHiRes.isNotBlank() && !s.hashHiRes.equals(s.hash320, ignoreCase = true) && !s.hashHiRes.equals(s.hash128, ignoreCase = true)
+            val cleanedQualities = if (!realHiRes) s.effectiveQualities.filter { it != AudioQuality.HI_RES }.ifEmpty { listOf(AudioQuality.STANDARD) } else s.effectiveQualities
+            s.copy(isHiRes = realHiRes, availableQualities = cleanedQualities)
+        }
         val savedPosMs = prefs.getLong("saved_position_ms", 0L).coerceAtLeast(0L)
+
+        // 严格根据恢复曲目真实支持的音质档位计算初始标签，杜绝无 Hi-Res 歌曲在右上角错误显示 Hi-Res
+        val effectiveRestoredQuality = if (restoredSong != null) {
+            restoredSong.actualPlayQuality?.takeIf { it in restoredSong.effectiveQualities }
+                ?: if (savedQuality in restoredSong.effectiveQualities) savedQuality else restoredSong.highestQuality
+        } else savedQuality
 
         mutableState.value = mutableState.value.copy(
             coverStyle = savedCover,
             playMode = savedPlayMode,
             preferredQuality = savedQuality,
-            currentQualityLabel = savedQuality.label,
+            currentQualityLabel = effectiveRestoredQuality.label,
             showTranslation = savedShowTrans,
             showPhonetic = savedShowPhonetic,
             lyricFontSize = savedFontSize,
             lyricAlignment = savedAlign,
             lyricWordByWord = savedWordByWord,
             climaxModeEnabled = savedClimaxMode,
+            crossfadeSeconds = savedCrossfade,
+            volumeNormalization = savedVolNorm,
+            wifiOnlyLossless = savedWifiOnly,
+            pauseOnHeadsetDisconnect = savedPauseHeadset,
+            autoPlayOnStartup = savedAutoPlay,
             playlistQueue = restoredQueue,
             currentIndex = savedIndex,
             currentSong = restoredSong,
@@ -338,6 +364,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         if (restoredSong != null) {
             loadLyric(restoredSong)
+            loadComments(isRefresh = true)
             ConceptMusicWidgetUpdater.updateState(
                 context = getApplication(),
                 songTitle = restoredSong.title,
@@ -364,6 +391,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     .putString("lyric_alignment", snapshot.lyricAlignment.name)
                     .putBoolean("lyric_word_by_word", snapshot.lyricWordByWord)
                     .putBoolean("climax_mode_enabled", snapshot.climaxModeEnabled)
+                    .putInt("crossfade_seconds", snapshot.crossfadeSeconds)
+                    .putBoolean("volume_normalization", snapshot.volumeNormalization)
+                    .putBoolean("wifi_only_lossless", snapshot.wifiOnlyLossless)
+                    .putBoolean("pause_on_headset_disconnect", snapshot.pauseOnHeadsetDisconnect)
+                    .putBoolean("auto_play_on_startup", snapshot.autoPlayOnStartup)
                     .putString("saved_queue_json", queueJson)
                     .putInt("saved_current_index", snapshot.currentIndex)
                     .putLong("saved_position_ms", snapshot.currentPositionMs)
@@ -394,7 +426,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         resolveJob?.cancel()
         prefetchJob?.cancel()
         lastClimaxSkipSongId = ""
-        loadLyric(song)
+
+        val initialPrefQuality = mutableState.value.preferredQuality
+        val initialPlayQuality = if (initialPrefQuality in song.effectiveQualities) initialPrefQuality else song.highestQuality
+        val initialQualityLabel = when (initialPlayQuality) {
+            AudioQuality.HI_RES -> "Hi-Res"
+            AudioQuality.LOSSLESS -> "SQ 无损"
+            AudioQuality.HIGH -> "高品 320K"
+            AudioQuality.STANDARD -> "标准 128K"
+        }
 
         mutableState.value = mutableState.value.copy(
             loading = true,
@@ -404,10 +444,14 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             currentSong = song,
             currentPositionMs = seekToPositionMs,
             durationMs = song.durationMs,
+            currentQualityLabel = initialQualityLabel,
             climaxUnlockedForCurrentSong = false,
             songDetail = VipManager.music.songDetail(song),
-            comments = emptyList()
+            comments = emptyList(),
+            commentCount = 0
         )
+        loadLyric(song)
+        loadComments(isRefresh = true)
         persistPlaybackStateAsync()
 
         resolveJob = viewModelScope.launch {
@@ -430,12 +474,18 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     if (AudioQuality.STANDARD !in full) full.add(AudioQuality.STANDARD)
                     full.distinct().sortedBy { it.ordinal }
                 }
+                val isTrulyHiRes = resolvedQuality == AudioQuality.HI_RES ||
+                    (song.isHiRes && song.hashHiRes.isNotBlank() && !song.hashHiRes.equals(song.hash320, ignoreCase = true))
+                val sanitizedQualities = if (!isTrulyHiRes) {
+                    fullQualities.filter { it != AudioQuality.HI_RES }.ifEmpty { listOf(AudioQuality.STANDARD) }
+                } else fullQualities
+
                 val resolvedSong = song.copy(
                     playUrl = url,
                     actualPlayQuality = resolvedQuality,
-                    availableQualities = fullQualities,
+                    availableQualities = sanitizedQualities,
                     isLossless = song.isLossless || resolvedQuality >= AudioQuality.LOSSLESS,
-                    isHiRes = song.isHiRes || resolvedQuality == AudioQuality.HI_RES,
+                    isHiRes = isTrulyHiRes,
                     bitrateKbps = playbackResult.bitrateKbps,
                     fileSizeByte = playbackResult.fileSizeByte,
                     climaxStartMs = playbackResult.climaxStartMs.takeIf { it > 0L } ?: song.climaxStartMs,
@@ -485,16 +535,23 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     AudioQuality.STANDARD -> "标准 128K"
                 }
 
+                val updatedQueue = mutableState.value.playlistQueue.map {
+                    if (it.id == resolvedSong.id) resolvedSong else it
+                }
                 mutableState.value = mutableState.value.copy(
                     loading = false,
                     currentSong = resolvedSong,
+                    playlistQueue = updatedQueue,
                     currentPositionMs = targetSeekMs,
-                    currentQualityLabel = qualityLabel
+                    currentQualityLabel = qualityLabel,
+                    songDetail = VipManager.music.songDetail(resolvedSong)
                 )
 
                 // 启动下一首零卡顿后台预加载 (预解析流地址与预取歌词)
-                prefetchNextSong(list, index)
-                loadComments(isRefresh = true)
+                prefetchNextSong(updatedQueue, index)
+                if (mutableState.value.commentCount <= 0) {
+                    loadComments(isRefresh = true)
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -852,6 +909,31 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     fun setLyricWordByWord(enabled: Boolean) {
         mutableState.value = mutableState.value.copy(lyricWordByWord = enabled)
+        persistPlaybackStateAsync()
+    }
+
+    fun setCrossfadeSeconds(seconds: Int) {
+        mutableState.value = mutableState.value.copy(crossfadeSeconds = seconds.coerceIn(0, 8))
+        persistPlaybackStateAsync()
+    }
+
+    fun setVolumeNormalization(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(volumeNormalization = enabled)
+        persistPlaybackStateAsync()
+    }
+
+    fun setWifiOnlyLossless(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(wifiOnlyLossless = enabled)
+        persistPlaybackStateAsync()
+    }
+
+    fun setPauseOnHeadsetDisconnect(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(pauseOnHeadsetDisconnect = enabled)
+        persistPlaybackStateAsync()
+    }
+
+    fun setAutoPlayOnStartup(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(autoPlayOnStartup = enabled)
         persistPlaybackStateAsync()
     }
 

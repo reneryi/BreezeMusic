@@ -12,6 +12,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
@@ -54,6 +57,7 @@ import com.concept.music.ui.components.SongActionBottomSheet
 import com.concept.music.ui.components.SongDetailSheet
 import com.concept.music.ui.home.DailyRecommendScreen
 import com.concept.music.ui.home.HomeScreen
+import com.concept.music.ui.home.RankDetailScreen
 import com.concept.music.ui.library.AlbumDetailScreen
 import com.concept.music.ui.library.ArtistDetailScreen
 import com.concept.music.ui.library.LibraryScreen
@@ -149,6 +153,7 @@ fun MainContent(
                         currentRoute.startsWith("album_detail") ||
                         currentRoute.startsWith("artist_detail") ||
                         currentRoute == "daily_recommend" ||
+                        currentRoute.startsWith("rank_detail") ||
                         currentRoute == "search" ||
                         currentRoute == "settings"
 
@@ -211,16 +216,45 @@ fun MainContent(
                 startDestination = Screen.Discover.route,
                 modifier = Modifier.padding(innerPadding),
                 enterTransition = {
-                    fadeIn(animationSpec = tween(240)) + scaleIn(initialScale = 0.95f, animationSpec = tween(240))
+                    val target = targetState.destination.route.orEmpty()
+                    val isMainTab = target == Screen.Discover.route || target == Screen.Library.route
+                    if (isMainTab) {
+                        fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)) +
+                            scaleIn(initialScale = 0.96f, animationSpec = tween(240, easing = FastOutSlowInEasing))
+                    } else {
+                        slideInHorizontally(
+                            initialOffsetX = { fullWidth -> (fullWidth * 0.28f).toInt() },
+                            animationSpec = tween(300, easing = FastOutSlowInEasing)
+                        ) + fadeIn(animationSpec = tween(260, easing = FastOutSlowInEasing)) +
+                            scaleIn(initialScale = 0.96f, animationSpec = tween(300, easing = FastOutSlowInEasing))
+                    }
                 },
                 exitTransition = {
-                    fadeOut(animationSpec = tween(180)) + scaleOut(targetScale = 1.03f, animationSpec = tween(180))
+                    val target = targetState.destination.route.orEmpty()
+                    val isMainTab = target == Screen.Discover.route || target == Screen.Library.route
+                    if (isMainTab) {
+                        fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing))
+                    } else {
+                        slideOutHorizontally(
+                            targetOffsetX = { fullWidth -> -(fullWidth * 0.12f).toInt() },
+                            animationSpec = tween(260, easing = FastOutSlowInEasing)
+                        ) + fadeOut(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                            scaleOut(targetScale = 0.96f, animationSpec = tween(260, easing = FastOutSlowInEasing))
+                    }
                 },
                 popEnterTransition = {
-                    fadeIn(animationSpec = tween(220)) + scaleIn(initialScale = 1.03f, animationSpec = tween(220))
+                    slideInHorizontally(
+                        initialOffsetX = { fullWidth -> -(fullWidth * 0.15f).toInt() },
+                        animationSpec = tween(280, easing = FastOutSlowInEasing)
+                    ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)) +
+                        scaleIn(initialScale = 0.96f, animationSpec = tween(280, easing = FastOutSlowInEasing))
                 },
                 popExitTransition = {
-                    fadeOut(animationSpec = tween(180)) + scaleOut(targetScale = 0.95f, animationSpec = tween(180))
+                    slideOutHorizontally(
+                        targetOffsetX = { fullWidth -> (fullWidth * 0.30f).toInt() },
+                        animationSpec = tween(260, easing = FastOutSlowInEasing)
+                    ) + fadeOut(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                        scaleOut(targetScale = 0.95f, animationSpec = tween(260, easing = FastOutSlowInEasing))
                 }
             ) {
             // 发现页
@@ -237,6 +271,9 @@ fun MainContent(
                     onOpenDailyRecommend = {
                         navController.navigate("daily_recommend") { launchSingleTop = true }
                     },
+                    onOpenRank = { rankId ->
+                        navController.navigate("rank_detail/$rankId") { launchSingleTop = true }
+                    },
                     currentSong = playerUiState.currentSong,
                     onSongMoreClick = { song ->
                         actionSheetSong = song
@@ -249,6 +286,24 @@ fun MainContent(
             composable("daily_recommend") {
                 DailyRecommendScreen(
                     viewModel = homeViewModel,
+                    onBack = { navController.popBackStack() },
+                    onSongClick = { song, list ->
+                        musicPlayerViewModel.playSong(song, list)
+                    },
+                    currentSong = playerUiState.currentSong,
+                    onSongMoreClick = { song ->
+                        actionSheetSong = song
+                        actionSheetRemoveCallback = null
+                    }
+                )
+            }
+
+            // 巅峰排行榜独立页
+            composable("rank_detail/{rankId}") { backStackEntry ->
+                val rankId = backStackEntry.arguments?.getString("rankId")?.toIntOrNull() ?: 6666
+                RankDetailScreen(
+                    viewModel = homeViewModel,
+                    initialRankId = rankId,
                     onBack = { navController.popBackStack() },
                     onSongClick = { song, list ->
                         musicPlayerViewModel.playSong(song, list)

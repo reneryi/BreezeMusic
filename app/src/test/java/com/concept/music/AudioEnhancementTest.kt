@@ -378,4 +378,75 @@ class AudioEnhancementTest {
         val sortModes = com.concept.music.ui.library.PlaylistSortMode.entries
         assertEquals(4, sortModes.size)
     }
+
+    @Test
+    fun testHighQualityInRelateGoodsAndHashHighIsNotMisclassifiedAsHiRes() {
+        val store = MemoryStore()
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ) = ApiResponse(JsonObject())
+        }
+        val repo = MusicApiRepository(transport, AccountRepository(store, AuthRepository(transport, store), transport))
+        val rawJson = com.google.gson.JsonParser.parseString(
+            """
+            {
+              "songname": "We Won't Be Alone",
+              "singername": "Feint",
+              "hash": "11111111111111111111111111111111",
+              "hash_high": "22222222222222222222222222222222",
+              "filesize_high": 9400000,
+              "relate_goods": [
+                {"hash": "11111111111111111111111111111111", "quality": "128", "size": 3800000},
+                {"hash": "22222222222222222222222222222222", "quality": "high", "size": 9400000},
+                {"hash": "33333333333333333333333333333333", "quality": "flac", "size": 26500000}
+              ]
+            }
+            """
+        ).asJsonObject
+        val song = repo.parseSong(rawJson)
+        assertFalse("320k high 与普通 flac 不应被误标为 Hi-Res", song.isHiRes)
+        assertTrue("应正确识别 SQ 无损", song.isLossless)
+        assertEquals("22222222222222222222222222222222", song.hash320)
+        assertEquals("33333333333333333333333333333333", song.hashFlac)
+    }
+
+    @Test
+    fun testPlaylistPaginationContinuesWhenFirstPageHas198FilteredSongs() = kotlinx.coroutines.test.runTest {
+        val store = MemoryStore()
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse {
+                if (path == "/pubsongs/v2/get_other_list_file_nofilt") {
+                    val beginIdx = query["begin_idx"]?.toIntOrNull() ?: 0
+                    val arr = com.google.gson.JsonArray()
+                    val countInPage = if (beginIdx == 0) 198 else if (beginIdx == 200) 135 else 0
+                    for (i in 1..countInPage) {
+                        val idx = beginIdx + i
+                        val h = idx.toString().padStart(32, 'a')
+                        arr.add(com.google.gson.JsonObject().apply {
+                            addProperty("songname", "Song_$idx")
+                            addProperty("hash", h)
+                            addProperty("audio_id", idx)
+                        })
+                    }
+                    val data = com.google.gson.JsonObject().apply {
+                        addProperty("total", 333)
+                        add("info", arr)
+                    }
+                    return ApiResponse(com.google.gson.JsonObject().apply {
+                        addProperty("status", 1)
+                        add("data", data)
+                    })
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+        val repo = MusicApiRepository(transport, AccountRepository(store, AuthRepository(transport, store), transport))
+        val allSongs = repo.fetchPlaylistSongsAll("collection_3_123_456_0")
+        assertEquals(333, allSongs.size)
+    }
 }

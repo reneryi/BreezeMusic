@@ -54,11 +54,16 @@ fun SettingsScreen(
     val sleepTimerRemainingSec = uiState.sleepTimerRemainingSec
     val sleepStopAfterCurrentSong = uiState.sleepStopAfterCurrentSong
     val climaxModeEnabled = uiState.climaxModeEnabled
+    val crossfadeSeconds = uiState.crossfadeSeconds
+    val volumeNormalization = uiState.volumeNormalization
+    val wifiOnlyLossless = uiState.wifiOnlyLossless
+    val pauseOnHeadsetDisconnect = uiState.pauseOnHeadsetDisconnect
+    val autoPlayOnStartup = uiState.autoPlayOnStartup
+
     val cacheSizeBytes by AudioCacheManager.cacheSizeBytes.collectAsState()
     val pinnedSongs by AudioCacheManager.pinnedSongIds.collectAsState()
     val themeMode by ThemeManager.themeMode.collectAsState()
 
-    // Phase 3 创新模块状态订阅
     val guardianState by VipGuardianManager.state.collectAsState()
     val systemLyricState by SystemLyricBridge.state.collectAsState()
     val ambientState by AmbientSoundManager.state.collectAsState()
@@ -106,18 +111,18 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
                 contentPadding = PaddingValues(bottom = 140.dp, top = 8.dp)
             ) {
-                // 0. [维度4定制要求] 酷狗蓝视觉与双境水彩/幽邃主题系统
+                // 1. 视觉主题与色彩风格
                 item {
                     SettingsSectionCard(
-                        title = "视觉主题与色彩风格",
+                        title = "外观主题与视觉风格",
                         icon = Icons.Rounded.Palette
                     ) {
                         Text(
-                            text = "酷狗经典蓝 · 幽邃微蓝（深色） / 水彩浸润（浅色）",
+                            text = "主题色彩方案",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                         )
                         Text(
-                            text = "深色呈现克制幽邃的深海微泛蓝质感；浅色以酷狗蓝为主调，交融水粉青与淡紫粉的水彩晕染效果",
+                            text = "深色模式采用静谧克制的深海微泛蓝基调；浅色模式以酷狗经典蓝为主色，融合水彩晕染质感",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -187,18 +192,55 @@ fun SettingsScreen(
                                 }
                             }
                         }
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 12.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                        )
+
+                        Text(
+                            text = "播放页机芯皮肤",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                        )
+                        Text(
+                            text = "自定义全屏播放页的主视觉形态，支持流光黑胶、透明机械磁带、杂志海报与极简圆盘",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            CoverStyle.entries.forEach { style ->
+                                FilterChip(
+                                    selected = coverStyle == style,
+                                    onClick = { viewModel.setCoverStyle(style) },
+                                    label = { Text(style.label, fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
+                                        selectedLabelColor = ConceptPrimary
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
 
-                // 1. 音质与多态机芯封面样式 ([INNOV-02])
+                // 2. 音质策略与无缝播放体验（现代音乐 App 专业设置）
                 item {
                     SettingsSectionCard(
-                        title = "音质与概念多态机芯",
+                        title = "音质标准与无缝听感",
                         icon = Icons.Rounded.HighQuality
                     ) {
                         Text(
-                            text = "默认首选音质档位",
+                            text = "默认在线播放音质",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                        )
+                        Text(
+                            text = "若歌曲未收录所选最高档位，将自动平滑匹配该曲目可用的最高音质",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         FlowRow(
@@ -227,94 +269,203 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
                         )
 
-                        Text(
-                            text = "概念多态播放机芯皮肤 ([INNOV-02])",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                        SettingToggleRow(
+                            title = "移动网络智能省流保护",
+                            subtitle = "使用蜂窝移动数据时自动切换为高品 320K，连接 Wi-Fi 时恢复无损 / Hi-Res",
+                            checked = wifiOnlyLossless,
+                            onCheckedChange = { viewModel.setWifiOnlyLossless(it) }
                         )
-                        Text(
-                            text = "支持流光黑胶、双轮消长透明磁带、内嵌逐字歌词杂志海报、极简圆盘",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingToggleRow(
+                            title = "跨曲目智能响度均衡 (ReplayGain)",
+                            subtitle = "自动平衡不同年代、不同专辑录音的音量落差，避免切歌时音量忽大忽小",
+                            checked = volumeNormalization,
+                            onCheckedChange = { viewModel.setVolumeNormalization(it) }
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            CoverStyle.entries.forEach { style ->
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "跨曲目淡入淡出过渡 (Crossfade)",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                )
+                                Text(
+                                    text = if (crossfadeSeconds == 0) "已关闭（曲目间保持自然原版间隙）" else "切歌前后 ${crossfadeSeconds} 秒平滑交叉混音过渡",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                text = if (crossfadeSeconds == 0) "关闭" else "${crossfadeSeconds} 秒",
+                                color = ConceptPrimary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
+                        }
+                        Slider(
+                            value = crossfadeSeconds.toFloat(),
+                            onValueChange = { viewModel.setCrossfadeSeconds(it.toInt()) },
+                            valueRange = 0f..6f,
+                            steps = 5,
+                            colors = SliderDefaults.colors(thumbColor = ConceptPrimary, activeTrackColor = ConceptPrimary)
+                        )
+
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 8.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                        )
+
+                        SettingToggleRow(
+                            title = "副歌刷刷 · 黄金高潮速听",
+                            subtitle = "直接切入每首歌 30~45 秒高潮段落并渐入渐出连播，遇到心仪歌曲可一键解锁整首",
+                            checked = climaxModeEnabled,
+                            onCheckedChange = { viewModel.setClimaxMode(it) },
+                            thumbColor = VipGold
+                        )
+                    }
+                }
+
+                // 3. 硬件外设与智能播放行为
+                item {
+                    SettingsSectionCard(
+                        title = "耳机外设与智能播放交互",
+                        icon = Icons.Rounded.Headphones
+                    ) {
+                        SettingToggleRow(
+                            title = "拔出耳机或断开蓝牙时自动暂停",
+                            subtitle = "当有线耳机拔出或蓝牙音频设备断开时立即暂停音乐，防止公共场合外放尴尬",
+                            checked = pauseOnHeadsetDisconnect,
+                            onCheckedChange = { viewModel.setPauseOnHeadsetDisconnect(it) }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingToggleRow(
+                            title = "启动应用时自动恢复播放",
+                            subtitle = "打开微风音乐时自动从上次退出的播放队列与毫秒级进度处继续播放",
+                            checked = autoPlayOnStartup,
+                            onCheckedChange = { viewModel.setAutoPlayOnStartup(it) }
+                        )
+                    }
+                }
+
+                // 4. 歌词排版、音译注音与系统级歌词投射
+                item {
+                    SettingsSectionCard(
+                        title = "歌词排版、音译注音与系统投射",
+                        icon = Icons.Rounded.Lyrics
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("全屏歌词字号", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                            Text("${lyricFontSize.toInt()} sp", color = ConceptPrimary, fontWeight = FontWeight.Bold)
+                        }
+                        Slider(
+                            value = lyricFontSize,
+                            onValueChange = { viewModel.setLyricFontSize(it) },
+                            valueRange = 14f..26f,
+                            steps = 5,
+                            colors = SliderDefaults.colors(thumbColor = ConceptPrimary, activeTrackColor = ConceptPrimary)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("歌词对齐方式", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 FilterChip(
-                                    selected = coverStyle == style,
-                                    onClick = { viewModel.setCoverStyle(style) },
-                                    label = { Text(style.label, fontSize = 12.sp) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
-                                        selectedLabelColor = ConceptPrimary
-                                    )
+                                    selected = lyricAlignment == LyricAlignment.CENTER,
+                                    onClick = { viewModel.setLyricAlignment(LyricAlignment.CENTER) },
+                                    label = { Text("居中对齐", fontSize = 12.sp) }
+                                )
+                                FilterChip(
+                                    selected = lyricAlignment == LyricAlignment.LEFT,
+                                    onClick = { viewModel.setLyricAlignment(LyricAlignment.LEFT) },
+                                    label = { Text("左对齐", fontSize = 12.sp) }
                                 )
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingToggleRow(
+                            title = "KRC 逐字流光染色与长音辉光",
+                            subtitle = "开启后歌词随人声逐字平滑染色，超过 800ms 的长音拖拍字自动叠加呼吸光晕",
+                            checked = lyricWordByWord,
+                            onCheckedChange = { viewModel.setLyricWordByWord(it) }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingToggleRow(
+                            title = "外语歌曲音译注音（罗马音 / 粤拼 / 韩音）",
+                            subtitle = "解析 KRC 内置音译轨道，在日韩粤语歌词上方对齐展示辅助跟唱注音",
+                            checked = showPhonetic,
+                            onCheckedChange = {
+                                if (showPhonetic != it) viewModel.togglePhonetic()
+                            }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingToggleRow(
+                            title = "外语歌曲双行中文翻译",
+                            subtitle = "在原文歌词下方同步展示时间轴对齐的中文译文",
+                            checked = showTranslation,
+                            onCheckedChange = {
+                                if (showTranslation != it) viewModel.toggleTranslation()
+                            }
+                        )
 
                         HorizontalDivider(
                             modifier = Modifier.padding(vertical = 12.dp),
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
                         )
 
-                        // [INNOV-01] 副歌刷刷（高潮速听模式）
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "🔥 副歌刷刷 · 高潮速听模式 ([INNOV-01])",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
-                                )
-                                Text(
-                                    text = "直接切入每首歌 30~45 秒黄金副歌并渐入渐出自动连播，喜欢可一键解锁整首",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = climaxModeEnabled,
-                                onCheckedChange = { viewModel.setClimaxMode(it) },
-                                colors = SwitchDefaults.colors(checkedThumbColor = VipGold)
-                            )
-                        }
+                        SettingToggleRow(
+                            title = "应用内全局悬浮逐字歌词胶囊",
+                            subtitle = "在浏览歌单、搜索或设置页时，于顶部悬浮展示可自由拖拽的毛玻璃逐字歌词",
+                            checked = floatingLyricEnabled,
+                            onCheckedChange = { SystemLyricBridge.setFloatingCapsuleEnabled(it) }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingToggleRow(
+                            title = "系统状态栏歌词广播",
+                            subtitle = "兼容 Flyme / HyperOS / OriginOS / LyricGetter 状态栏歌词协议",
+                            checked = statusBarLyricEnabled,
+                            onCheckedChange = { SystemLyricBridge.setStatusBarBroadcastEnabled(context, it) }
+                        )
                     }
                 }
 
-                // 2. 全自动静默养号守护与概念版小组件 ([INNOV-03])
+                // 5. 全自动概念版 VIP 权益守护与桌面组件
                 item {
                     SettingsSectionCard(
-                        title = "全自动静默养号守护与桌面组件",
+                        title = "概念版 VIP 自动续期与桌面组件",
                         icon = Icons.Rounded.VerifiedUser
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "后台定时全自动续期概念 VIP",
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
-                                )
-                                Text(
-                                    text = "JobScheduler 每日自动执行青年VIP签到 + VIP畅听补签 + 8首刷歌上报",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = autoGuardianEnabled,
-                                onCheckedChange = { VipGuardianManager.setEnabled(context, it) },
-                                colors = SwitchDefaults.colors(checkedThumbColor = ConceptPrimary)
-                            )
-                        }
+                        SettingToggleRow(
+                            title = "每日后台自动续期概念版 VIP",
+                            subtitle = "定时执行概念版每日签到、畅听 VIP 领取、SVIP 升级与 8 首听歌打卡上报",
+                            checked = autoGuardianEnabled,
+                            onCheckedChange = { VipGuardianManager.setEnabled(context, it) }
+                        )
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         Surface(
                             shape = RoundedCornerShape(12.dp),
@@ -330,7 +481,7 @@ fun SettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = if (guardianTodayDone) "今日守护已达成" else "今日守护待执行",
+                                        text = if (guardianTodayDone) "今日 VIP 守护已完成" else "今日 VIP 守护待执行",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = if (guardianTodayDone) ConceptPrimary else VipGold
@@ -348,185 +499,24 @@ fun SettingsScreen(
                                         }
                                     }
                                 ) {
-                                    Text("立即守护", color = ConceptPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text("立即执行", color = ConceptPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                 }
                             }
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "💡 提示：可在系统桌面长按添加「酷狗概念版 · 流光唱片与养号小组件」，在桌面直观查看今日 VIP 守护状态与实时逐字歌词。",
+                            text = "提示：可在手机桌面长按空白处添加「微风音乐 · 流光黑胶与 VIP 守护小组件」，随时查看权益状态与控制播放。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
 
-                // 3. 沉浸式歌词、音译注音与系统级状态栏/悬浮歌词 ([创新点3 + INNOV-05])
+                // 6. 倍速变调、睡眠定时与白噪音混音
                 item {
                     SettingsSectionCard(
-                        title = "KRC 逐字歌词、音译注音与投射",
-                        icon = Icons.Rounded.Lyrics
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("歌词字号大小", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-                            Text("${lyricFontSize.toInt()} sp", color = ConceptPrimary, fontWeight = FontWeight.Bold)
-                        }
-                        Slider(
-                            value = lyricFontSize,
-                            onValueChange = { viewModel.setLyricFontSize(it) },
-                            valueRange = 14f..26f,
-                            steps = 5,
-                            colors = SliderDefaults.colors(thumbColor = ConceptPrimary, activeTrackColor = ConceptPrimary)
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("歌词对齐排版", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                FilterChip(
-                                    selected = lyricAlignment == LyricAlignment.CENTER,
-                                    onClick = { viewModel.setLyricAlignment(LyricAlignment.CENTER) },
-                                    label = { Text("居中对齐", fontSize = 12.sp) }
-                                )
-                                FilterChip(
-                                    selected = lyricAlignment == LyricAlignment.LEFT,
-                                    onClick = { viewModel.setLyricAlignment(LyricAlignment.LEFT) },
-                                    label = { Text("左对齐", fontSize = 12.sp) }
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("KRC 字内流光横扫与长音辉光", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-                                Text(
-                                    "开启后逐字平滑染色，>800ms 长音拖拍字自动叠加呼吸光晕",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = lyricWordByWord,
-                                onCheckedChange = { viewModel.setLyricWordByWord(it) },
-                                colors = SwitchDefaults.colors(checkedThumbColor = ConceptPrimary)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // [创新点3] 音译注音开关
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("真·音译注音跟唱层（罗马音/粤拼/韩音）", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-                                Text(
-                                    "解析 KRC 内置 language(type=1) 音译流，在原文上方对齐展示发音注音",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = showPhonetic,
-                                onCheckedChange = {
-                                    if (showPhonetic != it) viewModel.togglePhonetic()
-                                },
-                                colors = SwitchDefaults.colors(checkedThumbColor = ConceptPrimary)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("默认显示双行中文翻译", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-                                Text(
-                                    "外语歌曲自动展示时间轴对齐的中文译文",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = showTranslation,
-                                onCheckedChange = {
-                                    if (showTranslation != it) viewModel.toggleTranslation()
-                                },
-                                colors = SwitchDefaults.colors(checkedThumbColor = ConceptPrimary)
-                            )
-                        }
-
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 12.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("全局可拖拽 KRC 逐字悬浮歌词胶囊 ([INNOV-05])", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-                                Text(
-                                    "在任意页面顶部悬浮展示毛玻璃逐字染色歌词，支持自由拖拽",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = floatingLyricEnabled,
-                                onCheckedChange = { SystemLyricBridge.setFloatingCapsuleEnabled(it) },
-                                colors = SwitchDefaults.colors(checkedThumbColor = ConceptPrimary)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("系统状态栏歌词广播 ([INNOV-05])", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
-                                Text(
-                                    "主动发送 Flyme / HyperOS / EvoX / LyricGetter 状态栏歌词广播",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = statusBarLyricEnabled,
-                                onCheckedChange = { SystemLyricBridge.setStatusBarBroadcastEnabled(context, it) },
-                                colors = SwitchDefaults.colors(checkedThumbColor = ConceptPrimary)
-                            )
-                        }
-                    }
-                }
-
-                // 4. 倍速播放、睡眠定时器与心流白噪音状态
-                item {
-                    SettingsSectionCard(
-                        title = "倍速变调、睡眠定时与心流白噪音",
+                        title = "倍速变调、睡眠定时与白噪音",
                         icon = Icons.Rounded.Speed
                     ) {
                         Row(
@@ -535,12 +525,12 @@ fun SettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "当前倍速：${String.format(java.util.Locale.getDefault(), "%.2f", playbackSpeed)}x / 音调：${String.format(java.util.Locale.getDefault(), "%.2f", playbackPitch)}x",
+                                text = "当前倍速：${String.format(java.util.Locale.getDefault(), "%.2f", playbackSpeed)}x · 音调：${String.format(java.util.Locale.getDefault(), "%.2f", playbackPitch)}x",
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                             )
                             if (playbackSpeed != 1.0f || playbackPitch != 1.0f) {
                                 TextButton(onClick = { viewModel.resetSpeedAndPitch() }) {
-                                    Text("重置 1.0x", color = ConceptPrimary)
+                                    Text("恢复原速", color = ConceptPrimary)
                                 }
                             }
                         }
@@ -558,20 +548,14 @@ fun SettingsScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("黑胶变速联动变调", style = MaterialTheme.typography.bodyMedium)
-                            Switch(
-                                checked = linkPitchToSpeed,
-                                onCheckedChange = { viewModel.setLinkPitchToSpeed(it) },
-                                colors = SwitchDefaults.colors(checkedThumbColor = ConceptPrimary)
-                            )
-                        }
+                        SettingToggleRow(
+                            title = "黑胶变速联动变调模式",
+                            subtitle = "开启后音调随播放倍速同步升降，模拟物理黑胶唱机慢放/快放的复古听感",
+                            checked = linkPitchToSpeed,
+                            onCheckedChange = { viewModel.setLinkPitchToSpeed(it) }
+                        )
 
                         if (ambientState.masterEnabled && ambientState.hasActiveChannel) {
                             HorizontalDivider(
@@ -584,14 +568,14 @@ fun SettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "心流环境音混音舱运行中 ([INNOV-04])",
+                                    text = "环境白噪音混音舱正在运行",
                                     style = MaterialTheme.typography.bodyMedium.copy(
                                         color = ConceptPrimary,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                 )
                                 TextButton(onClick = { AmbientSoundManager.setMasterEnabled(false) }) {
-                                    Text("一键静音环境音", color = VipGold)
+                                    Text("关闭环境音", color = VipGold)
                                 }
                             }
                         }
@@ -607,11 +591,11 @@ fun SettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("睡眠定时器", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                                Text("睡眠定时关闭", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
                                 val status = when {
                                     sleepTimerRemainingSec > 0L -> "剩余 ${sleepTimerRemainingSec / 60}分${sleepTimerRemainingSec % 60}秒 后自动停止"
-                                    sleepStopAfterCurrentSong -> "将在当前歌曲播放完毕后停止"
-                                    else -> "未开启（到点前5秒音量平滑渐弱）"
+                                    sleepStopAfterCurrentSong -> "将在当前曲目播放完毕后停止"
+                                    else -> "未开启（倒计时结束前 5 秒音量平滑渐弱）"
                                 }
                                 Text(
                                     text = status,
@@ -621,7 +605,7 @@ fun SettingsScreen(
                             }
                             if (sleepTimerRemainingSec > 0L || sleepStopAfterCurrentSong) {
                                 TextButton(onClick = { viewModel.cancelSleepTimer() }) {
-                                    Text("关闭", color = MaterialTheme.colorScheme.error)
+                                    Text("取消定时", color = MaterialTheme.colorScheme.error)
                                 }
                             }
                         }
@@ -654,10 +638,10 @@ fun SettingsScreen(
                     }
                 }
 
-                // 5. 边听边存音频流缓存与固定离线保护 ([维度6])
+                // 7. 边听边存缓存与固定离线空间
                 item {
                     SettingsSectionCard(
-                        title = "边听边存与固定离线空间",
+                        title = "边听边存与离线缓存空间",
                         icon = Icons.Rounded.Storage
                     ) {
                         Row(
@@ -667,11 +651,11 @@ fun SettingsScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "已缓存音频流数据（已固定保护 ${pinnedSongs.size} 首）",
+                                    text = "本地音频缓存占用（已固定保护 ${pinnedSongs.size} 首）",
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                                 )
                                 Text(
-                                    text = "Media3 SimpleCache 引擎（上限 1.0 GB，固定离线曲目在清理缓存时自动保留）",
+                                    text = "播放过的歌曲自动落盘缓存，支持断网秒播；标记为「固定离线收藏」的歌曲在清理缓存时自动保留",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -695,13 +679,13 @@ fun SettingsScreen(
                             OutlinedButton(
                                 onClick = {
                                     AudioCacheManager.refreshCacheSize(context)
-                                    Toast.makeText(context, "缓存统计已刷新", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "缓存统计已更新", Toast.LENGTH_SHORT).show()
                                 },
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("刷新占用", fontSize = 12.sp)
+                                Text("刷新统计", fontSize = 12.sp)
                             }
                             Spacer(modifier = Modifier.width(10.dp))
                             Button(
@@ -709,7 +693,7 @@ fun SettingsScreen(
                                     AudioCacheManager.clearCache(context, keepPinned = true) {
                                         Toast.makeText(
                                             context,
-                                            if (pinnedSongs.isNotEmpty()) "已清理普通缓存（已保留 ${pinnedSongs.size} 首固定离线曲目）" else "已清空本地音频流缓存",
+                                            if (pinnedSongs.isNotEmpty()) "已清理普通缓存（已保留 ${pinnedSongs.size} 首固定离线曲目）" else "已清空本地音频缓存",
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     }
@@ -722,34 +706,69 @@ fun SettingsScreen(
                             ) {
                                 Icon(Icons.Rounded.DeleteSweep, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("清理非固定缓存", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("清理普通缓存", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
 
-                // 6. 关于酷狗概念版第三方
+                // 8. 关于应用
                 item {
                     SettingsSectionCard(
-                        title = "关于与音频架构",
+                        title = "关于微风音乐 (BreezeMusic)",
                         icon = Icons.Rounded.Info
                     ) {
                         Text(
-                            text = "酷狗概念版 · 幽邃微蓝 & 水彩浸润定制版 (v4.0 Full Blueprint)",
+                            text = "BreezeMusic · 酷狗概念版高定客户端 (v5.0)",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "• 视觉系统：幽邃微蓝（深色微泛蓝） + 水彩浸润（酷狗经典蓝 × 水彩晕染浅色）\n" +
-                                "• 五大创新：概念胶囊工作台(番茄钟) + AI 情绪漫游队列重排 + 真·音译注音/KTV伴奏实验室 + VIP守护日历热力图&风控沙盒 + 歌词金句黑胶海报生成器",
+                            text = "• 音频架构：Media3 ExoPlayer + 32MB 大分片边听边存 + 硬件级 5 段均衡器 / 空间混响\n" +
+                                "• 视觉设计：幽邃微蓝（深色）与水彩浸润（浅色）双境主题系统，支持 120Hz 硬件着色器缓存\n" +
+                                "• 特色工坊：心流番茄工作台 · AI 情绪漫游重排 · KRC 音译/伴奏跟唱 · VIP 守护日历与风控自愈沙盒 · 黑胶金句海报",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            lineHeight = 18.sp
+                            lineHeight = 19.sp
                         )
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SettingToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    thumbColor: Color = ConceptPrimary
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 16.sp
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(checkedThumbColor = thumbColor)
+        )
     }
 }
 
