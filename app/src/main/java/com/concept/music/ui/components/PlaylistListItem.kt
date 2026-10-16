@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material3.*
@@ -20,10 +21,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.Playlist
+import com.concept.music.ui.theme.LocalIsDarkTheme
+import com.concept.music.ui.theme.conceptElevatedSurfaceColor
+import com.concept.music.ui.theme.conceptFloatingCardColor
 
 /**
- * 歌单列表项 (List View，参考酷狗概念版官方设计)
- * 填满整行宽度，左侧圆角封面，右侧歌单名与歌曲数量
+ * 歌单列表项 (List View，圆润饱满无边框悬浮块，自适应深色/浅色主题)
  */
 @Composable
 fun PlaylistListItem(
@@ -31,27 +34,28 @@ fun PlaylistListItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isDark = LocalIsDarkTheme.current
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(20.dp))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        color = Color.Transparent
+        shape = RoundedCornerShape(20.dp),
+        color = conceptFloatingCardColor(),
+        shadowElevation = if (isDark) 0.dp else 3.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp, horizontal = 2.dp),
+                .padding(vertical = 10.dp, horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 左侧圆角封面 (58.dp)
             Box(
                 modifier = Modifier
                     .size(58.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF222630)),
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(conceptElevatedSurfaceColor()),
                 contentAlignment = Alignment.Center
             ) {
                 if (playlist.coverUrl.isNotEmpty()) {
@@ -65,7 +69,7 @@ fun PlaylistListItem(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color(0xFFFF5252).copy(alpha = 0.2f)),
+                            .background(Color(0xFFFF5252).copy(alpha = 0.18f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -79,13 +83,12 @@ fun PlaylistListItem(
                     Icon(
                         imageVector = Icons.Rounded.LibraryMusic,
                         contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.4f),
-                        modifier = Modifier.size(28.dp)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(26.dp)
                     )
                 }
             }
 
-            // 中间歌单信息：标题 + 歌曲数
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -94,7 +97,7 @@ fun PlaylistListItem(
                     text = playlist.title,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 15.sp
                     ),
                     maxLines = 1,
@@ -104,13 +107,20 @@ fun PlaylistListItem(
                 Text(
                     text = "${playlist.trackCount}首",
                     style = MaterialTheme.typography.bodySmall.copy(
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
+
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }

@@ -5,12 +5,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -37,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.kugou.AuthState
 import com.concept.music.data.model.*
+import com.concept.music.ui.components.BadgeTag
 import com.concept.music.ui.components.CreatePlaylistDialog
 import com.concept.music.ui.components.PlaylistGridItem
 import com.concept.music.ui.components.PlaylistListItem
@@ -44,16 +43,17 @@ import com.concept.music.ui.components.VipBannerCard
 import com.concept.music.ui.components.VipCenterBottomSheet
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptStageBackground
+import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
+import com.concept.music.ui.theme.conceptElevatedSurfaceColor
+import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.viewmodel.LibraryViewModel
 
 /**
- * 酷狗概念版第三方 - 我的页 (全新重构)
- * 1. 沉浸式固定顶栏，自适应系统状态栏高度；
- * 2. 向上滚动时大标题与用户头像+名字平滑过渡动效，右上角常驻扫码、搜索与设置按钮；
- * 3. 饱满圆润的 VIP 领取二级界面入口胶囊；
- * 4. 听歌等级与数据展示，支持双向同步酷狗官方云端；
- * 5. 歌单与资产排版规范化，支持列表/网格切换、下拉刷新及关注歌手/已购专区浏览。
+ * 酷狗概念版第三方 - 我的页
+ * - 完整适配深色/浅色双主题，消除浅色模式下的深黑卡片与白字不可读问题
+ * - 所有悬浮卡片采用无边框圆润饱满设计
+ * - 资产分组 Tab (自建/收藏/关注/已购) 状态持久化在 LibraryViewModel 中，进入专辑或歌单返回后保持原 Tab
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +70,7 @@ fun LibraryScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val isDark = LocalIsDarkTheme.current
     val account by viewModel.accountState.collectAsState()
     val vip by viewModel.vipState.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
@@ -80,13 +81,15 @@ fun LibraryScreen(
     val purchasedSongs by viewModel.purchasedSongs.collectAsState()
     val purchasedAlbums by viewModel.purchasedAlbums.collectAsState()
 
+    // 从 ViewModel 收集持久化的分组 Tab 与视图模式，杜绝从详情页返回后自动跳回「自建」
+    val selectedTab by viewModel.selectedAssetTab.collectAsState()
+    val isGridView by viewModel.isGridView.collectAsState()
+
     val myPlaylists = remember(playlists) { playlists.filter { it.isCreatedByMe && !it.isLiked } }
     val favoritePlaylists = remember(playlists) { playlists.filter { it.isFavorite } }
     val likedPlaylist = remember(playlists) { playlists.firstOrNull { it.isLiked } }
     val historyCount = remember(account) { com.concept.music.data.vip.VipManager.history.get(account.currentId).size }
 
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: 我创建的, 1: 收藏的, 2: 关注歌手, 3: 已购音乐
-    var isGridView by remember { mutableStateOf(false) } // 歌单视图模式：false=列表视图, true=网格视图
     var showCreateDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
     var importPlaylistName by remember { mutableStateOf("") }
@@ -108,7 +111,6 @@ fun LibraryScreen(
         }
     }
 
-    // 计算滑动过渡比例 (0f: 完全在顶部; 1f: 头像卡片滑出视野)
     val scrollFraction by remember {
         derivedStateOf {
             if (listState.firstVisibleItemIndex > 0) {
@@ -122,13 +124,14 @@ fun LibraryScreen(
 
     val profile = account.profile
     val isLoggedIn = account.auth == AuthState.READY
+    val cardColor = conceptFloatingCardColor()
+    val elevatedColor = conceptElevatedSurfaceColor()
 
     ConceptStageBackground(
         modifier = modifier
             .fillMaxSize()
             .nestedScroll(pullRefreshState.nestedScrollConnection)
     ) {
-        // 主滚动内容流
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -136,15 +139,16 @@ fun LibraryScreen(
                 start = 16.dp,
                 end = 16.dp,
                 top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 60.dp,
-                bottom = 36.dp
+                bottom = 108.dp
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. 用户头像与账号主卡片 (饱满微光背景)
+            // 1. 用户头像与账号主卡片 (无边框饱满悬浮块，深浅色自适应)
             item {
-                Card(
-                    shape = RoundedCornerShape(24.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF161922)),
+                Surface(
+                    shape = RoundedCornerShape(26.dp),
+                    color = cardColor,
+                    shadowElevation = if (isDark) 0.dp else 5.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -154,19 +158,18 @@ fun LibraryScreen(
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // 用户大头像 (64.dp)
                         if (profile?.avatarUrl.isNullOrEmpty()) {
                             Surface(
                                 modifier = Modifier.size(64.dp),
                                 shape = CircleShape,
-                                color = Color(0xFF222734)
+                                color = elevatedColor
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = Icons.Rounded.Person,
                                         contentDescription = "账号头像",
-                                        tint = Color.White.copy(alpha = 0.5f),
-                                        modifier = Modifier.size(36.dp)
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(34.dp)
                                     )
                                 }
                             }
@@ -192,8 +195,8 @@ fun LibraryScreen(
                                 Text(
                                     text = profile?.nickname ?: "登录酷狗账号",
                                     style = MaterialTheme.typography.titleLarge.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
                                         fontSize = 18.sp
                                     ),
                                     maxLines = 1,
@@ -202,12 +205,12 @@ fun LibraryScreen(
 
                                 if (isLoggedIn) {
                                     Surface(
-                                        shape = RoundedCornerShape(6.dp),
+                                        shape = RoundedCornerShape(8.dp),
                                         color = VipGold.copy(alpha = 0.2f)
                                     ) {
                                         Text(
                                             text = "VIP",
-                                            color = VipGold,
+                                            color = if (isDark) VipGold else Color(0xFFB87900),
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Black,
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -219,7 +222,7 @@ fun LibraryScreen(
                             Text(
                                 text = if (isLoggedIn) "酷狗概念版专属权益已同步" else "登录后同步我喜欢的音乐与专属VIP",
                                 style = MaterialTheme.typography.bodySmall.copy(
-                                    color = Color.White.copy(alpha = 0.55f),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.sp
                                 ),
                                 maxLines = 1,
@@ -227,27 +230,26 @@ fun LibraryScreen(
                             )
                         }
 
-                        // 登录 / 账号管理胶囊按钮
                         FilledTonalButton(
                             onClick = { if (isLoggedIn) onAccounts() else onLogin() },
                             shape = CircleShape,
                             colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = Color(0xFF252B3A),
-                                contentColor = Color.White
+                                containerColor = elevatedColor,
+                                contentColor = MaterialTheme.colorScheme.onSurface
                             ),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                         ) {
                             Text(
                                 text = if (isLoggedIn) "账号管理" else "立即登录",
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
                 }
             }
 
-            // 2. VIP 概念版领取入口 (饱满圆润胶囊卡片，点击打开二级界面)
+            // 2. VIP 概念版领取入口 (无边框饱满圆润悬浮卡)
             item {
                 VipBannerCard(
                     state = vip,
@@ -257,11 +259,12 @@ fun LibraryScreen(
                 )
             }
 
-            // 3. 听歌等级与累计时长仪表盘 (支持听歌时长实时同步至官方云端)
+            // 3. 听歌等级与累计时长仪表盘 (无边框饱满悬浮块，深浅色自适应)
             item {
-                Card(
-                    shape = RoundedCornerShape(22.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF161922)),
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = cardColor,
+                    shadowElevation = if (isDark) 0.dp else 5.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -276,15 +279,15 @@ fun LibraryScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             Surface(
-                                color = ConceptPrimary.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(10.dp)
+                                color = ConceptPrimary.copy(alpha = 0.16f),
+                                shape = RoundedCornerShape(12.dp)
                             ) {
                                 Text(
                                     text = "Lv.${userGrade.level}",
                                     color = ConceptPrimary,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Black,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
                                 )
                             }
                             Spacer(modifier = Modifier.width(12.dp))
@@ -293,21 +296,20 @@ fun LibraryScreen(
                                     text = "听歌等级与时长",
                                     style = MaterialTheme.typography.titleMedium.copy(
                                         fontWeight = FontWeight.Bold,
-                                        color = Color.White,
+                                        color = MaterialTheme.colorScheme.onSurface,
                                         fontSize = 15.sp
                                     )
                                 )
                                 Text(
                                     text = "累计时长 ${userGrade.displayListenTimeText}",
                                     style = MaterialTheme.typography.labelMedium.copy(
-                                        color = Color.White.copy(alpha = 0.72f),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontWeight = FontWeight.Medium
                                     )
                                 )
                             }
                         }
 
-                        // 同步云端时长按钮 (带旋转动效与明确反馈)
                         val rotationAngle by animateFloatAsState(
                             targetValue = if (isGradeSyncing) 360f else 0f,
                             animationSpec = tween(durationMillis = 800),
@@ -336,7 +338,7 @@ fun LibraryScreen(
                                 text = if (isGradeSyncing) "同步中..." else "同步云端",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     color = ConceptPrimary,
-                                    fontWeight = FontWeight.Medium
+                                    fontWeight = FontWeight.Bold
                                 )
                             )
                         }
@@ -344,8 +346,19 @@ fun LibraryScreen(
                 }
             }
 
-            // 4. 核心快捷卡片 (我喜欢的音乐 + 最近播放)
+            // 4. 核心快捷卡片 (我喜欢的音乐 + 最近播放，深浅色自适应柔和渐变)
             item {
+                val likeGradient = if (isDark) {
+                    listOf(Color(0xFF2E1922), Color(0xFF1B1724))
+                } else {
+                    listOf(Color(0xFFFFE5EC), Color(0xFFFFF0F4))
+                }
+                val historyGradient = if (isDark) {
+                    listOf(Color(0xFF152538), Color(0xFF171926))
+                } else {
+                    listOf(Color(0xFFDFF0FF), Color(0xFFEEF6FF))
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -355,7 +368,7 @@ fun LibraryScreen(
                         subtitle = "${likedPlaylist?.trackCount ?: 0} 首歌曲",
                         icon = Icons.Rounded.Favorite,
                         iconTint = Color(0xFFFF5252),
-                        gradientColors = listOf(Color(0xFF2E1922), Color(0xFF1B1724)),
+                        gradientColors = likeGradient,
                         onClick = { onOpenPlaylist("like") },
                         modifier = Modifier.weight(1f)
                     )
@@ -364,15 +377,15 @@ fun LibraryScreen(
                         title = "最近播放",
                         subtitle = "${historyCount} 首记录",
                         icon = Icons.Rounded.History,
-                        iconTint = Color(0xFF448AFF),
-                        gradientColors = listOf(Color(0xFF152538), Color(0xFF171926)),
+                        iconTint = ConceptPrimary,
+                        gradientColors = historyGradient,
                         onClick = { onOpenPlaylist("history") },
                         modifier = Modifier.weight(1f)
                     )
                 }
             }
 
-            // 5. 歌单与音乐资产分组栏（现代胶囊分段栏 + 右侧紧凑工具组，彻底解决「已购」文字截断问题）
+            // 5. 歌单与音乐资产分组栏
             item {
                 Column(
                     modifier = Modifier
@@ -398,12 +411,13 @@ fun LibraryScreen(
                             tabs.forEachIndexed { idx, label ->
                                 val isSelected = selectedTab == idx
                                 Surface(
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = if (isSelected) ConceptPrimary.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.05f),
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = if (isSelected) ConceptPrimary.copy(alpha = 0.18f) else cardColor,
+                                    shadowElevation = if (!isDark && !isSelected) 2.dp else 0.dp,
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(14.dp))
+                                        .clip(RoundedCornerShape(16.dp))
                                         .clickable {
-                                            selectedTab = idx
+                                            viewModel.setSelectedAssetTab(idx)
                                             if (idx == 2 && isLoggedIn) {
                                                 viewModel.refreshFollowedArtists()
                                             } else if (idx == 3 && isLoggedIn) {
@@ -419,7 +433,7 @@ fun LibraryScreen(
                                             fontSize = 13.sp
                                         ),
                                         maxLines = 1,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp)
                                     )
                                 }
                             }
@@ -453,7 +467,7 @@ fun LibraryScreen(
                             }
                             if (selectedTab == 0 || selectedTab == 1) {
                                 IconButton(
-                                    onClick = { isGridView = !isGridView },
+                                    onClick = { viewModel.toggleGridView() },
                                     modifier = Modifier.size(32.dp)
                                 ) {
                                     @Suppress("DEPRECATION")
@@ -469,13 +483,14 @@ fun LibraryScreen(
                                 onClick = {
                                     viewModel.refreshMusicLibrary()
                                     viewModel.refreshPurchasedAssets()
+                                    viewModel.refreshFollowedArtists()
                                 },
                                 modifier = Modifier.size(32.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Refresh,
                                     contentDescription = "刷新",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(17.dp)
                                 )
                             }
@@ -484,7 +499,7 @@ fun LibraryScreen(
                 }
             }
 
-            // 6. 音乐库内容列表 (自建歌单 / 收藏歌单 / 已购资产)
+            // 6. 音乐库内容列表 (自建歌单 / 收藏歌单 / 关注歌手 / 已购资产)
             when (selectedTab) {
                 0, 1 -> {
                     val currentDisplayPlaylists = if (selectedTab == 0) myPlaylists else favoritePlaylists
@@ -498,7 +513,9 @@ fun LibraryScreen(
                             ) {
                                 Text(
                                     text = if (selectedTab == 0) "暂未创建自定义歌单" else "暂无收藏的歌单",
-                                    style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.35f))
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 )
                                 if (selectedTab == 0) {
                                     Spacer(modifier = Modifier.height(14.dp))
@@ -548,92 +565,113 @@ fun LibraryScreen(
                     }
                 }
                 2 -> {
-                    // [P1-2] 关注歌手列表
+                    // 关注歌手列表（对接官方 /v4/follow_list?plat=1）
                     if (followedArtists.isEmpty()) {
                         item {
-                            Box(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 36.dp),
-                                contentAlignment = Alignment.Center
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
-                                    text = if (isLoggedIn) "暂未关注任何歌手" else "请先登录同步关注的歌手",
-                                    style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.35f))
+                                    text = if (isLoggedIn) "暂未获取到已关注的歌手" else "请先登录同步关注的歌手",
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 )
+                                if (isLoggedIn) {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    FilledTonalButton(
+                                        onClick = { viewModel.refreshFollowedArtists() },
+                                        shape = RoundedCornerShape(18.dp)
+                                    ) {
+                                        Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("重新同步关注列表", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
                             }
                         }
                     } else {
                         items(followedArtists, key = { "artist_${it.id}_${it.name}" }) { artist ->
-                            Row(
+                            Surface(
+                                shape = RoundedCornerShape(20.dp),
+                                color = cardColor,
+                                shadowElevation = if (isDark) 0.dp else 3.dp,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(Color(0xFF161922))
+                                    .clip(RoundedCornerShape(20.dp))
                                     .clickable {
                                         if (artist.id.isNotBlank()) onOpenArtist(artist.id)
                                     }
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (artist.avatarUrl.isNotBlank()) {
-                                    AsyncImage(
-                                        model = artist.avatarUrl,
-                                        contentDescription = artist.name,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .size(50.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF222734))
-                                    )
-                                } else {
-                                    Surface(
-                                        modifier = Modifier.size(50.dp),
-                                        shape = CircleShape,
-                                        color = Color(0xFF222734)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.Person,
-                                                contentDescription = null,
-                                                tint = ConceptPrimary,
-                                                modifier = Modifier.size(26.dp)
-                                            )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (artist.avatarUrl.isNotBlank()) {
+                                        AsyncImage(
+                                            model = artist.avatarUrl,
+                                            contentDescription = artist.name,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(52.dp)
+                                                .clip(CircleShape)
+                                                .background(elevatedColor)
+                                        )
+                                    } else {
+                                        Surface(
+                                            modifier = Modifier.size(52.dp),
+                                            shape = CircleShape,
+                                            color = elevatedColor
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Person,
+                                                    contentDescription = null,
+                                                    tint = ConceptPrimary,
+                                                    modifier = Modifier.size(26.dp)
+                                                )
+                                            }
                                         }
                                     }
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = artist.name,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                    Spacer(modifier = Modifier.width(14.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = artist.name,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 15.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        val subText = buildList {
+                                            if (artist.songCount > 0) add("单曲 ${artist.songCount} 首")
+                                            if (artist.fansCount > 0) add("粉丝 ${artist.fansCount}")
+                                        }.joinToString(" · ").ifBlank { "已关注歌手 · 点击进入歌手主页" }
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = subText,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(16.dp)
                                     )
-                                    val subText = buildList {
-                                        if (artist.songCount > 0) add("单曲 ${artist.songCount} 首")
-                                        if (artist.fansCount > 0) add("粉丝 ${artist.fansCount}")
-                                    }.joinToString(" · ").ifBlank { "已关注歌手" }
-                                    Text(
-                                        text = subText,
-                                        color = Color.White.copy(alpha = 0.55f),
-                                        fontSize = 12.sp
-                                    )
                                 }
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                                    contentDescription = null,
-                                    tint = Color.White.copy(alpha = 0.35f),
-                                    modifier = Modifier.size(16.dp)
-                                )
                             }
                         }
                     }
                 }
                 3 -> {
-                    // 已购专辑与单曲列表 ([FUNC-05])
+                    // 已购专辑与单曲列表
                     if (purchasedAlbums.isEmpty() && purchasedSongs.isEmpty()) {
                         item {
                             Box(
@@ -644,7 +682,9 @@ fun LibraryScreen(
                             ) {
                                 Text(
                                     text = if (isLoggedIn) "暂无已购数字专辑或单曲" else "请先登录同步已购音乐资产",
-                                    style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.35f))
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 )
                             }
                         }
@@ -653,56 +693,65 @@ fun LibraryScreen(
                             item {
                                 Text(
                                     text = "已购专辑 (${purchasedAlbums.size})",
-                                    color = Color.White.copy(alpha = 0.65f),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier.padding(top = 2.dp, bottom = 2.dp)
                                 )
                             }
                             items(purchasedAlbums, key = { "album_${it.albumId}" }) { album ->
-                                Row(
+                                Surface(
+                                    shape = RoundedCornerShape(20.dp),
+                                    color = cardColor,
+                                    shadowElevation = if (isDark) 0.dp else 3.dp,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(Color(0xFF161922))
+                                        .clip(RoundedCornerShape(20.dp))
                                         .clickable {
                                             if (album.albumId.isNotBlank()) onOpenAlbum(album.albumId)
                                         }
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    AsyncImage(
-                                        model = album.coverUrl,
-                                        contentDescription = album.albumName,
-                                        contentScale = ContentScale.Crop,
+                                    Row(
                                         modifier = Modifier
-                                            .size(50.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(Color(0xFF222734))
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = album.albumName,
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            .fillMaxWidth()
+                                            .padding(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        AsyncImage(
+                                            model = album.coverUrl,
+                                            contentDescription = album.albumName,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(54.dp)
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(elevatedColor)
                                         )
-                                        val countSuffix = if (album.songCount > 0) " (${album.songCount}首)" else ""
-                                        Text(
-                                            text = "${album.singerName} · 数字专辑$countSuffix",
-                                            color = VipGold.copy(alpha = 0.85f),
-                                            fontSize = 12.sp
+                                        Spacer(modifier = Modifier.width(14.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = album.albumName,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 15.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            val countSuffix = if (album.songCount > 0) " (${album.songCount}首)" else ""
+                                            Text(
+                                                text = "${album.singerName} · 数字专辑$countSuffix",
+                                                color = if (isDark) VipGold else Color(0xFFB87900),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                                        contentDescription = null,
-                                        tint = Color.White.copy(alpha = 0.35f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
                                 }
                             }
                         }
@@ -711,7 +760,7 @@ fun LibraryScreen(
                             item {
                                 Text(
                                     text = "已购单曲 (${purchasedSongs.size})",
-                                    color = Color.White.copy(alpha = 0.65f),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
@@ -719,62 +768,83 @@ fun LibraryScreen(
                             }
                             val allPurchasedSongs = purchasedSongs.mapNotNull { it.song }
                             items(purchasedSongs, key = { "song_${it.songId}_${it.songName}" }) { item ->
-                                Row(
+                                val s = item.song
+                                Surface(
+                                    shape = RoundedCornerShape(20.dp),
+                                    color = cardColor,
+                                    shadowElevation = if (isDark) 0.dp else 3.dp,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(Color(0xFF161922))
+                                        .clip(RoundedCornerShape(20.dp))
                                         .clickable {
-                                            item.song?.let { s ->
-                                                onPlaySong(s, allPurchasedSongs.ifEmpty { listOf(s) })
+                                            s?.let { songObj ->
+                                                onPlaySong(songObj, allPurchasedSongs.ifEmpty { listOf(songObj) })
                                             }
                                         }
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (!item.song?.coverUrl.isNullOrBlank()) {
-                                        AsyncImage(
-                                            model = item.song?.coverUrl,
-                                            contentDescription = item.songName,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier
-                                                .size(44.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0xFF222734))
-                                        )
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(44.dp)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(ConceptPrimary.copy(alpha = 0.14f)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.MusicNote,
-                                                contentDescription = null,
-                                                tint = ConceptPrimary,
-                                                modifier = Modifier.size(22.dp)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (!s?.coverUrl.isNullOrBlank()) {
+                                            AsyncImage(
+                                                model = s?.coverUrl,
+                                                contentDescription = item.songName,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(elevatedColor)
                                             )
+                                        } else {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(ConceptPrimary.copy(alpha = 0.14f)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.MusicNote,
+                                                    contentDescription = null,
+                                                    tint = ConceptPrimary,
+                                                    modifier = Modifier.size(22.dp)
+                                                )
+                                            }
                                         }
-                                    }
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = item.songName,
-                                            color = Color.White,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 14.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = item.singerName,
-                                            color = Color.White.copy(alpha = 0.55f),
-                                            fontSize = 12.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = item.songName,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.5.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(3.dp))
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                if (s?.isHiRes == true) {
+                                                    BadgeTag(text = "Hi-Res", color = VipGold)
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                } else if (s?.isLossless == true) {
+                                                    BadgeTag(text = "SQ", color = ConceptPrimary)
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                } else if (s?.quality == "320") {
+                                                    BadgeTag(text = "HQ", color = ConceptPrimary.copy(alpha = 0.85f))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                }
+                                                Text(
+                                                    text = item.singerName,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    fontSize = 12.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -784,7 +854,6 @@ fun LibraryScreen(
             }
         }
 
-        // [INT-03] 下拉刷新指示器（仅在下拉或刷新时显示，杜绝静止状态下顶部突兀圆圈）
         if (pullRefreshState.progress > 0.05f || pullRefreshState.isRefreshing) {
             PullToRefreshContainer(
                 state = pullRefreshState,
@@ -796,13 +865,19 @@ fun LibraryScreen(
             )
         }
 
-        // 7. 固定沉浸式顶栏 (随页面滚动平滑切换大标题与小头像+昵称)
+        // 7. 固定沉浸式顶栏 (深色/浅色主题自适应背景与文字图标颜色)
+        val topBarSurfaceColor = if (isDark) {
+            Color(0xFF0A0F1A).copy(alpha = (scrollFraction * 0.96f).coerceIn(0f, 0.96f))
+        } else {
+            Color(0xFFF3F8FF).copy(alpha = (scrollFraction * 0.96f).coerceIn(0f, 0.96f))
+        }
+
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.TopCenter),
-            color = Color(0xFF0E1015).copy(alpha = (scrollFraction * 0.96f).coerceIn(0f, 0.96f)),
-            tonalElevation = (scrollFraction * 6).dp
+            color = topBarSurfaceColor,
+            tonalElevation = (scrollFraction * 4).dp
         ) {
             Column(
                 modifier = Modifier
@@ -817,17 +892,15 @@ fun LibraryScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // 左侧标题与用户小头像平滑联动切换
                     Box(
                         modifier = Modifier.weight(1f),
                         contentAlignment = Alignment.CenterStart
                     ) {
-                        // 1. 顶部未滑动时的大标题 "我的"
                         Text(
                             text = "我的",
                             style = MaterialTheme.typography.headlineMedium.copy(
                                 fontWeight = FontWeight.Black,
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 24.sp
                             ),
                             modifier = Modifier
@@ -835,7 +908,6 @@ fun LibraryScreen(
                                 .offset(y = (-10 * scrollFraction).dp)
                         )
 
-                        // 2. 向上滑动时平滑淡入并滑出的小头像 + 用户昵称
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -847,13 +919,13 @@ fun LibraryScreen(
                                 Surface(
                                     modifier = Modifier.size(34.dp),
                                     shape = CircleShape,
-                                    color = Color(0xFF222734)
+                                    color = elevatedColor
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             imageVector = Icons.Rounded.Person,
                                             contentDescription = null,
-                                            tint = Color.White.copy(alpha = 0.5f),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(20.dp)
                                         )
                                     }
@@ -873,7 +945,7 @@ fun LibraryScreen(
                                 text = profile?.nickname ?: "我的",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White,
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     fontSize = 17.sp
                                 ),
                                 maxLines = 1,
@@ -882,12 +954,10 @@ fun LibraryScreen(
                         }
                     }
 
-                    // 右侧功能按钮组：搜索、设置
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        // 搜索按钮
                         IconButton(
                             onClick = onOpenSearch,
                             modifier = Modifier.size(38.dp)
@@ -895,12 +965,11 @@ fun LibraryScreen(
                             Icon(
                                 imageVector = Icons.Rounded.Search,
                                 contentDescription = "搜索",
-                                tint = Color.White.copy(alpha = 0.85f),
+                                tint = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(21.dp)
                             )
                         }
 
-                        // 设置按钮 (当前重点添加)
                         IconButton(
                             onClick = onOpenSettings,
                             modifier = Modifier.size(38.dp)
@@ -908,7 +977,7 @@ fun LibraryScreen(
                             Icon(
                                 imageVector = Icons.Rounded.Settings,
                                 contentDescription = "设置",
-                                tint = Color.White.copy(alpha = 0.85f),
+                                tint = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.size(21.dp)
                             )
                         }
@@ -918,7 +987,6 @@ fun LibraryScreen(
         }
     }
 
-    // 二级界面：VIP 权益中心抽屉
     if (showVipCenterSheet) {
         VipCenterBottomSheet(
             state = vip,
@@ -935,7 +1003,6 @@ fun LibraryScreen(
         )
     }
 
-    // 新建歌单对话框
     if (showCreateDialog) {
         CreatePlaylistDialog(
             onDismiss = { showCreateDialog = false },
@@ -944,14 +1011,13 @@ fun LibraryScreen(
                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                     if (success) {
                         showCreateDialog = false
-                        selectedTab = 0
+                        viewModel.setSelectedAssetTab(0)
                     }
                 }
             }
         )
     }
 
-    // [P1-3] 导入外部歌单弹窗
     if (showImportDialog) {
         AlertDialog(
             onDismissRequest = { showImportDialog = false },
@@ -986,7 +1052,7 @@ fun LibraryScreen(
                                 showImportDialog = false
                                 importPlaylistName = ""
                                 importRawText = ""
-                                selectedTab = 0
+                                viewModel.setSelectedAssetTab(0)
                             }
                         }
                     }
@@ -1013,11 +1079,16 @@ private fun MediaShortcutCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+    val isDark = LocalIsDarkTheme.current
+    val titleColor = if (isDark) Color.White else Color(0xFF101C2E)
+    val subColor = if (isDark) Color.White.copy(alpha = 0.65f) else Color(0xFF4F6482)
+
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = Color.Transparent,
+        shadowElevation = if (isDark) 0.dp else 4.dp,
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(24.dp))
             .clickable(onClick = onClick)
     ) {
         Box(
@@ -1036,9 +1107,9 @@ private fun MediaShortcutCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
-                        modifier = Modifier.size(38.dp),
+                        modifier = Modifier.size(40.dp),
                         shape = CircleShape,
-                        color = iconTint.copy(alpha = 0.18f)
+                        color = iconTint.copy(alpha = 0.16f)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
@@ -1053,7 +1124,7 @@ private fun MediaShortcutCard(
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
                         contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.25f),
+                        tint = subColor.copy(alpha = 0.55f),
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -1064,7 +1135,7 @@ private fun MediaShortcutCard(
                     text = title,
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                        color = titleColor,
                         fontSize = 15.sp
                     ),
                     maxLines = 1,
@@ -1074,7 +1145,7 @@ private fun MediaShortcutCard(
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall.copy(
-                        color = Color.White.copy(alpha = 0.6f),
+                        color = subColor,
                         fontSize = 12.sp
                     ),
                     maxLines = 1,

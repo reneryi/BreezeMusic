@@ -28,3 +28,7 @@ google-services.json
 
 # OS specific
 Thumbs.db
+
+# Patch & diff files
+*.patch
+*.diff

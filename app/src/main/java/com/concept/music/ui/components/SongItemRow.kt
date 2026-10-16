@@ -47,6 +47,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.concept.music.data.model.Song
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
 
 @Composable
@@ -59,7 +60,9 @@ fun SongItemRow(
     onMoreClick: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
-    // 列表小图固定 144x144 采样与内存缓存 Key，大幅降低长列表快速滑动时的解码开销，保障 120Hz 满帧流畅度
+    val isDark = LocalIsDarkTheme.current
+    val goldTagColor = if (isDark) VipGold else Color(0xFFC47F00)
+
     val imageModel = remember(song.coverUrl) {
         if (song.coverUrl.isNotBlank()) {
             ImageRequest.Builder(context)
@@ -74,9 +77,9 @@ fun SongItemRow(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 2.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(
-                if (isPlaying) ConceptPrimary.copy(alpha = 0.10f) else Color.Transparent
+                if (isPlaying) ConceptPrimary.copy(alpha = 0.12f) else Color.Transparent
             )
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 8.dp),
@@ -95,18 +98,17 @@ fun SongItemRow(
                         text = orderIndex.toString().padStart(2, '0'),
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontWeight = if (isTopThree) FontWeight.Bold else FontWeight.SemiBold,
-                            color = if (isTopThree) ConceptPrimary.copy(alpha = 0.88f) else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = if (isTopThree) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     )
                 }
             }
         }
 
-        // 封面
         Box(
             modifier = Modifier
                 .size(50.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(14.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center
         ) {
@@ -140,14 +142,13 @@ fun SongItemRow(
 
         Spacer(modifier = Modifier.width(12.dp))
 
-        // 标题与歌手
         Column(
             modifier = Modifier.weight(1f)
         ) {
             Text(
                 text = song.title,
                 style = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.Medium,
+                    fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.SemiBold,
                     color = if (isPlaying) ConceptPrimary else MaterialTheme.colorScheme.onSurface
                 ),
                 maxLines = 1,
@@ -158,22 +159,29 @@ fun SongItemRow(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(top = 3.dp)
             ) {
-                if (song.isHiRes) {
-                    BadgeTag(text = "Hi-Res", color = VipGold)
-                    Spacer(modifier = Modifier.width(4.dp))
-                } else if (song.isLossless) {
-                    BadgeTag(text = "SQ", color = ConceptPrimary)
-                    Spacer(modifier = Modifier.width(4.dp))
+                when {
+                    song.isHiRes -> {
+                        BadgeTag(text = "Hi-Res", color = goldTagColor)
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    song.isLossless -> {
+                        BadgeTag(text = "SQ", color = ConceptPrimary)
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    song.quality == "320" -> {
+                        BadgeTag(text = "HQ", color = ConceptPrimary.copy(alpha = 0.85f))
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
                 }
                 if (song.isVip) {
-                    BadgeTag(text = "VIP", color = VipGold)
+                    BadgeTag(text = "VIP", color = goldTagColor)
                     Spacer(modifier = Modifier.width(4.dp))
                 }
 
                 Text(
-                    text = if (song.album.isNotBlank()) "${song.artist} · ${song.album}" else song.artist,
+                    text = if (song.album.isNotBlank() && song.album != "单曲") "${song.artist} · ${song.album}" else song.artist,
                     style = MaterialTheme.typography.bodySmall.copy(
-                        color = if (isPlaying) ConceptPrimary.copy(alpha = 0.75f) else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (isPlaying) ConceptPrimary.copy(alpha = 0.82f) else MaterialTheme.colorScheme.onSurfaceVariant
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -193,9 +201,6 @@ fun SongItemRow(
     }
 }
 
-/**
- * 正在播放动态三柱音波指示器
- */
 @Composable
 fun PlayingAudioWaveIndicator(
     color: Color = ConceptPrimary,
@@ -252,15 +257,15 @@ fun PlayingAudioWaveIndicator(
 @Composable
 fun BadgeTag(text: String, color: Color) {
     Surface(
-        color = color.copy(alpha = 0.15f),
-        shape = RoundedCornerShape(3.dp)
+        color = color.copy(alpha = 0.16f),
+        shape = RoundedCornerShape(5.dp)
     ) {
         Text(
             text = text,
             color = color,
             fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
         )
     }
 }

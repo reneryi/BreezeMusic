@@ -1,6 +1,5 @@
 package com.concept.music.ui.components
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,9 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -28,9 +24,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.concept.music.data.kugou.VipUiState
 import com.concept.music.data.kugou.today
+import com.concept.music.ui.theme.LocalIsDarkTheme
 
 /**
- * 饱满圆润的 VIP 权益中心入口横条
+ * 饱满圆润无边框的 VIP 权益中心入口横条（深色模式黑金流光 / 浅色模式香槟暖金水彩）
  */
 @Composable
 fun VipBannerCard(
@@ -39,6 +36,7 @@ fun VipBannerCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val isDark = LocalIsDarkTheme.current
     val todayRecord = state.records.find { it.day == today() }
     val isClaimedToday = todayRecord?.received == true
 
@@ -49,71 +47,76 @@ fun VipBannerCard(
         else -> "每日免费领 1 日 VIP"
     }
 
+    val bgBrush = if (isDark) {
+        Brush.horizontalGradient(
+            colors = listOf(
+                Color(0xFF282016),
+                Color(0xFF1D1922),
+                Color(0xFF151924)
+            )
+        )
+    } else {
+        Brush.horizontalGradient(
+            colors = listOf(
+                Color(0xFFFFF3D6),
+                Color(0xFFFFF8E8),
+                Color(0xFFF3F6FF)
+            )
+        )
+    }
+
+    val titleColor = if (isDark) Color.White else Color(0xFF2B1F0A)
+    val subColor = if (isDark) Color(0xFFFFD54F).copy(alpha = 0.8f) else Color(0xFF946200)
+    val statusColor = when {
+        isClaimedToday -> if (isDark) Color(0xFF81C784) else Color(0xFF2E7D32)
+        else -> if (isDark) Color(0xFFFFD54F) else Color(0xFFB87900)
+    }
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(24.dp))
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(22.dp),
-        color = Color(0xFF181B23),
-        border = BorderStroke(
-            width = 0.8.dp,
-            brush = Brush.horizontalGradient(
-                colors = listOf(
-                    Color(0xFFFFD54F).copy(alpha = 0.32f),
-                    Color(0xFFFFB300).copy(alpha = 0.12f),
-                    Color.White.copy(alpha = 0.05f)
-                )
-            )
-        ),
-        tonalElevation = 3.dp
+        shape = RoundedCornerShape(24.dp),
+        color = Color.Transparent,
+        shadowElevation = if (isDark) 0.dp else 5.dp
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            Color(0xFF2B2318),
-                            Color(0xFF1F1B22),
-                            Color(0xFF171A23)
-                        )
-                    )
-                )
-                .padding(horizontal = 18.dp, vertical = 14.dp)
+                .background(bgBrush)
+                .padding(horizontal = 18.dp, vertical = 15.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // 左侧醒目标识：黑金皇冠钻章 + VIP 权益中心
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    VipCrownBadge(size = 38.dp)
+                    VipCrownBadge(size = 40.dp)
 
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
                             text = "VIP 权益中心",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Black,
-                                color = Color.White,
+                                color = titleColor,
                                 fontSize = 15.sp
                             )
                         )
                         Text(
                             text = "无损音质与每日免费 VIP 领取",
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = Color(0xFFFFD54F).copy(alpha = 0.75f),
-                                fontSize = 11.sp
+                                color = subColor,
+                                fontSize = 11.5.sp
                             )
                         )
                     }
                 }
 
-                // 右侧提示文案 + 箭头
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -121,7 +124,7 @@ fun VipBannerCard(
                     Text(
                         text = statusText,
                         style = MaterialTheme.typography.bodyMedium.copy(
-                            color = if (isClaimedToday) Color(0xFF81C784) else Color(0xFFFFD54F),
+                            color = statusColor,
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp
                         )
@@ -129,7 +132,7 @@ fun VipBannerCard(
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                         contentDescription = "进入 VIP 权益中心",
-                        tint = Color.White.copy(alpha = 0.45f),
+                        tint = titleColor.copy(alpha = 0.45f),
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -138,26 +141,23 @@ fun VipBannerCard(
     }
 }
 
-/**
- * 极简现代风格 VIP 线性皇冠徽章组件
- */
 @Composable
 fun VipCrownBadge(
-    size: Dp = 38.dp,
+    size: Dp = 40.dp,
     modifier: Modifier = Modifier
 ) {
+    val isDark = LocalIsDarkTheme.current
+    val goldColor = if (isDark) Color(0xFFFFD54F) else Color(0xFFD48800)
     Surface(
         modifier = modifier.size(size),
-        shape = RoundedCornerShape(11.dp),
-        color = Color(0xFFFFD54F).copy(alpha = 0.14f)
+        shape = RoundedCornerShape(13.dp),
+        color = goldColor.copy(alpha = 0.16f)
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = this.size.width
             val h = this.size.height
-            val goldColor = Color(0xFFFFD54F)
             val strokeWidth = 2.dp.toPx()
 
-            // 极简一体式几何皇冠轮廓
             val crownPath = Path().apply {
                 moveTo(w * 0.26f, h * 0.68f)
                 lineTo(w * 0.22f, h * 0.38f)
@@ -180,4 +180,3 @@ fun VipCrownBadge(
         }
     }
 }
-

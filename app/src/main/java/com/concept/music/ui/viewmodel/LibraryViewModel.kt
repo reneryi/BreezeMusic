@@ -44,7 +44,22 @@ class LibraryViewModel(
     private val _librarySection = MutableStateFlow("我喜欢")
     val librarySection = _librarySection.asStateFlow()
 
-    // 新增：听歌统计、已购、关注歌手与收藏专辑
+    // 持久化「我的页」资产分组 Tab 状态与列表/网格视图状态（修复浏览已购专辑或收藏歌单返回后被重置回「自建」的问题）
+    private val _selectedAssetTab = MutableStateFlow(0) // 0: 自建, 1: 收藏, 2: 关注, 3: 已购
+    val selectedAssetTab = _selectedAssetTab.asStateFlow()
+
+    private val _isGridView = MutableStateFlow(false)
+    val isGridView = _isGridView.asStateFlow()
+
+    fun setSelectedAssetTab(tab: Int) {
+        _selectedAssetTab.value = tab.coerceIn(0, 3)
+    }
+
+    fun toggleGridView() {
+        _isGridView.value = !_isGridView.value
+    }
+
+    // 听歌统计、已购、关注歌手与收藏专辑
     private val _userGrade = MutableStateFlow(UserGradeInfo())
     val userGrade = _userGrade.asStateFlow()
 
@@ -121,7 +136,7 @@ class LibraryViewModel(
         }
     }
 
-    // [P1-2] 刷新关注歌手列表
+    // 刷新关注歌手列表
     fun refreshFollowedArtists() {
         val userId = accountState.value.currentId ?: return
         if (accountState.value.auth != AuthState.READY) return
@@ -182,7 +197,7 @@ class LibraryViewModel(
         }
     }
 
-    // [P1-3] 外部歌单文本批量导入
+    // 外部歌单文本批量导入
     fun importExternalPlaylist(name: String, rawText: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         if (accountState.value.auth != AuthState.READY) {
             onResult(false, "请先登录酷狗账号")
@@ -214,7 +229,6 @@ class LibraryViewModel(
             musicLibraryJob?.cancel()
             musicLibraryJob = viewModelScope.launch {
                 val localHistory = VipManager.history.get(userId)
-                // 优先从酷狗官方云端拉取当前账号在各端（PC/手机/车载）的最新播放历史并与本地融合
                 val cloudLatest = if (userId != null && accountState.value.auth == AuthState.READY) {
                     runCatching { VipManager.music.latestListenSongs(pageSize = 50) }.getOrDefault(emptyList())
                 } else emptyList()
@@ -232,6 +246,12 @@ class LibraryViewModel(
                         if (accounts.state.value.currentId == userId) {
                             _purchasedSongs.value = pSongs
                             _purchasedAlbums.value = pAlbums
+                        }
+                    }
+                    launch {
+                        val artists = runCatching { VipManager.music.followedArtists() }.getOrDefault(emptyList())
+                        if (accounts.state.value.currentId == userId) {
+                            _followedArtists.value = artists
                         }
                     }
                 }
@@ -290,7 +310,7 @@ class LibraryViewModel(
         musicLibraryJob = viewModelScope.launch {
             _libraryLoading.value = true; _libraryError.value = null
             try {
-                // 并行启动听歌等级与已购资产查询，避免歌单详情慢请求阻塞已购与等级刷新
+                // 并行启动听歌等级、已购资产与关注歌手查询
                 launch {
                     ListeningGradeManager.syncGrade(forceRefresh = false)
                 }
@@ -485,7 +505,6 @@ class LibraryViewModel(
                     _playlists.value = _playlists.value.map {
                         if (it.isLiked) it.copy(trackCount = it.trackCount + 1) else it
                     }
-                    // 后台拉取最新我喜欢列表以补全云端生成的 fileId
                     launch {
                         runCatching { VipManager.music.playlistSongs(likedPl) }.getOrNull()?.let { fresh ->
                             _likedSongs.value = fresh

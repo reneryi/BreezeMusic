@@ -778,10 +778,11 @@ private fun SettingsSectionCard(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val isDark = LocalIsDarkTheme.current
     Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)),
+        shape = RoundedCornerShape(24.dp),
+        color = conceptFloatingCardColor(),
+        shadowElevation = if (isDark) 0.dp else 4.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {

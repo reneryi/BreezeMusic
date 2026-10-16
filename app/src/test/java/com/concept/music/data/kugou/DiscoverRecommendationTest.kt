@@ -1,6 +1,5 @@
 package com.concept.music.data.kugou
 
-import com.concept.music.data.model.Song
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.test.runTest
@@ -80,33 +79,8 @@ class DiscoverRecommendationTest {
     }
 
     @Test
-    fun youthChannelSongsNestedAudioExtraction() = runTest {
-        val mockJson = """
-            {
-                "status": 1,
-                "data": [
-                    {
-                        "name": "心流曲目1",
-                        "audio": [
-                            {
-                                "hash": "AABBCCDDEEFF00112233445566778899",
-                                "songname": "Lofi Study Beat",
-                                "singername": "Chill Artist",
-                                "duration": 180000,
-                                "audio_id": "9001"
-                            }
-                        ]
-                    },
-                    {
-                        "hash": "11223344556677889900AABBCCDDEEFF",
-                        "songname": "Raindrops",
-                        "singername": "Nature Sound",
-                        "duration": 240000,
-                        "audio_id": "9002"
-                    }
-                ]
-            }
-        """.trimIndent()
+    fun youthChannelSevenOfficialApisWorkCorrectly() = runTest {
+        val calledPaths = mutableListOf<String>()
 
         val transport = object : KugouTransport {
             override suspend fun call(
@@ -119,7 +93,10 @@ class DiscoverRecommendationTest {
                 web: Boolean,
                 headers: Map<String, String>,
                 device: DeviceIdentity?
-            ): ApiResponse = ApiResponse(JsonParser.parseString(mockJson).asJsonObject)
+            ): ApiResponse {
+                calledPaths.add(path)
+                return ApiResponse(JsonParser.parseString("""{"status": 1, "errcode": 0, "data": {}}""").asJsonObject)
+            }
 
             override suspend fun callAdvanced(
                 path: String,
@@ -133,7 +110,28 @@ class DiscoverRecommendationTest {
                 device: DeviceIdentity?,
                 sign: Boolean,
                 includeDefaultParams: Boolean
-            ): ApiResponse = ApiResponse(JsonParser.parseString(mockJson).asJsonObject)
+            ): ApiResponse {
+                calledPaths.add(path)
+                val mock = when {
+                    path.contains("channel_list_by_id") -> """
+                        {"status": 1, "data": {"list": [{"channel_id": "101", "name": "自习室", "desc": "静心学习", "is_sub": 1}]}}
+                    """
+                    path.contains("amway") -> """
+                        {"status": 1, "data": {"list": [{"id": "am_1", "channel_id": "101", "channel_name": "自习室", "content": "深夜自习宝藏频道"}]}}
+                    """
+                    path.contains("get_friendly_channel") -> """
+                        {"status": 1, "data": {"list": [{"channel_id": "102", "name": "晚安助眠"}]}}
+                    """
+                    path.contains("channel_get_song_audit_passed") -> """
+                        {"status": 1, "data": {"list": [{"story_id": "st_1", "content": "一段治愈的旋律", "nickname": "微风听友"}]}}
+                    """
+                    path.contains("get_song_detail") -> """
+                        {"status": 1, "data": {"story_id": "st_1", "content": "完整音乐故事正文", "nickname": "微风听友"}}
+                    """
+                    else -> """{"status": 1, "errcode": 0, "data": {}}"""
+                }
+                return ApiResponse(JsonParser.parseString(mock.trimIndent()).asJsonObject)
+            }
         }
 
         val store = MemoryStore()
@@ -141,30 +139,57 @@ class DiscoverRecommendationTest {
         val accounts = AccountRepository(store, auth, transport)
         val repo = MusicApiRepository(transport, accounts)
 
-        val songs = repo.youthChannelSongs("ch_study_99")
-        assertEquals(2, songs.size)
-        assertEquals("Lofi Study Beat", songs[0].title)
-        assertEquals("Chill Artist", songs[0].artist)
-        assertEquals("Raindrops", songs[1].title)
+        val details = repo.youthChannelDetail(listOf("101"))
+        assertEquals(1, details.size)
+        assertEquals("自习室", details[0].name)
+        assertTrue(details[0].isSubscribed)
+
+        val amways = repo.youthChannelAmway("101")
+        assertTrue(amways.isNotEmpty())
+        assertEquals("深夜自习宝藏频道", amways[0].content)
+
+        val similars = repo.youthChannelSimilar("101")
+        assertTrue(similars.isNotEmpty())
+        assertEquals("102", similars[0].id)
+
+        val subOk = repo.youthChannelSubscribe("101", subscribe = true)
+        assertTrue(subOk)
+
+        val stories = repo.youthChannelStories("101", page = 1, pageSize = 10)
+        assertTrue(stories.isNotEmpty())
+
+        val storyDetail = repo.youthChannelStoryDetail("st_1", "101")
+        assertNotNull(storyDetail)
+        assertEquals("完整音乐故事正文", storyDetail?.content)
     }
 
     @Test
-    fun personalFmPayloadAndRoutingVerified() = runTest {
-        var capturedPath = ""
-        var capturedHeader = ""
-        var capturedBody: JsonObject? = null
-
-        val mockJson = """
+    fun relateGoodsLevelMappingDistinguishesFlacFromHiRes() = runTest {
+        // 验证 relate_goods 中 level=5 为无损 FLAC(SQ)，level=6 才是 Hi-Res，不再把普通歌曲误标为 Hi-Res
+        val mockPlaylistJson = """
             {
                 "status": 1,
                 "data": {
-                    "song_list": [
+                    "info": [
                         {
-                            "hash": "FM00112233445566778899AABBCCDDEE",
-                            "songname": "随心听好歌",
-                            "singername": "随心听歌手",
-                            "timelen": 200000,
-                            "audio_id": "8001"
+                            "name": "周杰伦 - 晴天",
+                            "hash": "11111111111111111111111111111111",
+                            "audio_id": 1001,
+                            "relate_goods": [
+                                {"level": 2, "hash": "11111111111111111111111111111111"},
+                                {"level": 4, "hash": "22222222222222222222222222222222"},
+                                {"level": 5, "hash": "33333333333333333333333333333333"}
+                            ]
+                        },
+                        {
+                            "name": "林俊杰 - 江南",
+                            "hash": "44444444444444444444444444444444",
+                            "audio_id": 1002,
+                            "relate_goods": [
+                                {"level": 2, "hash": "44444444444444444444444444444444"},
+                                {"level": 5, "hash": "55555555555555555555555555555555"},
+                                {"level": 6, "hash": "66666666666666666666666666666666"}
+                            ]
                         }
                     ]
                 }
@@ -182,12 +207,7 @@ class DiscoverRecommendationTest {
                 web: Boolean,
                 headers: Map<String, String>,
                 device: DeviceIdentity?
-            ): ApiResponse {
-                capturedPath = path
-                capturedHeader = headers["x-router"].orEmpty()
-                capturedBody = body
-                return ApiResponse(JsonParser.parseString(mockJson).asJsonObject)
-            }
+            ): ApiResponse = ApiResponse(JsonParser.parseString(mockPlaylistJson).asJsonObject)
         }
 
         val store = MemoryStore()
@@ -195,14 +215,15 @@ class DiscoverRecommendationTest {
         val accounts = AccountRepository(store, auth, transport)
         val repo = MusicApiRepository(transport, accounts)
 
-        val songs = repo.personalFm(size = 15)
-        assertEquals("/v2/personal_recommend", capturedPath)
-        assertEquals("persnfm.service.kugou.com", capturedHeader)
-        assertNotNull(capturedBody)
-        assertEquals(15, capturedBody?.get("remain_songcnt")?.asInt)
+        val songs = repo.rankSongs(6666)
+        assertEquals(2, songs.size)
+        // 第一首歌最高只有 level=5 (FLAC)，应标记为 isLossless=true, isHiRes=false
+        assertTrue(songs[0].isLossless)
+        assertFalse(songs[0].isHiRes)
 
-        assertEquals(1, songs.size)
-        assertEquals("随心听好歌", songs[0].title)
+        // 第二首歌含 level=6 (Hi-Res)，应标记为 isLossless=true, isHiRes=true
+        assertTrue(songs[1].isLossless)
+        assertTrue(songs[1].isHiRes)
     }
 
     @Test
@@ -235,7 +256,7 @@ class DiscoverRecommendationTest {
                 sign: Boolean,
                 includeDefaultParams: Boolean
             ): ApiResponse {
-                requestedChannel = query["global_collection_id"].orEmpty()
+                requestedChannel = query["channel_id"].orEmpty()
                 val mockJson = """
                     {
                         "status": 1,
@@ -258,24 +279,19 @@ class DiscoverRecommendationTest {
         val accounts = AccountRepository(store, auth, transport)
         val repo = MusicApiRepository(transport, accounts)
 
-        // 沉浸学习 -> ch_study
         repo.sceneRecommendSongs("STUDY", size = 10)
-        assertEquals("ch_study", requestedChannel)
+        assertEquals("101", requestedChannel)
 
-        // 深夜助眠 -> ch_sleep
         repo.sceneRecommendSongs("SLEEP", size = 10)
-        assertEquals("ch_sleep", requestedChannel)
+        assertEquals("102", requestedChannel)
 
-        // 燃动运动 -> ch_workout
         repo.sceneRecommendSongs("WORKOUT", size = 10)
-        assertEquals("ch_workout", requestedChannel)
+        assertEquals("106", requestedChannel)
 
-        // 自驾旅行 -> ch_drive
         repo.sceneRecommendSongs("DRIVE", size = 10)
-        assertEquals("ch_drive", requestedChannel)
+        assertEquals("105", requestedChannel)
 
-        // 治愈微风 -> ch_healing
         repo.sceneRecommendSongs("HEALING", size = 10)
-        assertEquals("ch_healing", requestedChannel)
+        assertEquals("103", requestedChannel)
     }
 }

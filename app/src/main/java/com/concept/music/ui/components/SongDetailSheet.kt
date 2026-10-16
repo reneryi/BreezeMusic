@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -25,7 +24,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.concept.music.data.model.SongDetailInfo
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
+import com.concept.music.ui.theme.conceptElevatedSurfaceColor
+import com.concept.music.ui.theme.conceptSheetContainerColor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,10 +36,11 @@ fun SongDetailSheet(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val isDark = LocalIsDarkTheme.current
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF16191F),
+        containerColor = conceptSheetContainerColor(),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = {
             Surface(
@@ -46,7 +49,7 @@ fun SongDetailSheet(
                     .width(42.dp)
                     .height(4.dp),
                 shape = CircleShape,
-                color = Color.White.copy(alpha = 0.2f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
             ) {}
         }
     ) {
@@ -55,7 +58,6 @@ fun SongDetailSheet(
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 8.dp)
         ) {
-            // 标题
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
@@ -71,7 +73,7 @@ fun SongDetailSheet(
                     text = "音乐技术参数与详情",
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 18.sp
                     )
                 )
@@ -79,10 +81,9 @@ fun SongDetailSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // 歌曲核心名片卡
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E222A)),
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = conceptElevatedSurfaceColor(),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
@@ -90,7 +91,7 @@ fun SongDetailSheet(
                         text = detail.song.title,
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = MaterialTheme.colorScheme.onSurface
                         ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -99,7 +100,7 @@ fun SongDetailSheet(
                     Text(
                         text = "${detail.singerName} · ${detail.albumName}",
                         style = MaterialTheme.typography.bodySmall.copy(
-                            color = Color.White.copy(alpha = 0.65f)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -109,24 +110,22 @@ fun SongDetailSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 属性列表网格
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E222A)),
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = conceptElevatedSurfaceColor(),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    DetailRow(label = "音质规格", value = detail.audioQuality, isHighlight = detail.song.isHiRes)
-                    DetailRow(label = "采样精度", value = detail.sampleRate)
-                    DetailRow(label = "音频码率", value = detail.bitRate)
-                    DetailRow(label = "文件大小", value = detail.fileSize)
-                    DetailRow(label = "所属专辑", value = detail.albumName)
-                    DetailRow(label = "唱片公司", value = detail.company)
+                    DetailRow(label = "音质规格", value = detail.audioQuality, isHighlight = detail.song.isHiRes, isDark = isDark)
+                    DetailRow(label = "采样精度", value = detail.sampleRate, isDark = isDark)
+                    DetailRow(label = "音频码率", value = detail.bitRate, isDark = isDark)
+                    DetailRow(label = "文件大小", value = detail.fileSize, isDark = isDark)
+                    DetailRow(label = "所属专辑", value = detail.albumName, isDark = isDark)
+                    DetailRow(label = "唱片公司", value = detail.company, isDark = isDark)
 
-                    // Hash 一键复制
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -142,7 +141,7 @@ fun SongDetailSheet(
                     ) {
                         Text(
                             text = "音频特征码",
-                            style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.5f))
+                            style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -173,8 +172,10 @@ fun SongDetailSheet(
 private fun DetailRow(
     label: String,
     value: String,
-    isHighlight: Boolean = false
+    isHighlight: Boolean = false,
+    isDark: Boolean = true
 ) {
+    val goldColor = if (isDark) VipGold else Color(0xFFC47F00)
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -182,13 +183,13 @@ private fun DetailRow(
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium.copy(color = Color.White.copy(alpha = 0.5f))
+            style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant)
         )
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium.copy(
                 fontWeight = if (isHighlight) FontWeight.Bold else FontWeight.Normal,
-                color = if (isHighlight) VipGold else Color.White
+                color = if (isHighlight) goldColor else MaterialTheme.colorScheme.onSurface
             )
         )
     }
