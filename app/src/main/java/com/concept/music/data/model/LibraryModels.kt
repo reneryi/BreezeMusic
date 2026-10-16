@@ -7,7 +7,8 @@ data class UserGradeInfo(
     val todayListenMinutes: Long = 0L,
     val nextLevelScore: Long = 100L,
     val progressPercent: Float = 0f,
-    val totalListenSeconds: Long = 0L
+    val totalListenSeconds: Long = 0L,
+    val nextLevelRemainMinutes: Long = 0L
 ) {
     val totalHoursFormatted: String
         get() = String.format(java.util.Locale.getDefault(), "%.1f", totalListenMinutes / 60.0)

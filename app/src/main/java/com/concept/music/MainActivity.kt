@@ -56,10 +56,9 @@ import com.concept.music.ui.components.SongActionBottomSheet
 import com.concept.music.ui.components.SongDetailSheet
 import com.concept.music.ui.home.DailyRecommendScreen
 import com.concept.music.ui.home.HomeScreen
+import com.concept.music.ui.home.NewSongExpressScreen
 import com.concept.music.ui.home.RadioScreen
 import com.concept.music.ui.home.RankDetailScreen
-import com.concept.music.ui.home.YouthChannelDetailScreen
-import com.concept.music.ui.home.YouthChannelPlazaScreen
 import com.concept.music.ui.library.AlbumDetailScreen
 import com.concept.music.ui.library.ArtistDetailScreen
 import com.concept.music.ui.library.LibraryScreen
@@ -154,9 +153,8 @@ fun MainContent(
                         currentRoute.startsWith("album_detail") ||
                         currentRoute.startsWith("artist_detail") ||
                         currentRoute == "daily_recommend" ||
+                        currentRoute == "new_song_express" ||
                         currentRoute.startsWith("rank_detail") ||
-                        currentRoute == "youth_plaza" ||
-                        currentRoute.startsWith("youth_channel") ||
                         currentRoute.startsWith("radio_station") ||
                         currentRoute == "search" ||
                         currentRoute == "settings"
@@ -272,20 +270,19 @@ fun MainContent(
                         onOpenDailyRecommend = {
                             navController.navigate("daily_recommend") { launchSingleTop = true }
                         },
+                        onOpenNewSongExpress = {
+                            navController.navigate("new_song_express") { launchSingleTop = true }
+                        },
                         onOpenRank = { rankId ->
                             navController.navigate("rank_detail/$rankId") { launchSingleTop = true }
                         },
-                        onOpenYouthPlaza = {
-                            navController.navigate("youth_plaza") { launchSingleTop = true }
-                        },
-                        onOpenYouthChannel = { channelId ->
-                            navController.navigate("youth_channel/$channelId") { launchSingleTop = true }
-                        },
                         onOpenRadio = { channelId ->
-                            val target = channelId.ifBlank { "1" }
+                            val target = channelId.ifBlank { "all" }
                             navController.navigate("radio_station/$target") { launchSingleTop = true }
                         },
                         currentSong = playerUiState.currentSong,
+                        isPlaying = playerUiState.isPlaying,
+                        onTogglePlayPause = { musicPlayerViewModel.togglePlayPause() },
                         onSongMoreClick = { song ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = null
@@ -296,6 +293,22 @@ fun MainContent(
                 // 每日推荐独立页
                 composable("daily_recommend") {
                     DailyRecommendScreen(
+                        viewModel = homeViewModel,
+                        onBack = { navController.popBackStack() },
+                        onSongClick = { song, list ->
+                            musicPlayerViewModel.playSong(song, list)
+                        },
+                        currentSong = playerUiState.currentSong,
+                        onSongMoreClick = { song ->
+                            actionSheetSong = song
+                            actionSheetRemoveCallback = null
+                        }
+                    )
+                }
+
+                // 概念新歌速递独立页
+                composable("new_song_express") {
+                    NewSongExpressScreen(
                         viewModel = homeViewModel,
                         onBack = { navController.popBackStack() },
                         onSongClick = { song, list ->
@@ -327,44 +340,9 @@ fun MainContent(
                     )
                 }
 
-                // 概念专属频道广场页
-                composable("youth_plaza") {
-                    YouthChannelPlazaScreen(
-                        viewModel = homeViewModel,
-                        onBack = { navController.popBackStack() },
-                        onOpenChannelDetail = { chId ->
-                            navController.navigate("youth_channel/$chId") { launchSingleTop = true }
-                        },
-                        onPlaySong = { song, list ->
-                            musicPlayerViewModel.playSong(song, list)
-                        }
-                    )
-                }
-
-                // 概念专属频道详情与音乐故事页
-                composable("youth_channel/{channelId}") { backStackEntry ->
-                    val channelId = backStackEntry.arguments?.getString("channelId") ?: "101"
-                    YouthChannelDetailScreen(
-                        viewModel = homeViewModel,
-                        channelId = channelId,
-                        onBack = { navController.popBackStack() },
-                        onSwitchChannel = { newId ->
-                            navController.navigate("youth_channel/$newId") { launchSingleTop = true }
-                        },
-                        onSongClick = { song, list ->
-                            musicPlayerViewModel.playSong(song, list)
-                        },
-                        currentSong = playerUiState.currentSong,
-                        onSongMoreClick = { song ->
-                            actionSheetSong = song
-                            actionSheetRemoveCallback = null
-                        }
-                    )
-                }
-
-                // 精选场景电台独立页
+                // 精选场景电台专区独立页
                 composable("radio_station/{channelId}") { backStackEntry ->
-                    val channelId = backStackEntry.arguments?.getString("channelId") ?: "1"
+                    val channelId = backStackEntry.arguments?.getString("channelId") ?: "all"
                     RadioScreen(
                         viewModel = homeViewModel,
                         initialChannelId = channelId,

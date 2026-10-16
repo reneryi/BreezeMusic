@@ -14,21 +14,21 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * [创新1] 「概念胶囊工作台 (Concept Focus Pod)」
- * 番茄钟 × 概念版频道 × 程序化环境白噪音 × 酷狗听歌等级时长四位一体引擎
+ * 「概念胶囊工作台 (Concept Focus Pod)」
+ * 番茄钟 × 心流场景音乐 × 程序化环境白噪音 × 酷狗听歌等级时长四位一体引擎
  */
 enum class FocusPreset(
     val id: String,
     val title: String,
     val subtitle: String,
     val minutes: Int,
-    val youthChannelId: String,
+    val sceneId: String,
     val ambientSceneKey: String
 ) {
-    POMODORO_25("pomo_25", "25分钟 · 标准心流番茄", "深度心流轻音 + 雨夜自习白噪音", 25, "ch_study", "rain_study"),
-    DEEP_STUDY_45("deep_45", "45分钟 · 沉浸代码研习", "放空自愈旋律 + 温暖黑胶底噪", 45, "ch_healing", "retro_vinyl"),
-    NIGHT_READ_30("night_30", "30分钟 · 深夜静读伴眠", "晚安梦游纯音 + 深海潮汐呼吸", 30, "ch_sleep", "deep_ocean"),
-    CAFE_FLOW_60("cafe_60", "60分钟 · 街角黑胶漫游", "独立爵士慢调 + 林间篝火暖流", 60, "ch_cafe", "camp_night")
+    POMODORO_25("pomo_25", "25分钟 · 标准心流番茄", "深度心流轻音 + 雨夜自习白噪音", 25, "STUDY", "rain_study"),
+    DEEP_STUDY_45("deep_45", "45分钟 · 沉浸代码研习", "放空自愈旋律 + 温暖黑胶底噪", 45, "HEALING", "retro_vinyl"),
+    NIGHT_READ_30("night_30", "30分钟 · 深夜静读伴眠", "晚安梦游纯音 + 深海潮汐呼吸", 30, "SLEEP", "deep_ocean"),
+    CAFE_FLOW_60("cafe_60", "60分钟 · 街角黑胶漫游", "独立爵士慢调 + 林间篝火暖流", 60, "CAFE", "camp_night")
 }
 
 data class FocusPodState(
@@ -37,9 +37,10 @@ data class FocusPodState(
     val remainingSeconds: Long = 25 * 60L,
     val totalSeconds: Long = 25 * 60L,
     val autoMixAmbient: Boolean = true,
-    val autoPlayYouthChannel: Boolean = true,
+    val autoPlaySceneMusic: Boolean = true,
     val completedPodsToday: Int = 0,
-    val totalFocusMinutesToday: Int = 0
+    val totalFocusMinutesToday: Int = 0,
+    val activeTracks: List<String> = emptyList()
 ) {
     val progressFraction: Float
         get() = if (totalSeconds > 0L) {
@@ -71,11 +72,11 @@ object FocusPodManager {
         val podsToday = if (savedDay == currentDay) p.getInt("pods_today", 0) else 0
         val minsToday = if (savedDay == currentDay) p.getInt("mins_today", 0) else 0
         val autoAmbient = p.getBoolean("auto_ambient", true)
-        val autoChannel = p.getBoolean("auto_channel", true)
+        val autoScene = p.getBoolean("auto_scene_music", true)
 
         _state.value = FocusPodState(
             autoMixAmbient = autoAmbient,
-            autoPlayYouthChannel = autoChannel,
+            autoPlaySceneMusic = autoScene,
             completedPodsToday = podsToday,
             totalFocusMinutesToday = minsToday
         )
@@ -95,12 +96,12 @@ object FocusPodManager {
         prefs?.edit()?.putBoolean("auto_ambient", enabled)?.apply()
     }
 
-    fun setAutoPlayYouthChannel(enabled: Boolean) {
-        _state.value = _state.value.copy(autoPlayYouthChannel = enabled)
-        prefs?.edit()?.putBoolean("auto_channel", enabled)?.apply()
+    fun setAutoPlaySceneMusic(enabled: Boolean) {
+        _state.value = _state.value.copy(autoPlaySceneMusic = enabled)
+        prefs?.edit()?.putBoolean("auto_scene_music", enabled)?.apply()
     }
 
-    fun startFocusPod(onPlayChannelRequested: ((String) -> Unit)? = null) {
+    fun startFocusPod(onPlaySceneRequested: ((String) -> Unit)? = null) {
         timerJob?.cancel()
         val preset = _state.value.selectedPreset
         val durationSec = preset.minutes * 60L
@@ -114,8 +115,8 @@ object FocusPodManager {
             AmbientSoundManager.setSyncWithMusic(false)
             AmbientSoundManager.applyQuickScene(preset.ambientSceneKey)
         }
-        if (_state.value.autoPlayYouthChannel) {
-            onPlayChannelRequested?.invoke(preset.youthChannelId)
+        if (_state.value.autoPlaySceneMusic) {
+            onPlaySceneRequested?.invoke(preset.sceneId)
         }
 
         timerJob = scope.launch {
@@ -126,7 +127,6 @@ object FocusPodManager {
                 elapsedSec += 1L
                 _state.value = _state.value.copy(remainingSeconds = nextRem)
 
-                // 每满 60 秒自动累计一次专注时长并同步至酷狗听歌等级管理器
                 if (elapsedSec % 60L == 0L) {
                     val newMins = _state.value.totalFocusMinutesToday + 1
                     _state.value = _state.value.copy(totalFocusMinutesToday = newMins)
@@ -135,7 +135,6 @@ object FocusPodManager {
                 }
             }
 
-            // 番茄钟完成：平滑关闭独立环境音并记录完成次数
             val newPods = _state.value.completedPodsToday + 1
             _state.value = _state.value.copy(
                 isRunning = false,

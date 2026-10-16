@@ -1,7 +1,6 @@
 package com.concept.music.ui.components
 
 import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -27,16 +26,18 @@ import com.concept.music.service.FocusPreset
 import com.concept.music.ui.theme.ConceptCyanAccent
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
+import com.concept.music.ui.theme.conceptElevatedSurfaceColor
+import com.concept.music.ui.theme.conceptSheetContainerColor
 
 /**
- * [创新1] 「概念胶囊工作台 (Concept Focus Pod)」抽屉面板
- * 番茄钟 × 概念版频道 × 程序化环境白噪音 × 听歌等级时长四位一体
+ * 「概念胶囊工作台 (Concept Focus Pod)」抽屉面板
+ * 番茄钟 × 场景电台伴听 × 程序化环境白噪音 × 听歌等级时长四位一体
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FocusPodBottomSheet(
     onDismiss: () -> Unit,
-    onPlayYouthChannel: (String) -> Unit = {}
+    onPlaySceneMusic: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     LaunchedEffect(Unit) {
@@ -48,7 +49,7 @@ fun FocusPodBottomSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = conceptSheetContainerColor(),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     ) {
         Column(
@@ -59,7 +60,6 @@ fun FocusPodBottomSheet(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 顶部标题与今日心流统计
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -108,7 +108,6 @@ fun FocusPodBottomSheet(
                 }
             }
 
-            // 中央倒计时胶囊主仪表盘
             Card(
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.Transparent),
@@ -172,7 +171,6 @@ fun FocusPodBottomSheet(
                 }
             }
 
-            // 场景预设网格
             Text(
                 text = "选择心流场景预设",
                 style = MaterialTheme.typography.labelLarge.copy(
@@ -184,12 +182,11 @@ fun FocusPodBottomSheet(
                 FocusPreset.entries.forEach { preset ->
                     val selected = state.selectedPreset == preset
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (selected) ConceptPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                        border = if (selected) BorderStroke(1.dp, ConceptPrimary) else null,
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (selected) ConceptPrimary.copy(alpha = 0.16f) else conceptElevatedSurfaceColor(),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
+                            .clip(RoundedCornerShape(18.dp))
                             .clickable(enabled = !state.isRunning) {
                                 FocusPodManager.selectPreset(preset)
                             }
@@ -229,12 +226,9 @@ fun FocusPodBottomSheet(
                 }
             }
 
-            // 联动开关
-            Card(
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                ),
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = conceptElevatedSurfaceColor(),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -245,18 +239,18 @@ fun FocusPodBottomSheet(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "联动播放概念版轻音频道",
+                                text = "联动播放心流场景轻音",
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                             )
                             Text(
-                                text = "启动时自动装载对应概念频道曲目",
+                                text = "启动时自动装载对应场景伴听曲目",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Switch(
-                            checked = state.autoPlayYouthChannel,
-                            onCheckedChange = { FocusPodManager.setAutoPlayYouthChannel(it) }
+                            checked = state.autoPlaySceneMusic,
+                            onCheckedChange = { FocusPodManager.setAutoPlaySceneMusic(it) }
                         )
                     }
                     Row(
@@ -283,15 +277,14 @@ fun FocusPodBottomSheet(
                 }
             }
 
-            // 启动 / 停止按钮
             Button(
                 onClick = {
                     if (state.isRunning) {
                         FocusPodManager.stopFocusPod()
                         Toast.makeText(context, "已结束本次心流专注舱", Toast.LENGTH_SHORT).show()
                     } else {
-                        FocusPodManager.startFocusPod { channelId ->
-                            onPlayYouthChannel(channelId)
+                        FocusPodManager.startFocusPod { sceneId ->
+                            onPlaySceneMusic(sceneId)
                         }
                         Toast.makeText(context, "已开启 ${state.selectedPreset.title}", Toast.LENGTH_SHORT).show()
                     }

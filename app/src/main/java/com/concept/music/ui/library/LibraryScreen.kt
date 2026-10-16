@@ -5,10 +5,12 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,27 +35,33 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.concept.music.data.kugou.AccountProfile
 import com.concept.music.data.kugou.AuthState
 import com.concept.music.data.model.*
+import com.concept.music.data.vip.VipManager
+import com.concept.music.service.FocusPodManager
 import com.concept.music.ui.components.BadgeTag
 import com.concept.music.ui.components.CreatePlaylistDialog
+import com.concept.music.ui.components.FocusPodBottomSheet
 import com.concept.music.ui.components.PlaylistGridItem
 import com.concept.music.ui.components.PlaylistListItem
 import com.concept.music.ui.components.VipBannerCard
 import com.concept.music.ui.components.VipCenterBottomSheet
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.viewmodel.LibraryViewModel
+import kotlinx.coroutines.launch
 
 /**
  * 酷狗概念版第三方 - 我的页
- * - 完整适配深色/浅色双主题，消除浅色模式下的深黑卡片与白字不可读问题
- * - 所有悬浮卡片采用无边框圆润饱满设计
- * - 资产分组 Tab (自建/收藏/关注/已购) 状态持久化在 LibraryViewModel 中，进入专辑或歌单返回后保持原 Tab
+ * - 将用户头像账号信息与「听歌等级与累计时长」深度融合为一张立体饱满的一体式数字身份名片卡
+ * - 集成「概念胶囊工作台 · Focus Pod」（心流番茄钟 × 4路白噪音混音 × 心流场景伴音）
+ * - 修复「已购」胶囊标签在小屏下被截断显示不全的问题
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +78,7 @@ fun LibraryScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val isDark = LocalIsDarkTheme.current
     val account by viewModel.accountState.collectAsState()
     val vip by viewModel.vipState.collectAsState()
@@ -81,20 +90,21 @@ fun LibraryScreen(
     val purchasedSongs by viewModel.purchasedSongs.collectAsState()
     val purchasedAlbums by viewModel.purchasedAlbums.collectAsState()
 
-    // 从 ViewModel 收集持久化的分组 Tab 与视图模式，杜绝从详情页返回后自动跳回「自建」
     val selectedTab by viewModel.selectedAssetTab.collectAsState()
     val isGridView by viewModel.isGridView.collectAsState()
 
     val myPlaylists = remember(playlists) { playlists.filter { it.isCreatedByMe && !it.isLiked } }
     val favoritePlaylists = remember(playlists) { playlists.filter { it.isFavorite } }
     val likedPlaylist = remember(playlists) { playlists.firstOrNull { it.isLiked } }
-    val historyCount = remember(account) { com.concept.music.data.vip.VipManager.history.get(account.currentId).size }
+    val historyCount = remember(account) { VipManager.history.get(account.currentId).size }
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
     var importPlaylistName by remember { mutableStateOf("") }
     var importRawText by remember { mutableStateOf("") }
     var showVipCenterSheet by remember { mutableStateOf(false) }
+    var showFocusPodSheet by remember { mutableStateOf(false) }
+    val focusPodState by FocusPodManager.state.collectAsState()
 
     val listState = rememberLazyListState()
     val pullRefreshState = rememberPullToRefreshState()
@@ -143,110 +153,20 @@ fun LibraryScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. 用户头像与账号主卡片 (无边框饱满悬浮块，深浅色自适应)
+            // 1. 头像账号与听歌等级时长融合卡片（一体式高颜值数字音乐名片）
             item {
-                Surface(
-                    shape = RoundedCornerShape(26.dp),
-                    color = cardColor,
-                    shadowElevation = if (isDark) 0.dp else 5.dp,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(18.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (profile?.avatarUrl.isNullOrEmpty()) {
-                            Surface(
-                                modifier = Modifier.size(64.dp),
-                                shape = CircleShape,
-                                color = elevatedColor
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Person,
-                                        contentDescription = "账号头像",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(34.dp)
-                                    )
-                                }
-                            }
-                        } else {
-                            AsyncImage(
-                                model = profile?.avatarUrl,
-                                contentDescription = "账号头像",
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clip(CircleShape),
-                                contentScale = ContentScale.Crop
-                            )
-                        }
-
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = profile?.nickname ?: "登录酷狗账号",
-                                    style = MaterialTheme.typography.titleLarge.copy(
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontSize = 18.sp
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-
-                                if (isLoggedIn) {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = VipGold.copy(alpha = 0.2f)
-                                    ) {
-                                        Text(
-                                            text = "VIP",
-                                            color = if (isDark) VipGold else Color(0xFFB87900),
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Black,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
-                            }
-
-                            Text(
-                                text = if (isLoggedIn) "酷狗概念版专属权益已同步" else "登录后同步我喜欢的音乐与专属VIP",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 12.sp
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        FilledTonalButton(
-                            onClick = { if (isLoggedIn) onAccounts() else onLogin() },
-                            shape = CircleShape,
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = elevatedColor,
-                                contentColor = MaterialTheme.colorScheme.onSurface
-                            ),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                        ) {
-                            Text(
-                                text = if (isLoggedIn) "账号管理" else "立即登录",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                UnifiedProfileAndGradeCard(
+                    profile = profile,
+                    isLoggedIn = isLoggedIn,
+                    userGrade = userGrade,
+                    isGradeSyncing = isGradeSyncing,
+                    onAccountAction = { if (isLoggedIn) onAccounts() else onLogin() },
+                    onSyncGrade = {
+                        viewModel.refreshGradeInfo { _, msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                         }
                     }
-                }
+                )
             }
 
             // 2. VIP 概念版领取入口 (无边框饱满圆润悬浮卡)
@@ -259,94 +179,7 @@ fun LibraryScreen(
                 )
             }
 
-            // 3. 听歌等级与累计时长仪表盘 (无边框饱满悬浮块，深浅色自适应)
-            item {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = cardColor,
-                    shadowElevation = if (isDark) 0.dp else 5.dp,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Surface(
-                                color = ConceptPrimary.copy(alpha = 0.16f),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text(
-                                    text = "Lv.${userGrade.level}",
-                                    color = ConceptPrimary,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Black,
-                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text(
-                                    text = "听歌等级与时长",
-                                    style = MaterialTheme.typography.titleMedium.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontSize = 15.sp
-                                    )
-                                )
-                                Text(
-                                    text = "累计时长 ${userGrade.displayListenTimeText}",
-                                    style = MaterialTheme.typography.labelMedium.copy(
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                )
-                            }
-                        }
-
-                        val rotationAngle by animateFloatAsState(
-                            targetValue = if (isGradeSyncing) 360f else 0f,
-                            animationSpec = tween(durationMillis = 800),
-                            label = "syncRotation"
-                        )
-
-                        TextButton(
-                            onClick = {
-                                viewModel.refreshGradeInfo { _, msg ->
-                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            enabled = !isGradeSyncing,
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = "同步",
-                                tint = ConceptPrimary,
-                                modifier = Modifier
-                                    .size(15.dp)
-                                    .rotate(rotationAngle)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (isGradeSyncing) "同步中..." else "同步云端",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = ConceptPrimary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 4. 核心快捷卡片 (我喜欢的音乐 + 最近播放，深浅色自适应柔和渐变)
+            // 3. 核心快捷卡片 (我喜欢的音乐 + 最近播放，深浅色自适应柔和渐变)
             item {
                 val likeGradient = if (isDark) {
                     listOf(Color(0xFF2E1922), Color(0xFF1B1724))
@@ -375,7 +208,7 @@ fun LibraryScreen(
 
                     MediaShortcutCard(
                         title = "最近播放",
-                        subtitle = "${historyCount} 首记录",
+                        subtitle = "$historyCount 首记录",
                         icon = Icons.Rounded.History,
                         iconTint = ConceptPrimary,
                         gradientColors = historyGradient,
@@ -385,12 +218,120 @@ fun LibraryScreen(
                 }
             }
 
-            // 5. 歌单与音乐资产分组栏
+            // 4. 概念胶囊工作台 · Focus Pod（从发现页移至我的页，紧接常用听歌入口下方，排版紧凑大气）
             item {
+                val podActive = focusPodState.isRunning || focusPodState.activeTracks.isNotEmpty()
+                val podBrush = if (isDark) {
+                    Brush.linearGradient(listOf(Color(0xFF142844), Color(0xFF101C32)))
+                } else {
+                    Brush.linearGradient(listOf(Color(0xFFE6F3FF), Color(0xFFF1EEFF)))
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color.Transparent,
+                    shadowElevation = if (isDark) 0.dp else 4.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(24.dp))
+                        .clickable { showFocusPodSheet = true }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(podBrush)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = ConceptPrimary.copy(alpha = 0.18f),
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Rounded.SelfImprovement,
+                                    contentDescription = "概念胶囊工作台",
+                                    tint = ConceptPrimary,
+                                    modifier = Modifier.size(25.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "概念胶囊工作台 · Focus Pod",
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (focusPodState.isRunning) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = ConceptPrimary.copy(alpha = 0.18f)
+                                    ) {
+                                        Text(
+                                            text = "专注 ${focusPodState.formattedRemaining}",
+                                            color = ConceptPrimary,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(
+                                text = if (focusPodState.activeTracks.isNotEmpty()) {
+                                    "已开启 ${focusPodState.activeTracks.size} 路环境白噪音 · 心流伴音自动累计听歌时长"
+                                } else {
+                                    "心流番茄钟 × 4路白噪音混音 × 场景轻音 · 自动累计等级时长"
+                                },
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.5.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        FilledTonalButton(
+                            onClick = { showFocusPodSheet = true },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = if (podActive) ConceptPrimary else ConceptPrimary.copy(alpha = 0.16f),
+                                contentColor = if (podActive) Color.White else ConceptPrimary
+                            ),
+                            contentPadding = PaddingValues(horizontal = 13.dp, vertical = 5.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Text(
+                                text = if (podActive) "控制台" else "开启心流",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 5. 歌单与音乐资产分组栏（修复「已购」在小屏上被挤压截断的问题：支持横向滚动 + 禁止换行截断）
+            item {
+                val tabsScrollState = rememberScrollState()
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 6.dp, bottom = 2.dp),
+                        .padding(top = 4.dp, bottom = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(
@@ -400,7 +341,10 @@ fun LibraryScreen(
                     ) {
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.weight(1f)
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .horizontalScroll(tabsScrollState)
                         ) {
                             val tabs = listOf(
                                 "自建 ${myPlaylists.size}",
@@ -430,52 +374,55 @@ fun LibraryScreen(
                                         style = MaterialTheme.typography.labelLarge.copy(
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                             color = if (isSelected) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = 13.sp
+                                            fontSize = 12.5.sp
                                         ),
                                         maxLines = 1,
-                                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp)
+                                        softWrap = false,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                     )
                                 }
                             }
                         }
 
+                        Spacer(modifier = Modifier.width(4.dp))
+
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            horizontalArrangement = Arrangement.spacedBy(0.dp)
                         ) {
                             IconButton(
                                 onClick = { showCreateDialog = true },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(30.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Add,
                                     contentDescription = "新建歌单",
                                     tint = ConceptPrimary,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(19.dp)
                                 )
                             }
                             IconButton(
                                 onClick = { showImportDialog = true },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(30.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.FileUpload,
                                     contentDescription = "导入歌单",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(17.dp)
                                 )
                             }
                             if (selectedTab == 0 || selectedTab == 1) {
                                 IconButton(
                                     onClick = { viewModel.toggleGridView() },
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(30.dp)
                                 ) {
                                     @Suppress("DEPRECATION")
                                     Icon(
                                         imageVector = if (isGridView) Icons.Rounded.ViewList else Icons.Rounded.GridView,
                                         contentDescription = if (isGridView) "切换为列表视图" else "切换为网格视图",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(17.dp)
                                     )
                                 }
                             }
@@ -485,13 +432,13 @@ fun LibraryScreen(
                                     viewModel.refreshPurchasedAssets()
                                     viewModel.refreshFollowedArtists()
                                 },
-                                modifier = Modifier.size(32.dp)
+                                modifier = Modifier.size(30.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Refresh,
                                     contentDescription = "刷新",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(17.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
                             }
                         }
@@ -865,7 +812,7 @@ fun LibraryScreen(
             )
         }
 
-        // 7. 固定沉浸式顶栏 (深色/浅色主题自适应背景与文字图标颜色)
+        // 7. 固定沉浸式顶栏
         val topBarSurfaceColor = if (isDark) {
             Color(0xFF0A0F1A).copy(alpha = (scrollFraction * 0.96f).coerceIn(0f, 0.96f))
         } else {
@@ -1003,6 +950,20 @@ fun LibraryScreen(
         )
     }
 
+    if (showFocusPodSheet) {
+        FocusPodBottomSheet(
+            onDismiss = { showFocusPodSheet = false },
+            onPlaySceneMusic = { sceneId ->
+                coroutineScope.launch {
+                    val songs = runCatching { VipManager.music.sceneRecommendSongs(sceneId, size = 20) }.getOrDefault(emptyList())
+                    if (songs.isNotEmpty()) {
+                        onPlaySong(songs.first(), songs)
+                    }
+                }
+            }
+        )
+    }
+
     if (showCreateDialog) {
         CreatePlaylistDialog(
             onDismiss = { showCreateDialog = false },
@@ -1066,6 +1027,279 @@ fun LibraryScreen(
                 }
             }
         )
+    }
+}
+
+/**
+ * 头像账号与听歌等级时长一体式融合名片卡：
+ * - 上层：用户头像（右下角内嵌 Lv.xx 勋章）+ 昵称与 VIP 金标 + 账号管理胶囊
+ * - 下层：内嵌式听歌等级进度与累计时长仪表舱 + 云端同步按钮
+ */
+@Composable
+private fun UnifiedProfileAndGradeCard(
+    profile: AccountProfile?,
+    isLoggedIn: Boolean,
+    userGrade: UserGradeInfo,
+    isGradeSyncing: Boolean,
+    onAccountAction: () -> Unit,
+    onSyncGrade: () -> Unit
+) {
+    val isDark = LocalIsDarkTheme.current
+    val cardColor = conceptFloatingCardColor()
+    val elevatedColor = conceptElevatedSurfaceColor()
+
+    val rotationAngle by animateFloatAsState(
+        targetValue = if (isGradeSyncing) 360f else 0f,
+        animationSpec = tween(durationMillis = 800),
+        label = "gradeSyncRotation"
+    )
+
+    // 计算当前等级经验进度（若接口未返回百分比，则按时长给出优雅的阶段进度展示）
+    val progressValue = remember(userGrade) {
+        if (userGrade.progressPercent.toInt() in 1..100) {
+            (userGrade.progressPercent / 100f).coerceIn(0.08f, 1f)
+        } else {
+            val mins = (userGrade.totalListenSeconds / 60L).coerceAtLeast(0L)
+            ((mins % 600L) / 600f).coerceIn(0.18f, 0.92f)
+        }
+    }
+
+    Surface(
+        shape = RoundedCornerShape(28.dp),
+        color = cardColor,
+        shadowElevation = if (isDark) 0.dp else 6.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // 上半部分：头像 + 昵称/VIP/等级 + 账号管理按钮
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.size(66.dp)) {
+                    if (profile?.avatarUrl.isNullOrEmpty()) {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = CircleShape,
+                            color = elevatedColor
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Person,
+                                    contentDescription = "账号头像",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(34.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        AsyncImage(
+                            model = profile?.avatarUrl,
+                            contentDescription = "账号头像",
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(CircleShape),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+
+                    // 头像右下角融合等级角标
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = ConceptPrimary,
+                        modifier = Modifier.align(Alignment.BottomEnd)
+                    ) {
+                        Text(
+                            text = "Lv.${userGrade.level}",
+                            color = Color.White,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Black,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = profile?.nickname ?: "登录酷狗账号",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 18.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        if (isLoggedIn) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = VipGold.copy(alpha = 0.2f)
+                            ) {
+                                Text(
+                                    text = "VIP",
+                                    color = if (isDark) VipGold else Color(0xFFB87900),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Text(
+                        text = if (isLoggedIn) "酷狗概念版专属权益与听歌等级已同步" else "登录后同步我喜欢的音乐与听歌等级",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                FilledTonalButton(
+                    onClick = onAccountAction,
+                    shape = CircleShape,
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = elevatedColor,
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 7.dp),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Text(
+                        text = if (isLoggedIn) "账号管理" else "立即登录",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // 下半部分：融合在同一张卡片内的听歌等级与时长仪表盘
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = elevatedColor,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Surface(
+                                color = ConceptPrimary.copy(alpha = 0.16f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Headphones,
+                                        contentDescription = null,
+                                        tint = ConceptPrimary,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Lv.${userGrade.level} 听歌等级",
+                                        color = ConceptPrimary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "累计 ${userGrade.displayListenTimeText}",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.5.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable(enabled = !isGradeSyncing) { onSyncGrade() }
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = "同步云端",
+                                tint = ConceptPrimary,
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .rotate(rotationAngle)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isGradeSyncing) "同步中..." else "同步云端",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = ConceptPrimary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+                    }
+
+                    // 等级经验进度条
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        LinearProgressIndicator(
+                            progress = { progressValue },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(5.dp)
+                                .clip(CircleShape),
+                            color = ConceptPrimary,
+                            trackColor = ConceptPrimary.copy(alpha = 0.14f)
+                        )
+                        Text(
+                            text = if (userGrade.nextLevelRemainMinutes > 0) {
+                                "距 Lv.${userGrade.level + 1} 还需 ${userGrade.nextLevelRemainMinutes} 分钟"
+                            } else {
+                                "听歌时长实时上报"
+                            },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
