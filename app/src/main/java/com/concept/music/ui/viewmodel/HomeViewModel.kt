@@ -19,7 +19,7 @@ class HomeViewModel : ViewModel() {
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val dailyRecommendSongs: StateFlow<List<Song>> = _songs.asStateFlow()
 
-    // 官方私人随心听 FM（定位「猜你喜欢」，每次刷新拉取全新 20 首）
+    // 官方私人随心听 FM（定位「猜你喜欢」，对接 5 大个性化推荐引擎，每次刷新拉取全新 20 首）
     private val _personalFmSongs = MutableStateFlow<List<Song>>(emptyList())
     val personalFmSongs: StateFlow<List<Song>> = _personalFmSongs.asStateFlow()
 
@@ -29,8 +29,8 @@ class HomeViewModel : ViewModel() {
     private val _personalFmRefreshing = MutableStateFlow(false)
     val personalFmRefreshing: StateFlow<Boolean> = _personalFmRefreshing.asStateFlow()
 
-    // 概念新歌速递（支持今日最新 / 近3日 / 近5日 / 华语 / 欧美 / 日韩 / 粤语）
-    private val _selectedNewSongPeriod = MutableStateFlow("TODAY")
+    // 新歌速递（对接 module/top_song.js: 21608华语 / 21609欧美 / 21610日韩 / 21611粤语 / TODAY综合首发，解除36首限制，支持100+首与分页加载更多）
+    private val _selectedNewSongPeriod = MutableStateFlow("CHINESE")
     val selectedNewSongPeriod: StateFlow<String> = _selectedNewSongPeriod.asStateFlow()
 
     private val _currentNewSongs = MutableStateFlow<List<Song>>(emptyList())
@@ -39,7 +39,11 @@ class HomeViewModel : ViewModel() {
     private val _newSongsLoading = MutableStateFlow(false)
     val newSongsLoading: StateFlow<Boolean> = _newSongsLoading.asStateFlow()
 
+    private val _newSongsLoadingMore = MutableStateFlow(false)
+    val newSongsLoadingMore: StateFlow<Boolean> = _newSongsLoadingMore.asStateFlow()
+
     private val newSongCache = mutableMapOf<String, List<Song>>()
+    private val newSongPageMap = mutableMapOf<String, Int>()
 
     // 实时场景电台列表 (FM Channels)
     private val _fmChannels = MutableStateFlow<List<FmChannel>>(emptyList())
@@ -97,9 +101,10 @@ class HomeViewModel : ViewModel() {
                 }
                 val newSongJob = launch {
                     val period = _selectedNewSongPeriod.value
-                    val list = runCatching { VipManager.music.newSongExpress(periodKey = period, size = 36) }.getOrDefault(emptyList())
+                    val list = runCatching { VipManager.music.newSongExpress(periodKey = period, size = 100, page = 1) }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && list.isNotEmpty()) {
                         newSongCache[period] = list
+                        newSongPageMap[period] = 1
                         _currentNewSongs.value = list
                     }
                 }
@@ -165,7 +170,6 @@ class HomeViewModel : ViewModel() {
             _personalFmIndex.value = nextIdx
             onPlay(list[nextIdx], list)
         } else {
-            // 已播完当前 20 首，自动换新一批 20 首并播放第一首
             refreshPersonalFm { loaded ->
                 if (loaded.isNotEmpty()) {
                     _personalFmIndex.value = 0
@@ -184,14 +188,39 @@ class HomeViewModel : ViewModel() {
         }
         viewModelScope.launch {
             _newSongsLoading.value = true
-            val list = runCatching { VipManager.music.newSongExpress(periodKey = periodKey, size = 36) }.getOrDefault(emptyList())
+            val list = runCatching { VipManager.music.newSongExpress(periodKey = periodKey, size = 100, page = 1) }.getOrDefault(emptyList())
             if (list.isNotEmpty()) {
                 newSongCache[periodKey] = list
+                newSongPageMap[periodKey] = 1
                 if (_selectedNewSongPeriod.value == periodKey) {
                     _currentNewSongs.value = list
                 }
             }
             _newSongsLoading.value = false
+        }
+    }
+
+    fun loadMoreNewSongs(onLoaded: (Int) -> Unit = {}) {
+        if (_newSongsLoadingMore.value || _newSongsLoading.value) return
+        val periodKey = _selectedNewSongPeriod.value
+        val nextPage = (newSongPageMap[periodKey] ?: 1) + 1
+        viewModelScope.launch {
+            _newSongsLoadingMore.value = true
+            val more = runCatching {
+                VipManager.music.newSongExpress(periodKey = periodKey, size = 90, page = nextPage)
+            }.getOrDefault(emptyList())
+            val current = _currentNewSongs.value
+            val merged = (current + more).distinctBy { it.hash.ifBlank { it.id }.lowercase() }
+            val addedCount = (merged.size - current.size).coerceAtLeast(0)
+            if (addedCount > 0) {
+                newSongPageMap[periodKey] = nextPage
+                newSongCache[periodKey] = merged
+                if (_selectedNewSongPeriod.value == periodKey) {
+                    _currentNewSongs.value = merged
+                }
+            }
+            _newSongsLoadingMore.value = false
+            onLoaded(addedCount)
         }
     }
 

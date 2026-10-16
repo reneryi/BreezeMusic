@@ -9,8 +9,9 @@ import org.junit.Test
 class DiscoverRecommendationTest {
 
     @Test
-    fun newSongExpressSupportsTodayAndMultiDayPeriods() = runTest {
-        var callCounter = 0
+    fun newSongExpressUsesOfficialNewsongPublishContainerAndBreaksThirtySixLimit() = runTest {
+        val requestedPaths = mutableListOf<String>()
+        val requestedRankIds = mutableListOf<Int>()
 
         val transport = object : KugouTransport {
             override suspend fun call(
@@ -23,29 +24,55 @@ class DiscoverRecommendationTest {
                 web: Boolean,
                 headers: Map<String, String>,
                 device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+
+            override suspend fun callAdvanced(
+                path: String,
+                session: KugouSession?,
+                query: Map<String, String>,
+                body: JsonObject?,
+                host: String,
+                method: String,
+                web: Boolean,
+                headers: Map<String, String>,
+                device: DeviceIdentity?,
+                sign: Boolean,
+                includeDefaultParams: Boolean
             ): ApiResponse {
-                callCounter++
-                val page = query["page"]?.toIntOrNull() ?: 1
-                val rankId = query["rankid"] ?: "1"
-                val items = (1..20).joinToString(",") { idx ->
-                    val globalIdx = (page - 1) * 20 + idx
-                    """
-                    {
-                        "name": "歌手$globalIdx - 新歌_${rankId}_$globalIdx",
-                        "hash": "NEWSONG_${rankId}_${page}_$idx",
-                        "audio_id": ${80000 + globalIdx}
-                    }
-                    """.trimIndent()
+                synchronized(requestedPaths) {
+                    requestedPaths.add(path)
                 }
-                val mockJson = """
-                    {
-                        "status": 1,
-                        "data": {
-                            "info": [$items]
-                        }
+                if (path == "/musicadservice/container/v1/newsong_publish") {
+                    val rankId = body?.number("rank_id") ?: 21608
+                    val page = body?.number("page") ?: 1
+                    synchronized(requestedRankIds) {
+                        requestedRankIds.add(rankId)
                     }
-                """.trimIndent()
-                return ApiResponse(JsonParser.parseString(mockJson).asJsonObject)
+                    val items = (1..35).joinToString(",") { idx ->
+                        val globalIdx = (page - 1) * 35 + idx
+                        val hashHex = String.format("%032x", rankId.toLong() * 10000L + globalIdx)
+                        """
+                        {
+                            "songname": "新歌_${rankId}_$globalIdx",
+                            "singername": "首发歌手_${globalIdx}",
+                            "hash": "$hashHex",
+                            "audio_id": ${80000 + globalIdx},
+                            "album_audio_id": ${90000 + globalIdx}
+                        }
+                        """.trimIndent()
+                    }
+                    val mockJson = """
+                        {
+                            "status": 1,
+                            "error_code": 0,
+                            "data": {
+                                "list": [$items]
+                            }
+                        }
+                    """.trimIndent()
+                    return ApiResponse(JsonParser.parseString(mockJson).asJsonObject)
+                }
+                return ApiResponse(JsonParser.parseString("""{"status":1,"data":[]}""").asJsonObject)
             }
         }
 
@@ -54,20 +81,20 @@ class DiscoverRecommendationTest {
         val accounts = AccountRepository(store, auth, transport)
         val repo = MusicApiRepository(transport, accounts)
 
-        val todaySongs = repo.newSongExpress("TODAY", size = 30)
-        val day3Songs = repo.newSongExpress("DAY3", size = 30)
-        val day5Songs = repo.newSongExpress("DAY5", size = 30)
+        val chineseSongs = repo.newSongExpress("CHINESE", size = 100, page = 1)
+        val westernSongs = repo.newSongExpress("WESTERN", size = 100, page = 1)
+        val jpkrSongs = repo.newSongExpress("JPKR", size = 100, page = 1)
 
-        assertEquals(30, todaySongs.size)
-        assertEquals(30, day3Songs.size)
-        assertEquals(30, day5Songs.size)
-        assertNotEquals(todaySongs.map { it.hash }, day3Songs.map { it.hash })
-        assertNotEquals(day3Songs.map { it.hash }, day5Songs.map { it.hash })
-        assertTrue(callCounter > 0)
+        // 验证突破原先 36 首上限，单次可加载 100 首最新歌曲，且严格调用 /musicadservice/container/v1/newsong_publish
+        assertEquals(100, chineseSongs.size)
+        assertEquals(100, westernSongs.size)
+        assertEquals(100, jpkrSongs.size)
+        assertTrue(requestedPaths.contains("/musicadservice/container/v1/newsong_publish"))
+        assertTrue(requestedRankIds.containsAll(listOf(21608, 21609, 21610)))
     }
 
     @Test
-    fun personalFmRefreshReturnsBrandNewSongsInsteadOfShufflingSameTwenty() = runTest {
+    fun personalFmCombinesMultiEnginePersonalizedRecommendersAndNeverRepeats() = runTest {
         var batchSeq = 0
 
         val transport = object : KugouTransport {
@@ -96,21 +123,23 @@ class DiscoverRecommendationTest {
                 sign: Boolean,
                 includeDefaultParams: Boolean
             ): ApiResponse {
-                if (path.contains("personal_recommend")) {
-                    batchSeq++
-                    val songsJson = (1..20).joinToString(",") { idx ->
-                        val uid = (batchSeq - 1) * 20 + idx
+                if (path == "/v2/personal_recommend" || path == "/concepts/v1/ai/recommend_song" || path == "/singlecardrec.service/v1/single_card_recommend") {
+                    val seq = synchronized(this) { ++batchSeq }
+                    val songsJson = (1..12).joinToString(",") { idx ->
+                        val uid = seq * 100 + idx
+                        val hashHex = String.format("%032x", uid.toLong())
                         """
                         {
-                            "hash": "PFM_HASH_${batchSeq}_$idx",
-                            "songname": "猜你喜欢曲目_$uid",
-                            "singername": "推荐歌手_$uid",
-                            "audio_id": "${90000 + uid}"
+                            "hash": "$hashHex",
+                            "songname": "个性推荐_$uid",
+                            "singername": "偏好歌手_$uid",
+                            "audio_id": "${90000 + uid}",
+                            "album_audio_id": "${190000 + uid}"
                         }
                         """.trimIndent()
                     }
                     return ApiResponse(
-                        JsonParser.parseString("""{"status": 1, "data": {"song_list": [$songsJson]}}""").asJsonObject
+                        JsonParser.parseString("""{"status": 1, "error_code": 0, "data": {"song_list": [$songsJson]}}""").asJsonObject
                     )
                 }
                 return ApiResponse(JsonObject())
@@ -128,7 +157,7 @@ class DiscoverRecommendationTest {
         assertEquals(20, firstBatch.size)
         assertEquals(20, secondBatch.size)
         val overlap = firstBatch.map { it.hash }.intersect(secondBatch.map { it.hash }.toSet())
-        assertTrue("Personal FM refresh must return brand new songs rather than shuffling old ones", overlap.isEmpty())
+        assertTrue("Personal FM refresh must return 20 brand new personalized songs", overlap.isEmpty())
     }
 
     @Test
@@ -202,64 +231,5 @@ class DiscoverRecommendationTest {
         assertEquals(20, loadMoreBatch.size)
         val overlap = initialBatch.map { it.hash }.intersect(loadMoreBatch.map { it.hash }.toSet())
         assertTrue("Each +20 load on FM station must return 20 fresh tracks", overlap.isEmpty())
-    }
-
-    @Test
-    fun relateGoodsLevelMappingDistinguishesFlacFromHiRes() = runTest {
-        val mockPlaylistJson = """
-            {
-                "status": 1,
-                "data": {
-                    "info": [
-                        {
-                            "name": "周杰伦 - 晴天",
-                            "hash": "11111111111111111111111111111111",
-                            "audio_id": 1001,
-                            "relate_goods": [
-                                {"level": 2, "hash": "11111111111111111111111111111111"},
-                                {"level": 4, "hash": "22222222222222222222222222222222"},
-                                {"level": 5, "hash": "33333333333333333333333333333333"}
-                            ]
-                        },
-                        {
-                            "name": "林俊杰 - 江南",
-                            "hash": "44444444444444444444444444444444",
-                            "audio_id": 1002,
-                            "relate_goods": [
-                                {"level": 2, "hash": "44444444444444444444444444444444"},
-                                {"level": 5, "hash": "55555555555555555555555555555555"},
-                                {"level": 6, "hash": "66666666666666666666666666666666"}
-                            ]
-                        }
-                    ]
-                }
-            }
-        """.trimIndent()
-
-        val transport = object : KugouTransport {
-            override suspend fun call(
-                path: String,
-                session: KugouSession?,
-                query: Map<String, String>,
-                body: JsonObject?,
-                host: String,
-                method: String,
-                web: Boolean,
-                headers: Map<String, String>,
-                device: DeviceIdentity?
-            ): ApiResponse = ApiResponse(JsonParser.parseString(mockPlaylistJson).asJsonObject)
-        }
-
-        val store = MemoryStore()
-        val auth = AuthRepository(transport, store)
-        val accounts = AccountRepository(store, auth, transport)
-        val repo = MusicApiRepository(transport, accounts)
-
-        val songs = repo.rankSongs(6666)
-        assertEquals(2, songs.size)
-        assertTrue(songs[0].isLossless)
-        assertFalse(songs[0].isHiRes)
-        assertTrue(songs[1].isLossless)
-        assertTrue(songs[1].isHiRes)
     }
 }

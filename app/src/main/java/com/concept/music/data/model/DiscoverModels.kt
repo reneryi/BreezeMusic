@@ -18,8 +18,8 @@ data class RankItem(
  * 酷狗官方电台频道模型
  */
 data class FmChannel(
-    val id: String = "",
-    val name: String = "",
+    val id: String,
+    val name: String,
     val coverUrl: String = "",
     val desc: String = "",
     val category: String = "推荐电台",

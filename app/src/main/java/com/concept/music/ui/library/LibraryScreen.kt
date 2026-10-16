@@ -1109,20 +1109,7 @@ private fun UnifiedProfileAndGradeCard(
                         )
                     }
 
-                    // 头像右下角融合等级角标
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = ConceptPrimary,
-                        modifier = Modifier.align(Alignment.BottomEnd)
-                    ) {
-                        Text(
-                            text = "Lv.${userGrade.level}",
-                            color = Color.White,
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.Black,
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
-                        )
-                    }
+
                 }
 
                 Column(

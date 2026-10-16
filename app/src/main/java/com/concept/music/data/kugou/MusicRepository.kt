@@ -39,8 +39,39 @@ class MusicApiRepository(
     private val seenFmChannelHashes = ConcurrentHashMap<String, MutableSet<String>>()
     private val personalFmPoolCursor = AtomicInteger(0)
     private val seenPersonalFmHashes = ConcurrentHashMap.newKeySet<String>()
+    private val userTasteSeedsCache = java.util.concurrent.CopyOnWriteArrayList<Song>()
     @Volatile
     private var lastPersonalFmSong: Song? = null
+
+    private fun recordUserTasteSeeds(songs: List<Song>) {
+        if (songs.isEmpty()) return
+        val valid = songs.filter { it.hash.isNotBlank() && it.title != "未知歌曲" }
+        if (valid.isEmpty()) return
+        val merged = (valid + userTasteSeedsCache)
+            .distinctBy { it.hash.ifBlank { it.id }.lowercase() }
+            .take(160)
+        userTasteSeedsCache.clear()
+        userTasteSeedsCache.addAll(merged)
+    }
+
+    private fun diversifyArtistOrder(songs: List<Song>): List<Song> {
+        if (songs.size <= 2) return songs
+        val remaining = songs.toMutableList()
+        val result = ArrayList<Song>(songs.size)
+        while (remaining.isNotEmpty()) {
+            val prev = result.lastOrNull()
+            val nextIdx = if (prev == null) {
+                0
+            } else {
+                remaining.indexOfFirst { cand ->
+                    !cand.artist.equals(prev.artist, ignoreCase = true) &&
+                        (cand.coverUrl.isBlank() || cand.coverUrl != prev.coverUrl)
+                }.takeIf { it >= 0 } ?: 0
+            }
+            result.add(remaining.removeAt(nextIdx))
+        }
+        return result
+    }
 
     // 本地已关注歌手增量缓存（防止关注后因云端延迟未立即出现在列表中）
     private val localFollowedArtistsMap = ConcurrentHashMap<String, FollowedArtist>()
@@ -76,7 +107,10 @@ class MusicApiRepository(
             }.getOrNull()
         } else null
 
-        if (!primarySongs.isNullOrEmpty()) return primarySongs
+        if (!primarySongs.isNullOrEmpty()) {
+            recordUserTasteSeeds(primarySongs)
+            return primarySongs
+        }
 
         // 当个性化日推暂未生成或未登录时，自动平滑加载概念精选推荐，确保首屏不出现 0 首
         val fallbackSongs = runCatching {
@@ -339,7 +373,11 @@ class MusicApiRepository(
 
     suspend fun playlistSongs(playlist: Playlist): List<Song> = auth { ctx ->
         val collectionId = playlist.globalCollectionId.ifBlank { playlist.id }
-        fetchPlaylistSongsAll(collectionId, ctx.session)
+        val list = fetchPlaylistSongsAll(collectionId, ctx.session)
+        if (playlist.isLiked || playlist.title.contains("喜欢")) {
+            recordUserTasteSeeds(list.take(80))
+        }
+        list
     }
 
     suspend fun fetchPlaylistSongsAll(collectionId: String, session: KugouSession? = accounts.context()?.session): List<Song> {
@@ -705,12 +743,18 @@ class MusicApiRepository(
                 else -> s.hash
             }
             val isVipPriv = s.isVip || privObj.number("privilege") == 10 || privObj.number("pay_type") == 3
+            val privCover = imageUrl(
+                privObj.text("sizable_cover") ?: privObj.text("album_img") ?: privObj.text("union_cover")
+                    ?: privObj.obj("trans_param")?.text("union_cover")
+                    ?: privObj.obj("album_info")?.text("sizable_cover")
+            )
             s.copy(
                 hash = primaryHash,
                 hash128 = stdHash,
                 hash320 = hqHash,
                 hashFlac = sqHash,
                 hashHiRes = if (hasHiRes) resHash else "",
+                coverUrl = s.coverUrl.ifBlank { privCover },
                 isHiRes = hasHiRes,
                 isLossless = hasFlac || hasHiRes,
                 isVip = isVipPriv,
@@ -2200,81 +2244,113 @@ class MusicApiRepository(
     }
 
     // =========================================================================
-    // 概念新歌速递 (New Song Express) —— 实时获取今日最新 / 近3日 / 近5日及各语种新歌
+    // 概念新歌速递 (New Song Express) —— 严格对齐 MakcRe/KuGouMusicApi module/top_song.js:
+    // POST /musicadservice/container/v1/newsong_publish
+    // rank_id: 21608(华语), 21609(欧美), 21610(日韩), 21611(粤语)
+    // 支持多页并发拉取（默认单次加载 90~100+ 首，解除 36 首上限限制，并支持分页继续加载）
     // =========================================================================
 
-    suspend fun newSongExpress(periodKey: String = "TODAY", size: Int = 36): List<Song> = coroutineScope {
-        val minuteStamp = (System.currentTimeMillis() / 60_000L).toString()
+    suspend fun newSongExpress(
+        periodKey: String = "CHINESE",
+        size: Int = 100,
+        page: Int = 1
+    ): List<Song> = coroutineScope {
+        val session = accounts.context()?.session
+        val uidNum = session?.userId?.toLongOrNull() ?: 0L
 
-        suspend fun fetchCdnNewSongs(type: Int, page: Int = 1, pageSize: Int = 40): List<Song> {
+        suspend fun fetchOfficialTopSongPublish(rankId: Int, targetPage: Int, pageSize: Int = 35): List<Song> {
             return runCatching {
+                val body = JsonObject().apply {
+                    addProperty("rank_id", rankId)
+                    addProperty("userid", uidNum)
+                    addProperty("page", targetPage)
+                    addProperty("pagesize", pageSize)
+                    add("tags", JsonArray())
+                }
                 val response = transport.callAdvanced(
-                    path = "/api/v3/rank/newsong",
-                    host = "http://mobilecdnbj.kugou.com",
-                    query = mapOf(
-                        "version" to "9108",
-                        "plat" to "0",
-                        "type" to type.toString(),
-                        "page" to page.toString(),
-                        "pagesize" to pageSize.toString(),
-                        "_t" to minuteStamp
-                    ),
-                    sign = false,
-                    includeDefaultParams = false
+                    path = "/musicadservice/container/v1/newsong_publish",
+                    method = "POST",
+                    session = session,
+                    body = body,
+                    sign = true,
+                    includeDefaultParams = true
                 ).requireSuccess()
-                parseSongs(response.data)
+                val parsed = parseSongs(response.data)
+                if (parsed.isNotEmpty()) parsed else parseSongs(response.body)
             }.getOrDefault(emptyList())
         }
 
+        suspend fun fetchMultiPagesForRankId(rankId: Int, fallbackChartRankId: Int, startPage: Int, pageCount: Int): List<Song> = coroutineScope {
+            val publishDefs = (0 until pageCount).map { offset ->
+                async { fetchOfficialTopSongPublish(rankId, targetPage = startPage + offset, pageSize = 35) }
+            }
+            val publishSongs = publishDefs.flatMap { it.await() }
+            if (publishSongs.size >= (size.coerceAtMost(60))) {
+                publishSongs
+            } else {
+                // 若网关容器单页数量较少，结合官方新歌榜 (module/rank_audio.js: 31308华语新歌/31310欧美新歌/31311日韩新歌/31313粤语新歌) 补充
+                val chartDefs = (0 until 2).map { offset ->
+                    async { runCatching { rankSongs(fallbackChartRankId, page = startPage + offset, pageSize = 60) }.getOrDefault(emptyList()) }
+                }
+                publishSongs + chartDefs.flatMap { it.await() }
+            }
+        }
+
+        val startSubPage = ((page.coerceAtLeast(1) - 1) * 3) + 1
         val rawSongs: List<Song> = when (periodKey.uppercase()) {
-            "TODAY" -> {
-                // 今日实时新歌：聚合官方新歌首发接口(type=1) + 华语新歌榜(31308)首屏与次屏 + 酷狗飙升新歌(6666)前排
-                val cdnDef = async { fetchCdnNewSongs(type = 1, page = 1, pageSize = 30) }
-                val cdnP2Def = async { fetchCdnNewSongs(type = 1, page = 2, pageSize = 30) }
-                val rankNewDef = async { runCatching { rankSongs(31308, page = 1, pageSize = 30) }.getOrDefault(emptyList()) }
-                val soarDef = async { runCatching { rankSongs(6666, page = 1, pageSize = 20) }.getOrDefault(emptyList()) }
-                (cdnDef.await() + cdnP2Def.await() + rankNewDef.await() + soarDef.await())
+            "CHINESE", "21608" -> {
+                fetchMultiPagesForRankId(rankId = 21608, fallbackChartRankId = 31308, startPage = startSubPage, pageCount = 3)
+            }
+            "WESTERN", "21609" -> {
+                fetchMultiPagesForRankId(rankId = 21609, fallbackChartRankId = 31310, startPage = startSubPage, pageCount = 3)
+            }
+            "JPKR", "21610" -> {
+                fetchMultiPagesForRankId(rankId = 21610, fallbackChartRankId = 31311, startPage = startSubPage, pageCount = 3)
+            }
+            "CANTON", "21611" -> {
+                fetchMultiPagesForRankId(rankId = 21611, fallbackChartRankId = 31313, startPage = startSubPage, pageCount = 3)
+            }
+            "TODAY", "ALL" -> {
+                // 综合首发：并发拉取华语(21608)、欧美(21609)、日韩(21610)、粤语(21611) 最新首发曲目并交错编排
+                val cnP1 = async { fetchOfficialTopSongPublish(21608, targetPage = startSubPage, pageSize = 35) }
+                val cnP2 = async { fetchOfficialTopSongPublish(21608, targetPage = startSubPage + 1, pageSize = 35) }
+                val westP1 = async { fetchOfficialTopSongPublish(21609, targetPage = startSubPage, pageSize = 30) }
+                val jpkrP1 = async { fetchOfficialTopSongPublish(21610, targetPage = startSubPage, pageSize = 30) }
+                val cantonP1 = async { fetchOfficialTopSongPublish(21611, targetPage = startSubPage, pageSize = 25) }
+
+                val cnList = cnP1.await() + cnP2.await()
+                val westList = westP1.await()
+                val jpkrList = jpkrP1.await()
+                val cantonList = cantonP1.await()
+
+                val combined = mutableListOf<Song>()
+                val maxLen = maxOf(cnList.size, westList.size, jpkrList.size, cantonList.size)
+                for (i in 0 until maxLen) {
+                    if (i < cnList.size) combined.add(cnList[i])
+                    if (i * 2 + 1 < cnList.size) combined.add(cnList[i * 2 + 1])
+                    if (i < westList.size) combined.add(westList[i])
+                    if (i < jpkrList.size) combined.add(jpkrList[i])
+                    if (i < cantonList.size) combined.add(cantonList[i])
+                }
+                if (combined.size >= 30) {
+                    combined
+                } else {
+                    val fallbackCn = runCatching { rankSongs(31308, page = page, pageSize = 60) }.getOrDefault(emptyList())
+                    val fallbackWest = runCatching { rankSongs(31310, page = page, pageSize = 30) }.getOrDefault(emptyList())
+                    val fallbackJpkr = runCatching { rankSongs(31311, page = page, pageSize = 30) }.getOrDefault(emptyList())
+                    combined + fallbackCn + fallbackWest + fallbackJpkr
+                }
             }
             "DAY3" -> {
-                // 近3日热播新歌：聚合新歌榜第 1~2 页深度曲目 + 欧美/日韩新歌首发 + 网络热歌新曲
-                val rankP1Def = async { runCatching { rankSongs(31308, page = 1, pageSize = 50) }.getOrDefault(emptyList()).drop(12) }
-                val cdnP2Def = async { fetchCdnNewSongs(type = 1, page = 2, pageSize = 30) }
-                val westDef = async { fetchCdnNewSongs(type = 2, page = 1, pageSize = 20) }
-                (rankP1Def.await() + cdnP2Def.await() + westDef.await())
+                fetchMultiPagesForRankId(rankId = 21608, fallbackChartRankId = 31308, startPage = startSubPage + 1, pageCount = 3)
             }
             "DAY5" -> {
-                // 近5日全网新歌：聚合华语新歌榜第 2 页 + 粤语新歌榜(31313) + 欧美新歌榜(31310) + 日韩新歌(type=3)
-                val jpkrDef = async { fetchCdnNewSongs(type = 3, page = 1, pageSize = 25) }
-                val jpkrP2Def = async { fetchCdnNewSongs(type = 3, page = 2, pageSize = 25) }
-                val rankP2Def = async { runCatching { rankSongs(31308, page = 2, pageSize = 40) }.getOrDefault(emptyList()) }
-                val cantonDef = async { runCatching { rankSongs(31313, page = 1, pageSize = 25) }.getOrDefault(emptyList()) }
-                val soarP2Def = async { runCatching { rankSongs(6666, page = 2, pageSize = 30) }.getOrDefault(emptyList()) }
-                (jpkrDef.await() + jpkrP2Def.await() + rankP2Def.await() + cantonDef.await() + soarP2Def.await())
-            }
-            "CHINESE" -> {
-                val a = async { fetchCdnNewSongs(type = 1, page = 1, pageSize = 35) }
-                val b = async { runCatching { rankSongs(31308, page = 1, pageSize = 40) }.getOrDefault(emptyList()) }
-                (a.await() + b.await())
-            }
-            "WESTERN" -> {
-                val a = async { fetchCdnNewSongs(type = 2, page = 1, pageSize = 35) }
-                val b = async { runCatching { rankSongs(31310, page = 1, pageSize = 35) }.getOrDefault(emptyList()) }
-                val c = async { runCatching { rankSongs(33162, page = 1, pageSize = 25) }.getOrDefault(emptyList()) }
-                (a.await() + b.await() + c.await())
-            }
-            "JPKR" -> {
-                val a = async { fetchCdnNewSongs(type = 3, page = 1, pageSize = 35) }
-                val b = async { runCatching { rankSongs(31311, page = 1, pageSize = 30) }.getOrDefault(emptyList()) }
-                val c = async { runCatching { rankSongs(4673, page = 1, pageSize = 25) }.getOrDefault(emptyList()) }
-                (a.await() + b.await() + c.await())
-            }
-            "CANTON" -> {
-                val a = async { runCatching { rankSongs(31313, page = 1, pageSize = 35) }.getOrDefault(emptyList()) }
-                val b = async { runCatching { rankSongs(24971, page = 1, pageSize = 30) }.getOrDefault(emptyList()) }
-                (a.await() + b.await())
+                val cnDeep = async { fetchMultiPagesForRankId(rankId = 21608, fallbackChartRankId = 31308, startPage = startSubPage + 2, pageCount = 2) }
+                val westDeep = async { fetchMultiPagesForRankId(rankId = 21609, fallbackChartRankId = 31310, startPage = startSubPage + 1, pageCount = 2) }
+                cnDeep.await() + westDeep.await()
             }
             else -> {
-                fetchCdnNewSongs(type = 1, page = 1, pageSize = size)
+                fetchMultiPagesForRankId(rankId = 21608, fallbackChartRankId = 31308, startPage = startSubPage, pageCount = 3)
             }
         }
 
@@ -2282,30 +2358,245 @@ class MusicApiRepository(
         val deduped = rawSongs.filter { s ->
             val key = s.hash.ifBlank { s.id }.lowercase()
             key.isNotBlank() && seen.add(key)
-        }.take(size)
+        }.take(size.coerceAtLeast(30))
 
-        val finalSongs = if (deduped.isNotEmpty()) {
-            deduped
-        } else {
-            runCatching { searchSongs("2026 最新发行 新歌", page = 1, pageSize = size).songs }.getOrDefault(emptyList())
-        }
-
-        runCatching { enrichSongsPrivilegeLite(finalSongs) }.getOrDefault(finalSongs)
+        val diversified = diversifyArtistOrder(deduped)
+        runCatching { enrichSongsPrivilegeLite(diversified) }.getOrDefault(diversified)
     }
 
     // =========================================================================
-    // 私人随心听 FM（定位「猜你喜欢」：每次刷新均返回 20 首全新未重复推荐曲目）
+    // 私人随心听 FM（定位「猜你喜欢」：严格对接 MakcRe/KuGouMusicApi 5 大个性化推荐引擎 + 用户真实听歌口味锚点）
+    // 1. module/ai_recommend.js (/recommend, x-router: songlistairec.kugou.com, 传入用户真实红心/历史曲目 album_audio_id)
+    // 2. module/ai_recommend_song.js (/concepts/v1/ai/recommend_song, 概念版原生 AI 个性化推荐歌曲)
+    // 3. module/top_card.js (/singlecardrec.service/v1/single_card_recommend, card_id=1/2/3 猜你喜欢单卡推荐)
+    // 4. module/personal_fm.js (/v2/personal_recommend, x-router: persnfm.service.kugou.com, platform=ios 私人FM推荐流)
+    // 5. module/everyday_style_recommend.js (/everydayrec.service/everyday_style_recommend, 个人风格推荐)
     // =========================================================================
 
-    suspend fun personalFm(size: Int = 20, mode: String = "normal"): List<Song> {
+    private suspend fun collectUserTasteSeeds(): List<Song> = coroutineScope {
+        if (userTasteSeedsCache.size >= 15) {
+            return@coroutineScope userTasteSeedsCache.toList()
+        }
+        val session = accounts.context()?.session
+        val dailyDef = async { runCatching { dailyRecommend() }.getOrDefault(emptyList()) }
+        val recentDef = async {
+            if (session != null) runCatching { latestListenSongs(pageSize = 35) }.getOrDefault(emptyList())
+            else emptyList()
+        }
+        val likedDef = async {
+            if (session != null && userTasteSeedsCache.isEmpty()) {
+                runCatching {
+                    val likedPl = userPlaylists().firstOrNull { it.isLiked }
+                    if (likedPl != null) fetchPlaylistSongsAll(likedPl.globalCollectionId.ifBlank { likedPl.id }, session).take(50)
+                    else emptyList()
+                }.getOrDefault(emptyList())
+            } else emptyList()
+        }
+
+        val combined = (recentDef.await() + likedDef.await() + dailyDef.await())
+            .filter { it.hash.isNotBlank() && it.title != "未知歌曲" }
+            .distinctBy { it.hash.ifBlank { it.id }.lowercase() }
+        recordUserTasteSeeds(combined)
+        userTasteSeedsCache.toList()
+    }
+
+    suspend fun personalFm(size: Int = 20, mode: String = "normal"): List<Song> = coroutineScope {
         val session = accounts.context()?.session
         val d = device()
         val clientTime = System.currentTimeMillis() / 1000
+        val uidNum = session?.userId?.toLongOrNull() ?: 0L
         val batchIdx = personalFmPoolCursor.getAndIncrement()
-        val poolId = batchIdx % 4
 
         if (seenPersonalFmHashes.size > 600) {
             seenPersonalFmHashes.clear()
+        }
+
+        // 获取用户真实的听歌口味种子（来自最近播放、我喜欢的音乐、每日推荐）
+        val allUserSeeds = runCatching { collectUserTasteSeeds() }.getOrDefault(emptyList())
+        val rotatedSeeds = if (allUserSeeds.isNotEmpty()) {
+            val offset = (batchIdx * 7) % allUserSeeds.size
+            (allUserSeeds.drop(offset) + allUserSeeds.take(offset)).take(12)
+        } else emptyList()
+
+        // 1. 引擎一：module/personal_fm.js (POST /v2/personal_recommend, x-router: persnfm.service.kugou.com)
+        // 单次请求返回约 5 首歌，并发 2 个不同口味锚点的请求获取 10+ 首私人 FM 曲目
+        val pfmDeferreds = (0..1).map { subIdx ->
+            async {
+                runCatching {
+                    val anchorSong = rotatedSeeds.getOrNull(subIdx * 3) ?: lastPersonalFmSong
+                    val poolId = (batchIdx + subIdx) % 3
+                    val body = JsonObject().apply {
+                        addProperty("appid", KugouSigner.APP_ID)
+                        addProperty("clienttime", clientTime)
+                        addProperty("mid", d.mid)
+                        addProperty("action", if (anchorSong != null) "play" else "play")
+                        addProperty("recommend_source_locked", 0)
+                        addProperty("song_pool_id", poolId)
+                        addProperty("callerid", 0)
+                        addProperty("m_type", 1)
+                        addProperty("platform", "ios")
+                        addProperty("area_code", 1)
+                        addProperty("remain_songcnt", 0)
+                        addProperty("clientver", KugouSigner.CLIENT_VERSION)
+                        addProperty("is_overplay", 1)
+                        addProperty("mode", mode)
+                        addProperty("fakem", "ca981cfc583a4c37f28d2d49000013c16a0a")
+                        addProperty("key", KugouSigner.paramsKey(clientTime))
+                        if (anchorSong != null) {
+                            if (anchorSong.hash.isNotBlank()) addProperty("hash", anchorSong.hash.lowercase())
+                            val sid = anchorSong.audioId.takeIf { it > 0L } ?: anchorSong.albumAudioId
+                            if (sid > 0L) addProperty("songid", sid)
+                            addProperty("playtime", 180)
+                        }
+                        if (session != null) {
+                            addProperty("userid", uidNum)
+                            addProperty("kguid", uidNum)
+                            addProperty("token", session.token)
+                            addProperty("vip_type", 6)
+                        }
+                    }
+                    val response = transport.callAdvanced(
+                        path = "/v2/personal_recommend",
+                        session = session,
+                        body = body,
+                        method = "POST",
+                        headers = mapOf("x-router" to "persnfm.service.kugou.com"),
+                        sign = true,
+                        includeDefaultParams = true
+                    ).requireSuccess()
+                    val parsed = parseSongs(response.data)
+                    if (parsed.isNotEmpty()) parsed else parseSongs(response.body)
+                }.getOrDefault(emptyList())
+            }
+        }
+
+        // 2. 引擎二：module/ai_recommend.js (POST /recommend, x-router: songlistairec.kugou.com)
+        // 基于用户自己「我喜欢 / 最近播放」的真实 album_audio_id 列表驱动酷狗 AI 协同过滤推荐！
+        val aiSeedRecDef = async {
+            runCatching {
+                val seedIds = rotatedSeeds.mapNotNull { s ->
+                    s.albumAudioId.takeIf { it > 0L } ?: s.audioId.takeIf { it > 0L }
+                }.distinct().take(10)
+                if (seedIds.isEmpty()) return@runCatching emptyList<Song>()
+                val recSourceArr = JsonArray().apply {
+                    seedIds.forEach { idNum ->
+                        add(JsonObject().apply { addProperty("ID", idNum) })
+                    }
+                }
+                val body = JsonObject().apply {
+                    addProperty("platform", "ios")
+                    addProperty("clientver", KugouSigner.CLIENT_VERSION)
+                    addProperty("clienttime", clientTime)
+                    addProperty("userid", uidNum)
+                    add("client_playlist", JsonArray())
+                    addProperty("source_type", 2)
+                    addProperty("playlist_ver", 2)
+                    addProperty("area_code", 1)
+                    addProperty("appid", KugouSigner.APP_ID)
+                    addProperty("key", KugouSigner.paramsKey(clientTime))
+                    addProperty("mid", d.mid)
+                    add("recommend_source", recSourceArr)
+                }
+                val response = transport.callAdvanced(
+                    path = "/recommend",
+                    method = "POST",
+                    session = session,
+                    body = body,
+                    headers = mapOf("x-router" to "songlistairec.kugou.com"),
+                    sign = true,
+                    includeDefaultParams = true
+                ).requireSuccess()
+                val parsed = parseSongs(response.data)
+                if (parsed.isNotEmpty()) parsed else parseSongs(response.body)
+            }.getOrDefault(emptyList())
+        }
+
+        // 3. 引擎三：module/ai_recommend_song.js (POST /concepts/v1/ai/recommend_song 概念版原生 AI 推荐单曲)
+        val conceptAiSongDef = async {
+            runCatching {
+                val targetPage = (batchIdx % 6) + 1
+                val body = json(
+                    "apiver" to 2,
+                    "source" to 2,
+                    "pagesize" to 30,
+                    "page" to targetPage
+                )
+                val response = transport.callAdvanced(
+                    path = "/concepts/v1/ai/recommend_song",
+                    method = "POST",
+                    session = session,
+                    body = body,
+                    sign = true,
+                    includeDefaultParams = true
+                ).requireSuccess()
+                val parsed = parseSongs(response.data)
+                if (parsed.isNotEmpty()) parsed else parseSongs(response.body)
+            }.getOrDefault(emptyList())
+        }
+
+        // 4. 引擎四：module/top_card.js (POST /singlecardrec.service/v1/single_card_recommend 猜你喜欢单卡推荐)
+        val singleCardDef = async {
+            runCatching {
+                val cardId = ((batchIdx % 3) + 1).toString()
+                val clientPlaylistArr = JsonArray().apply {
+                    rotatedSeeds.take(6).forEach { s ->
+                        if (s.hash.isNotBlank()) {
+                            add(JsonObject().apply {
+                                addProperty("hash", s.hash.lowercase())
+                                val aid = s.albumAudioId.takeIf { it > 0L } ?: s.audioId
+                                if (aid > 0L) addProperty("album_audio_id", aid)
+                            })
+                        }
+                    }
+                }
+                val body = JsonObject().apply {
+                    addProperty("appid", KugouSigner.APP_ID)
+                    addProperty("clientver", KugouSigner.CLIENT_VERSION)
+                    addProperty("platform", "android")
+                    addProperty("clienttime", clientTime)
+                    addProperty("userid", uidNum)
+                    addProperty("key", KugouSigner.paramsKey(clientTime))
+                    addProperty("fakem", "60f7ebf1f812edbac3c63a7310001701760f")
+                    addProperty("area_code", 1)
+                    addProperty("mid", d.mid)
+                    addProperty("uuid", "-")
+                    add("client_playlist", clientPlaylistArr)
+                    addProperty("u_info", "a0c35cd40af564444b5584c2754dedec")
+                }
+                val response = transport.callAdvanced(
+                    path = "/singlecardrec.service/v1/single_card_recommend",
+                    method = "POST",
+                    session = session,
+                    query = mapOf(
+                        "card_id" to cardId,
+                        "fakem" to "60f7ebf1f812edbac3c63a7310001701760f",
+                        "area_code" to "1",
+                        "platform" to "ios"
+                    ),
+                    body = body,
+                    sign = true,
+                    includeDefaultParams = true
+                ).requireSuccess()
+                val parsed = parseSongs(response.data)
+                if (parsed.isNotEmpty()) parsed else parseSongs(response.body)
+            }.getOrDefault(emptyList())
+        }
+
+        // 5. 引擎五：module/everyday_style_recommend.js (/everydayrec.service/everyday_style_recommend 个性化风格日推)
+        val styleRecDef = async {
+            runCatching {
+                val response = transport.callAdvanced(
+                    path = "/everydayrec.service/everyday_style_recommend",
+                    method = "POST",
+                    session = session,
+                    query = mapOf("tagids" to ""),
+                    body = JsonObject(),
+                    sign = true,
+                    includeDefaultParams = true
+                ).requireSuccess()
+                val parsed = parseSongs(response.data)
+                if (parsed.isNotEmpty()) parsed else parseSongs(response.body)
+            }.getOrDefault(emptyList())
         }
 
         val collected = mutableListOf<Song>()
@@ -2314,141 +2605,122 @@ class MusicApiRepository(
         fun tryCollect(candidates: List<Song>) {
             for (s in candidates) {
                 val key = s.hash.ifBlank { s.id }.lowercase()
-                if (key.isNotBlank() && !seenPersonalFmHashes.contains(key) && batchKeys.add(key)) {
+                if (key.isNotBlank() && s.title != "未知歌曲" && !seenPersonalFmHashes.contains(key) && batchKeys.add(key)) {
                     collected.add(s)
                     if (collected.size >= size) break
                 }
             }
         }
 
-        // 1. 对齐 MakcRe/KuGouMusicApi module/personal_fm.js: POST /v2/personal_recommend (必须带 sign=true + 上一首锚点推进推荐流)
-        val prevSong = lastPersonalFmSong
-        val body = JsonObject().apply {
-            addProperty("appid", KugouSigner.APP_ID)
-            addProperty("clienttime", clientTime)
-            addProperty("mid", d.mid)
-            addProperty("action", if (prevSong != null) "next" else "play")
-            addProperty("recommend_source_locked", 0)
-            addProperty("song_pool_id", poolId)
-            addProperty("callerid", 0)
-            addProperty("m_type", 1)
-            addProperty("platform", "android")
-            addProperty("area_code", 1)
-            addProperty("remain_songcnt", 0)
-            addProperty("play_time", if (prevSong != null) 180 else 0)
-            addProperty("clientver", KugouSigner.CLIENT_VERSION)
-            addProperty("is_overplay", 0)
-            addProperty("mode", mode)
-            addProperty("fakem", "ca981cfc583a4c37f28d2d49000013c16a0a")
-            addProperty("key", KugouSigner.paramsKey(clientTime))
-            if (prevSong != null) {
-                if (prevSong.hash.isNotBlank()) addProperty("hash", prevSong.hash.lowercase())
-                val aid = prevSong.audioId.takeIf { it > 0L } ?: prevSong.albumAudioId
-                if (aid > 0L) addProperty("audio_id", aid)
-            }
-            if (session != null) {
-                addProperty("userid", session.userId)
-                addProperty("kguid", session.userId)
-                addProperty("token", session.token)
-                addProperty("vip_type", 6)
-            }
+        // 交错融合 5 大官方个性化推荐引擎的结果
+        val pfmResults = pfmDeferreds.flatMap { it.await() }
+        val aiSeedResults = aiSeedRecDef.await()
+        val conceptAiResults = conceptAiSongDef.await()
+        val singleCardResults = singleCardDef.await()
+        val styleResults = styleRecDef.await()
+
+        val maxEngineLen = maxOf(
+            pfmResults.size,
+            aiSeedResults.size,
+            conceptAiResults.size,
+            singleCardResults.size,
+            styleResults.size
+        )
+        val interleavedOfficial = mutableListOf<Song>()
+        for (i in 0 until maxEngineLen) {
+            if (i < pfmResults.size) interleavedOfficial.add(pfmResults[i])
+            if (i < aiSeedResults.size) interleavedOfficial.add(aiSeedResults[i])
+            if (i < conceptAiResults.size) interleavedOfficial.add(conceptAiResults[i])
+            if (i < singleCardResults.size) interleavedOfficial.add(singleCardResults[i])
+            if (i < styleResults.size) interleavedOfficial.add(styleResults[i])
         }
+        tryCollect(interleavedOfficial)
 
-        val remoteFm = runCatching {
-            val response = transport.callAdvanced(
-                path = "/v2/personal_recommend",
-                session = session,
-                body = body,
-                method = "POST",
-                headers = mapOf("x-router" to "persnfm.service.kugou.com"),
-                sign = true,
-                includeDefaultParams = true
-            ).requireSuccess()
-            parseSongs(response.data)
-        }.getOrDefault(emptyList())
-        tryCollect(remoteFm)
-
-        // 2. 对齐 module/top_card.js: /v2/GetCardRecommend (card_id=1 猜你喜欢私人推荐流)
-        if (collected.size < size && session != null) {
-            val cardSongs = runCatching {
-                val enc = KugouSigner.encrypt(KugouSigner.gson.toJson(mapOf("userid" to (session.userId.toLongOrNull() ?: 0L), "token" to session.token)))
-                val pRsa = KugouSigner.rsa(KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "key" to enc.key))).uppercase()
-                val resp = transport.callAdvanced(
-                    path = "/v2/GetCardRecommend",
-                    method = "POST",
-                    session = session,
-                    query = mapOf("card_id" to "1"),
-                    body = json(
-                        "appid" to KugouSigner.APP_ID,
-                        "clientver" to KugouSigner.CLIENT_VERSION,
-                        "clienttime" to clientTime,
-                        "mid" to d.mid,
-                        "userid" to (session.userId.toLongOrNull() ?: 0L),
-                        "area_code" to 1,
-                        "params" to enc.ciphertext,
-                        "p" to pRsa,
-                        "key" to KugouSigner.paramsKey(clientTime)
-                    ),
-                    headers = mapOf("x-router" to "everydayrec.service.kugou.com"),
-                    sign = true,
-                    includeDefaultParams = true
-                ).requireSuccess()
-                parseSongs(resp.data)
-            }.getOrDefault(emptyList())
-            tryCollect(cardSongs)
-        }
-
-        // 3. 若仍不满 20 首，通过动态多源「猜你喜欢」种子池拉取全新曲目（绝不重复洗牌同一批歌）
+        // 6. 若网关推荐流返回不满 20 首，严格基于用户真实常听歌手与红心曲风做同好扩展（彻底摒弃固定老歌词库）
         if (collected.size < size) {
             val needed = size - collected.size
-            val guessBatch = guessYouLike(batchIndex = batchIdx, minSize = needed + 10)
-            tryCollect(guessBatch)
+            val personalizedExtra = guessYouLike(batchIndex = batchIdx, minSize = needed + 10, userSeeds = rotatedSeeds)
+            tryCollect(personalizedExtra)
         }
 
-        val finalResult = collected.take(size)
-        for (s in finalResult) {
+        val diversified = diversifyArtistOrder(collected.take(size))
+        val enriched = runCatching { enrichSongsPrivilegeLite(diversified) }.getOrDefault(diversified)
+        for (s in enriched) {
             val key = s.hash.ifBlank { s.id }.lowercase()
             if (key.isNotBlank()) seenPersonalFmHashes.add(key)
         }
-        if (finalResult.isNotEmpty()) {
-            lastPersonalFmSong = finalResult.last()
+        if (enriched.isNotEmpty()) {
+            lastPersonalFmSong = enriched.last()
         }
-        return finalResult
+        enriched
     }
 
-    // 猜你喜欢 (智能动态口味推荐池，每次调用推进种子与页码，确保每次刷新都是全新的歌曲)
-    suspend fun guessYouLike(batchIndex: Int = personalFmPoolCursor.getAndIncrement(), minSize: Int = 20): List<Song> {
-        val tasteSeeds = listOf(
-            "猜你喜欢 宝藏热歌",
-            "周杰伦 林俊杰 陶喆 陈奕迅",
-            "告五人 邓紫棋 孙燕姿 蔡依林",
-            "华语流行 单曲循环 必听",
-            "毛不易 薛之谦 张杰 李荣浩",
-            "王菲 莫文蔚 梁静茹 张惠妹",
-            "欧美热单 Taylor Swift Bruno Mars",
-            "独立乐队 落日飞车 橘子海 棱镜",
-            "R&B 律动 方大同 单依纯 袁娅维",
-            "千禧金曲 经典华语 青春",
-            "粤语金曲 张敬轩 杨千嬅 Beyond",
-            "治愈民谣 房东的猫 赵雷 朴树"
-        )
-        val seed = tasteSeeds[batchIndex.coerceAtLeast(0) % tasteSeeds.size]
-        val page = (batchIndex.coerceAtLeast(0) / tasteSeeds.size) + 1
-        val searched = runCatching {
-            searchSongs(seed, page = page, pageSize = (minSize + 15).coerceAtLeast(30)).songs
-        }.getOrDefault(emptyList())
+    /**
+     * 基于用户真实听歌画像（最近播放 / 我喜欢的音乐 / 每日推荐中的常听歌手与曲目）扩展「猜你喜欢」候选池：
+     * - 优先提取用户真实常听歌手（artistId 或歌手名），拉取这些歌手的代表作或关联新曲
+     * - 结合用户每日推荐池中未听过的曲目交错混排，彻底告别与用户口味无关的硬编码老歌
+     */
+    suspend fun guessYouLike(
+        batchIndex: Int = personalFmPoolCursor.getAndIncrement(),
+        minSize: Int = 20,
+        userSeeds: List<Song> = emptyList()
+    ): List<Song> = coroutineScope {
+        val effectiveSeeds = userSeeds.ifEmpty { userTasteSeedsCache.toList() }
+        val userArtists = effectiveSeeds
+            .flatMap { s ->
+                s.artist.split("、", "/", "&", ",")
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() && it != "未知歌手" && it != "群星" }
+                    .map { name -> name to s.artistId }
+            }
+            .distinctBy { it.first.lowercase() }
 
-        val unseen = searched.filter { s ->
+        val results = mutableListOf<Song>()
+
+        if (userArtists.isNotEmpty()) {
+            // 从用户真实喜爱的歌手中轮流选取 3 位歌手拉取其热门/最新曲目
+            val chosenArtists = (0 until 3.coerceAtMost(userArtists.size)).map { idx ->
+                userArtists[(batchIndex * 3 + idx) % userArtists.size]
+            }
+            val page = (batchIndex / userArtists.size.coerceAtLeast(1)) + 1
+            val artistDefs = chosenArtists.map { (artistName, artistId) ->
+                async {
+                    val byId = if (artistId.isNotBlank() && artistId != "0") {
+                        runCatching { artistSongs(artistId, sort = if (batchIndex % 2 == 0) "hot" else "new", page = page, pageSize = 15) }
+                            .getOrDefault(emptyList())
+                    } else emptyList()
+                    if (byId.isNotEmpty()) byId
+                    else runCatching { searchSongs(artistName, page = page, pageSize = 15).songs }.getOrDefault(emptyList())
+                }
+            }
+            val lists = artistDefs.map { it.await() }
+            val maxLen = lists.maxOfOrNull { it.size } ?: 0
+            for (i in 0 until maxLen) {
+                for (l in lists) {
+                    if (i < l.size) results.add(l[i])
+                }
+            }
+        }
+
+        // 同时融合用户真实每日推荐中尚未在随心听出现过的曲目
+        val unseenSeeds = effectiveSeeds.filter { s ->
             val k = s.hash.ifBlank { s.id }.lowercase()
             k.isNotBlank() && !seenPersonalFmHashes.contains(k)
         }
-        if (unseen.size >= minSize) return unseen
+        results.addAll(unseenSeeds)
 
-        val nextSeed = tasteSeeds[(batchIndex + 1).coerceAtLeast(0) % tasteSeeds.size]
-        val extra = runCatching {
-            searchSongs(nextSeed, page = page, pageSize = 30).songs
+        val filtered = results.filter { s ->
+            val k = s.hash.ifBlank { s.id }.lowercase()
+            k.isNotBlank() && !seenPersonalFmHashes.contains(k)
+        }.distinctBy { it.hash.ifBlank { it.id }.lowercase() }
+
+        if (filtered.size >= minSize) return@coroutineScope filtered
+
+        // 仅当未登录且无任何个人种子时，使用新歌速递与飙升潮流曲目兜底
+        val fallbackNew = runCatching {
+            newSongExpress("TODAY", size = minSize + 10, page = (batchIndex % 3) + 1)
         }.getOrDefault(emptyList())
-        return (unseen + extra).distinctBy { it.hash.ifBlank { it.id }.lowercase() }
+        (filtered + fallbackNew).distinctBy { it.hash.ifBlank { it.id }.lowercase() }
     }
 
     // 场景化音乐推荐歌曲（供心流番茄工作台等调用）
@@ -2936,7 +3208,10 @@ class MusicApiRepository(
             parseSongs(response.data)
         }.getOrNull()
 
-        if (!historyList.isNullOrEmpty()) return historyList
+        if (!historyList.isNullOrEmpty()) {
+            recordUserTasteSeeds(historyList)
+            return historyList
+        }
 
         return runCatching {
             val response = transport.call(
@@ -3690,26 +3965,68 @@ class MusicApiRepository(
     )
 
     private fun parseSongs(root: JsonObject): List<Song> {
-        val candidates = mutableListOf<JsonObject>()
-        candidates.add(root)
-        root.obj("data")?.let { candidates.add(it) }
+        val arrayKeys = listOf(
+            "songs", "songlist", "song_list", "info", "data", "files", "lists", "list",
+            "audio_list", "audios", "recommend_list", "song_info_list", "album_audio_list",
+            "card_list", "module_list", "items", "rows", "result", "newsong_list", "publish_list"
+        )
+        val collectedObjects = mutableListOf<JsonObject>()
 
-        val array = candidates.asSequence()
-            .mapNotNull { obj ->
-                listOf("songs", "songlist", "song_list", "info", "data", "files", "lists", "list", "audio_list", "audios")
-                    .asSequence().mapNotNull { obj.arr(it) }.firstOrNull()
-            }.firstOrNull() ?: return emptyList()
-        return array.filter { it.isJsonObject }
-            .map { parseSong(it.asJsonObject) }
-            .filter { it.hash.isNotBlank() || it.id.isNotBlank() }
+        fun isLikelySongObject(obj: JsonObject): Boolean {
+            return obj.has("hash") || obj.has("FileHash") || obj.has("hash_128") || obj.has("hash_320") ||
+                obj.has("audio_info") || obj.has("song_info") || obj.has("base") ||
+                obj.has("songname") || obj.has("song_name") || obj.has("SongName") ||
+                obj.has("audio_name") || obj.has("filename") || obj.has("FileName") ||
+                obj.has("OriSongName") || (obj.has("name") && (obj.has("audio_id") || obj.has("album_audio_id") || obj.has("mixsongid") || obj.has("singername") || obj.has("author_name") || obj.has("relate_goods")))
+        }
+
+        fun extractFromElement(el: com.google.gson.JsonElement?, depth: Int) {
+            if (el == null || depth > 4) return
+            if (el.isJsonArray) {
+                for (item in el.asJsonArray) {
+                    if (item.isJsonObject) {
+                        val obj = item.asJsonObject
+                        if (isLikelySongObject(obj)) {
+                            collectedObjects.add(obj)
+                        } else {
+                            extractFromElement(obj, depth + 1)
+                        }
+                    }
+                }
+            } else if (el.isJsonObject) {
+                val obj = el.asJsonObject
+                var foundArray = false
+                for (k in arrayKeys) {
+                    val arr = obj.arr(k)
+                    if (arr != null && arr.size() > 0) {
+                        foundArray = true
+                        extractFromElement(arr, depth + 1)
+                    }
+                }
+                if (!foundArray) {
+                    for ((k, v) in obj.entrySet()) {
+                        if (k != "relate_goods" && k != "authors" && k != "Singers" && k != "singerinfo" && k != "trans_param") {
+                            if (v.isJsonObject || v.isJsonArray) {
+                                extractFromElement(v, depth + 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        extractFromElement(root, 0)
+        return collectedObjects
+            .map { parseSong(it) }
+            .filter { (it.hash.isNotBlank() || it.id.isNotBlank()) && it.title != "未知歌曲" }
     }
 
     internal fun parseSong(o: JsonObject): Song {
-        val base = o.obj("base")
-        val audioInfo = o.obj("audio_info") ?: o.obj("audio") ?: o.obj("song_info")
-        val albumInfo = o.obj("album_info") ?: o.obj("albuminfo")
-        val transParam = o.obj("trans_param") ?: audioInfo?.obj("trans_param")
-        val deprecated = o.obj("deprecated")
+        val base = o.obj("base") ?: o.obj("song")?.obj("base")
+        val audioInfo = o.obj("audio_info") ?: o.obj("audio") ?: o.obj("song_info") ?: o.obj("song") ?: o.obj("track")
+        val albumInfo = o.obj("album_info") ?: o.obj("albuminfo") ?: audioInfo?.obj("album_info")
+        val transParam = o.obj("trans_param") ?: audioInfo?.obj("trans_param") ?: base?.obj("trans_param")
+        val deprecated = o.obj("deprecated") ?: audioInfo?.obj("deprecated")
 
         val oriSongName = o.text("OriSongName") ?: o.text("ori_song_name")
         val suffix = o.text("Suffix") ?: o.text("suffix")
@@ -3781,11 +4098,12 @@ class MusicApiRepository(
             .takeIf { it != "0" }.orEmpty()
 
         val coverRaw = o.text("Image") ?: o.text("image") ?: o.text("cover") ?: o.text("Cover")
-            ?: o.text("album_sizable_cover") ?: o.text("sizable_cover") ?: o.text("album_img")
+            ?: o.text("album_sizable_cover") ?: o.text("sizable_cover") ?: o.text("album_img") ?: o.text("union_cover")
             ?: o.text("pic") ?: o.text("Pic") ?: o.text("img") ?: o.text("Img")
-            ?: transParam?.text("union_cover")
-            ?: albumInfo?.text("sizable_cover") ?: albumInfo?.text("cover") ?: albumInfo?.text("img")
-            ?: base?.text("cover") ?: audioInfo?.text("cover")
+            ?: transParam?.text("union_cover") ?: transParam?.text("sizable_cover")
+            ?: albumInfo?.text("sizable_cover") ?: albumInfo?.text("cover") ?: albumInfo?.text("img") ?: albumInfo?.text("album_img")
+            ?: base?.text("sizable_cover") ?: base?.text("cover") ?: base?.text("img")
+            ?: audioInfo?.text("sizable_cover") ?: audioInfo?.text("cover") ?: audioInfo?.text("img")
         val cover = imageUrl(coverRaw)
 
         val durationRaw = o.text("duration") ?: o.text("timelen") ?: o.text("time_length") ?: o.text("timelength") ?: o.text("Duration")
@@ -3812,7 +4130,8 @@ class MusicApiRepository(
         var relateSqSize = 0L
         var relateHqSize = 0L
         var relateStdSize = 0L
-        for (rg in o.objects("relate_goods")) {
+        val allRelateGoods = o.objects("relate_goods") + audioInfo?.objects("relate_goods").orEmpty() + base?.objects("relate_goods").orEmpty()
+        for (rg in allRelateGoods) {
             val h = rg.text("hash")?.takeIf { isValidHash(it) } ?: continue
             val levelNum = rg.number("level") ?: -1
             val qStr = (rg.text("quality") ?: rg.text("type") ?: "").lowercase()
@@ -3919,8 +4238,13 @@ class MusicApiRepository(
             ?: o.text("hash")?.takeIf { isValidHash(it) }
             ?: o.text("Hash")?.takeIf { isValidHash(it) }
             ?: o.text("hash_128")?.takeIf { isValidHash(it) }
+            ?: o.text("hash128")?.takeIf { isValidHash(it) }
+            ?: o.text("audio_hash")?.takeIf { isValidHash(it) }
+            ?: base?.text("hash")?.takeIf { isValidHash(it) }
+            ?: base?.text("hash_128")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("hash_128")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("hash")?.takeIf { isValidHash(it) }
+            ?: audioInfo?.text("FileHash")?.takeIf { isValidHash(it) }
             ?: deprecated?.text("hash")?.takeIf { isValidHash(it) }
             ?: transParam?.text("ogg_128_hash")?.takeIf { isValidHash(it) }
             ?: relateStdHash

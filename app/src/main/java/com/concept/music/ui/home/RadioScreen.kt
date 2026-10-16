@@ -84,7 +84,7 @@ fun RadioScreen(
     val currentChannel = remember(fmChannels, selectedChannelId) {
         fmChannels.firstOrNull { it.id == selectedChannelId }
             ?: fmChannels.firstOrNull()
-            ?: FmChannel(id = selectedChannelId, name = "流行风向标", desc = "全天候智能音乐伴听", category = "推荐电台")
+            ?: FmChannel(id = selectedChannelId, name = "流行风向标", coverUrl = "", desc = "全天候智能音乐伴听", category = "推荐电台")
     }
 
     var selectedCategory by remember { mutableStateOf("全部") }
