@@ -1170,9 +1170,8 @@ private fun PersonalFmPlayerCard(
 
 /**
  * 新歌速递重构卡片（横向三行分栏流悬浮卡片设计）：
- * - 对接 MakcRe/KuGouMusicApi module/top_song.js (/musicadservice/container/v1/newsong_publish)
- * - 支持「华语 / 欧美 / 日韩 / 粤语 / 综合首发」切换，单分类默认加载 100+ 首最新发行曲目（解除 36 首上限）
- * - 发现页采用灵动横向滑动的「每卡 3 首」双列/多列流式分栏卡片，告别原先笨重拥挤的大竖块
+ * - 严格审核近一周内（当天往前推6天，共7天）发行的新歌，数量随每日实际发歌量动态变化
+ * - 严格按「发行时间降序 + 相同时间按歌名首字母升序 (A-Z)」排列，每首歌直观展示精确发行日期角标
  */
 @Composable
 private fun NewSongExpressSectionCard(
@@ -1188,13 +1187,14 @@ private fun NewSongExpressSectionCard(
     onSongMoreClick: (Song) -> Unit
 ) {
     val isDark = LocalIsDarkTheme.current
-    val todayStr = remember {
-        val date = runCatching { LocalDate.now(DISCOVER_CHINA_ZONE) }.getOrElse { LocalDate.now() }
-        String.format("%02d.%02d 实时首发", date.monthValue, date.dayOfMonth)
+    val windowRangeStr = remember {
+        val end = runCatching { LocalDate.now(DISCOVER_CHINA_ZONE) }.getOrElse { LocalDate.now() }
+        val start = end.minusDays(6)
+        String.format("%02d.%02d-%02d.%02d 近7日", start.monthValue, start.dayOfMonth, end.monthValue, end.dayOfMonth)
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        // 顶部标题与全部入口
+        // 顶部标题与动态数量全部入口
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1217,7 +1217,7 @@ private fun NewSongExpressSectionCard(
                         color = ConceptPrimary.copy(alpha = 0.15f)
                     ) {
                         Text(
-                            text = todayStr,
+                            text = windowRangeStr,
                             color = ConceptPrimary,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
@@ -1226,7 +1226,7 @@ private fun NewSongExpressSectionCard(
                     }
                 }
                 Text(
-                    text = "官方首发容器直连 · 华语 / 欧美 / 日韩 / 粤语全量更新",
+                    text = "严审近一周发行新歌 · 按发行日期与首字母(A-Z)排序",
                     style = MaterialTheme.typography.labelSmall.copy(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1253,7 +1253,7 @@ private fun NewSongExpressSectionCard(
                         .clickable(onClick = onOpenFullScreen)
                 ) {
                     Text(
-                        text = if (songs.isNotEmpty()) "全部 ${songs.size} 首 >" else "全部新歌 >",
+                        text = if (songs.isNotEmpty()) "近7日共 ${songs.size} 首 >" else "查看全部 >",
                         color = ConceptPrimary,
                         fontSize = 11.5.sp,
                         fontWeight = FontWeight.Bold,
@@ -1314,7 +1314,7 @@ private fun NewSongExpressSectionCard(
             }
         }
 
-        // 横向滑动三行新歌分栏矩阵（每张悬浮卡展示 3 首新歌，共展示前 18 首，滑动轻盈精致）
+        // 横向滑动三行新歌分栏矩阵
         if (loading && songs.isEmpty()) {
             Surface(
                 shape = RoundedCornerShape(24.dp),
@@ -1342,7 +1342,7 @@ private fun NewSongExpressSectionCard(
                         .padding(vertical = 28.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("正在同步最新发行单曲...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    Text("正在审核并同步近7日最新发行单曲...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                 }
             }
         } else {
@@ -1356,7 +1356,7 @@ private fun NewSongExpressSectionCard(
                         shape = RoundedCornerShape(26.dp),
                         color = conceptFloatingCardColor(),
                         shadowElevation = if (isDark) 0.dp else 5.dp,
-                        modifier = Modifier.width(304.dp)
+                        modifier = Modifier.width(308.dp)
                     ) {
                         Column(
                             modifier = Modifier
@@ -1370,6 +1370,7 @@ private fun NewSongExpressSectionCard(
                                     currentSong.id == song.id ||
                                         (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))
                                     )
+                                val shortDate = song.publishDate.takeIf { it.length >= 10 }?.substring(5) ?: song.publishDate
 
                                 Row(
                                     modifier = Modifier
@@ -1383,7 +1384,6 @@ private fun NewSongExpressSectionCard(
                                         .padding(4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    // 圆润封面 + 左上角首发序号角标
                                     Box(
                                         modifier = Modifier
                                             .size(56.dp)
@@ -1407,18 +1407,20 @@ private fun NewSongExpressSectionCard(
                                             )
                                         }
 
-                                        Surface(
-                                            shape = RoundedCornerShape(bottomEnd = 8.dp),
-                                            color = if (globalIdx <= 3) VipGold else Color.Black.copy(alpha = 0.58f),
-                                            modifier = Modifier.align(Alignment.TopStart)
-                                        ) {
-                                            Text(
-                                                text = String.format("%02d", globalIdx),
-                                                color = if (globalIdx <= 3) Color(0xFF1A1200) else Color.White,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.Black,
-                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
-                                            )
+                                        if (shortDate.isNotBlank()) {
+                                            Surface(
+                                                shape = RoundedCornerShape(topEnd = 8.dp),
+                                                color = Color.Black.copy(alpha = 0.65f),
+                                                modifier = Modifier.align(Alignment.BottomStart)
+                                            ) {
+                                                Text(
+                                                    text = shortDate,
+                                                    color = Color.White,
+                                                    fontSize = 8.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                )
+                                            }
                                         }
                                     }
 
@@ -1437,6 +1439,21 @@ private fun NewSongExpressSectionCard(
                                         )
                                         Spacer(modifier = Modifier.height(3.dp))
                                         Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (shortDate.isNotBlank()) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(5.dp),
+                                                    color = ConceptPrimary.copy(alpha = 0.14f)
+                                                ) {
+                                                    Text(
+                                                        text = "$shortDate 首发",
+                                                        color = ConceptPrimary,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 4.5.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                            }
                                             if (song.isHiRes) {
                                                 BadgeTag(text = "Hi-Res", color = VipGold)
                                                 Spacer(modifier = Modifier.width(4.dp))
@@ -1448,13 +1465,8 @@ private fun NewSongExpressSectionCard(
                                                 BadgeTag(text = "VIP", color = VipGold)
                                                 Spacer(modifier = Modifier.width(4.dp))
                                             }
-                                            val subText = if (song.album.isNotBlank() && song.album != "单曲专辑") {
-                                                "${song.artist} · 《${song.album}》"
-                                            } else {
-                                                song.artist
-                                            }
                                             Text(
-                                                text = subText,
+                                                text = song.artist,
                                                 style = MaterialTheme.typography.bodySmall.copy(
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     fontSize = 11.5.sp
@@ -1492,7 +1504,10 @@ private fun NewSongExpressSectionCard(
 }
 
 /**
- * 新歌速递独立全屏页（支持 100+ 首全量浏览与底部无限分页追加加载更多新歌）
+ * 新歌速递独立全屏页：
+ * - 展示近一周内（当天往前推6天，共7天）严格按发行时间审核通过的所有新歌
+ * - 数量随每日实际发歌量动态变化（不设固定数值）
+ * - 按发行时间降序排列，同一发行日期内按歌名首字母 (A-Z) 升序排列，并按发行日期分组展示
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1503,13 +1518,15 @@ fun NewSongExpressScreen(
     currentSong: Song? = null,
     onSongMoreClick: (Song) -> Unit = {}
 ) {
-    val context = LocalContext.current
     val selectedPeriod by viewModel.selectedNewSongPeriod.collectAsState()
     val songs by viewModel.currentNewSongs.collectAsState()
     val loading by viewModel.newSongsLoading.collectAsState()
-    val loadingMore by viewModel.newSongsLoadingMore.collectAsState()
     val isDark = LocalIsDarkTheme.current
-    val today = remember { runCatching { LocalDate.now(DISCOVER_CHINA_ZONE) }.getOrElse { LocalDate.now() } }
+    val endDay = remember { runCatching { LocalDate.now(DISCOVER_CHINA_ZONE) }.getOrElse { LocalDate.now() } }
+    val startDay = remember(endDay) { endDay.minusDays(6) }
+    val groupedByDate = remember(songs) {
+        songs.groupBy { it.publishDate.ifBlank { endDay.toString() } }
+    }
 
     ConceptStageBackground(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -1519,12 +1536,17 @@ fun NewSongExpressScreen(
                     title = {
                         Column {
                             Text(
-                                text = "新歌速递",
+                                text = "新歌速递 · 近7日严选",
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 18.sp
                             )
                             Text(
-                                text = "${today.monthValue}月${today.dayOfMonth}日 官方首发容器 · 已加载 ${songs.size} 首",
+                                text = String.format(
+                                    "发行周期 %02d.%02d - %02d.%02d · 严审共 %d 首（按日期与首字母排序）",
+                                    startDay.monthValue, startDay.dayOfMonth,
+                                    endDay.monthValue, endDay.dayOfMonth,
+                                    songs.size
+                                ),
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1600,7 +1622,7 @@ fun NewSongExpressScreen(
                         ) {
                             Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("播放全部新歌 (${songs.size})", fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                            Text("播放全部近7日新歌 (${songs.size}首)", fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
                         }
 
                         if (loading) {
@@ -1613,60 +1635,56 @@ fun NewSongExpressScreen(
                     }
                 }
 
-                itemsIndexed(songs, key = { idx, s -> "nse_${s.id}_${s.hash}_$idx" }) { index, song ->
-                    Box(modifier = Modifier.padding(horizontal = 12.dp)) {
-                        SongItemRow(
-                            song = song,
-                            orderIndex = index + 1,
-                            isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                            onClick = { onSongClick(song, songs) },
-                            onMoreClick = { onSongMoreClick(song) }
-                        )
-                    }
-                }
-
-                if (songs.isNotEmpty()) {
-                    item {
-                        Box(
+                var runningIndex = 0
+                groupedByDate.forEach { (pubDate, dateSongs) ->
+                    item(key = "header_$pubDate") {
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 24.dp, vertical = 18.dp),
-                            contentAlignment = Alignment.Center
+                                .padding(horizontal = 18.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            FilledTonalButton(
-                                onClick = {
-                                    viewModel.loadMoreNewSongs { added ->
-                                        if (added > 0) {
-                                            Toast.makeText(context, "已继续加载 $added 首新歌", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            Toast.makeText(context, "已加载当前分类全部最新曲目", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                },
-                                enabled = !loadingMore && !loading,
-                                shape = RoundedCornerShape(20.dp),
-                                colors = ButtonDefaults.filledTonalButtonColors(
-                                    containerColor = ConceptPrimary.copy(alpha = 0.15f),
-                                    contentColor = ConceptPrimary
-                                ),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                if (loadingMore) {
-                                    CircularProgressIndicator(
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = ConceptPrimary.copy(alpha = 0.16f)
+                                ) {
+                                    Text(
+                                        text = "发行日期 · $pubDate",
                                         color = ConceptPrimary,
-                                        strokeWidth = 2.dp,
-                                        modifier = Modifier.size(16.dp)
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("正在加载更多新歌...", fontWeight = FontWeight.Bold)
-                                } else {
-                                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("继续加载更多新歌", fontWeight = FontWeight.Bold)
                                 }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "当日发行 ${dateSongs.size} 首 · 已按歌名首字母(A-Z)排序",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp
+                                )
                             }
                         }
                     }
+
+                    itemsIndexed(dateSongs, key = { idx, s -> "nse_${pubDate}_${s.id}_${s.hash}_$idx" }) { idx, song ->
+                        val displayOrder = runningIndex + idx + 1
+                        Box(modifier = Modifier.padding(horizontal = 12.dp)) {
+                            SongItemRow(
+                                song = song.copy(
+                                    album = if (song.publishDate.isNotBlank()) {
+                                        if (song.album.isNotBlank()) "${song.album} · ${song.publishDate}" else "${song.publishDate} 发行"
+                                    } else song.album
+                                ),
+                                orderIndex = displayOrder,
+                                isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                                onClick = { onSongClick(song, songs) },
+                                onMoreClick = { onSongMoreClick(song) }
+                            )
+                        }
+                    }
+                    runningIndex += dateSongs.size
                 }
             }
         }
@@ -1866,6 +1884,7 @@ fun RankDetailScreen(
 ) {
     val ranks by viewModel.ranks.collectAsState()
     val isDark = LocalIsDarkTheme.current
+    val coroutineScope = rememberCoroutineScope()
     var selectedRankId by remember(initialRankId) { mutableIntStateOf(initialRankId) }
     var rankSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -1927,6 +1946,17 @@ fun RankDetailScreen(
                         }
                     },
                     actions = {
+                        IconButton(
+                            onClick = {
+                                coroutineScope.launch {
+                                    loading = true
+                                    rankSongs = viewModel.getRankSongsAll(selectedRankId, maxSongs = 500)
+                                    loading = false
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Rounded.Refresh, contentDescription = "实时刷新榜单", tint = ConceptPrimary)
+                        }
                         FilledTonalButton(
                             onClick = { showRankGridSheet = true },
                             shape = RoundedCornerShape(16.dp),

@@ -46,7 +46,8 @@ data class Song(
     val bitrateKbps: Int = 0,
     val fileSizeByte: Long = 0L,
     val climaxStartMs: Long = 0L,
-    val climaxEndMs: Long = 0L
+    val climaxEndMs: Long = 0L,
+    val publishDate: String = ""
 ) {
     val hasAccompaniment: Boolean
         get() = accompanyHash.isNotBlank()

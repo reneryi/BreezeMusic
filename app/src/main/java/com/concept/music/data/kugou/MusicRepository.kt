@@ -40,8 +40,101 @@ class MusicApiRepository(
     private val personalFmPoolCursor = AtomicInteger(0)
     private val seenPersonalFmHashes = ConcurrentHashMap.newKeySet<String>()
     private val userTasteSeedsCache = java.util.concurrent.CopyOnWriteArrayList<Song>()
+    private val rankLatestVolMap = ConcurrentHashMap<String, Int>()
+    private val albumPublishDateCache = ConcurrentHashMap<String, String>()
     @Volatile
     private var lastPersonalFmSong: Song? = null
+
+    internal fun normalizePublishDate(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        val trimmed = raw.trim()
+        if (trimmed == "0" || trimmed.startsWith("0000") || trimmed.startsWith("1900") || trimmed.startsWith("1970-01-01")) return ""
+        val dateMatch = Regex("""(\d{4})[-./](\d{1,2})[-./](\d{1,2})""").find(trimmed)
+        if (dateMatch != null) {
+            val y = dateMatch.groupValues[1].toIntOrNull() ?: return ""
+            val m = dateMatch.groupValues[2].toIntOrNull() ?: return ""
+            val d = dateMatch.groupValues[3].toIntOrNull() ?: return ""
+            if (y in 1971..2100 && m in 1..12 && d in 1..31) {
+                return runCatching { java.time.LocalDate.of(y, m, d).toString() }.getOrDefault("")
+            }
+        }
+        if (trimmed.length >= 8 && trimmed.take(8).all { it.isDigit() }) {
+            val y = trimmed.substring(0, 4).toIntOrNull() ?: 0
+            val m = trimmed.substring(4, 6).toIntOrNull() ?: 0
+            val d = trimmed.substring(6, 8).toIntOrNull() ?: 0
+            if (y in 2000..2100 && m in 1..12 && d in 1..31) {
+                return runCatching { java.time.LocalDate.of(y, m, d).toString() }.getOrDefault("")
+            }
+        }
+        val num = trimmed.toLongOrNull()
+        if (num != null && num > 100_000_000L) {
+            return runCatching {
+                val instant = if (num > 10_000_000_000L) java.time.Instant.ofEpochMilli(num) else java.time.Instant.ofEpochSecond(num)
+                instant.atZone(CHINA_ZONE).toLocalDate().toString()
+            }.getOrDefault("")
+        }
+        return ""
+    }
+
+    private fun cleanTitleForSort(rawTitle: String): String {
+        val stripped = rawTitle.trim()
+            .replace(Regex("""^[\s《》〈〉「」『』【】()（）\[\]"'“”‘’·\-_:：]+"""), "")
+            .trim()
+        return stripped.ifBlank { rawTitle.trim() }
+    }
+
+    internal fun extractTitleFirstLetter(rawTitle: String): Char {
+        val clean = cleanTitleForSort(rawTitle)
+        if (clean.isEmpty()) return '#'
+        val firstChar = clean[0]
+        if (firstChar in 'a'..'z') return firstChar.uppercaseChar()
+        if (firstChar in 'A'..'Z') return firstChar
+        if (firstChar in '0'..'9') return firstChar
+
+        // 优先尝试 Android ICU Transliterator (Han-Latin)
+        val icuInitial = runCatching {
+            val cls = Class.forName("android.icu.text.Transliterator")
+            val getInst = cls.getMethod("getInstance", String::class.java)
+            val trans = getInst.invoke(null, "Han-Latin; NFD; [[:Nonspacing Mark:]] Remove; Upper()")
+            val transliterate = cls.getMethod("transliterate", String::class.java)
+            val latin = (transliterate.invoke(trans, firstChar.toString()) as? String)?.trim().orEmpty()
+            latin.firstOrNull { it in 'A'..'Z' }
+        }.getOrNull()
+        if (icuInitial != null) return icuInitial
+
+        // 标准中文拼音首字母边界表 (Collator.getInstance(Locale.CHINA))
+        val collator = java.text.Collator.getInstance(java.util.Locale.CHINA)
+        val boundaries = listOf(
+            'A' to "阿", 'B' to "八", 'C' to "擦", 'D' to "搭", 'E' to "蛾",
+            'F' to "发", 'G' to "噶", 'H' to "哈", 'J' to "击", 'K' to "喀",
+            'L' to "垃", 'M' to "妈", 'N' to "拿", 'O' to "哦", 'P' to "啪",
+            'Q' to "期", 'R' to "然", 'S' to "撒", 'T' to "塌", 'W' to "挖",
+            'X' to "昔", 'Y' to "压", 'Z' to "匝"
+        )
+        val target = firstChar.toString()
+        for (i in boundaries.indices.reversed()) {
+            if (collator.compare(target, boundaries[i].second) >= 0) {
+                return boundaries[i].first
+            }
+        }
+        return '#'
+    }
+
+    internal val newSongExpressComparator = Comparator<Song> { a, b ->
+        // 1. 严格按发行日期降序（越新越靠前，如 2026-10-17 在 2026-10-16 之前）
+        val dateCmp = b.publishDate.compareTo(a.publishDate)
+        if (dateCmp != 0) return@Comparator dateCmp
+
+        // 2. 相同发行时间按歌名首字母升序 (A -> Z)
+        val initA = extractTitleFirstLetter(a.title)
+        val initB = extractTitleFirstLetter(b.title)
+        if (initA != initB) return@Comparator initA.compareTo(initB)
+
+        // 3. 首字母相同时按完整歌名拼音/字典序升序
+        val collator = java.text.Collator.getInstance(java.util.Locale.CHINA)
+        val titleCmp = collator.compare(cleanTitleForSort(a.title), cleanTitleForSort(b.title))
+        if (titleCmp != 0) titleCmp else a.artist.compareTo(b.artist)
+    }
 
     private fun recordUserTasteSeeds(songs: List<Song>) {
         if (songs.isEmpty()) return
@@ -748,19 +841,28 @@ class MusicApiRepository(
                     ?: privObj.obj("trans_param")?.text("union_cover")
                     ?: privObj.obj("album_info")?.text("sizable_cover")
             )
+            val privAlbumId = (privObj.text("album_id") ?: privObj.obj("album_info")?.text("album_id") ?: "")
+                .takeIf { it != "0" }.orEmpty()
+            val privPubDate = normalizePublishDate(
+                privObj.text("publish_date") ?: privObj.text("publish_time") ?: privObj.text("publishtime")
+                    ?: privObj.obj("album_info")?.text("publish_date")
+                    ?: privObj.obj("trans_param")?.text("publish_date")
+            )
             s.copy(
                 hash = primaryHash,
                 hash128 = stdHash,
                 hash320 = hqHash,
                 hashFlac = sqHash,
                 hashHiRes = if (hasHiRes) resHash else "",
+                albumId = s.albumId.ifBlank { privAlbumId },
                 coverUrl = s.coverUrl.ifBlank { privCover },
                 isHiRes = hasHiRes,
                 isLossless = hasFlac || hasHiRes,
                 isVip = isVipPriv,
                 quality = if (hasHiRes) "high" else if (hasFlac) "flac" else if (has320) "320" else "128",
                 availableQualities = qualities,
-                fileSizeByte = maxFileSize
+                fileSizeByte = maxFileSize,
+                publishDate = s.publishDate.ifBlank { privPubDate }
             )
         }
     }
@@ -2094,16 +2196,53 @@ class MusicApiRepository(
         }.getOrDefault(emptyList())
     }
 
-    // 排行榜列表 (直连实时官方排行榜，附加防缓存时间戳确保每日实时刷新)
-    suspend fun rankList(): List<RankItem> {
+    // =========================================================================
+    // 排行榜体系（严格对齐 MakcRe/KuGouMusicApi: rank_list.js, rank_vol.js, rank_info.js, rank_audio.js）
+    // - 修复此前缺少 showtype=2 及硬编码 rank_cid=0 导致榜单停留在旧快照、未能每日实时刷新的问题
+    // - 自动解析每个榜单当日最新期数 volid / rank_cid，并实时刷新发现页榜单卡片的前三名预览曲目
+    // =========================================================================
+
+    private suspend fun resolveLatestRankVolId(rankId: Int): Int {
+        val todayKey = "${rankId}_${today()}"
+        rankLatestVolMap[todayKey]?.let { if (it > 0) return it }
         val minuteStamp = (System.currentTimeMillis() / 60_000L).toString()
-        return runCatching {
+        val fetchedVol = runCatching {
+            val response = transport.callAdvanced(
+                path = "/api/v3/rank/vol",
+                host = "http://mobilecdnbj.kugou.com",
+                query = mapOf(
+                    "plat" to "0",
+                    "ranktype" to "2",
+                    "rankid" to rankId.toString(),
+                    "with_res_tag" to "0",
+                    "_t" to minuteStamp
+                ),
+                sign = false,
+                includeDefaultParams = false
+            ).requireSuccess()
+            val infoArr = response.data.obj("data")?.arr("info")
+                ?: response.data.arr("info")
+                ?: response.data.arr("vol_list")
+            val latestObj = infoArr?.firstOrNull { it.isJsonObject }?.asJsonObject
+            latestObj?.number("volid") ?: latestObj?.number("rank_cid") ?: 0
+        }.getOrDefault(0)
+        if (fetchedVol > 0) {
+            rankLatestVolMap[todayKey] = fetchedVol
+        }
+        return fetchedVol
+    }
+
+    suspend fun rankList(): List<RankItem> = coroutineScope {
+        val minuteStamp = (System.currentTimeMillis() / 60_000L).toString()
+        val todayKeySuffix = today()
+        val rawRanks = runCatching {
             val response = transport.callAdvanced(
                 path = "/api/v3/rank/list",
                 host = "http://mobilecdnbj.kugou.com",
                 query = mapOf(
                     "version" to "9108",
                     "plat" to "0",
+                    "showtype" to "2",
                     "withsong" to "1",
                     "parentid" to "0",
                     "apiver" to "6",
@@ -2113,29 +2252,61 @@ class MusicApiRepository(
                 sign = false,
                 includeDefaultParams = false
             ).requireSuccess()
-            val array = response.data.obj("data")?.arr("info")
-                ?: response.data.arr("info") ?: return defaultRanks()
-            val list = array.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull { o ->
+            val topArray = response.data.obj("data")?.arr("info")
+                ?: response.data.arr("info") ?: return@runCatching emptyList<RankItem>()
+
+            // showtype=2 下既可能是平铺榜单，也可能包含 children 子榜单列表
+            val flatObjects = mutableListOf<JsonObject>()
+            for (el in topArray) {
+                if (el.isJsonObject) {
+                    val obj = el.asJsonObject
+                    val children = obj.arr("children")
+                    if (children != null && children.size() > 0) {
+                        children.filter { it.isJsonObject }.forEach { flatObjects.add(it.asJsonObject) }
+                    }
+                    if (obj.number("rankid") != null) {
+                        flatObjects.add(obj)
+                    }
+                }
+            }
+
+            val seenRankIds = HashSet<Int>()
+            flatObjects.mapNotNull { o ->
                 val id = o.number("rankid") ?: return@mapNotNull null
-                val name = o.text("rankname") ?: "热门榜单"
-                val coverRaw = o.text("imgurl") ?: o.text("pic") ?: o.text("banner7url")
-                val update = o.text("update_frequency") ?: "每日更新"
+                if (id <= 0 || !seenRankIds.add(id)) return@mapNotNull null
+                val name = (o.text("rankname") ?: "").trim()
+                if (name.isBlank()) return@mapNotNull null
+
+                val volId = o.number("volid") ?: o.number("rank_cid") ?: 0
+                if (volId > 0) {
+                    rankLatestVolMap["${id}_$todayKeySuffix"] = volId
+                }
+
+                val coverRaw = o.text("imgurl") ?: o.text("pic") ?: o.text("banner7url") ?: o.text("album_img")
+                val rawUpdate = (o.text("update_frequency") ?: "").trim()
+                val isDailyRank = name.contains("飙升") || name.contains("TOP") || name.contains("新歌") ||
+                    name.contains("热歌") || name.contains("红歌") || name.contains("分享") ||
+                    name.contains("雷达") || name.contains("每日") || name.contains("DJ") ||
+                    name.contains("抖音") || name.contains("快手") || rawUpdate.contains("天") || rawUpdate.contains("日")
+                val update = if (isDailyRank) "每日实时更新" else rawUpdate.ifBlank { "每日更新" }
+
                 val classify = o.number("classify") ?: 0
                 val category = when {
-                    name.contains("飙升") || name.contains("TOP") || name.contains("热歌") || name.contains("新歌") || name.contains("分享") || classify == 1 -> "官方热榜"
+                    name.contains("飙升") || name.contains("TOP") || name.contains("热歌") || name.contains("新歌") || name.contains("分享") || name.contains("红歌") || classify == 1 -> "官方热榜"
                     name.contains("ビルボード") || name.contains("Billboard") || name.contains("UK") || name.contains("韩国") || name.contains("日本") || name.contains("欧美") || classify == 4 -> "全球权威"
                     else -> "特色曲风"
                 }
                 val totalCount = o.number("songcount") ?: o.number("count") ?: if (name.contains("500")) 500 else 100
-                val songsArr = o.arr("songinfo")
+                val songsArr = o.arr("songinfo") ?: o.arr("songs")
                 val topSongs = songsArr?.filter { it.isJsonObject }?.take(3)?.mapNotNull {
                     val s = it.asJsonObject
-                    val sName = s.text("songname") ?: s.text("name") ?: ""
+                    val sName = s.text("songname") ?: s.text("name") ?: s.text("audio_name") ?: ""
                     val singer = s.text("singername") ?: s.text("author_name") ?: ""
                     if (sName.isNotBlank()) {
                         if (singer.isNotBlank() && !sName.contains(singer)) "$sName - $singer" else sName
                     } else null
                 } ?: emptyList()
+
                 RankItem(
                     rankId = id,
                     rankName = name,
@@ -2147,14 +2318,103 @@ class MusicApiRepository(
                     totalSongs = totalCount
                 )
             }
-            if (list.isNotEmpty()) list else defaultRanks()
-        }.getOrElse { defaultRanks() }
+        }.getOrDefault(emptyList())
+
+        val baseList = if (rawRanks.isNotEmpty()) rawRanks else defaultRanks()
+
+        // 实时校准前 8 个核心榜单的前三名预览曲目与封面（杜绝发现页榜单卡片展示旧缓存曲目）
+        baseList.mapIndexed { idx, item ->
+            async {
+                if (idx < 8 || item.topSongsPreview.isEmpty()) {
+                    val liveTop = runCatching { rankSongs(item.rankId, page = 1, pageSize = 5, enrichPrivilege = false) }
+                        .getOrDefault(emptyList())
+                    if (liveTop.isNotEmpty()) {
+                        val previewLines = liveTop.take(3).mapIndexed { i, s ->
+                            "${i + 1}. ${s.title} - ${s.artist}"
+                        }
+                        val liveCover = liveTop.firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl.orEmpty()
+                        item.copy(
+                            topSongsPreview = previewLines,
+                            coverUrl = if (liveCover.isNotBlank() && (item.coverUrl.isBlank() || item.coverUrl.contains("20210729"))) liveCover else item.coverUrl
+                        )
+                    } else item
+                } else item
+            }
+        }.map { it.await() }
     }
 
-    // 排行榜单页曲目 (严格对齐 module/rank_audio.js: /openapi/kmr/v2/rank/audio + 官方 CDN /api/v3/rank/song 实时双通道保障)
-    suspend fun rankSongs(rankId: Int, page: Int = 1, pageSize: Int = 100): List<Song> {
+    /**
+     * 排行榜单页曲目（实时三通道）：
+     * 1. 优先解析该榜单今日最新期数 volid / rank_cid，调用实时官方榜单接口 /api/v3/rank/song
+     * 2. 网关通道 /openapi/kmr/v2/rank/audio 传入最新 rank_cid（不再硬编码为 0，避免返回历史旧快照）
+     * 3. 移动 Web 实时榜单通道 http://m.kugou.com/rank/info/
+     */
+    suspend fun rankSongs(
+        rankId: Int,
+        page: Int = 1,
+        pageSize: Int = 100,
+        enrichPrivilege: Boolean = true
+    ): List<Song> {
         val session = accounts.context()?.session
         val minuteStamp = (System.currentTimeMillis() / 60_000L).toString()
+        val latestVolId = resolveLatestRankVolId(rankId)
+
+        // 通道 1：官方实时排行榜曲目接口 /api/v3/rank/song（附带最新期数 volid 与实时防缓存时间戳）
+        val cdnList = runCatching {
+            val queryMap = linkedMapOf(
+                "version" to "9108",
+                "ranktype" to "2",
+                "rankid" to rankId.toString(),
+                "page" to page.toString(),
+                "pagesize" to pageSize.toString(),
+                "plat" to "0",
+                "area_code" to "1",
+                "_t" to minuteStamp
+            )
+            if (latestVolId > 0) {
+                queryMap["volid"] = latestVolId.toString()
+            }
+            val response = transport.callAdvanced(
+                path = "/api/v3/rank/song",
+                host = "http://mobilecdnbj.kugou.com",
+                query = queryMap,
+                sign = false,
+                includeDefaultParams = false
+            ).requireSuccess()
+            parseSongs(response.data)
+        }.getOrNull()
+
+        // 若带 volid 请求未返回，尝试不带 volid 直连最新默认期
+        val effectiveCdnList = if (!cdnList.isNullOrEmpty()) {
+            cdnList
+        } else if (latestVolId > 0) {
+            runCatching {
+                val response = transport.callAdvanced(
+                    path = "/api/v3/rank/song",
+                    host = "http://mobilecdnbj.kugou.com",
+                    query = mapOf(
+                        "version" to "9108",
+                        "rankid" to rankId.toString(),
+                        "page" to page.toString(),
+                        "pagesize" to pageSize.toString(),
+                        "plat" to "0",
+                        "area_code" to "1",
+                        "_t" to minuteStamp
+                    ),
+                    sign = false,
+                    includeDefaultParams = false
+                ).requireSuccess()
+                parseSongs(response.data)
+            }.getOrNull()
+        } else null
+
+        if (!effectiveCdnList.isNullOrEmpty()) {
+            return if (enrichPrivilege) {
+                runCatching { enrichSongsPrivilegeLite(effectiveCdnList) }.getOrDefault(effectiveCdnList)
+            } else effectiveCdnList
+        }
+
+        // 通道 2：KMR 网关接口 /openapi/kmr/v2/rank/audio (传入解析到的今日最新 rank_cid)
         val gatewayList = runCatching {
             val response = transport.callAdvanced(
                 path = "/openapi/kmr/v2/rank/audio",
@@ -2166,7 +2426,7 @@ class MusicApiRepository(
                     "filter_original_remarks" to 1,
                     "area_code" to 1,
                     "pagesize" to pageSize,
-                    "rank_cid" to 0,
+                    "rank_cid" to latestVolId,
                     "type" to 1,
                     "page" to page,
                     "rank_id" to rankId
@@ -2178,31 +2438,18 @@ class MusicApiRepository(
                 sign = true,
                 includeDefaultParams = true
             ).requireSuccess()
-            parseSongs(response.data)
+            val parsed = parseSongs(response.data)
+            if (parsed.isNotEmpty()) parsed else parseSongs(response.body)
         }.getOrNull()
-        if (!gatewayList.isNullOrEmpty()) return gatewayList
 
-        val cdnList = runCatching {
-            val response = transport.callAdvanced(
-                path = "/api/v3/rank/song",
-                host = "http://mobilecdnbj.kugou.com",
-                query = mapOf(
-                    "version" to "9108",
-                    "rankid" to rankId.toString(),
-                    "page" to page.toString(),
-                    "pagesize" to pageSize.toString(),
-                    "plat" to "0",
-                    "area_code" to "1",
-                    "_t" to minuteStamp
-                ),
-                sign = false,
-                includeDefaultParams = false
-            ).requireSuccess()
-            parseSongs(response.data)
-        }.getOrNull()
-        if (!cdnList.isNullOrEmpty()) return cdnList
+        if (!gatewayList.isNullOrEmpty()) {
+            return if (enrichPrivilege) {
+                runCatching { enrichSongsPrivilegeLite(gatewayList) }.getOrDefault(gatewayList)
+            } else gatewayList
+        }
 
-        return runCatching {
+        // 通道 3：M 站实时榜单接口
+        val mList = runCatching {
             val response = transport.callAdvanced(
                 path = "/rank/info/",
                 host = "http://m.kugou.com",
@@ -2218,10 +2465,14 @@ class MusicApiRepository(
             val songsObj = response.data.obj("songs") ?: response.data
             parseSongs(songsObj)
         }.getOrDefault(emptyList())
+
+        return if (enrichPrivilege && mList.isNotEmpty()) {
+            runCatching { enrichSongsPrivilegeLite(mList) }.getOrDefault(mList)
+        } else mList
     }
 
     /**
-     * 排行榜全量曲目多页聚合拉取（彻底解除原先单页 50/100 首截断限制，支持 TOP500 等完整榜单）
+     * 排行榜全量曲目多页聚合拉取
      */
     suspend fun rankSongsAll(rankId: Int, maxSongs: Int = 500, pageSize: Int = 100): List<Song> {
         val maxPages = ((maxSongs + pageSize - 1) / pageSize).coerceIn(1, 6)
@@ -2244,21 +2495,144 @@ class MusicApiRepository(
     }
 
     // =========================================================================
-    // 概念新歌速递 (New Song Express) —— 严格对齐 MakcRe/KuGouMusicApi module/top_song.js:
-    // POST /musicadservice/container/v1/newsong_publish
-    // rank_id: 21608(华语), 21609(欧美), 21610(日韩), 21611(粤语)
-    // 支持多页并发拉取（默认单次加载 90~100+ 首，解除 36 首上限限制，并支持分页继续加载）
+    // 新歌速递 (New Song Express) —— 严格审核近一周（当天往前推6天，共7天）内发行的新歌：
+    // 1. 数据源：对接 MakcRe/KuGouMusicApi module/top_song.js (/musicadservice/container/v1/newsong_publish)
+    //    结合 /kmr/v2/albums (module/album.js) 批量补全每首歌的精确发行日期 publish_date (yyyy-MM-dd)
+    // 2. 严格时间审核：仅保留 publishDate 处于 [today.minusDays(6), today] 近7天窗口内的歌曲
+    // 3. 动态数量：不设固定上限或补齐数量，每天随实际近7日发歌量自然变化
+    // 4. 严格排序：按发行时间降序排列（最新日期在前）；同一发行日期的歌曲按歌名首字母升序排列 (A -> Z)
     // =========================================================================
+
+    private suspend fun enrichSongsPublishDateByAlbums(songs: List<Song>): List<Song> {
+        val missingAlbumIds = songs
+            .filter { it.publishDate.isBlank() && it.albumId.isNotBlank() && it.albumId != "0" }
+            .map { it.albumId.trim() }
+            .distinct()
+            .filterNot { albumPublishDateCache.containsKey(it) }
+
+        if (missingAlbumIds.isNotEmpty()) {
+            val session = accounts.context()?.session
+            for (chunk in missingAlbumIds.chunked(40)) {
+                runCatching {
+                    val itemArr = JsonArray().apply {
+                        chunk.forEach { aid ->
+                            add(JsonObject().apply {
+                                val numId = aid.toLongOrNull()
+                                if (numId != null) addProperty("album_id", numId)
+                                else addProperty("album_id", aid)
+                            })
+                        }
+                    }
+                    val body = JsonObject().apply {
+                        add("data", itemArr)
+                        addProperty("is_buy", 0)
+                        addProperty("fields", "album_id,album_name,publish_date,sizable_cover,author_name")
+                    }
+                    val resp = transport.callAdvanced(
+                        path = "/kmr/v2/albums",
+                        method = "POST",
+                        session = session,
+                        body = body,
+                        headers = mapOf(
+                            "x-router" to "openapi.kugou.com",
+                            "kg-tid" to "255"
+                        ),
+                        sign = true,
+                        includeDefaultParams = true
+                    )
+                    val arr = resp.data.arr("data") ?: resp.body.arr("data")
+                    arr?.filter { it.isJsonObject }?.map { it.asJsonObject }?.forEach { obj ->
+                        val aid = (obj.text("album_id") ?: obj.text("albumid") ?: "").trim()
+                        val pub = normalizePublishDate(
+                            obj.text("publish_date") ?: obj.text("publishtime") ?: obj.text("publish_time")
+                        )
+                        if (aid.isNotBlank() && pub.isNotBlank()) {
+                            albumPublishDateCache[aid] = pub
+                        }
+                    }
+                }
+            }
+        }
+
+        val afterAlbumEnrich = songs.map { s ->
+            if (s.publishDate.isNotBlank()) s
+            else {
+                val cachedPub = albumPublishDateCache[s.albumId.trim()].orEmpty()
+                if (cachedPub.isNotBlank()) s.copy(publishDate = cachedPub) else s
+            }
+        }
+
+        // 二级兜底：对仍缺少 publishDate 但有 albumAudioId 的单曲，通过 /kmr/v2/audio 批量查询 base,album_info 的 publish_date
+        val stillMissingAudioIds = afterAlbumEnrich
+            .filter { it.publishDate.isBlank() && it.albumAudioId > 0L }
+            .map { it.albumAudioId }
+            .distinct()
+            .filterNot { albumPublishDateCache.containsKey("aaid_$it") }
+
+        if (stillMissingAudioIds.isNotEmpty()) {
+            val session = accounts.context()?.session
+            for (chunk in stillMissingAudioIds.chunked(40)) {
+                runCatching {
+                    val dataArr = JsonArray().apply {
+                        chunk.forEach { aaid ->
+                            add(JsonObject().apply { addProperty("entity_id", aaid) })
+                        }
+                    }
+                    val body = JsonObject().apply {
+                        add("data", dataArr)
+                        addProperty("fields", "base,album_info")
+                    }
+                    val resp = transport.callAdvanced(
+                        path = "/kmr/v2/audio",
+                        method = "POST",
+                        session = session,
+                        body = body,
+                        headers = mapOf(
+                            "x-router" to "openapi.kugou.com",
+                            "kg-tid" to "36"
+                        ),
+                        sign = true,
+                        includeDefaultParams = true
+                    )
+                    val arr = resp.data.arr("data") ?: resp.body.arr("data")
+                    arr?.filter { it.isJsonObject }?.map { it.asJsonObject }?.forEach { item ->
+                        val baseObj = item.obj("base") ?: item
+                        val albObj = item.obj("album_info")
+                        val aaid = baseObj.number("album_audio_id")?.toLong()
+                            ?: item.number("album_audio_id")?.toLong()
+                            ?: item.number("entity_id")?.toLong() ?: 0L
+                        val pub = normalizePublishDate(
+                            baseObj.text("publish_date") ?: baseObj.text("publish_time")
+                                ?: albObj?.text("publish_date") ?: item.text("publish_date")
+                        )
+                        if (aaid > 0L && pub.isNotBlank()) {
+                            albumPublishDateCache["aaid_$aaid"] = pub
+                        }
+                    }
+                }
+            }
+        }
+
+        return afterAlbumEnrich.map { s ->
+            if (s.publishDate.isNotBlank()) s
+            else {
+                val cachedPub = albumPublishDateCache["aaid_${s.albumAudioId}"].orEmpty()
+                if (cachedPub.isNotBlank()) s.copy(publishDate = cachedPub) else s
+            }
+        }
+    }
 
     suspend fun newSongExpress(
         periodKey: String = "CHINESE",
-        size: Int = 100,
-        page: Int = 1
+        size: Int = 200,
+        page: Int = 1,
+        referenceDate: java.time.LocalDate = java.time.LocalDate.now(CHINA_ZONE)
     ): List<Song> = coroutineScope {
         val session = accounts.context()?.session
         val uidNum = session?.userId?.toLongOrNull() ?: 0L
+        val windowStartDate = referenceDate.minusDays(6) // 当天往前推 6 天，共 7 天窗口
 
-        suspend fun fetchOfficialTopSongPublish(rankId: Int, targetPage: Int, pageSize: Int = 35): List<Song> {
+        suspend fun fetchOfficialTopSongPublish(rankId: Int, targetPage: Int, pageSize: Int = 40): List<Song> {
             return runCatching {
                 val body = JsonObject().apply {
                     addProperty("rank_id", rankId)
@@ -2280,88 +2654,93 @@ class MusicApiRepository(
             }.getOrDefault(emptyList())
         }
 
-        suspend fun fetchMultiPagesForRankId(rankId: Int, fallbackChartRankId: Int, startPage: Int, pageCount: Int): List<Song> = coroutineScope {
-            val publishDefs = (0 until pageCount).map { offset ->
-                async { fetchOfficialTopSongPublish(rankId, targetPage = startPage + offset, pageSize = 35) }
+        suspend fun fetchCandidatePoolForRank(rankId: Int, fallbackChartRankId: Int, pageCount: Int = 4): List<Song> = coroutineScope {
+            val publishDefs = (1..pageCount).map { p ->
+                async { fetchOfficialTopSongPublish(rankId, targetPage = p, pageSize = 40) }
             }
-            val publishSongs = publishDefs.flatMap { it.await() }
-            if (publishSongs.size >= (size.coerceAtMost(60))) {
-                publishSongs
-            } else {
-                // 若网关容器单页数量较少，结合官方新歌榜 (module/rank_audio.js: 31308华语新歌/31310欧美新歌/31311日韩新歌/31313粤语新歌) 补充
-                val chartDefs = (0 until 2).map { offset ->
-                    async { runCatching { rankSongs(fallbackChartRankId, page = startPage + offset, pageSize = 60) }.getOrDefault(emptyList()) }
-                }
-                publishSongs + chartDefs.flatMap { it.await() }
+            val chartDef = async {
+                runCatching { rankSongs(fallbackChartRankId, page = 1, pageSize = 80, enrichPrivilege = false) }
+                    .getOrDefault(emptyList())
             }
+            publishDefs.flatMap { it.await() } + chartDef.await()
         }
 
-        val startSubPage = ((page.coerceAtLeast(1) - 1) * 3) + 1
-        val rawSongs: List<Song> = when (periodKey.uppercase()) {
+        val rawCandidates: List<Song> = when (periodKey.uppercase()) {
             "CHINESE", "21608" -> {
-                fetchMultiPagesForRankId(rankId = 21608, fallbackChartRankId = 31308, startPage = startSubPage, pageCount = 3)
+                fetchCandidatePoolForRank(rankId = 21608, fallbackChartRankId = 31308, pageCount = 4)
             }
             "WESTERN", "21609" -> {
-                fetchMultiPagesForRankId(rankId = 21609, fallbackChartRankId = 31310, startPage = startSubPage, pageCount = 3)
+                fetchCandidatePoolForRank(rankId = 21609, fallbackChartRankId = 31310, pageCount = 4)
             }
             "JPKR", "21610" -> {
-                fetchMultiPagesForRankId(rankId = 21610, fallbackChartRankId = 31311, startPage = startSubPage, pageCount = 3)
+                fetchCandidatePoolForRank(rankId = 21610, fallbackChartRankId = 31311, pageCount = 4)
             }
             "CANTON", "21611" -> {
-                fetchMultiPagesForRankId(rankId = 21611, fallbackChartRankId = 31313, startPage = startSubPage, pageCount = 3)
-            }
-            "TODAY", "ALL" -> {
-                // 综合首发：并发拉取华语(21608)、欧美(21609)、日韩(21610)、粤语(21611) 最新首发曲目并交错编排
-                val cnP1 = async { fetchOfficialTopSongPublish(21608, targetPage = startSubPage, pageSize = 35) }
-                val cnP2 = async { fetchOfficialTopSongPublish(21608, targetPage = startSubPage + 1, pageSize = 35) }
-                val westP1 = async { fetchOfficialTopSongPublish(21609, targetPage = startSubPage, pageSize = 30) }
-                val jpkrP1 = async { fetchOfficialTopSongPublish(21610, targetPage = startSubPage, pageSize = 30) }
-                val cantonP1 = async { fetchOfficialTopSongPublish(21611, targetPage = startSubPage, pageSize = 25) }
-
-                val cnList = cnP1.await() + cnP2.await()
-                val westList = westP1.await()
-                val jpkrList = jpkrP1.await()
-                val cantonList = cantonP1.await()
-
-                val combined = mutableListOf<Song>()
-                val maxLen = maxOf(cnList.size, westList.size, jpkrList.size, cantonList.size)
-                for (i in 0 until maxLen) {
-                    if (i < cnList.size) combined.add(cnList[i])
-                    if (i * 2 + 1 < cnList.size) combined.add(cnList[i * 2 + 1])
-                    if (i < westList.size) combined.add(westList[i])
-                    if (i < jpkrList.size) combined.add(jpkrList[i])
-                    if (i < cantonList.size) combined.add(cantonList[i])
-                }
-                if (combined.size >= 30) {
-                    combined
-                } else {
-                    val fallbackCn = runCatching { rankSongs(31308, page = page, pageSize = 60) }.getOrDefault(emptyList())
-                    val fallbackWest = runCatching { rankSongs(31310, page = page, pageSize = 30) }.getOrDefault(emptyList())
-                    val fallbackJpkr = runCatching { rankSongs(31311, page = page, pageSize = 30) }.getOrDefault(emptyList())
-                    combined + fallbackCn + fallbackWest + fallbackJpkr
-                }
-            }
-            "DAY3" -> {
-                fetchMultiPagesForRankId(rankId = 21608, fallbackChartRankId = 31308, startPage = startSubPage + 1, pageCount = 3)
-            }
-            "DAY5" -> {
-                val cnDeep = async { fetchMultiPagesForRankId(rankId = 21608, fallbackChartRankId = 31308, startPage = startSubPage + 2, pageCount = 2) }
-                val westDeep = async { fetchMultiPagesForRankId(rankId = 21609, fallbackChartRankId = 31310, startPage = startSubPage + 1, pageCount = 2) }
-                cnDeep.await() + westDeep.await()
+                fetchCandidatePoolForRank(rankId = 21611, fallbackChartRankId = 31313, pageCount = 4)
             }
             else -> {
-                fetchMultiPagesForRankId(rankId = 21608, fallbackChartRankId = 31308, startPage = startSubPage, pageCount = 3)
+                // 综合首发：汇总华语(21608)、欧美(21609)、日韩(21610)、粤语(21611) 全部近7日候选新歌
+                val cnDef = async { fetchCandidatePoolForRank(rankId = 21608, fallbackChartRankId = 31308, pageCount = 3) }
+                val westDef = async { fetchCandidatePoolForRank(rankId = 21609, fallbackChartRankId = 31310, pageCount = 2) }
+                val jpkrDef = async { fetchCandidatePoolForRank(rankId = 21610, fallbackChartRankId = 31311, pageCount = 2) }
+                val cantonDef = async { fetchCandidatePoolForRank(rankId = 21611, fallbackChartRankId = 31313, pageCount = 2) }
+                cnDef.await() + westDef.await() + jpkrDef.await() + cantonDef.await()
             }
         }
 
         val seen = HashSet<String>()
-        val deduped = rawSongs.filter { s ->
+        val deduped = rawCandidates.filter { s ->
             val key = s.hash.ifBlank { s.id }.lowercase()
             key.isNotBlank() && seen.add(key)
-        }.take(size.coerceAtLeast(30))
+        }
 
-        val diversified = diversifyArtistOrder(deduped)
-        runCatching { enrichSongsPrivilegeLite(diversified) }.getOrDefault(diversified)
+        // 先通过 privilege/lite 与 /kmr/v2/albums 批量补全每首歌的真实发行时间 publishDate 与音质标签
+        val privEnriched = runCatching { enrichSongsPrivilegeLite(deduped) }.getOrDefault(deduped)
+        val dateEnriched = runCatching { enrichSongsPublishDateByAlbums(privEnriched) }.getOrDefault(privEnriched)
+
+        // 严格审核发行日期：仅保留发行日期处于 [referenceDate.minusDays(6), referenceDate] 共 7 天内的新歌
+        val auditedSevenDaySongs = dateEnriched.filter { song ->
+            if (song.publishDate.isBlank()) return@filter false
+            val pubLocal = runCatching { java.time.LocalDate.parse(song.publishDate) }.getOrNull() ?: return@filter false
+            !pubLocal.isBefore(windowStartDate) && !pubLocal.isAfter(referenceDate)
+        }
+
+        // 若当前分类下部分容器歌曲只返回了当周新上架但未携带独立 album_id 导致 auditedSevenDaySongs 偏少，
+        // 对缺少 publishDate 的容器前排首发新歌通过单曲详情或新碟检索进一步核验发行时间
+        val finalVerifiedSongs = if (auditedSevenDaySongs.isNotEmpty()) {
+            auditedSevenDaySongs
+        } else {
+            // 若网关在离线或特定环境下未返回 publish_date 字段，尝试从最新发行专辑接口 (/v1/search/album) 检索近7日新歌
+            val yearStr = referenceDate.year.toString()
+            val recentAlbums = runCatching { searchAlbums(yearStr, page = 1, pageSize = 30) }.getOrDefault(emptyList())
+                .filter { alb ->
+                    val norm = normalizePublishDate(alb.publishDate)
+                    val d = runCatching { java.time.LocalDate.parse(norm) }.getOrNull()
+                    d != null && !d.isBefore(windowStartDate) && !d.isAfter(referenceDate)
+                }
+            val fromRecentAlbums = coroutineScope {
+                recentAlbums.take(8).map { alb ->
+                    async {
+                        val normDate = normalizePublishDate(alb.publishDate)
+                        runCatching { albumSongs(alb.id) }.getOrDefault(emptyList()).map { s ->
+                            s.copy(
+                                publishDate = s.publishDate.ifBlank { normDate },
+                                coverUrl = s.coverUrl.ifBlank { alb.coverUrl }
+                            )
+                        }
+                    }
+                }.flatMap { it.await() }
+            }
+            fromRecentAlbums.filter { s ->
+                val d = runCatching { java.time.LocalDate.parse(s.publishDate) }.getOrNull()
+                d != null && !d.isBefore(windowStartDate) && !d.isAfter(referenceDate)
+            }
+        }
+
+        // 严格排序：1. 发行时间降序（最新日期在前） 2. 相同发行时间按歌名首字母升序 (A -> Z)
+        finalVerifiedSongs
+            .distinctBy { it.hash.ifBlank { it.id }.lowercase() }
+            .sortedWith(newSongExpressComparator)
     }
 
     // =========================================================================
@@ -4308,6 +4687,15 @@ class MusicApiRepository(
             )
 
         val fileId = o.text("fileid")?.toLongOrNull() ?: o.text("file_id")?.toLongOrNull() ?: 0L
+        val rawPublishDate = o.text("publish_date") ?: o.text("publish_time") ?: o.text("publishtime")
+            ?: o.text("PublishDate") ?: o.text("PublishTime") ?: o.text("release_date")
+            ?: o.text("online_time") ?: o.text("inlist_time")
+            ?: base?.text("publish_date") ?: base?.text("publish_time")
+            ?: audioInfo?.text("publish_date") ?: audioInfo?.text("publish_time") ?: audioInfo?.text("publishtime")
+            ?: albumInfo?.text("publish_date") ?: albumInfo?.text("publishtime") ?: albumInfo?.text("publish_time")
+            ?: transParam?.text("publish_date") ?: transParam?.text("publish_time")
+            ?: deprecated?.text("publish_date")
+        val publishDate = normalizePublishDate(rawPublishDate)
 
         return Song(
             id = audioId.takeIf { it > 0 }?.toString() ?: primaryHash,
@@ -4334,7 +4722,8 @@ class MusicApiRepository(
             quality = if (hasHiRes) "high" else if (hasFlac) "flac" else if (has320) "320" else "128",
             fileId = fileId,
             availableQualities = qualities,
-            fileSizeByte = maxFileSize
+            fileSizeByte = maxFileSize,
+            publishDate = publishDate
         )
     }
 

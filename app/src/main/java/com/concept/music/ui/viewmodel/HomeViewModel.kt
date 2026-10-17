@@ -29,7 +29,7 @@ class HomeViewModel : ViewModel() {
     private val _personalFmRefreshing = MutableStateFlow(false)
     val personalFmRefreshing: StateFlow<Boolean> = _personalFmRefreshing.asStateFlow()
 
-    // 新歌速递（对接 module/top_song.js: 21608华语 / 21609欧美 / 21610日韩 / 21611粤语 / TODAY综合首发，解除36首限制，支持100+首与分页加载更多）
+    // 新歌速递（严格审核当天往前推6天共7天内发行的新歌，数量随每日实际发歌量动态变化，按发行时间降序 + 同日首字母升序排列）
     private val _selectedNewSongPeriod = MutableStateFlow("CHINESE")
     val selectedNewSongPeriod: StateFlow<String> = _selectedNewSongPeriod.asStateFlow()
 
@@ -39,11 +39,7 @@ class HomeViewModel : ViewModel() {
     private val _newSongsLoading = MutableStateFlow(false)
     val newSongsLoading: StateFlow<Boolean> = _newSongsLoading.asStateFlow()
 
-    private val _newSongsLoadingMore = MutableStateFlow(false)
-    val newSongsLoadingMore: StateFlow<Boolean> = _newSongsLoadingMore.asStateFlow()
-
     private val newSongCache = mutableMapOf<String, List<Song>>()
-    private val newSongPageMap = mutableMapOf<String, Int>()
 
     // 实时场景电台列表 (FM Channels)
     private val _fmChannels = MutableStateFlow<List<FmChannel>>(emptyList())
@@ -101,12 +97,13 @@ class HomeViewModel : ViewModel() {
                 }
                 val newSongJob = launch {
                     val period = _selectedNewSongPeriod.value
-                    val list = runCatching { VipManager.music.newSongExpress(periodKey = period, size = 100, page = 1) }.getOrDefault(emptyList())
-                    if (accountState.value.currentId == currentUserId && list.isNotEmpty()) {
+                    _newSongsLoading.value = true
+                    val list = runCatching { VipManager.music.newSongExpress(periodKey = period) }.getOrDefault(emptyList())
+                    if (accountState.value.currentId == currentUserId) {
                         newSongCache[period] = list
-                        newSongPageMap[period] = 1
                         _currentNewSongs.value = list
                     }
+                    _newSongsLoading.value = false
                 }
                 val radioJob = launch {
                     val radios = runCatching { VipManager.music.fmChannels() }.getOrDefault(emptyList())
@@ -188,39 +185,12 @@ class HomeViewModel : ViewModel() {
         }
         viewModelScope.launch {
             _newSongsLoading.value = true
-            val list = runCatching { VipManager.music.newSongExpress(periodKey = periodKey, size = 100, page = 1) }.getOrDefault(emptyList())
-            if (list.isNotEmpty()) {
-                newSongCache[periodKey] = list
-                newSongPageMap[periodKey] = 1
-                if (_selectedNewSongPeriod.value == periodKey) {
-                    _currentNewSongs.value = list
-                }
+            val list = runCatching { VipManager.music.newSongExpress(periodKey = periodKey) }.getOrDefault(emptyList())
+            newSongCache[periodKey] = list
+            if (_selectedNewSongPeriod.value == periodKey) {
+                _currentNewSongs.value = list
             }
             _newSongsLoading.value = false
-        }
-    }
-
-    fun loadMoreNewSongs(onLoaded: (Int) -> Unit = {}) {
-        if (_newSongsLoadingMore.value || _newSongsLoading.value) return
-        val periodKey = _selectedNewSongPeriod.value
-        val nextPage = (newSongPageMap[periodKey] ?: 1) + 1
-        viewModelScope.launch {
-            _newSongsLoadingMore.value = true
-            val more = runCatching {
-                VipManager.music.newSongExpress(periodKey = periodKey, size = 90, page = nextPage)
-            }.getOrDefault(emptyList())
-            val current = _currentNewSongs.value
-            val merged = (current + more).distinctBy { it.hash.ifBlank { it.id }.lowercase() }
-            val addedCount = (merged.size - current.size).coerceAtLeast(0)
-            if (addedCount > 0) {
-                newSongPageMap[periodKey] = nextPage
-                newSongCache[periodKey] = merged
-                if (_selectedNewSongPeriod.value == periodKey) {
-                    _currentNewSongs.value = merged
-                }
-            }
-            _newSongsLoadingMore.value = false
-            onLoaded(addedCount)
         }
     }
 
