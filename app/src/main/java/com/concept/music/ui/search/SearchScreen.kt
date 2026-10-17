@@ -1,19 +1,15 @@
 package com.concept.music.ui.search
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -25,6 +21,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -37,8 +34,11 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.*
 import com.concept.music.ui.components.SongItemRow
+import com.concept.music.ui.theme.ConceptAmberAccent
+import com.concept.music.ui.theme.ConceptMintAccent
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptStageBackground
+import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
@@ -59,7 +59,6 @@ fun SearchScreen(
 ) {
     val isDark = LocalIsDarkTheme.current
     val cardColor = conceptFloatingCardColor()
-    val elevatedColor = conceptElevatedSurfaceColor()
 
     val query by viewModel.query.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
@@ -136,7 +135,7 @@ fun SearchScreen(
                     )
                 }
         ) {
-            // 顶部无边框饱满搜索输入胶囊（深浅色自适应）
+            // 顶部无边框搜索输入胶囊
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -191,49 +190,55 @@ fun SearchScreen(
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(52.dp)
+                        .height(50.dp)
                 )
             }
 
-            // 现代流体分类 Tab（无边框线，深浅色自适应）
+            // 开放式极简分类导航栏（去除 4 个胶囊按钮外壳，采用底部多彩指示条）
             if (hasSearched && query.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    SearchTab.entries.forEach { tab ->
-                        val isSelected = selectedTab == tab
-                        val animatedBgColor by animateColorAsState(
-                            targetValue = if (isSelected) ConceptPrimary else cardColor,
-                            animationSpec = tween(durationMillis = 180),
-                            label = "search_tab_bg"
-                        )
-                        val animatedTextColor by animateColorAsState(
-                            targetValue = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                            animationSpec = tween(durationMillis = 180),
-                            label = "search_tab_text"
-                        )
-
-                        Surface(
-                            color = animatedBgColor,
-                            shape = RoundedCornerShape(18.dp),
-                            shadowElevation = if (!isDark && !isSelected) 2.dp else 0.dp,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(18.dp))
-                                .clickable { viewModel.selectTab(tab) }
-                        ) {
-                            Text(
-                                text = tab.label,
-                                color = animatedTextColor,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp)
-                            )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(28.dp),
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        SearchTab.entries.forEach { tab ->
+                            val isSelected = selectedTab == tab
+                            val tabAccent = when (tab) {
+                                SearchTab.COMPLEX -> ConceptPrimary
+                                SearchTab.SONG -> ConceptMintAccent
+                                SearchTab.ALBUM -> ConceptAmberAccent
+                                SearchTab.PLAYLIST -> ConceptVioletAccent
+                            }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clickable { viewModel.selectTab(tab) }
+                                    .padding(top = 4.dp)
+                            ) {
+                                Text(
+                                    text = tab.label,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                                    fontSize = if (isSelected) 15.5.sp else 14.5.sp
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .width(20.dp)
+                                        .height(3.dp)
+                                        .clip(CircleShape)
+                                        .background(if (isSelected) tabAccent else Color.Transparent)
+                                )
+                            }
                         }
                     }
+                    HorizontalDivider(
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                    )
                 }
             }
 
@@ -271,7 +276,10 @@ fun SearchScreen(
                                         )
                                     )
                                 }
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
+                                HorizontalDivider(
+                                    thickness = 0.5.dp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                                )
                             }
                         }
                     }
@@ -283,11 +291,11 @@ fun SearchScreen(
                                 CircularProgressIndicator(
                                     color = ConceptPrimary,
                                     strokeWidth = 3.dp,
-                                    modifier = Modifier.size(36.dp)
+                                    modifier = Modifier.size(34.dp)
                                 )
                                 Spacer(modifier = Modifier.height(14.dp))
                                 Text(
-                                    text = "正在检索酷狗概念版曲库...",
+                                    text = "正在检索曲库...",
                                     style = MaterialTheme.typography.bodySmall.copy(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -354,8 +362,7 @@ fun SearchScreen(
                                     LazyColumn(
                                         state = listState,
                                         modifier = Modifier.fillMaxSize(),
-                                        contentPadding = PaddingValues(16.dp),
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                     ) {
                                         items(albumResults) { album ->
                                             AlbumCardItem(album = album, onClick = { onAlbumClick(album.id) })
@@ -366,7 +373,7 @@ fun SearchScreen(
                                                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    CircularProgressIndicator(color = ConceptPrimary, modifier = Modifier.size(24.dp))
+                                                    CircularProgressIndicator(color = ConceptAmberAccent, modifier = Modifier.size(24.dp))
                                                 }
                                             }
                                         }
@@ -380,8 +387,7 @@ fun SearchScreen(
                                     LazyColumn(
                                         state = listState,
                                         modifier = Modifier.fillMaxSize(),
-                                        contentPadding = PaddingValues(16.dp),
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                     ) {
                                         items(playlistResults) { playlist ->
                                             PlaylistSearchCard(playlist = playlist, onClick = { onPlaylistClick(playlist.id) })
@@ -392,7 +398,7 @@ fun SearchScreen(
                                                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    CircularProgressIndicator(color = ConceptPrimary, modifier = Modifier.size(24.dp))
+                                                    CircularProgressIndicator(color = ConceptVioletAccent, modifier = Modifier.size(24.dp))
                                                 }
                                             }
                                         }
@@ -442,13 +448,13 @@ fun SearchScreen(
                                         searchHistory.forEach { hist ->
                                             Surface(
                                                 color = cardColor,
-                                                shape = RoundedCornerShape(18.dp),
-                                                shadowElevation = if (isDark) 0.dp else 2.dp,
-                                                modifier = Modifier.clip(RoundedCornerShape(18.dp))
+                                                shape = RoundedCornerShape(16.dp),
+                                                shadowElevation = if (isDark) 0.dp else 1.dp,
+                                                modifier = Modifier.clip(RoundedCornerShape(16.dp))
                                             ) {
                                                 Row(
                                                     verticalAlignment = Alignment.CenterVertically,
-                                                    modifier = Modifier.padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+                                                    modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
                                                 ) {
                                                     Text(
                                                         text = hist,
@@ -460,12 +466,12 @@ fun SearchScreen(
                                                                 keyboardController?.hide()
                                                                 viewModel.search(hist)
                                                             }
-                                                            .padding(vertical = 6.dp)
+                                                            .padding(vertical = 5.dp)
                                                     )
-                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Spacer(modifier = Modifier.width(2.dp))
                                                     Box(
                                                         modifier = Modifier
-                                                            .size(28.dp)
+                                                            .size(26.dp)
                                                             .clip(CircleShape)
                                                             .clickable { viewModel.removeHistoryItem(hist) },
                                                         contentAlignment = Alignment.Center
@@ -474,7 +480,7 @@ fun SearchScreen(
                                                             imageVector = Icons.Rounded.Close,
                                                             contentDescription = "删除",
                                                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                            modifier = Modifier.size(14.dp)
+                                                            modifier = Modifier.size(13.dp)
                                                         )
                                                     }
                                                 }
@@ -494,22 +500,13 @@ fun SearchScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center
                                 ) {
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = cardColor,
-                                        shadowElevation = if (isDark) 0.dp else 4.dp,
-                                        modifier = Modifier.size(76.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.MusicNote,
-                                                contentDescription = null,
-                                                tint = ConceptPrimary,
-                                                modifier = Modifier.size(36.dp)
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(18.dp))
+                                    Icon(
+                                        imageVector = Icons.Rounded.MusicNote,
+                                        contentDescription = null,
+                                        tint = ConceptPrimary.copy(alpha = 0.65f),
+                                        modifier = Modifier.size(44.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(14.dp))
                                     Text(
                                         text = "搜索你喜爱的音乐",
                                         style = MaterialTheme.typography.titleMedium.copy(
@@ -517,7 +514,7 @@ fun SearchScreen(
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                     )
-                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text = "支持单曲、歌手、专辑与歌单",
                                         style = MaterialTheme.typography.bodySmall.copy(
@@ -535,7 +532,7 @@ fun SearchScreen(
 }
 
 /**
- * 现代设计感综合搜索结果页（自适应深色与浅色主题，无边框圆润悬浮块）
+ * 综合搜索结果页（开放式排版：删除歌手横栏多余的「歌手主页」按钮；歌单与专辑去除独立卡片盒）
  */
 @Composable
 private fun ComplexSearchResultView(
@@ -549,35 +546,41 @@ private fun ComplexSearchResultView(
     onSelectTab: (SearchTab) -> Unit
 ) {
     val isDark = LocalIsDarkTheme.current
-    val cardColor = conceptFloatingCardColor()
     val elevatedColor = conceptElevatedSurfaceColor()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
+        contentPadding = PaddingValues(top = 12.dp, bottom = 112.dp),
+        verticalArrangement = Arrangement.spacedBy(22.dp)
     ) {
-        // 1. 歌手专属无边框悬浮卡片
+        // 1. 歌手直达横栏（删除右侧多余的「歌手主页」蓝色按钮，点击整行即进主页）
         if (result.artists.isNotEmpty()) {
             val artist = result.artists.first()
             item {
+                val artistBrush = if (isDark) {
+                    Brush.linearGradient(listOf(Color(0xFF15253C), Color(0xFF131B2B)))
+                } else {
+                    Brush.linearGradient(listOf(Color(0xFFE8F3FF), Color(0xFFF5F8FF)))
+                }
                 Surface(
-                    shape = RoundedCornerShape(26.dp),
-                    color = cardColor,
-                    shadowElevation = if (isDark) 0.dp else 5.dp,
+                    shape = RoundedCornerShape(22.dp),
+                    color = Color.Transparent,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
-                        .clip(RoundedCornerShape(26.dp))
+                        .clip(RoundedCornerShape(22.dp))
                         .clickable { onArtistClick(artist.id) }
                 ) {
                     Row(
-                        modifier = Modifier.padding(18.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(artistBrush)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(64.dp)
+                                .size(60.dp)
                                 .clip(CircleShape)
                                 .background(elevatedColor),
                             contentAlignment = Alignment.Center
@@ -594,7 +597,7 @@ private fun ComplexSearchResultView(
                                     imageVector = Icons.Rounded.Person,
                                     contentDescription = artist.name,
                                     tint = ConceptPrimary,
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(30.dp)
                                 )
                             }
                         }
@@ -603,40 +606,35 @@ private fun ComplexSearchResultView(
 
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Surface(
-                                    color = ConceptPrimary.copy(alpha = 0.16f),
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(
-                                        text = "歌手",
-                                        color = ConceptPrimary,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = artist.name,
                                     style = MaterialTheme.typography.titleMedium.copy(
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = MaterialTheme.colorScheme.onSurface
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 17.sp
                                     ),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "歌手",
+                                    color = ConceptPrimary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
 
-                            Spacer(modifier = Modifier.height(5.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
 
                             Text(
                                 text = buildString {
                                     if (artist.songCount > 0) append("单曲 ${artist.songCount}")
                                     if (artist.albumCount > 0) {
-                                        if (isNotEmpty()) append(" · ")
+                                        if (isNotEmpty()) append("  ·  ")
                                         append("专辑 ${artist.albumCount}")
                                     }
-                                    if (isEmpty()) append("点击进入歌手主页")
+                                    if (isEmpty()) append("查看代表作与专辑")
                                 },
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -644,21 +642,12 @@ private fun ComplexSearchResultView(
                             )
                         }
 
-                        Surface(
-                            shape = CircleShape,
-                            color = ConceptPrimary,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable { onArtistClick(artist.id) }
-                        ) {
-                            Text(
-                                text = "歌手主页",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Rounded.ChevronRight,
+                            contentDescription = "进入歌手主页",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
                 }
             }
@@ -682,16 +671,26 @@ private fun ComplexSearchResultView(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         )
-                        Text(
-                            text = "查看全部 >",
-                            color = ConceptPrimary,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Bold,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.clickable { onSelectTab(SearchTab.SONG) }
-                        )
+                        ) {
+                            Text(
+                                text = "查看全部",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Icon(
+                                imageVector = Icons.Rounded.ChevronRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
 
                     result.songs.take(6).forEachIndexed { index, song ->
                         SongItemRow(
@@ -706,7 +705,7 @@ private fun ComplexSearchResultView(
             }
         }
 
-        // 3. 精选歌单
+        // 3. 精选歌单（画廊式无外框封面排布，告别外层圆角卡片盒）
         if (result.playlists.isNotEmpty()) {
             item {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -724,79 +723,82 @@ private fun ComplexSearchResultView(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         )
-                        Text(
-                            text = "更多歌单 >",
-                            color = ConceptPrimary,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Bold,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.clickable { onSelectTab(SearchTab.PLAYLIST) }
-                        )
+                        ) {
+                            Text(
+                                text = "更多歌单",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Icon(
+                                imageVector = Icons.Rounded.ChevronRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     LazyRow(
                         contentPadding = PaddingValues(horizontal = 16.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
                         items(result.playlists.take(6)) { pl ->
-                            Surface(
-                                shape = RoundedCornerShape(22.dp),
-                                color = cardColor,
-                                shadowElevation = if (isDark) 0.dp else 4.dp,
+                            Column(
                                 modifier = Modifier
-                                    .width(146.dp)
-                                    .height(194.dp)
-                                    .clip(RoundedCornerShape(22.dp))
+                                    .width(134.dp)
+                                    .clip(RoundedCornerShape(16.dp))
                                     .clickable { onPlaylistClick(pl.id) }
                             ) {
-                                Column(
+                                Box(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(10.dp),
-                                    verticalArrangement = Arrangement.SpaceBetween
+                                        .size(134.dp)
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .background(elevatedColor)
                                 ) {
-                                    Box {
-                                        AsyncImage(
-                                            model = pl.coverUrl,
-                                            contentDescription = pl.name,
-                                            contentScale = ContentScale.Crop,
+                                    AsyncImage(
+                                        model = pl.coverUrl,
+                                        contentDescription = pl.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    if (pl.trackCount > 0) {
+                                        Box(
                                             modifier = Modifier
-                                                .size(126.dp)
-                                                .clip(RoundedCornerShape(16.dp))
-                                                .background(elevatedColor)
-                                        )
-                                        if (pl.trackCount > 0) {
-                                            Surface(
-                                                color = Color.Black.copy(alpha = 0.6f),
-                                                shape = RoundedCornerShape(8.dp),
-                                                modifier = Modifier
-                                                    .align(Alignment.BottomEnd)
-                                                    .padding(6.dp)
-                                            ) {
-                                                Text(
-                                                    text = "${pl.trackCount}首",
-                                                    color = Color.White,
-                                                    fontSize = 9.5.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                )
-                                            }
+                                                .align(Alignment.BottomEnd)
+                                                .padding(6.dp)
+                                                .clip(RoundedCornerShape(7.dp))
+                                                .background(Color.Black.copy(alpha = 0.58f))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "${pl.trackCount}首",
+                                                color = Color.White,
+                                                fontSize = 9.5.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
                                         }
                                     }
-                                    Text(
-                                        text = pl.name,
-                                        maxLines = 2,
-                                        minLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            fontSize = 12.sp,
-                                            lineHeight = 16.sp
-                                        )
-                                    )
                                 }
+                                Spacer(modifier = Modifier.height(7.dp))
+                                Text(
+                                    text = pl.name,
+                                    maxLines = 2,
+                                    minLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 12.5.sp,
+                                        lineHeight = 16.sp
+                                    ),
+                                    modifier = Modifier.padding(horizontal = 2.dp)
+                                )
                             }
                         }
                     }
@@ -804,7 +806,7 @@ private fun ComplexSearchResultView(
             }
         }
 
-        // 4. 热门专辑
+        // 4. 热门专辑（无外框开放式行排版）
         if (result.albums.isNotEmpty()) {
             item {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -822,22 +824,31 @@ private fun ComplexSearchResultView(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         )
-                        Text(
-                            text = "更多专辑 >",
-                            color = ConceptPrimary,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Bold,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.clickable { onSelectTab(SearchTab.ALBUM) }
-                        )
+                        ) {
+                            Text(
+                                text = "更多专辑",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Icon(
+                                imageVector = Icons.Rounded.ChevronRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                            .padding(horizontal = 16.dp)
                     ) {
                         val primaryArtistName = result.artists.firstOrNull()?.name.orEmpty()
                         result.albums.take(4).forEach { alb ->
@@ -853,26 +864,27 @@ private fun ComplexSearchResultView(
     }
 }
 
+/**
+ * 专辑搜索项（无外框通透行排版 + 极细内缩分割线）
+ */
 @Composable
 private fun AlbumCardItem(album: AlbumItem, onClick: () -> Unit = {}) {
-    val isDark = LocalIsDarkTheme.current
-    Surface(
-        shape = RoundedCornerShape(22.dp),
-        color = conceptFloatingCardColor(),
-        shadowElevation = if (isDark) 0.dp else 4.dp,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(14.dp))
             .clickable { onClick() }
     ) {
         Row(
-            modifier = Modifier.padding(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .size(58.dp)
+                    .clip(RoundedCornerShape(14.dp))
                     .background(conceptElevatedSurfaceColor()),
                 contentAlignment = Alignment.Center
             ) {
@@ -890,31 +902,29 @@ private fun AlbumCardItem(album: AlbumItem, onClick: () -> Unit = {}) {
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 14.5.sp
+                        fontSize = 15.sp
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 val meta = buildList {
                     if (album.artist.isNotBlank() && album.artist != "未知歌手") add(album.artist)
-                    if (album.songCount > 1) add("${album.songCount}首曲目") else add("录音室专辑")
+                    if (album.songCount > 1) add("${album.songCount} 首") else add("专辑")
                     if (album.publishDate.isNotBlank()) add(album.publishDate)
                 }.joinToString(" · ")
-                Text(
-                    text = meta,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (album.intro.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(ConceptAmberAccent)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = album.intro.replace("\n", " "),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+                        text = meta,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -924,26 +934,32 @@ private fun AlbumCardItem(album: AlbumItem, onClick: () -> Unit = {}) {
             Icon(
                 imageVector = Icons.Rounded.ChevronRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
             )
         }
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 74.dp),
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+        )
     }
 }
 
+/**
+ * 歌单搜索项（无外框通透行排版 + 极细内缩分割线）
+ */
 @Composable
 private fun PlaylistSearchCard(playlist: PlaylistItem, onClick: () -> Unit = {}) {
-    val isDark = LocalIsDarkTheme.current
-    Surface(
-        shape = RoundedCornerShape(22.dp),
-        color = conceptFloatingCardColor(),
-        shadowElevation = if (isDark) 0.dp else 4.dp,
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(22.dp))
+            .clip(RoundedCornerShape(14.dp))
             .clickable { onClick() }
     ) {
         Row(
-            modifier = Modifier.padding(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             AsyncImage(
@@ -951,8 +967,8 @@ private fun PlaylistSearchCard(playlist: PlaylistItem, onClick: () -> Unit = {})
                 contentDescription = playlist.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .size(58.dp)
+                    .clip(RoundedCornerShape(14.dp))
                     .background(conceptElevatedSurfaceColor())
             )
             Spacer(modifier = Modifier.width(14.dp))
@@ -962,26 +978,24 @@ private fun PlaylistSearchCard(playlist: PlaylistItem, onClick: () -> Unit = {})
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 14.5.sp
+                        fontSize = 15.sp
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "创建者：${playlist.creatorName} · ${playlist.trackCount}首",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (playlist.intro.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(3.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(ConceptVioletAccent)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = playlist.intro.replace("\n", " "),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+                        text = "${playlist.creatorName} · ${playlist.trackCount} 首",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -991,9 +1005,14 @@ private fun PlaylistSearchCard(playlist: PlaylistItem, onClick: () -> Unit = {})
             Icon(
                 imageVector = Icons.Rounded.ChevronRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
             )
         }
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 74.dp),
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+        )
     }
 }
 

@@ -468,44 +468,47 @@ fun RadioScreen(
                 // 2. 分段式电台分类栏 + 平滑折叠电台矩阵
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        // 免滑动分段式分类切换条
-                        Surface(
-                            shape = RoundedCornerShape(18.dp),
-                            color = conceptElevatedSurfaceColor(),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
+                        // 开放式极简电台分类指示栏（无胶囊外壳）
+                        Column(modifier = Modifier.fillMaxWidth()) {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                                verticalAlignment = Alignment.Bottom
                             ) {
                                 categories.forEach { cat ->
                                     val selected = cat == selectedCategory
                                     val tabAccent = radioCategoryAccentColor(cat)
-                                    Surface(
-                                        shape = RoundedCornerShape(14.dp),
-                                        color = if (selected) tabAccent else Color.Transparent,
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(14.dp))
                                             .clickable {
                                                 selectedCategory = cat
                                                 showAllStationsGrid = true
                                             }
+                                            .padding(top = 4.dp)
                                     ) {
                                         Text(
                                             text = cat.removeSuffix("电台"),
-                                            color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                            fontSize = 12.sp,
-                                            textAlign = TextAlign.Center,
-                                            maxLines = 1,
-                                            modifier = Modifier.padding(vertical = 7.dp)
+                                            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                            fontSize = 14.sp,
+                                            maxLines = 1
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .width(18.dp)
+                                                .height(3.dp)
+                                                .clip(CircleShape)
+                                                .background(if (selected) tabAccent else Color.Transparent)
                                         )
                                     }
                                 }
                             }
+                            HorizontalDivider(
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                            )
                         }
 
                         AnimatedVisibility(

@@ -779,32 +779,44 @@ private fun SettingsSectionCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val isDark = LocalIsDarkTheme.current
+    val sectionAccent = when {
+        title.contains("外观") || title.contains("主题") -> ConceptVioletAccent
+        title.contains("音质") -> ConceptMintAccent
+        title.contains("耳机") -> ConceptCoralAccent
+        title.contains("歌词") -> ConceptCyanAccent
+        title.contains("VIP") -> VipGold
+        title.contains("缓存") -> ConceptAmberAccent
+        else -> ConceptPrimary
+    }
     Surface(
         shape = RoundedCornerShape(24.dp),
         color = conceptFloatingCardColor(),
-        shadowElevation = if (isDark) 0.dp else 4.dp,
+        shadowElevation = if (isDark) 0.dp else 3.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(30.dp)
+                        .width(3.5.dp)
+                        .height(16.dp)
                         .clip(CircleShape)
-                        .background(ConceptPrimary.copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = ConceptPrimary,
-                        modifier = Modifier.size(17.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(10.dp))
+                        .background(sectionAccent)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = sectionAccent,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                    style = MaterialTheme.typography.titleSmall.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp
+                    )
                 )
             }
             Spacer(modifier = Modifier.height(14.dp))

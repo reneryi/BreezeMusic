@@ -1,6 +1,5 @@
 package com.concept.music.ui.library
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,9 +15,11 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -32,12 +33,39 @@ import com.concept.music.data.model.ArtistItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
 import com.concept.music.ui.components.SongItemRow
+import com.concept.music.ui.theme.ConceptAmberAccent
+import com.concept.music.ui.theme.ConceptCoralAccent
+import com.concept.music.ui.theme.ConceptMintAccent
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.ConceptStageBackground
+import com.concept.music.ui.theme.ConceptVioletAccent
+import com.concept.music.ui.theme.conceptFloatingCardColor
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * 歌手主页会话内存缓存：
+ * 确保用户在歌手主页切换至「专辑」Tab 点击进入某张专辑再返回时：
+ * 1. 保持停留在「专辑」Tab，绝不重置回「单曲」页；
+ * 2. 直接恢复已加载好的歌手详情、单曲与专辑列表，绝不重复触发网络请求。
+ */
+private data class ArtistPageSessionSnapshot(
+    val artist: ArtistItem?,
+    val songs: List<Song>,
+    val albums: List<AlbumItem>,
+    val selectedTab: Int,
+    val sortMethod: String,
+    val songPage: Int,
+    val hasMoreSongs: Boolean,
+    val albumPage: Int,
+    val hasMoreAlbums: Boolean
+)
+
+private val artistPageSessionCache = ConcurrentHashMap<String, ArtistPageSessionSnapshot>()
 
 @Composable
 fun ArtistDetailScreen(
@@ -54,26 +82,43 @@ fun ArtistDetailScreen(
     val coroutineScope = rememberCoroutineScope()
     val listState = rememberLazyListState()
 
-    var artist by remember { mutableStateOf<ArtistItem?>(null) }
-    var songs by remember { mutableStateOf<List<Song>>(emptyList()) }
-    var albums by remember { mutableStateOf<List<AlbumItem>>(emptyList()) }
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: 单曲, 1: 专辑, 2: 歌手百科
-    var sortMethod by remember { mutableStateOf("hot") } // hot | new
-    var songSearchQuery by remember { mutableStateOf("") }
+    val cachedSnapshot = remember(artistId) { artistPageSessionCache[artistId] }
 
-    var loading by remember { mutableStateOf(true) }
-    var songsLoading by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var isHeaderIntroExpanded by remember { mutableStateOf(false) }
+    var artist by remember(artistId) { mutableStateOf(cachedSnapshot?.artist) }
+    var songs by remember(artistId) { mutableStateOf(cachedSnapshot?.songs ?: emptyList()) }
+    var albums by remember(artistId) { mutableStateOf(cachedSnapshot?.albums ?: emptyList()) }
+    var selectedTab by rememberSaveable(artistId) { mutableIntStateOf(cachedSnapshot?.selectedTab ?: 0) } // 0: 单曲, 1: 专辑, 2: 歌手百科
+    var sortMethod by rememberSaveable(artistId) { mutableStateOf(cachedSnapshot?.sortMethod ?: "hot") } // hot | new
+    var songSearchQuery by rememberSaveable(artistId) { mutableStateOf("") }
 
-    // 无限滚动分页状态（彻底突破原先 100 首歌与 50 张专辑的上限！）
-    var songPage by remember { mutableIntStateOf(1) }
-    var hasMoreSongs by remember { mutableStateOf(true) }
-    var loadingMoreSongs by remember { mutableStateOf(false) }
+    var loading by remember(artistId) { mutableStateOf(cachedSnapshot == null) }
+    var songsLoading by remember(artistId) { mutableStateOf(false) }
+    var error by remember(artistId) { mutableStateOf<String?>(null) }
 
-    var albumPage by remember { mutableIntStateOf(1) }
-    var hasMoreAlbums by remember { mutableStateOf(true) }
-    var loadingMoreAlbums by remember { mutableStateOf(false) }
+    var songPage by remember(artistId) { mutableIntStateOf(cachedSnapshot?.songPage ?: 1) }
+    var hasMoreSongs by remember(artistId) { mutableStateOf(cachedSnapshot?.hasMoreSongs ?: true) }
+    var loadingMoreSongs by remember(artistId) { mutableStateOf(false) }
+
+    var albumPage by remember(artistId) { mutableIntStateOf(cachedSnapshot?.albumPage ?: 1) }
+    var hasMoreAlbums by remember(artistId) { mutableStateOf(cachedSnapshot?.hasMoreAlbums ?: true) }
+    var loadingMoreAlbums by remember(artistId) { mutableStateOf(false) }
+
+    // 实时同步当前歌手主页状态至会话缓存，确保进入专辑详情再返回时零闪烁恢复
+    LaunchedEffect(artistId, artist, songs, albums, selectedTab, sortMethod, songPage, hasMoreSongs, albumPage, hasMoreAlbums) {
+        if (artist != null || songs.isNotEmpty() || albums.isNotEmpty()) {
+            artistPageSessionCache[artistId] = ArtistPageSessionSnapshot(
+                artist = artist,
+                songs = songs,
+                albums = albums,
+                selectedTab = selectedTab,
+                sortMethod = sortMethod,
+                songPage = songPage,
+                hasMoreSongs = hasMoreSongs,
+                albumPage = albumPage,
+                hasMoreAlbums = hasMoreAlbums
+            )
+        }
+    }
 
     fun loadAllData() {
         coroutineScope.launch {
@@ -127,63 +172,6 @@ fun ArtistDetailScreen(
         }
     }
 
-    fun loadMoreSongs() {
-        if (loadingMoreSongs || !hasMoreSongs || loading || songsLoading) return
-        loadingMoreSongs = true
-        val nextPage = songPage + 1
-        coroutineScope.launch {
-            val nextBatch = runCatching {
-                VipManager.music.artistSongs(artistId, sort = sortMethod, page = nextPage, pageSize = 100)
-            }.getOrDefault(emptyList())
-            if (nextBatch.isEmpty()) {
-                hasMoreSongs = false
-            } else {
-                val existingKeys = songs.map { it.hash.ifBlank { it.id }.lowercase() }.toHashSet()
-                val uniqueNew = nextBatch.filter { existingKeys.add(it.hash.ifBlank { it.id }.lowercase()) }
-                if (uniqueNew.isEmpty()) {
-                    hasMoreSongs = false
-                } else {
-                    songs = songs + uniqueNew
-                    songPage = nextPage
-                    val targetTotal = artist?.songCount ?: 0
-                    hasMoreSongs = nextBatch.size >= 30 && (targetTotal == 0 || songs.size < targetTotal)
-                }
-            }
-            loadingMoreSongs = false
-        }
-    }
-
-    fun loadMoreAlbums() {
-        if (loadingMoreAlbums || !hasMoreAlbums || loading) return
-        loadingMoreAlbums = true
-        val nextPage = albumPage + 1
-        coroutineScope.launch {
-            val nextBatch = runCatching {
-                VipManager.music.artistAlbums(artistId, page = nextPage, pageSize = 50)
-            }.getOrDefault(emptyList())
-            if (nextBatch.isEmpty()) {
-                hasMoreAlbums = false
-            } else {
-                val existingIds = albums.map { it.id }.toHashSet()
-                val artistName = artist?.name.orEmpty()
-                val uniqueNew = nextBatch.filter { existingIds.add(it.id) }.map { alb ->
-                    if (alb.artist.isBlank() || alb.artist == "未知歌手" || alb.artist == "群星") {
-                        alb.copy(artist = artistName.ifBlank { alb.artist })
-                    } else alb
-                }
-                if (uniqueNew.isEmpty()) {
-                    hasMoreAlbums = false
-                } else {
-                    albums = albums + uniqueNew
-                    albumPage = nextPage
-                    val targetTotal = artist?.albumCount ?: 0
-                    hasMoreAlbums = nextBatch.size >= 20 && (targetTotal == 0 || albums.size < targetTotal)
-                }
-            }
-            loadingMoreAlbums = false
-        }
-    }
-
     fun reloadSongsBySort(newSort: String) {
         if (sortMethod == newSort && songs.isNotEmpty()) return
         sortMethod = newSort
@@ -202,28 +190,83 @@ fun ArtistDetailScreen(
         }
     }
 
-    // 滚动触底自动加载下一页单曲或专辑
-    val shouldLoadMore by remember {
-        derivedStateOf {
-            val layoutInfo = listState.layoutInfo
-            val totalItems = layoutInfo.totalItemsCount
-            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            totalItems > 4 && lastVisible >= totalItems - 5
+    // 仅在首次进入（无会话缓存）时请求网络，从专辑页返回时直接复用缓存，绝不重新加载
+    LaunchedEffect(artistId) {
+        val existing = artistPageSessionCache[artistId]
+        if (existing == null || (existing.songs.isEmpty() && existing.albums.isEmpty())) {
+            loadAllData()
+        } else {
+            loading = false
         }
     }
 
-    LaunchedEffect(shouldLoadMore, selectedTab, songSearchQuery) {
-        if (shouldLoadMore) {
-            if (selectedTab == 0 && songSearchQuery.isBlank()) {
-                loadMoreSongs()
-            } else if (selectedTab == 1) {
-                loadMoreAlbums()
+    // 静默全量加载单曲：只要停留在歌手主页，后台自动连续静默拉取后续分页，直到全部单曲加载完毕
+    LaunchedEffect(artistId, sortMethod, loading, songsLoading, hasMoreSongs) {
+        if (!loading && !songsLoading && hasMoreSongs && !loadingMoreSongs) {
+            loadingMoreSongs = true
+            try {
+                while (hasMoreSongs && songPage < 25) {
+                    delay(90)
+                    val nextPage = songPage + 1
+                    val nextBatch = runCatching {
+                        VipManager.music.artistSongs(artistId, sort = sortMethod, page = nextPage, pageSize = 100)
+                    }.getOrDefault(emptyList())
+                    if (nextBatch.isEmpty()) {
+                        hasMoreSongs = false
+                        break
+                    }
+                    val existingKeys = songs.map { it.hash.ifBlank { it.id }.lowercase() }.toHashSet()
+                    val uniqueNew = nextBatch.filter { existingKeys.add(it.hash.ifBlank { it.id }.lowercase()) }
+                    if (uniqueNew.isEmpty()) {
+                        hasMoreSongs = false
+                        break
+                    }
+                    songs = songs + uniqueNew
+                    songPage = nextPage
+                    val targetTotal = artist?.songCount ?: 0
+                    hasMoreSongs = nextBatch.size >= 30 && (targetTotal == 0 || songs.size < targetTotal)
+                }
+            } finally {
+                loadingMoreSongs = false
             }
         }
     }
 
-    LaunchedEffect(artistId) {
-        loadAllData()
+    // 静默全量加载专辑：后台自动连续拉取剩余专辑页直至全部加载完毕
+    LaunchedEffect(artistId, loading, hasMoreAlbums) {
+        if (!loading && hasMoreAlbums && !loadingMoreAlbums) {
+            loadingMoreAlbums = true
+            try {
+                while (hasMoreAlbums && albumPage < 15) {
+                    delay(120)
+                    val nextPage = albumPage + 1
+                    val nextBatch = runCatching {
+                        VipManager.music.artistAlbums(artistId, page = nextPage, pageSize = 50)
+                    }.getOrDefault(emptyList())
+                    if (nextBatch.isEmpty()) {
+                        hasMoreAlbums = false
+                        break
+                    }
+                    val existingIds = albums.map { it.id }.toHashSet()
+                    val artistName = artist?.name.orEmpty()
+                    val uniqueNew = nextBatch.filter { existingIds.add(it.id) }.map { alb ->
+                        if (alb.artist.isBlank() || alb.artist == "未知歌手" || alb.artist == "群星") {
+                            alb.copy(artist = artistName.ifBlank { alb.artist })
+                        } else alb
+                    }
+                    if (uniqueNew.isEmpty()) {
+                        hasMoreAlbums = false
+                        break
+                    }
+                    albums = albums + uniqueNew
+                    albumPage = nextPage
+                    val targetTotal = artist?.albumCount ?: 0
+                    hasMoreAlbums = nextBatch.size >= 20 && (targetTotal == 0 || albums.size < targetTotal)
+                }
+            } finally {
+                loadingMoreAlbums = false
+            }
+        }
     }
 
     val filteredSongs = remember(songs, songSearchQuery) {
@@ -280,145 +323,177 @@ fun ArtistDetailScreen(
                     .padding(innerPadding),
                 contentPadding = PaddingValues(bottom = 112.dp)
             ) {
-                // 1. 歌手头部信息卡片
+                // 1. 开放式无框歌手头部（消除厚重灰盒与胶囊分段栏，视觉开阔通透）
                 item {
-                    Card(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
-                        )
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
                     ) {
-                        Column(modifier = Modifier.padding(18.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(88.dp)
+                                    .shadow(8.dp, CircleShape)
+                                    .clip(CircleShape)
+                                    .background(Brush.linearGradient(listOf(ConceptPrimary, ConceptPrimaryDark))),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(92.dp)
-                                        .clip(CircleShape)
-                                        .background(Brush.linearGradient(listOf(ConceptPrimaryDark, Color(0xFF1E293B)))),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (!artist?.avatarUrl.isNullOrBlank()) {
-                                        AsyncImage(
-                                            model = artist!!.avatarUrl,
-                                            contentDescription = artist?.name,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Person,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(46.dp)
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.width(16.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = artist?.name ?: "歌手",
-                                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        if (onToggleFollow != null && artist != null) {
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            FilledTonalButton(
-                                                onClick = { artist?.let { onToggleFollow(it) } },
-                                                shape = CircleShape,
-                                                colors = ButtonDefaults.filledTonalButtonColors(
-                                                    containerColor = if (isFollowed) MaterialTheme.colorScheme.surface else ConceptPrimary,
-                                                    contentColor = if (isFollowed) MaterialTheme.colorScheme.onSurfaceVariant else Color.White
-                                                ),
-                                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
-                                                modifier = Modifier.height(32.dp)
-                                            ) {
-                                                Text(
-                                                    text = if (isFollowed) "已关注" else "+ 关注",
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = "单曲 $totalSongCountDisplay 首  ·  专辑 $totalAlbumCountDisplay 张",
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            color = ConceptPrimary,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
+                                if (!artist?.avatarUrl.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = artist!!.avatarUrl,
+                                        contentDescription = artist?.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
                                     )
-                                    if (!artist?.intro.isNullOrBlank()) {
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = artist!!.intro.replace("\n", " "),
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                                                lineHeight = 17.sp
-                                            ),
-                                            maxLines = if (isHeaderIntroExpanded) 6 else 2,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.clickable { selectedTab = 2 }
-                                        )
-                                    }
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Person,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(44.dp)
+                                    )
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(16.dp))
+                            Spacer(modifier = Modifier.width(18.dp))
 
-                            // 栏目切换：单曲 / 专辑 / 歌手百科（显示真实总数，不再被第一页的 100/50 截断）
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f))
-                                    .padding(4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                val tabs = listOf(
-                                    "单曲 ($totalSongCountDisplay)",
-                                    "专辑 ($totalAlbumCountDisplay)",
-                                    "歌手百科"
-                                )
-                                tabs.forEachIndexed { idx, title ->
-                                    val selected = selectedTab == idx
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(if (selected) ConceptPrimary else Color.Transparent)
-                                            .clickable { selectedTab = idx }
-                                            .padding(vertical = 8.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = title,
-                                            style = MaterialTheme.typography.labelLarge.copy(
-                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                                color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-                                            ),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = artist?.name ?: "歌手",
+                                        style = MaterialTheme.typography.headlineSmall.copy(
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 22.sp
+                                        ),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (onToggleFollow != null && artist != null) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = if (isFollowed) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f) else ConceptCoralAccent,
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .clickable { artist?.let { onToggleFollow(it) } }
+                                        ) {
+                                            Text(
+                                                text = if (isFollowed) "已关注" else "+ 关注",
+                                                color = if (isFollowed) MaterialTheme.colorScheme.onSurfaceVariant else Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                            )
+                                        }
                                     }
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "单曲 $totalSongCountDisplay",
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            color = ConceptPrimary,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.5.sp
+                                        )
+                                    )
+                                    Text(
+                                        text = "  ·  ",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                        fontSize = 12.sp
+                                    )
+                                    Text(
+                                        text = "专辑 $totalAlbumCountDisplay",
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            color = ConceptAmberAccent,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.5.sp
+                                        )
+                                    )
+                                }
+                                if (!artist?.intro.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = artist!!.intro.replace("\n", " "),
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.82f),
+                                            lineHeight = 17.sp
+                                        ),
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.clickable { selectedTab = 2 }
+                                    )
                                 }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+
+                        // 开放式极简栏目导航栏（单曲 / 专辑 / 歌手百科 + 多彩底部指示条）
+                        val tabConfigs = listOf(
+                            Triple("单曲", totalSongCountDisplay.toString(), ConceptPrimary),
+                            Triple("专辑", totalAlbumCountDisplay.toString(), ConceptAmberAccent),
+                            Triple("歌手百科", "", ConceptVioletAccent)
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(28.dp),
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            tabConfigs.forEachIndexed { idx, (label, countText, tabAccent) ->
+                                val selected = selectedTab == idx
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .clickable { selectedTab = idx }
+                                        .padding(top = 4.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.Bottom) {
+                                        Text(
+                                            text = label,
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = if (selected) 16.sp else 15.sp
+                                            )
+                                        )
+                                        if (countText.isNotEmpty()) {
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = countText,
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (selected) tabAccent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                    fontSize = 11.sp
+                                                ),
+                                                modifier = Modifier.padding(bottom = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(7.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .width(22.dp)
+                                            .height(3.dp)
+                                            .clip(CircleShape)
+                                            .background(if (selected) tabAccent else Color.Transparent)
+                                    )
+                                }
+                            }
+                        }
+                        HorizontalDivider(
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                        )
                     }
                 }
 
@@ -445,19 +520,19 @@ fun ArtistDetailScreen(
 
                 when (selectedTab) {
                     0 -> {
-                        // 单曲页：搜索过滤框 + 一键播放 + 最热/最新切换
+                        // 单曲页：极简搜索栏（不显示“在已加载的xx首单曲中搜索”）+ 开放式全播与最热/最新文字切换
                         item {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 OutlinedTextField(
                                     value = songSearchQuery,
                                     onValueChange = { songSearchQuery = it },
                                     singleLine = true,
-                                    placeholder = { Text("在已加载的 ${songs.size} 首单曲中搜索...", fontSize = 13.sp) },
+                                    placeholder = { Text("搜索单曲或专辑名称...", fontSize = 13.sp) },
                                     leadingIcon = {
                                         Icon(Icons.Rounded.Search, contentDescription = null, tint = ConceptPrimary, modifier = Modifier.size(18.dp))
                                     },
@@ -468,64 +543,86 @@ fun ArtistDetailScreen(
                                             }
                                         }
                                     },
-                                    shape = RoundedCornerShape(16.dp),
+                                    shape = CircleShape,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = ConceptPrimary,
+                                        unfocusedBorderColor = Color.Transparent,
+                                        focusedContainerColor = conceptFloatingCardColor(),
+                                        unfocusedContainerColor = conceptFloatingCardColor()
+                                    ),
                                     modifier = Modifier.fillMaxWidth()
                                 )
 
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 2.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Button(
-                                        onClick = {
-                                            if (filteredSongs.isNotEmpty()) {
-                                                onSongClick(filteredSongs.first(), filteredSongs)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(18.dp))
+                                            .clickable(enabled = filteredSongs.isNotEmpty()) {
+                                                if (filteredSongs.isNotEmpty()) {
+                                                    onSongClick(filteredSongs.first(), filteredSongs)
+                                                }
                                             }
-                                        },
-                                        enabled = filteredSongs.isNotEmpty(),
-                                        shape = CircleShape,
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = ConceptPrimary,
-                                            contentColor = Color.White
-                                        ),
-                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                                            .padding(vertical = 4.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.PlayArrow,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp)
+                                        Box(
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(CircleShape)
+                                                .background(ConceptPrimary),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.PlayArrow,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Text(
+                                            text = "播放全部",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 15.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "播放全部 (${filteredSongs.size})",
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 13.sp
+                                            text = "${filteredSongs.size} 首",
+                                            fontSize = 12.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
 
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        FilterChip(
-                                            selected = sortMethod == "hot",
-                                            onClick = { reloadSongsBySort("hot") },
-                                            label = { Text("最热", fontSize = 12.sp) },
-                                            colors = FilterChipDefaults.filterChipColors(
-                                                selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
-                                                selectedLabelColor = ConceptPrimary
-                                            ),
-                                            border = null,
-                                            shape = RoundedCornerShape(12.dp)
+                                    // 开放式最热 / 最新文字切换（无胶囊背景框）
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                    ) {
+                                        Text(
+                                            text = "最热",
+                                            color = if (sortMethod == "hot") ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = if (sortMethod == "hot") FontWeight.ExtraBold else FontWeight.Medium,
+                                            fontSize = 13.5.sp,
+                                            modifier = Modifier.clickable { reloadSongsBySort("hot") }
                                         )
-                                        FilterChip(
-                                            selected = sortMethod == "new",
-                                            onClick = { reloadSongsBySort("new") },
-                                            label = { Text("最新", fontSize = 12.sp) },
-                                            colors = FilterChipDefaults.filterChipColors(
-                                                selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
-                                                selectedLabelColor = ConceptPrimary
-                                            ),
-                                            border = null,
-                                            shape = RoundedCornerShape(12.dp)
+                                        Text(
+                                            text = "|",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                                            fontSize = 12.sp
+                                        )
+                                        Text(
+                                            text = "最新",
+                                            color = if (sortMethod == "new") ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = if (sortMethod == "new") FontWeight.ExtraBold else FontWeight.Medium,
+                                            fontSize = 13.5.sp,
+                                            modifier = Modifier.clickable { reloadSongsBySort("new") }
                                         )
                                     }
                                 }
@@ -567,60 +664,11 @@ fun ArtistDetailScreen(
                                     onMoreClick = { onSongMoreClick(song) }
                                 )
                             }
-
-                            // 底部自动/手动加载更多单曲提示
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 16.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    when {
-                                        loadingMoreSongs -> {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                CircularProgressIndicator(
-                                                    color = ConceptPrimary,
-                                                    strokeWidth = 2.dp,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                Text(
-                                                    text = "正在加载更多单曲 (${songs.size}/$totalSongCountDisplay)...",
-                                                    fontSize = 12.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                        hasMoreSongs -> {
-                                            OutlinedButton(
-                                                onClick = { loadMoreSongs() },
-                                                shape = RoundedCornerShape(16.dp),
-                                                border = BorderStroke(0.8.dp, ConceptPrimary.copy(alpha = 0.5f))
-                                            ) {
-                                                Text(
-                                                    text = "加载更多单曲（已展示 ${songs.size} / 共 $totalSongCountDisplay 首）",
-                                                    fontSize = 12.sp,
-                                                    color = ConceptPrimary,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                        songs.isNotEmpty() -> {
-                                            Text(
-                                                text = "— 已加载全部 ${songs.size} 首单曲 —",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
 
                     1 -> {
-                        // 专辑页：展示歌手所有发行专辑，支持无限滚动分页加载全部专辑
+                        // 专辑页：展示歌手所有发行专辑，后台静默全量加载，无外框通透行排版
                         if (!loading && albums.isEmpty()) {
                             item {
                                 Box(
@@ -642,145 +690,85 @@ fun ArtistDetailScreen(
                                     onClick = { onAlbumClick(albumItem.id) }
                                 )
                             }
-
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 16.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    when {
-                                        loadingMoreAlbums -> {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                CircularProgressIndicator(
-                                                    color = ConceptPrimary,
-                                                    strokeWidth = 2.dp,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(8.dp))
-                                                Text(
-                                                    text = "正在加载更多专辑 (${albums.size}/$totalAlbumCountDisplay)...",
-                                                    fontSize = 12.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                        hasMoreAlbums -> {
-                                            OutlinedButton(
-                                                onClick = { loadMoreAlbums() },
-                                                shape = RoundedCornerShape(16.dp),
-                                                border = BorderStroke(0.8.dp, ConceptPrimary.copy(alpha = 0.5f))
-                                            ) {
-                                                Text(
-                                                    text = "加载更多专辑（已展示 ${albums.size} / 共 $totalAlbumCountDisplay 张）",
-                                                    fontSize = 12.sp,
-                                                    color = ConceptPrimary,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                        albums.isNotEmpty() -> {
-                                            Text(
-                                                text = "— 已加载全部 ${albums.size} 张专辑 —",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
 
                     2 -> {
-                        // 歌手详情与完整多段落百科面板
+                        // 歌手百科：开放式杂志排版，去除卡片套卡片
                         item {
-                            Card(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                                shape = RoundedCornerShape(20.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                                )
+                                    .padding(horizontal = 20.dp, vertical = 14.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
-                                Column(
-                                    modifier = Modifier.padding(20.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.MenuBook,
-                                            contentDescription = null,
-                                            tint = ConceptPrimary,
-                                            modifier = Modifier.size(20.dp)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(3.5.dp)
+                                            .height(16.dp)
+                                            .clip(CircleShape)
+                                            .background(ConceptVioletAccent)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "艺人档案",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = MaterialTheme.colorScheme.onSurface
                                         )
-                                        Spacer(modifier = Modifier.width(8.dp))
+                                    )
+                                }
+
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = "歌手姓名：${artist?.name ?: "未知"}",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        text = "作品收录：单曲 $totalSongCountDisplay 首  ·  专辑 $totalAlbumCountDisplay 张",
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    )
+                                    if (songs.isNotEmpty()) {
+                                        val topWorks = songs.take(3).joinToString(" / ") { "《${it.title}》" }
                                         Text(
-                                            text = "艺人百科与完整档案",
-                                            style = MaterialTheme.typography.titleMedium.copy(
-                                                fontWeight = FontWeight.Bold,
-                                                color = ConceptPrimary
+                                            text = "代表作品：$topWorks",
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                color = ConceptPrimary,
+                                                fontWeight = FontWeight.SemiBold
                                             )
                                         )
                                     }
+                                }
 
-                                    Surface(
-                                        shape = RoundedCornerShape(14.dp),
-                                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.padding(14.dp),
-                                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(
-                                                text = "艺人姓名：${artist?.name ?: "未知"}",
-                                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
-                                            )
-                                            Text(
-                                                text = "曲库收录：单曲 $totalSongCountDisplay 首 · 专辑 $totalAlbumCountDisplay 张",
-                                                style = MaterialTheme.typography.bodySmall.copy(
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            )
-                                            if (songs.isNotEmpty()) {
-                                                val topWorks = songs.take(3).joinToString(" / ") { "《${it.title}》" }
-                                                Text(
-                                                    text = "代表作品：$topWorks",
-                                                    style = MaterialTheme.typography.bodySmall.copy(
-                                                        color = ConceptPrimary
-                                                    )
-                                                )
-                                            }
-                                        }
-                                    }
+                                HorizontalDivider(
+                                    thickness = 0.5.dp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                )
 
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
-
-                                    val fullIntro = artist?.intro?.trim().orEmpty()
-                                    if (fullIntro.isBlank()) {
+                                val fullIntro = artist?.intro?.trim().orEmpty()
+                                if (fullIntro.isBlank()) {
+                                    Text(
+                                        text = "暂无该歌手的详细百科介绍。",
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    )
+                                } else {
+                                    val paragraphs = fullIntro.split("\n", "\r\n")
+                                        .map { it.trim() }
+                                        .filter { it.isNotBlank() }
+                                    paragraphs.forEach { para ->
                                         Text(
-                                            text = "暂无该歌手的详细百科介绍。",
+                                            text = para,
                                             style = MaterialTheme.typography.bodyMedium.copy(
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f),
+                                                lineHeight = 24.sp,
+                                                fontSize = 14.5.sp
                                             )
                                         )
-                                    } else {
-                                        val paragraphs = fullIntro.split("\n", "\r\n")
-                                            .map { it.trim() }
-                                            .filter { it.isNotBlank() }
-                                        paragraphs.forEach { para ->
-                                            Text(
-                                                text = para,
-                                                style = MaterialTheme.typography.bodyMedium.copy(
-                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f),
-                                                    lineHeight = 24.sp,
-                                                    fontSize = 14.5.sp
-                                                )
-                                            )
-                                        }
                                     }
                                 }
                             }
@@ -792,30 +780,31 @@ fun ArtistDetailScreen(
     }
 }
 
+/**
+ * 歌手专辑列表行（开放式无外框排版 + 琥珀金圆点 + 极细内缩分割线）
+ */
 @Composable
 private fun ArtistAlbumRow(
     album: AlbumItem,
     onClick: () -> Unit
 ) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 5.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .padding(horizontal = 16.dp)
+            .clip(RoundedCornerShape(14.dp))
             .clickable(onClick = onClick)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(vertical = 10.dp, horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(60.dp)
+                    .clip(RoundedCornerShape(14.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
@@ -830,8 +819,8 @@ private fun ArtistAlbumRow(
                     Icon(
                         imageVector = Icons.Rounded.Album,
                         contentDescription = null,
-                        tint = ConceptPrimary,
-                        modifier = Modifier.size(30.dp)
+                        tint = ConceptAmberAccent,
+                        modifier = Modifier.size(28.dp)
                     )
                 }
             }
@@ -847,24 +836,22 @@ private fun ArtistAlbumRow(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 val metaParts = buildList {
-                    if (album.publishDate.isNotBlank()) add("发行于 ${album.publishDate}")
-                    if (album.songCount > 1) add("${album.songCount} 首曲目")
+                    if (album.publishDate.isNotBlank()) add(album.publishDate)
+                    if (album.songCount > 1) add("${album.songCount} 首")
                     if (album.company.isNotBlank()) add(album.company)
                 }
-                Text(
-                    text = if (metaParts.isNotEmpty()) metaParts.joinToString(" · ") else album.artist,
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (album.intro.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(ConceptAmberAccent)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = album.intro.replace("\n", " "),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        text = if (metaParts.isNotEmpty()) metaParts.joinToString(" · ") else album.artist,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -875,8 +862,13 @@ private fun ArtistAlbumRow(
             Icon(
                 imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                 contentDescription = "查看专辑",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
             )
         }
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 76.dp),
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+        )
     }
 }

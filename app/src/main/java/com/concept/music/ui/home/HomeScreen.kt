@@ -301,14 +301,14 @@ fun HomeScreen(
                 )
             }
 
-            // 5. 巅峰排行榜
+            // 5. 巅峰排行榜（开放式排版：无胶囊按钮堆叠，采用底部多彩指示条与单层微渐变榜单卡）
             if (ranks.isNotEmpty()) {
                 item {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 10.dp),
+                                .padding(bottom = 6.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -316,64 +316,76 @@ fun HomeScreen(
                                 text = "巅峰排行榜",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 18.sp
                                 )
                             )
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = ConceptPrimary.copy(alpha = 0.14f),
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(14.dp))
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable { showRankGridSheet = true }
+                                    .padding(horizontal = 4.dp, vertical = 4.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.GridView,
-                                        contentDescription = "榜单宫格",
-                                        tint = ConceptPrimary,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(5.dp))
-                                    Text(
-                                        text = "榜单宫格 (${ranks.size})",
-                                        color = ConceptPrimary,
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
+                                Text(
+                                    text = "全部 ${ranks.size} 榜",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Icon(
+                                    imageVector = Icons.Rounded.ChevronRight,
+                                    contentDescription = "榜单宫格",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
                             }
                         }
 
                         if (rankCategories.size > 2) {
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(22.dp),
+                                verticalAlignment = Alignment.Bottom,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(bottom = 12.dp)
+                                    .padding(bottom = 4.dp)
                             ) {
-                                items(rankCategories) { cat ->
+                                rankCategories.forEach { cat ->
                                     val selected = cat == selectedRankCategory
-                                    Surface(
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = if (selected) ConceptPrimary else conceptFloatingCardColor(),
-                                        shadowElevation = if (!isDark && !selected) 2.dp else 0.dp,
+                                    val catAccent = when (cat) {
+                                        "官方热榜" -> ConceptCoralAccent
+                                        "特色曲风" -> ConceptVioletAccent
+                                        "全球权威" -> ConceptCyanAccent
+                                        else -> ConceptPrimary
+                                    }
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(16.dp))
                                             .clickable { selectedRankCategory = cat }
+                                            .padding(top = 4.dp)
                                     ) {
                                         Text(
                                             text = cat,
-                                            color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                            fontSize = 12.sp,
-                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                            fontSize = 13.5.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .width(18.dp)
+                                                .height(3.dp)
+                                                .clip(CircleShape)
+                                                .background(if (selected) catAccent else Color.Transparent)
                                         )
                                     }
                                 }
                             }
+                            HorizontalDivider(
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                modifier = Modifier.padding(bottom = 12.dp)
+                            )
                         }
 
                         LazyRow(
@@ -402,14 +414,14 @@ fun HomeScreen(
                 }
             }
 
-            // 6. 精选场景电台
+            // 6. 精选场景电台（画廊式无外框封面卡片 + 极简文字链入口）
             if (fmChannels.isNotEmpty()) {
                 item {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 10.dp),
+                                .padding(bottom = 12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -417,39 +429,34 @@ fun HomeScreen(
                                 text = "精选场景电台",
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 18.sp
                                 )
                             )
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = ConceptPrimary.copy(alpha = 0.14f),
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(14.dp))
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable { onOpenRadio("all") }
+                                    .padding(horizontal = 4.dp, vertical = 4.dp)
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Radio,
-                                        contentDescription = "电台专区",
-                                        tint = ConceptPrimary,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "电台专区 >",
-                                        color = ConceptPrimary,
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
+                                Text(
+                                    text = "电台广场",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Icon(
+                                    imageVector = Icons.Rounded.ChevronRight,
+                                    contentDescription = "电台专区",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
                             }
                         }
 
                         LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             itemsIndexed(fmChannels, key = { _, it -> it.id }) { idx, channel ->
@@ -830,7 +837,7 @@ fun HomeScreen(
 }
 
 /**
- * 发现页顶部标题栏
+ * 发现页顶部标题栏（去除时段胶囊背景，采用多彩呼吸圆点 + 开放式副标题）
  */
 @Composable
 private fun DiscoverTopHeader(
@@ -841,13 +848,13 @@ private fun DiscoverTopHeader(
         val now = runCatching { LocalTime.now(DISCOVER_CHINA_ZONE) }.getOrElse { LocalTime.now() }
         val minutes = now.hour * 60 + now.minute
         when (minutes) {
-            in (5 * 60) until (8 * 60) -> "早晨" to "晨光微熹 · 用第一缕旋律唤醒耳朵"
-            in (8 * 60) until (11 * 60 + 30) -> "上午" to "清风伴读 · 轻快节拍开启元气上午"
-            in (11 * 60 + 30) until (14 * 60) -> "午间" to "午间小憩 · 卸下忙碌享片刻松弛"
-            in (14 * 60) until (17 * 60) -> "下午" to "午后漫游 · 一杯咖啡与恰到好处的律动"
-            in (17 * 60) until (19 * 60) -> "傍晚" to "暮色微醺 · 晚风与落日余晖皆入歌"
-            in (19 * 60) until (22 * 60 + 30) -> "晚上" to "夜幕微蓝 · 卸下喧嚣沉浸私人旋律"
-            else -> "深夜" to "深夜静谧 · 耳机里的温柔陪你入眠"
+            in (5 * 60) until (8 * 60) -> Triple("早晨", "晨光微熹 · 用第一缕旋律唤醒耳朵", ConceptMintAccent)
+            in (8 * 60) until (11 * 60 + 30) -> Triple("上午", "清风伴读 · 轻快节拍开启元气上午", ConceptCyanAccent)
+            in (11 * 60 + 30) until (14 * 60) -> Triple("午间", "午间小憩 · 卸下忙碌享片刻松弛", ConceptAmberAccent)
+            in (14 * 60) until (17 * 60) -> Triple("下午", "午后漫游 · 一杯咖啡与恰到好处的律动", ConceptCoralAccent)
+            in (17 * 60) until (19 * 60) -> Triple("傍晚", "暮色微醺 · 晚风与落日余晖皆入歌", ConceptCoralAccent)
+            in (19 * 60) until (22 * 60 + 30) -> Triple("晚上", "夜幕微蓝 · 卸下喧嚣沉浸私人旋律", ConceptPrimary)
+            else -> Triple("深夜", "深夜静谧 · 耳机里的温柔陪你入眠", ConceptVioletAccent)
         }
     }
 
@@ -867,26 +874,21 @@ private fun DiscoverTopHeader(
                     letterSpacing = 0.5.sp
                 )
             )
-            Spacer(modifier = Modifier.height(3.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = ConceptPrimary.copy(alpha = 0.15f)
-                ) {
-                    Text(
-                        text = timeGreeting.first,
-                        color = ConceptPrimary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(timeGreeting.third)
+                )
+                Spacer(modifier = Modifier.width(7.dp))
                 Text(
                     text = timeGreeting.second,
                     style = MaterialTheme.typography.labelSmall.copy(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        letterSpacing = 0.2.sp
+                        letterSpacing = 0.2.sp,
+                        fontSize = 12.sp
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -899,27 +901,27 @@ private fun DiscoverTopHeader(
         Surface(
             shape = CircleShape,
             color = conceptFloatingCardColor(),
-            shadowElevation = if (isDark) 0.dp else 4.dp,
+            shadowElevation = if (isDark) 0.dp else 3.dp,
             modifier = Modifier
-                .height(38.dp)
+                .height(36.dp)
                 .clip(CircleShape)
                 .clickable(onClick = onSearchClick)
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 15.dp, vertical = 7.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Search,
                     contentDescription = "搜索",
                     tint = ConceptPrimary,
-                    modifier = Modifier.size(17.dp)
+                    modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(5.dp))
                 Text(
                     text = "搜索",
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 13.sp,
+                    fontSize = 12.5.sp,
                     fontWeight = FontWeight.SemiBold
                 )
             }
@@ -928,9 +930,7 @@ private fun DiscoverTopHeader(
 }
 
 /**
- * 私人随心听 FM（极简概念版设计 + 极光薄荷绿多彩点缀）：
- * - 做减法：删除顶部冗长的「私人随心听 · 猜你喜欢」「口味漫游 1/20」「查看列表 (20首) >」状态栏
- * - 点击卡片任意区域直达 20 首列表抽屉，右侧保留刷新、播放/暂停、下一首三枚核心操控键
+ * 私人随心听 FM（极简概念版设计 + 极光薄荷绿点缀，优化内部呼吸留白）
  */
 @Composable
 private fun PersonalFmPlayerCard(
@@ -954,11 +954,11 @@ private fun PersonalFmPlayerCard(
 
     val playerCardBrush = if (isDark) {
         Brush.linearGradient(
-            listOf(Color(0xFF112A2A), Color(0xFF122334), Color(0xFF141C2C))
+            listOf(Color(0xFF102829), Color(0xFF122132), Color(0xFF131B2A))
         )
     } else {
         Brush.linearGradient(
-            listOf(Color(0xFFE3FAF4), Color(0xFFEDF7FF), Color(0xFFF4F2FF))
+            listOf(Color(0xFFE4FAF4), Color(0xFFEDF7FF), Color(0xFFF4F3FF))
         )
     }
 
@@ -982,7 +982,7 @@ private fun PersonalFmPlayerCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(64.dp)
+                    .size(62.dp)
                     .shadow(4.dp, RoundedCornerShape(18.dp))
                     .clip(RoundedCornerShape(18.dp))
                     .background(Brush.linearGradient(listOf(ConceptMintAccent, ConceptPrimaryDark))),
@@ -1000,7 +1000,7 @@ private fun PersonalFmPlayerCard(
                         imageVector = Icons.Rounded.GraphicEq,
                         contentDescription = null,
                         tint = Color.White,
-                        modifier = Modifier.size(30.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                 }
             }
@@ -1009,19 +1009,17 @@ private fun PersonalFmPlayerCard(
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        color = mintAccent.copy(alpha = 0.16f),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text(
-                            text = "随心听",
-                            color = mintAccent,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "随心听",
+                        color = mintAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                    Text(
+                        text = "  ·  ",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        fontSize = 11.sp
+                    )
                     Text(
                         text = activeSong?.title ?: "点击开启随心漫游",
                         style = MaterialTheme.typography.titleMedium.copy(
@@ -1064,7 +1062,7 @@ private fun PersonalFmPlayerCard(
                     Text(
                         text = "下一首：${nextSong.title}",
                         style = MaterialTheme.typography.labelSmall.copy(
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f),
                             fontSize = 11.sp
                         ),
                         maxLines = 1,
@@ -1073,24 +1071,21 @@ private fun PersonalFmPlayerCard(
                 }
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                FilledTonalIconButton(
+                IconButton(
                     onClick = onRefreshNewBatch,
                     enabled = !isRefreshing,
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = mintAccent.copy(alpha = 0.14f),
-                        contentColor = mintAccent
-                    ),
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(34.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Refresh,
                         contentDescription = "换一批",
+                        tint = mintAccent,
                         modifier = Modifier
                             .size(18.dp)
                             .rotate(rotationAngle)
@@ -1104,29 +1099,26 @@ private fun PersonalFmPlayerCard(
                         contentColor = Color.White
                     ),
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(42.dp)
                         .shadow(4.dp, CircleShape)
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                         contentDescription = if (isPlaying) "暂停随心听" else "播放随心听",
                         tint = Color.White,
-                        modifier = Modifier.size(23.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
-                FilledTonalIconButton(
+                IconButton(
                     onClick = onSkipNext,
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = mintAccent.copy(alpha = 0.14f),
-                        contentColor = mintAccent
-                    ),
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(34.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.SkipNext,
                         contentDescription = "下一首",
-                        modifier = Modifier.size(19.dp)
+                        tint = mintAccent,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
@@ -1135,10 +1127,11 @@ private fun PersonalFmPlayerCard(
 }
 
 /**
- * 新歌速递发现页卡片（极简减法 + 鸢尾紫点缀色 + 免滑动分段式分类栏）：
- * - 删除标题下冗余小字介绍，日期角标去除「近7日」仅保留周期如 10.11 - 10.17
- * - 重新排版右侧刷新按钮与独立页入口胶囊，单行紧凑呈现，绝不换行
- * - 语种分类采用免滑动一体式分段胶囊栏（华语 / 欧美 / 日韩 / 粤语 / 全部）
+ * 新歌速递发现页模块（彻底去盒子化 · 开放式杂志排版）：
+ * - 消除此前「日期胶囊 + 刷新圆按钮 + 86首胶囊 + 分类分段框 + 全播胶囊 + 三行歌曲大黑框」共 6 处圆角盒子的密集感
+ * - 标题栏采用「新歌速递  / 10.12 - 10.18」纯排版层次 + 右侧无框文字链「全部 86 首 >」
+ * - 语种栏采用开放式文字 Tab + 底部 3dp 鸢尾紫指示条
+ * - 三行横向新歌流直接悬浮于画布，不包裹外层深色卡片框，视野开阔通透
  */
 @Composable
 private fun NewSongExpressSectionCard(
@@ -1168,318 +1161,285 @@ private fun NewSongExpressSectionCard(
     )
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        // 顶部标题栏：左对齐标题+精简日期，右对齐紧凑刷新键+单行独立页入口
+        // 1. 开放式标题栏（无任何胶囊框包裹）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 10.dp),
+                .padding(bottom = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.Bottom) {
                 Text(
                     text = "新歌速递",
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 18.sp
                     )
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = violetAccent.copy(alpha = 0.14f)
-                ) {
-                    Text(
-                        text = windowRangeStr,
-                        color = violetAccent,
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                    )
-                }
+                Text(
+                    text = "/ $windowRangeStr",
+                    color = violetAccent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 1.5.dp)
+                )
             }
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Surface(
-                    shape = CircleShape,
-                    color = violetAccent.copy(alpha = 0.12f),
+                Icon(
+                    imageVector = Icons.Rounded.Refresh,
+                    contentDescription = "刷新当前分类新歌",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
+                        .size(16.dp)
+                        .rotate(refreshRotation)
                         .clickable(enabled = !loading, onClick = onRefreshPeriod)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "刷新当前分类新歌",
-                            tint = violetAccent,
-                            modifier = Modifier
-                                .size(15.dp)
-                                .rotate(refreshRotation)
-                        )
-                    }
-                }
+                )
 
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = violetAccent.copy(alpha = 0.14f),
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(RoundedCornerShape(8.dp))
                         .clickable(onClick = onOpenFullScreen)
+                        .padding(horizontal = 2.dp, vertical = 2.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Text(
+                        text = if (songs.isNotEmpty()) "全部 ${songs.size} 首" else "查看全部",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                    Icon(
+                        imageVector = Icons.Rounded.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        // 2. 开放式极简语种栏 + 右侧无框全播文字动作
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Bottom
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(22.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                NEW_SONG_PERIOD_TABS.forEach { tab ->
+                    val selected = tab.key == selectedPeriod
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .clickable { onSelectPeriod(tab.key) }
+                            .padding(top = 4.dp)
                     ) {
                         Text(
-                            text = if (songs.isNotEmpty()) "${songs.size} 首" else "全部",
-                            color = violetAccent,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold,
+                            text = tab.label,
+                            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                            fontSize = 13.5.sp,
                             maxLines = 1,
                             softWrap = false
                         )
-                        Spacer(modifier = Modifier.width(2.dp))
-                        Icon(
-                            imageVector = Icons.Rounded.ChevronRight,
-                            contentDescription = null,
-                            tint = violetAccent,
-                            modifier = Modifier.size(15.dp)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .width(18.dp)
+                                .height(3.dp)
+                                .clip(CircleShape)
+                                .background(if (selected) violetAccent else Color.Transparent)
                         )
                     }
                 }
             }
-        }
 
-        // 免滑动一体式分段分类选择栏 + 右侧全播按钮
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = conceptElevatedSurfaceColor(),
-                modifier = Modifier.weight(1f)
-            ) {
+            if (songs.isNotEmpty()) {
                 Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        .padding(bottom = 5.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onPlayAll)
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
                 ) {
-                    NEW_SONG_PERIOD_TABS.forEach { tab ->
-                        val selected = tab.key == selectedPeriod
-                        Surface(
-                            shape = RoundedCornerShape(13.dp),
-                            color = if (selected) violetAccent else Color.Transparent,
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(13.dp))
-                                .clickable { onSelectPeriod(tab.key) }
-                        ) {
-                            Text(
-                                text = tab.label,
-                                color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 12.sp,
-                                textAlign = TextAlign.Center,
-                                maxLines = 1,
-                                softWrap = false,
-                                modifier = Modifier.padding(vertical = 6.dp)
-                            )
-                        }
-                    }
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        tint = violetAccent,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text(
+                        text = "全播",
+                        color = violetAccent,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            FilledTonalButton(
-                onClick = onPlayAll,
-                enabled = songs.isNotEmpty(),
-                shape = RoundedCornerShape(15.dp),
-                colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = violetAccent.copy(alpha = 0.15f),
-                    contentColor = violetAccent
-                ),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                modifier = Modifier.height(32.dp)
-            ) {
-                Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(15.dp))
-                Spacer(modifier = Modifier.width(2.dp))
-                Text("全播", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
             }
         }
 
-        // 横向滑动三行新歌分栏矩阵
+        HorizontalDivider(
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+            modifier = Modifier.padding(bottom = 10.dp)
+        )
+
+        // 3. 无外框通透横向三行新歌流（去除外层深色卡片盒，视野瞬间舒展）
         if (loading && songs.isEmpty()) {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = conceptFloatingCardColor(),
-                modifier = Modifier.fillMaxWidth()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 32.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 36.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = violetAccent, strokeWidth = 2.5.dp, modifier = Modifier.size(26.dp))
-                }
+                CircularProgressIndicator(color = violetAccent, strokeWidth = 2.5.dp, modifier = Modifier.size(24.dp))
             }
         } else if (songs.isEmpty()) {
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = conceptFloatingCardColor(),
-                modifier = Modifier.fillMaxWidth()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 24.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 28.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("正在同步近期发行新歌...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-                }
+                Text("正在同步近期发行新歌...", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
             }
         } else {
             val columns = remember(songs) { songs.take(18).chunked(3) }
             LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 itemsIndexed(columns, key = { colIdx, group -> "ns_col_${colIdx}_${group.firstOrNull()?.id}" }) { _, group ->
-                    Surface(
-                        shape = RoundedCornerShape(26.dp),
-                        color = conceptFloatingCardColor(),
-                        shadowElevation = if (isDark) 0.dp else 5.dp,
-                        modifier = Modifier.width(304.dp)
+                    Column(
+                        modifier = Modifier.width(288.dp)
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            group.forEach { song ->
-                                val isThisPlaying = currentSong != null && (
-                                    currentSong.id == song.id ||
-                                        (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))
+                        group.forEachIndexed { rowIdx, song ->
+                            val isThisPlaying = currentSong != null && (
+                                currentSong.id == song.id ||
+                                    (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))
+                                )
+                            val shortDate = song.publishDate.takeIf { it.length >= 10 }?.substring(5) ?: song.publishDate
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(
+                                        if (isThisPlaying) violetAccent.copy(alpha = 0.10f)
+                                        else Color.Transparent
                                     )
-                                val shortDate = song.publishDate.takeIf { it.length >= 10 }?.substring(5) ?: song.publishDate
-
-                                Row(
+                                    .clickable { onPlaySong(song) }
+                                    .padding(vertical = 7.dp, horizontal = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(
-                                            if (isThisPlaying) violetAccent.copy(alpha = 0.12f)
-                                            else Color.Transparent
-                                        )
-                                        .clickable { onPlaySong(song) }
-                                        .padding(4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .size(52.dp)
+                                        .clip(RoundedCornerShape(13.dp))
+                                        .background(Brush.linearGradient(listOf(ConceptVioletAccent, ConceptPrimaryDark))),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(54.dp)
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(Brush.linearGradient(listOf(ConceptVioletAccent, ConceptPrimaryDark))),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (song.coverUrl.isNotBlank()) {
-                                            AsyncImage(
-                                                model = song.coverUrl,
-                                                contentDescription = song.title,
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
-                                            )
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Rounded.MusicNote,
-                                                contentDescription = null,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(22.dp)
-                                            )
-                                        }
-
-                                        if (shortDate.isNotBlank()) {
-                                            Surface(
-                                                shape = RoundedCornerShape(topEnd = 8.dp),
-                                                color = Color.Black.copy(alpha = 0.65f),
-                                                modifier = Modifier.align(Alignment.BottomStart)
-                                            ) {
-                                                Text(
-                                                    text = shortDate,
-                                                    color = Color.White,
-                                                    fontSize = 8.5.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.width(12.dp))
-
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = song.title,
-                                            style = MaterialTheme.typography.titleSmall.copy(
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = if (isThisPlaying) violetAccent else MaterialTheme.colorScheme.onSurface,
-                                                fontSize = 14.sp
-                                            ),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                    if (song.coverUrl.isNotBlank()) {
+                                        AsyncImage(
+                                            model = song.coverUrl,
+                                            contentDescription = song.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
                                         )
-                                        Spacer(modifier = Modifier.height(3.dp))
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            if (song.isHiRes) {
-                                                BadgeTag(text = "Hi-Res", color = VipGold)
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                            } else if (song.isLossless) {
-                                                BadgeTag(text = "SQ", color = ConceptPrimary)
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                            }
-                                            if (song.isVip) {
-                                                BadgeTag(text = "VIP", color = VipGold)
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                            }
-                                            Text(
-                                                text = song.artist,
-                                                style = MaterialTheme.typography.bodySmall.copy(
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    fontSize = 11.5.sp
-                                                ),
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Rounded.MusicNote,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(22.dp)
+                                        )
                                     }
 
-                                    Spacer(modifier = Modifier.width(6.dp))
-
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = if (isThisPlaying) violetAccent else violetAccent.copy(alpha = 0.13f),
-                                        modifier = Modifier.size(30.dp)
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                imageVector = if (isThisPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
-                                                contentDescription = "播放",
-                                                tint = if (isThisPlaying) Color.White else violetAccent,
-                                                modifier = Modifier.size(16.dp)
+                                    if (shortDate.isNotBlank()) {
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomStart)
+                                                .clip(RoundedCornerShape(topEnd = 7.dp))
+                                                .background(Color.Black.copy(alpha = 0.62f))
+                                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                        ) {
+                                            Text(
+                                                text = shortDate,
+                                                color = Color.White,
+                                                fontSize = 8.5.sp,
+                                                fontWeight = FontWeight.Bold
                                             )
                                         }
                                     }
                                 }
+
+                                Spacer(modifier = Modifier.width(12.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = song.title,
+                                        style = MaterialTheme.typography.titleSmall.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isThisPlaying) violetAccent else MaterialTheme.colorScheme.onSurface,
+                                            fontSize = 14.5.sp
+                                        ),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (song.isHiRes) {
+                                            BadgeTag(text = "Hi-Res", color = VipGold)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                        } else if (song.isLossless) {
+                                            BadgeTag(text = "SQ", color = ConceptPrimary)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                        }
+                                        if (song.isVip) {
+                                            BadgeTag(text = "VIP", color = VipGold)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                        }
+                                        Text(
+                                            text = song.artist,
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = 12.sp
+                                            ),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                Icon(
+                                    imageVector = if (isThisPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
+                                    contentDescription = "播放",
+                                    tint = if (isThisPlaying) violetAccent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            if (rowIdx < group.lastIndex) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(start = 66.dp),
+                                    thickness = 0.5.dp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+                                )
                             }
                         }
                     }
@@ -1495,11 +1455,9 @@ private data class DateSongGroup(
 )
 
 /**
- * 新歌速递独立全屏页（极简优化版）：
- * 1. 每个分类下的歌曲序号严格从 1 (01) 开始连续递增排序（预计算 1..N 索引，杜绝 LazyColumn 闭包累加导致的 96 起步 Bug）；
- * 2. 免滑动一体式分段分类栏（华语 / 欧美 / 日韩 / 粤语 / 全部）；
- * 3. 点击任意发行日期栏可平滑折叠/展开当日曲目（AnimatedVisibility 丝滑垂直展开/收起 + 箭头旋转动效）；
- * 4. 删除顶部小字介绍与分组内冗余排序说明。
+ * 新歌速递独立全屏页（开放式时间轴排版）：
+ * - 语种切换采用开放式底部指示条，去除外框胶囊
+ * - 日期分组采用开放式彩色竖线时间轴头（点击平滑折叠/展开），彻底告别层层灰盒堆叠
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1522,7 +1480,6 @@ fun NewSongExpressScreen(
         String.format("%02d.%02d - %02d.%02d", startDay.monthValue, startDay.dayOfMonth, endDay.monthValue, endDay.dayOfMonth)
     }
 
-    // 预计算每个分类下从 1 开始的严格连续序号 (1..songs.size)，彻底修复 LazyColumn 延迟组合导致的序号从 96 开始的问题
     val dateGroups = remember(songs, endDay) {
         var orderCounter = 1
         songs.groupBy { it.publishDate.ifBlank { endDay.toString() } }
@@ -1532,7 +1489,6 @@ fun NewSongExpressScreen(
             }
     }
 
-    // 记录每个日期分组的折叠状态（切换分类时自动展开）
     val collapsedDates = remember(selectedPeriod) { mutableStateMapOf<String, Boolean>() }
 
     ConceptStageBackground(modifier = Modifier.fillMaxSize()) {
@@ -1541,25 +1497,20 @@ fun NewSongExpressScreen(
             topBar = {
                 TopAppBar(
                     title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.Bottom) {
                             Text(
                                 text = "新歌速递",
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 18.sp
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = violetAccent.copy(alpha = 0.14f)
-                            ) {
-                                Text(
-                                    text = periodRangeText,
-                                    color = violetAccent,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp)
-                                )
-                            }
+                            Text(
+                                text = "/ $periodRangeText",
+                                color = violetAccent,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(bottom = 2.dp)
+                            )
                         }
                     },
                     navigationIcon = {
@@ -1585,70 +1536,101 @@ fun NewSongExpressScreen(
                     .padding(innerPadding),
                 contentPadding = PaddingValues(bottom = 112.dp)
             ) {
-                // 1. 免滑动一体式五维分段选择栏
+                // 1. 开放式极简五维语种导航栏
                 item {
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = conceptElevatedSurfaceColor(),
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .padding(horizontal = 16.dp)
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom
                         ) {
-                            NEW_SONG_PERIOD_TABS.forEach { tab ->
-                                val selected = tab.key == selectedPeriod
-                                Surface(
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = if (selected) violetAccent else Color.Transparent,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .clickable { viewModel.selectNewSongPeriod(tab.key, forceRefresh = false) }
-                                ) {
-                                    Text(
-                                        text = tab.label,
-                                        color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 13.sp,
-                                        textAlign = TextAlign.Center,
-                                        maxLines = 1,
-                                        modifier = Modifier.padding(vertical = 8.dp)
-                                    )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                                verticalAlignment = Alignment.Bottom
+                            ) {
+                                NEW_SONG_PERIOD_TABS.forEach { tab ->
+                                    val selected = tab.key == selectedPeriod
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .clickable { viewModel.selectNewSongPeriod(tab.key, forceRefresh = false) }
+                                            .padding(top = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = tab.label,
+                                            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                            fontSize = 15.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(7.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .width(20.dp)
+                                                .height(3.dp)
+                                                .clip(CircleShape)
+                                                .background(if (selected) violetAccent else Color.Transparent)
+                                        )
+                                    }
                                 }
                             }
                         }
+                        HorizontalDivider(
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                        )
                     }
                 }
 
-                // 2. 播放全部 + 一键折叠/展开全部日期
+                // 2. 开放式操作栏：全部播放 + 折叠/展开全部日期
                 item {
                     val allCollapsed = dateGroups.isNotEmpty() && dateGroups.all { collapsedDates[it.date] == true }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(
-                            onClick = {
-                                if (songs.isNotEmpty()) {
-                                    onSongClick(songs.first(), songs)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable(enabled = songs.isNotEmpty()) {
+                                    if (songs.isNotEmpty()) onSongClick(songs.first(), songs)
                                 }
-                            },
-                            enabled = songs.isNotEmpty(),
-                            shape = RoundedCornerShape(20.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = violetAccent, contentColor = Color.White),
-                            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp)
+                                .padding(vertical = 4.dp)
                         ) {
-                            Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text("全部播放 (${songs.size})", fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(violetAccent),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "播放全部",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "${songs.size} 首",
+                                fontSize = 12.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1656,30 +1638,30 @@ fun NewSongExpressScreen(
                                 CircularProgressIndicator(
                                     color = violetAccent,
                                     strokeWidth = 2.dp,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                             }
                             if (dateGroups.size > 1) {
-                                TextButton(
-                                    onClick = {
-                                        val targetState = !allCollapsed
-                                        dateGroups.forEach { collapsedDates[it.date] = targetState }
-                                    }
-                                ) {
-                                    Text(
-                                        text = if (allCollapsed) "展开全部日期" else "折叠全部日期",
-                                        color = violetAccent,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
+                                Text(
+                                    text = if (allCollapsed) "展开全部日期" else "折叠全部日期",
+                                    color = violetAccent,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            val targetState = !allCollapsed
+                                            dateGroups.forEach { collapsedDates[it.date] = targetState }
+                                        }
+                                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                                )
                             }
                         }
                     }
                 }
 
-                // 3. 按日期分组列表（点击日期栏平滑折叠/展开）
+                // 3. 开放式时间轴日期分组（无卡片盒包裹，点击平滑折叠/展开）
                 dateGroups.forEach { group ->
                     val pubDate = group.date
                     val isCollapsed = collapsedDates[pubDate] == true
@@ -1691,52 +1673,48 @@ fun NewSongExpressScreen(
                             label = "dateCollapseArrow_$pubDate"
                         )
 
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = conceptFloatingCardColor(),
-                            shadowElevation = if (isDark) 0.dp else 2.dp,
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 5.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable {
-                                    collapsedDates[pubDate] = !isCollapsed
-                                }
+                                .clickable { collapsedDates[pubDate] = !isCollapsed }
+                                .padding(horizontal = 16.dp)
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    .padding(vertical = 10.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(
-                                        shape = RoundedCornerShape(7.dp),
-                                        color = violetAccent.copy(alpha = 0.15f)
-                                    ) {
-                                        Text(
-                                            text = pubDate,
-                                            color = violetAccent,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .width(3.5.dp)
+                                            .height(15.dp)
+                                            .clip(CircleShape)
+                                            .background(violetAccent)
+                                    )
+                                    Spacer(modifier = Modifier.width(9.dp))
+                                    Text(
+                                        text = pubDate,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Text(
                                         text = "${group.indexedSongs.size} 首",
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold
+                                        fontWeight = FontWeight.Medium
                                     )
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         text = if (isCollapsed) "展开" else "收起",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                                        fontSize = 11.sp
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        fontSize = 11.5.sp
                                     )
                                     Spacer(modifier = Modifier.width(2.dp))
                                     Icon(
@@ -1749,6 +1727,10 @@ fun NewSongExpressScreen(
                                     )
                                 }
                             }
+                            HorizontalDivider(
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                            )
                         }
                     }
 
@@ -1786,7 +1768,7 @@ fun NewSongExpressScreen(
 }
 
 /**
- * 精选场景电台大气饱满悬浮卡片（移除封面上冗余的「每次 20 首严选」字样，按分类注入多彩点缀）
+ * 精选场景电台画廊式无外框卡片（去除外层圆角卡片盒，封面直接悬浮于通透画布，文字自然排布于封面下方）
  */
 @Composable
 private fun FmChannelCardView(
@@ -1796,7 +1778,6 @@ private fun FmChannelCardView(
     onCardClick: () -> Unit,
     onPlayFmChannel: () -> Unit
 ) {
-    val isDark = LocalIsDarkTheme.current
     val effectiveCover = channel.coverUrl.takeIf { it.isNotBlank() && !it.contains("20210519") } ?: fallbackCoverUrl
     val freqText = remember(channel.id, index) {
         val base = 88.6 + ((channel.id.hashCode().and(0x7fffffff) % 180) * 0.1)
@@ -1819,145 +1800,116 @@ private fun FmChannelCardView(
         }
     }
 
-    Surface(
-        shape = RoundedCornerShape(26.dp),
-        color = conceptFloatingCardColor(),
-        shadowElevation = if (isDark) 0.dp else 5.dp,
+    Column(
         modifier = Modifier
-            .width(174.dp)
-            .clip(RoundedCornerShape(26.dp))
+            .width(148.dp)
+            .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onCardClick)
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp)
+                .height(148.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .background(fallbackBrush)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(132.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(fallbackBrush)
-            ) {
-                if (effectiveCover.isNotBlank()) {
-                    AsyncImage(
-                        model = effectiveCover,
-                        contentDescription = channel.name,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Rounded.Radio,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.45f),
-                        modifier = Modifier
-                            .size(48.dp)
-                            .align(Alignment.Center)
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color.Black.copy(alpha = 0.32f),
-                                    Color.Transparent,
-                                    Color.Black.copy(alpha = 0.56f)
-                                )
-                            )
-                        )
+            if (effectiveCover.isNotBlank()) {
+                AsyncImage(
+                    model = effectiveCover,
+                    contentDescription = channel.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
                 )
-
-                Surface(
-                    shape = RoundedCornerShape(9.dp),
-                    color = Color.Black.copy(alpha = 0.48f),
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.Radio,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.45f),
                     modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.GraphicEq,
-                            contentDescription = null,
-                            tint = categoryAccent,
-                            modifier = Modifier.size(11.dp)
-                        )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(
-                            text = freqText,
-                            color = Color.White,
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(9.dp),
-                    color = categoryAccent.copy(alpha = 0.88f),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                ) {
-                    Text(
-                        text = channel.category.removeSuffix("电台").ifBlank { "伴听" },
-                        color = Color.White,
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                    )
-                }
-
-                FilledIconButton(
-                    onClick = onPlayFmChannel,
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = categoryAccent),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp)
-                        .size(36.dp)
-                        .shadow(4.dp, CircleShape)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = "播放电台",
-                        tint = Color.White,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+                        .size(46.dp)
+                        .align(Alignment.Center)
+                )
             }
 
-            Spacer(modifier = Modifier.height(9.dp))
-
-            Text(
-                text = channel.name,
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.5.sp
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Black.copy(alpha = 0.28f),
+                                Color.Transparent,
+                                Color.Black.copy(alpha = 0.52f)
+                            )
+                        )
+                    )
             )
 
-            Spacer(modifier = Modifier.height(2.dp))
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(categoryAccent)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = freqText,
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
 
-            Text(
-                text = channel.description.ifBlank { "随心漫游精选旋律" },
-                style = MaterialTheme.typography.bodySmall.copy(
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            FilledIconButton(
+                onClick = onPlayFmChannel,
+                colors = IconButtonDefaults.filledIconButtonColors(containerColor = categoryAccent),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(10.dp)
+                    .size(34.dp)
+                    .shadow(4.dp, CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.PlayArrow,
+                    contentDescription = "播放电台",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = channel.name,
+            style = MaterialTheme.typography.titleSmall.copy(
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 14.sp
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp)
+        )
+
+        Spacer(modifier = Modifier.height(2.dp))
+
+        Text(
+            text = channel.description.ifBlank { "随心漫游精选旋律" },
+            style = MaterialTheme.typography.bodySmall.copy(
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.5.sp
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp)
+        )
     }
 }
 
@@ -1972,12 +1924,7 @@ private fun rankAccentColor(rank: RankItem): Color {
 }
 
 /**
- * 巅峰排行榜独立全屏页面（全新重构设计）：
- * - 彻底解决此前「左上角标题下拉 + 右上角全部榜单 + 卡片内换榜单」三次重复弹窗的问题：
- *   1. 左上角仅作纯粹页面标题展示；
- *   2. 右上角保留刷新键与唯一的「榜单宫格」入口；
- *   3. 顶部内嵌一条高频榜单横向快选胶囊栏，无需弹窗即可一键切换常用热榜；
- *   4. 头部卡片按榜单属性呈现多彩微渐变点缀，去除冗余小字与重复的「换榜单」按钮。
+ * 巅峰排行榜独立全屏页面（开放式大视野头部 + 底部指示条快选栏，消除卡片堆叠）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1990,7 +1937,6 @@ fun RankDetailScreen(
     onSongMoreClick: (Song) -> Unit = {}
 ) {
     val ranks by viewModel.ranks.collectAsState()
-    val isDark = LocalIsDarkTheme.current
     val coroutineScope = rememberCoroutineScope()
     var selectedRankId by remember(initialRankId) { mutableIntStateOf(initialRankId) }
     var rankSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
@@ -2060,32 +2006,23 @@ fun RankDetailScreen(
                         ) {
                             Icon(Icons.Rounded.Refresh, contentDescription = "刷新当前榜单", tint = accentColor)
                         }
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = accentColor.copy(alpha = 0.14f),
-                            modifier = Modifier
-                                .padding(end = 12.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable { showRankGridSheet = true }
+                        TextButton(
+                            onClick = { showRankGridSheet = true },
+                            modifier = Modifier.padding(end = 6.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.GridView,
-                                    contentDescription = null,
-                                    tint = accentColor,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "榜单宫格 (${ranks.size})",
-                                    color = accentColor,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Rounded.GridView,
+                                contentDescription = null,
+                                tint = accentColor,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "全部榜单 (${ranks.size})",
+                                color = accentColor,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
@@ -2098,157 +2035,149 @@ fun RankDetailScreen(
                     .padding(innerPadding),
                 contentPadding = PaddingValues(bottom = 112.dp)
             ) {
-                // 1. 顶部内嵌同级榜单快选条（无需弹窗一键切榜）
+                // 1. 开放式横向榜单快选条（无胶囊外壳，底部彩色指示线）
                 if (quickSwitchRanks.size > 1) {
                     item {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            items(quickSwitchRanks, key = { it.rankId }) { item ->
-                                val selected = item.rankId == currentRank.rankId
-                                val itemAccent = rankAccentColor(item)
-                                Surface(
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = if (selected) itemAccent else conceptFloatingCardColor(),
-                                    shadowElevation = if (!isDark && !selected) 2.dp else 0.dp,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .clickable { selectedRankId = item.rankId }
-                                ) {
-                                    Text(
-                                        text = item.rankName,
-                                        color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 12.sp,
-                                        maxLines = 1,
-                                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp)
-                                    )
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(quickSwitchRanks, key = { it.rankId }) { item ->
+                                    val selected = item.rankId == currentRank.rankId
+                                    val itemAccent = rankAccentColor(item)
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        modifier = Modifier
+                                            .clickable { selectedRankId = item.rankId }
+                                            .padding(top = 4.dp)
+                                    ) {
+                                        Text(
+                                            text = item.rankName,
+                                            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                            fontSize = 13.5.sp,
+                                            maxLines = 1
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .width(20.dp)
+                                                .height(3.dp)
+                                                .clip(CircleShape)
+                                                .background(if (selected) itemAccent else Color.Transparent)
+                                        )
+                                    }
                                 }
                             }
+                            HorizontalDivider(
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                            )
                         }
                     }
                 }
 
-                // 2. 重构后的精简多彩榜单头部卡（无重复「换榜单」按钮，无冗余加载提示词）
+                // 2. 开放式无框榜单头部（去除卡片包裹，采用大视野氛围排版）
                 item {
-                    val headerBrush = if (isDark) {
-                        Brush.linearGradient(
-                            listOf(
-                                accentColor.copy(alpha = 0.25f),
-                                Color(0xFF151F32),
-                                Color(0xFF121826)
-                            )
-                        )
-                    } else {
-                        Brush.linearGradient(
-                            listOf(
-                                accentColor.copy(alpha = 0.16f),
-                                Color(0xFFEEF5FF),
-                                Color(0xFFFFFFFF)
-                            )
-                        )
-                    }
-
-                    Surface(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        shape = RoundedCornerShape(26.dp),
-                        color = conceptFloatingCardColor(),
-                        shadowElevation = if (isDark) 0.dp else 5.dp
+                            .padding(horizontal = 16.dp, vertical = 18.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .background(headerBrush)
-                                .padding(18.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .size(96.dp)
+                                .shadow(8.dp, RoundedCornerShape(22.dp))
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(Brush.linearGradient(listOf(accentColor, ConceptPrimaryDark))),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(88.dp)
-                                    .clip(RoundedCornerShape(22.dp))
-                                    .background(Brush.linearGradient(listOf(accentColor, ConceptPrimaryDark))),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                val cover = currentRank.coverUrl.ifBlank { rankSongs.firstOrNull()?.coverUrl.orEmpty() }
-                                if (cover.isNotBlank()) {
-                                    AsyncImage(
-                                        model = cover,
-                                        contentDescription = currentRank.rankName,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Leaderboard,
-                                        contentDescription = null,
-                                        tint = Color.White,
-                                        modifier = Modifier.size(40.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(
-                                        shape = RoundedCornerShape(7.dp),
-                                        color = accentColor.copy(alpha = 0.16f)
-                                    ) {
-                                        Text(
-                                            text = currentRank.category.ifBlank { "官方热榜" },
-                                            color = accentColor,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = currentRank.updateFrequency.ifBlank { "每日更新" },
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = currentRank.rankName,
-                                    style = MaterialTheme.typography.titleLarge.copy(
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontSize = 20.sp
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                            val cover = currentRank.coverUrl.ifBlank { rankSongs.firstOrNull()?.coverUrl.orEmpty() }
+                            if (cover.isNotBlank()) {
+                                AsyncImage(
+                                    model = cover,
+                                    contentDescription = currentRank.rankName,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
                                 )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Button(
-                                    onClick = {
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.Leaderboard,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(40.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(18.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(accentColor)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "${currentRank.category.ifBlank { "官方热榜" }} · ${currentRank.updateFrequency.ifBlank { "每日更新" }}",
+                                    color = accentColor,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = currentRank.rankName,
+                                style = MaterialTheme.typography.headlineSmall.copy(
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 22.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .clickable(enabled = filteredSongs.isNotEmpty()) {
                                         if (filteredSongs.isNotEmpty()) {
                                             onSongClick(filteredSongs.first(), filteredSongs)
                                         }
-                                    },
-                                    enabled = filteredSongs.isNotEmpty(),
-                                    shape = RoundedCornerShape(18.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = accentColor,
-                                        contentColor = Color.White
-                                    ),
-                                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 7.dp)
+                                    }
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
+                                        .background(accentColor),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("播放全部 (${filteredSongs.size})", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Icon(
+                                        imageVector = Icons.Rounded.PlayArrow,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(19.dp)
+                                    )
                                 }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "播放全部 (${filteredSongs.size})",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
                             }
                         }
                     }
                 }
 
-                // 3. 榜内搜索栏
+                // 3. 极简榜内搜索栏
                 item {
                     OutlinedTextField(
                         value = searchQuery,
@@ -2265,7 +2194,7 @@ fun RankDetailScreen(
                                 }
                             }
                         },
-                        shape = RoundedCornerShape(18.dp),
+                        shape = CircleShape,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = accentColor,
                             unfocusedBorderColor = Color.Transparent,
@@ -2377,30 +2306,44 @@ private fun RankGridPickerSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(categories) { cat ->
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(22.dp),
+                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                categories.forEach { cat ->
                     val selected = cat == selectedCategory
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (selected) ConceptPrimary else conceptElevatedSurfaceColor(),
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
                             .clickable { selectedCategory = cat }
+                            .padding(top = 4.dp)
                     ) {
                         Text(
                             text = cat,
-                            color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 12.5.sp,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
+                            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                            fontSize = 13.5.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .width(18.dp)
+                                .height(3.dp)
+                                .clip(CircleShape)
+                                .background(if (selected) ConceptPrimary else Color.Transparent)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
 
             val rows = filteredRanks.chunked(2)
             LazyColumn(
@@ -2422,13 +2365,13 @@ private fun RankGridPickerSheet(
                                 else -> conceptElevatedSurfaceColor()
                             }
                             Surface(
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(18.dp),
                                 color = cardBg,
                                 border = if (isSelected) BorderStroke(1.5.dp, itemAccent) else null,
                                 shadowElevation = 0.dp,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .clip(RoundedCornerShape(20.dp))
+                                    .clip(RoundedCornerShape(18.dp))
                                     .clickable { onSelectRank(item.rankId) }
                             ) {
                                 Row(
@@ -2437,8 +2380,8 @@ private fun RankGridPickerSheet(
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .size(46.dp)
-                                            .clip(RoundedCornerShape(14.dp))
+                                            .size(44.dp)
+                                            .clip(RoundedCornerShape(12.dp))
                                             .background(Brush.linearGradient(listOf(itemAccent, ConceptPrimaryDark))),
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -2454,7 +2397,7 @@ private fun RankGridPickerSheet(
                                                 imageVector = Icons.Rounded.Leaderboard,
                                                 contentDescription = null,
                                                 tint = Color.White,
-                                                modifier = Modifier.size(22.dp)
+                                                modifier = Modifier.size(20.dp)
                                             )
                                         }
                                     }
@@ -2492,7 +2435,7 @@ private fun RankGridPickerSheet(
 }
 
 /**
- * 每日推荐独立详情页（严格刷新边界：右上角刷新仅刷新每日推荐本身）
+ * 每日推荐独立详情页（开放式无框大视野头部，严格刷新边界）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2507,7 +2450,6 @@ fun DailyRecommendScreen(
     val dailyRefreshing by viewModel.dailyRefreshing.collectAsState()
     val loading by viewModel.loading.collectAsState()
     val isBusy = dailyRefreshing || loading
-    val isDark = LocalIsDarkTheme.current
     val today = remember { runCatching { LocalDate.now(DISCOVER_CHINA_ZONE) }.getOrElse { LocalDate.now() } }
     val monthStr = remember(today) { String.format("%02d", today.monthValue) }
     val dayStr = remember(today) { String.format("%02d", today.dayOfMonth) }
@@ -2548,105 +2490,92 @@ fun DailyRecommendScreen(
                     .padding(padding),
                 contentPadding = PaddingValues(bottom = 100.dp)
             ) {
-                item {
-                    Surface(
-                        shape = RoundedCornerShape(28.dp),
-                        color = conceptFloatingCardColor(),
-                        shadowElevation = if (isDark) 0.dp else 6.dp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(20.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            StaggeredThreeCovers(
-                                songs = dailySongs.take(3),
-                                primarySize = 84.dp,
-                                secondarySize = 72.dp,
-                                tertiarySize = 62.dp
-                            )
-
-                            Spacer(modifier = Modifier.width(18.dp))
-
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.Bottom) {
-                                    Text(
-                                        text = dayStr,
-                                        color = ConceptCoralAccent,
-                                        fontSize = 32.sp,
-                                        fontWeight = FontWeight.Black
-                                    )
-                                    Text(
-                                        text = " / $monthStr",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(bottom = 4.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "个性化定制 · 每日 6:00 更新",
-                                    style = MaterialTheme.typography.titleSmall.copy(
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "今日精选 ${dailySongs.size} 首心动曲目",
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-
+                // 开放式日推头部（去除外层圆角卡片盒）
                 item {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                            .padding(horizontal = 20.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(
-                            onClick = {
-                                if (dailySongs.isNotEmpty()) {
-                                    onSongClick(dailySongs.first(), dailySongs)
-                                }
-                            },
-                            enabled = dailySongs.isNotEmpty(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = ConceptCoralAccent,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(24.dp),
-                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 10.dp)
-                        ) {
-                            Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "播放全部 (${dailySongs.size})",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
-                            )
-                        }
+                        StaggeredThreeCovers(
+                            songs = dailySongs.take(3),
+                            primarySize = 86.dp,
+                            secondarySize = 74.dp,
+                            tertiarySize = 64.dp
+                        )
 
-                        if (isBusy) {
-                            CircularProgressIndicator(
-                                color = ConceptCoralAccent,
-                                strokeWidth = 2.dp,
-                                modifier = Modifier.size(20.dp)
+                        Spacer(modifier = Modifier.width(18.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(
+                                    text = dayStr,
+                                    color = ConceptCoralAccent,
+                                    fontSize = 36.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = " / $monthStr",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(bottom = 5.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "循着你的听歌轨迹 · 每日 6:00 更新",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .clickable(enabled = dailySongs.isNotEmpty()) {
+                                        if (dailySongs.isNotEmpty()) onSongClick(dailySongs.first(), dailySongs)
+                                    }
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .clip(CircleShape)
+                                        .background(ConceptCoralAccent),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.PlayArrow,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "播放全部 (${dailySongs.size})",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                if (isBusy) {
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    CircularProgressIndicator(
+                                        color = ConceptCoralAccent,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
                         }
                     }
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)
+                    )
                 }
 
                 if (dailySongs.isEmpty() && !isBusy) {
@@ -2662,7 +2591,7 @@ fun DailyRecommendScreen(
                     }
                 } else {
                     itemsIndexed(dailySongs, key = { index, song -> "daily_page_${song.id}_$index" }) { index, song ->
-                        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) {
+                        Box(modifier = Modifier.padding(horizontal = 12.dp)) {
                             SongItemRow(
                                 song = song,
                                 orderIndex = index + 1,
@@ -2679,9 +2608,7 @@ fun DailyRecommendScreen(
 }
 
 /**
- * 每日推荐主页横幅卡片（极简概念版设计 + 暖珊瑚日落渐变点缀）：
- * - 做减法：删除顶部「10/17 · 个性化定制」胶囊与底部「查看全部 30 首推荐 >」字样（点击卡片即进独立详情页展示）
- * - 将生硬的歌名罗列替换为富有呼吸感的概念版音乐导语
+ * 每日推荐主页横幅卡片（极简概念版设计 + 暖珊瑚日落渐变点缀）
  */
 @Composable
 private fun DailyRecommendBanner(
@@ -2718,7 +2645,7 @@ private fun DailyRecommendBanner(
         shadowElevation = if (isDark) 0.dp else 6.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .height(142.dp)
+            .height(140.dp)
             .clip(RoundedCornerShape(28.dp))
             .clickable(onClick = onCardClick)
     ) {
@@ -2734,9 +2661,9 @@ private fun DailyRecommendBanner(
             ) {
                 StaggeredThreeCovers(
                     songs = songs.take(3),
-                    primarySize = 88.dp,
-                    secondarySize = 76.dp,
-                    tertiarySize = 66.dp
+                    primarySize = 86.dp,
+                    secondarySize = 74.dp,
+                    tertiarySize = 64.dp
                 )
 
                 Spacer(modifier = Modifier.width(16.dp))
@@ -2750,7 +2677,7 @@ private fun DailyRecommendBanner(
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontWeight = FontWeight.ExtraBold,
                             color = titleColor,
-                            fontSize = 22.sp,
+                            fontSize = 21.sp,
                             letterSpacing = 0.5.sp
                         )
                     )
@@ -2776,14 +2703,14 @@ private fun DailyRecommendBanner(
                         containerColor = ConceptCoralAccent
                     ),
                     modifier = Modifier
-                        .size(46.dp)
-                        .shadow(6.dp, CircleShape)
+                        .size(44.dp)
+                        .shadow(5.dp, CircleShape)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.PlayArrow,
                         contentDescription = "播放每日推荐",
                         tint = Color.White,
-                        modifier = Modifier.size(25.dp)
+                        modifier = Modifier.size(24.dp)
                     )
                 }
             }
@@ -2890,7 +2817,7 @@ private fun StaggeredThreeCovers(
 }
 
 /**
- * 巅峰排行榜圆润饱满悬浮卡片（按榜单分类赋予珊瑚红/琥珀金/鸢尾紫/概念蓝差异化点缀）
+ * 巅峰排行榜卡片（去内嵌盒子化：消除内部嵌套的灰底预览盒，采用单层多彩微渐变 + 极细分割线）
  */
 @Composable
 private fun RankCardView(
@@ -2900,19 +2827,37 @@ private fun RankCardView(
 ) {
     val isDark = LocalIsDarkTheme.current
     val accent = remember(rank) { rankAccentColor(rank) }
+    val cardBrush = if (isDark) {
+        Brush.linearGradient(
+            listOf(
+                accent.copy(alpha = 0.16f),
+                Color(0xFF141C2B),
+                Color(0xFF141C2B)
+            )
+        )
+    } else {
+        Brush.linearGradient(
+            listOf(
+                accent.copy(alpha = 0.10f),
+                Color(0xFFFFFFFF),
+                Color(0xFFFFFFFF)
+            )
+        )
+    }
 
     Surface(
-        shape = RoundedCornerShape(26.dp),
+        shape = RoundedCornerShape(24.dp),
         color = conceptFloatingCardColor(),
-        shadowElevation = if (isDark) 0.dp else 5.dp,
+        shadowElevation = if (isDark) 0.dp else 4.dp,
         modifier = Modifier
-            .width(278.dp)
-            .clip(RoundedCornerShape(26.dp))
+            .width(268.dp)
+            .clip(RoundedCornerShape(24.dp))
             .clickable(onClick = onCardClick)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(cardBrush)
                 .padding(16.dp)
         ) {
             Row(
@@ -2921,8 +2866,8 @@ private fun RankCardView(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(58.dp)
-                        .clip(RoundedCornerShape(18.dp))
+                        .size(54.dp)
+                        .clip(RoundedCornerShape(16.dp))
                         .background(Brush.linearGradient(listOf(accent, ConceptPrimaryDark)))
                 ) {
                     if (rank.coverUrl.isNotBlank()) {
@@ -2938,7 +2883,7 @@ private fun RankCardView(
                             contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier
-                                .size(26.dp)
+                                .size(24.dp)
                                 .align(Alignment.Center)
                         )
                     }
@@ -2947,31 +2892,6 @@ private fun RankCardView(
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = accent.copy(alpha = 0.14f)
-                        ) {
-                            Text(
-                                text = rank.category.ifBlank { "热榜" },
-                                color = accent,
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = rank.updateFrequency.ifBlank { "每日更新" },
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 10.5.sp
-                            ),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = rank.rankName,
                         style = MaterialTheme.typography.titleSmall.copy(
@@ -2982,50 +2902,56 @@ private fun RankCardView(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = "${rank.category.ifBlank { "热榜" }} · ${rank.updateFrequency.ifBlank { "每日更新" }}",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = accent,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
-                FilledIconButton(
+                IconButton(
                     onClick = onPlayRank,
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = accent),
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.size(34.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
+                        imageVector = Icons.Rounded.PlayCircleFilled,
                         contentDescription = "播放榜单",
-                        tint = Color.White,
-                        modifier = Modifier.size(19.dp)
+                        tint = accent,
+                        modifier = Modifier.size(28.dp)
                     )
                 }
             }
 
             if (rank.topSongsPreview.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = conceptElevatedSurfaceColor(),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        rank.topSongsPreview.take(3).forEachIndexed { idx, line ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "${idx + 1}",
-                                    color = if (idx == 0) VipGold else accent,
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 11.5.sp,
-                                    modifier = Modifier.width(18.dp)
-                                )
-                                Text(
-                                    text = line.replace(Regex("^\\d+\\.\\s*"), ""),
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f),
-                                    fontSize = 11.5.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
+                HorizontalDivider(
+                    thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    rank.topSongsPreview.take(3).forEachIndexed { idx, line ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "${idx + 1}",
+                                color = if (idx == 0) VipGold else accent,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 12.sp,
+                                modifier = Modifier.width(18.dp)
+                            )
+                            Text(
+                                text = line.replace(Regex("^\\d+\\.\\s*"), ""),
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.88f),
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }

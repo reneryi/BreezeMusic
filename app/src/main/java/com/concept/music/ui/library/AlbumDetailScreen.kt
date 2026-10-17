@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -31,9 +32,11 @@ import com.concept.music.data.model.AlbumItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
 import com.concept.music.ui.components.SongItemRow
+import com.concept.music.ui.theme.ConceptAmberAccent
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.ConceptStageBackground
+import com.concept.music.ui.theme.conceptFloatingCardColor
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -158,150 +161,156 @@ fun AlbumDetailScreen(
                     .padding(innerPadding),
                 contentPadding = PaddingValues(bottom = 112.dp)
             ) {
-                // 1. 专辑头部卡片
+                // 1. 开放式无框专辑头部（去除外层灰盒与简介内嵌框，营造大视野呼吸感）
                 item {
-                    Card(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        shape = RoundedCornerShape(22.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
-                        )
+                            .padding(horizontal = 18.dp, vertical = 12.dp)
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(106.dp)
+                                    .shadow(8.dp, RoundedCornerShape(20.dp))
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(Brush.linearGradient(listOf(ConceptAmberAccent, ConceptPrimaryDark))),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(110.dp)
-                                        .clip(RoundedCornerShape(16.dp))
-                                        .background(Brush.linearGradient(listOf(ConceptPrimaryDark, Color(0xFF1E293B)))),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (!album?.coverUrl.isNullOrBlank()) {
-                                        AsyncImage(
-                                            model = album!!.coverUrl,
-                                            contentDescription = album?.name,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Album,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(48.dp)
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.width(16.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = album?.name ?: "精选专辑",
-                                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
+                                if (!album?.coverUrl.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = album!!.coverUrl,
+                                        contentDescription = album?.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
                                     )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Album,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(46.dp)
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(18.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = album?.name ?: "精选专辑",
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 20.sp
+                                    ),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = album?.artist ?: "未知歌手",
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        color = ConceptAmberAccent,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                val metaLine = buildList {
+                                    if (!album?.publishDate.isNullOrBlank()) add(album!!.publishDate)
+                                    if (!album?.company.isNullOrBlank()) add(album!!.company)
+                                }.joinToString(" · ")
+                                if (metaLine.isNotBlank()) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "歌手：${album?.artist ?: "未知歌手"}",
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            color = ConceptPrimary,
-                                            fontWeight = FontWeight.SemiBold
+                                        text = metaLine,
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         ),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    if (!album?.publishDate.isNullOrBlank()) {
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = "发行时间：${album?.publishDate}",
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        )
-                                    }
-                                    if (!album?.company.isNullOrBlank()) {
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = "发行公司：${album?.company}",
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            ),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
                                 }
                             }
+                        }
 
-                            // 专辑简介（完整多段落展开支持）
-                            if (!album?.intro.isNullOrBlank()) {
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .clickable { isIntroExpanded = !isIntroExpanded }
-                                ) {
-                                    Column(modifier = Modifier.padding(10.dp)) {
-                                        Text(
-                                            text = album!!.intro.trim(),
-                                            style = MaterialTheme.typography.bodySmall.copy(
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f),
-                                                lineHeight = 19.sp
-                                            ),
-                                            maxLines = if (isIntroExpanded) Int.MAX_VALUE else 3,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = if (isIntroExpanded) "收起专辑介绍 ▲" else "展开完整专辑介绍 ▼",
-                                            color = ConceptPrimary,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                }
+                        // 开放式专辑简介（无内嵌盒子）
+                        if (!album?.intro.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { isIntroExpanded = !isIntroExpanded }
+                            ) {
+                                Text(
+                                    text = album!!.intro.trim(),
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.88f),
+                                        lineHeight = 19.sp
+                                    ),
+                                    maxLines = if (isIntroExpanded) Int.MAX_VALUE else 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = if (isIntroExpanded) "收起简介 ▲" else "展开完整专辑介绍 ▼",
+                                    color = ConceptAmberAccent,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
+                        }
 
-                            Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
 
-                            // 播放全部按钮
-                            Button(
-                                onClick = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(18.dp))
+                                .clickable(enabled = filteredSongs.isNotEmpty()) {
                                     if (filteredSongs.isNotEmpty()) {
                                         onSongClick(filteredSongs.first(), filteredSongs)
                                     }
-                                },
-                                enabled = filteredSongs.isNotEmpty(),
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = CircleShape,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = ConceptPrimary,
-                                    contentColor = Color.White
-                                )
+                                }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(ConceptAmberAccent),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.PlayArrow,
                                     contentDescription = null,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "播放全部 (${filteredSongs.size}首)",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
+                                    tint = Color.White,
+                                    modifier = Modifier.size(19.dp)
                                 )
                             }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "播放全部",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "${filteredSongs.size} 首",
+                                fontSize = 12.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        HorizontalDivider(
+                            thickness = 0.5.dp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                        )
                     }
                 }
 
@@ -312,9 +321,9 @@ fun AlbumDetailScreen(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },
                             singleLine = true,
-                            placeholder = { Text("搜索专辑内曲目 (${songs.size}首)...", fontSize = 13.sp) },
+                            placeholder = { Text("搜索专辑曲目...", fontSize = 13.sp) },
                             leadingIcon = {
-                                Icon(Icons.Rounded.Search, contentDescription = null, tint = ConceptPrimary, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Rounded.Search, contentDescription = null, tint = ConceptAmberAccent, modifier = Modifier.size(18.dp))
                             },
                             trailingIcon = {
                                 if (searchQuery.isNotBlank()) {
@@ -323,7 +332,13 @@ fun AlbumDetailScreen(
                                     }
                                 }
                             },
-                            shape = RoundedCornerShape(16.dp),
+                            shape = CircleShape,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = ConceptAmberAccent,
+                                unfocusedBorderColor = Color.Transparent,
+                                focusedContainerColor = conceptFloatingCardColor(),
+                                unfocusedContainerColor = conceptFloatingCardColor()
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 4.dp)
@@ -338,7 +353,7 @@ fun AlbumDetailScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
-                            color = ConceptPrimary
+                            color = ConceptAmberAccent
                         )
                     }
                 }

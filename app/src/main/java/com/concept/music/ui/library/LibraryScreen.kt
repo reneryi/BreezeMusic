@@ -47,9 +47,13 @@ import com.concept.music.ui.components.PlaylistGridItem
 import com.concept.music.ui.components.PlaylistListItem
 import com.concept.music.ui.components.VipBannerCard
 import com.concept.music.ui.components.VipCenterBottomSheet
+import com.concept.music.ui.theme.ConceptCoralAccent
+import com.concept.music.ui.theme.ConceptCyanAccent
+import com.concept.music.ui.theme.ConceptMintAccent
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.ConceptStageBackground
+import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
@@ -149,11 +153,10 @@ fun LibraryScreen(
                 start = 16.dp,
                 end = 16.dp,
                 top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 60.dp,
-                bottom = 108.dp
-            ),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                bottom = 112.dp
+            )
         ) {
-            // 1. 头像账号与听歌等级时长融合卡片（一体式高颜值数字音乐名片）
+            // 1. 头像账号与听歌等级时长一体式数字名片（去嵌套盒子化，视觉通透开阔）
             item {
                 UnifiedProfileAndGradeCard(
                     profile = profile,
@@ -167,9 +170,10 @@ fun LibraryScreen(
                         }
                     }
                 )
+                Spacer(modifier = Modifier.height(14.dp))
             }
 
-            // 2. VIP 概念版领取入口 (无边框饱满圆润悬浮卡)
+            // 2. VIP 概念版领取入口
             item {
                 VipBannerCard(
                     state = vip,
@@ -177,19 +181,20 @@ fun LibraryScreen(
                     onClick = { showVipCenterSheet = true },
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(modifier = Modifier.height(14.dp))
             }
 
-            // 3. 核心快捷卡片 (我喜欢的音乐 + 最近播放，深浅色自适应柔和渐变)
+            // 3. 核心快捷入口（我喜欢的音乐 + 最近播放，双色渐变点缀）
             item {
                 val likeGradient = if (isDark) {
-                    listOf(Color(0xFF2E1922), Color(0xFF1B1724))
+                    listOf(Color(0xFF2B1822), Color(0xFF191724))
                 } else {
-                    listOf(Color(0xFFFFE5EC), Color(0xFFFFF0F4))
+                    listOf(Color(0xFFFFE8EE), Color(0xFFFFF3F6))
                 }
                 val historyGradient = if (isDark) {
-                    listOf(Color(0xFF152538), Color(0xFF171926))
+                    listOf(Color(0xFF132638), Color(0xFF151926))
                 } else {
-                    listOf(Color(0xFFDFF0FF), Color(0xFFEEF6FF))
+                    listOf(Color(0xFFE3F2FF), Color(0xFFF0F7FF))
                 }
 
                 Row(
@@ -200,7 +205,7 @@ fun LibraryScreen(
                         title = "我喜欢的音乐",
                         subtitle = "${likedPlaylist?.trackCount ?: 0} 首歌曲",
                         icon = Icons.Rounded.Favorite,
-                        iconTint = Color(0xFFFF5252),
+                        iconTint = ConceptCoralAccent,
                         gradientColors = likeGradient,
                         onClick = { onOpenPlaylist("like") },
                         modifier = Modifier.weight(1f)
@@ -216,21 +221,23 @@ fun LibraryScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
+                Spacer(modifier = Modifier.height(14.dp))
             }
 
-            // 4. 概念胶囊工作台 · Focus Pod（从发现页移至我的页，紧接常用听歌入口下方，排版紧凑大气）
+            // 4. 概念胶囊工作台 · Focus Pod（去除右侧胶囊按钮，改为极简文字指示，减少页面圆角按钮密度）
             item {
                 val podActive = focusPodState.isRunning || focusPodState.activeTracks.isNotEmpty()
+                val podAccent = if (isDark) Color(0xFF9688FF) else ConceptVioletAccent
                 val podBrush = if (isDark) {
-                    Brush.linearGradient(listOf(Color(0xFF142844), Color(0xFF101C32)))
+                    Brush.linearGradient(listOf(Color(0xFF1A1E36), Color(0xFF121829)))
                 } else {
-                    Brush.linearGradient(listOf(Color(0xFFE6F3FF), Color(0xFFF1EEFF)))
+                    Brush.linearGradient(listOf(Color(0xFFEEEBFF), Color(0xFFEAF4FF)))
                 }
 
                 Surface(
                     shape = RoundedCornerShape(24.dp),
                     color = Color.Transparent,
-                    shadowElevation = if (isDark) 0.dp else 4.dp,
+                    shadowElevation = if (isDark) 0.dp else 3.dp,
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(24.dp))
@@ -243,22 +250,22 @@ fun LibraryScreen(
                             .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = ConceptPrimary.copy(alpha = 0.18f),
-                            modifier = Modifier.size(48.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(podAccent.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Rounded.SelfImprovement,
-                                    contentDescription = "概念胶囊工作台",
-                                    tint = ConceptPrimary,
-                                    modifier = Modifier.size(25.dp)
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Rounded.SelfImprovement,
+                                contentDescription = "概念胶囊工作台",
+                                tint = podAccent,
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
 
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(13.dp))
 
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -272,27 +279,21 @@ fun LibraryScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 if (focusPodState.isRunning) {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = ConceptPrimary.copy(alpha = 0.18f)
-                                    ) {
-                                        Text(
-                                            text = "专注 ${focusPodState.formattedRemaining}",
-                                            color = ConceptPrimary,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "专注 ${focusPodState.formattedRemaining}",
+                                        color = podAccent,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
                             Spacer(modifier = Modifier.height(3.dp))
                             Text(
                                 text = if (focusPodState.activeTracks.isNotEmpty()) {
-                                    "已开启 ${focusPodState.activeTracks.size} 路环境白噪音 · 心流伴音自动累计听歌时长"
+                                    "已开启 ${focusPodState.activeTracks.size} 路环境白噪音 · 自动累计听歌时长"
                                 } else {
-                                    "心流番茄钟 × 4路白噪音混音 × 场景轻音 · 自动累计等级时长"
+                                    "心流番茄钟 × 4路白噪音混音 × 场景轻音"
                                 },
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -305,61 +306,51 @@ fun LibraryScreen(
 
                         Spacer(modifier = Modifier.width(8.dp))
 
-                        FilledTonalButton(
-                            onClick = { showFocusPodSheet = true },
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = if (podActive) ConceptPrimary else ConceptPrimary.copy(alpha = 0.16f),
-                                contentColor = if (podActive) Color.White else ConceptPrimary
-                            ),
-                            contentPadding = PaddingValues(horizontal = 13.dp, vertical = 5.dp),
-                            modifier = Modifier.height(34.dp)
-                        ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = if (podActive) "控制台" else "开启心流",
-                                fontSize = 11.5.sp,
+                                color = podAccent,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Icon(
+                                imageVector = Icons.Rounded.ChevronRight,
+                                contentDescription = null,
+                                tint = podAccent,
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(22.dp))
             }
 
-            // 5. 歌单与音乐资产分组栏（修复「已购」在小屏上被挤压截断的问题：支持横向滚动 + 禁止换行截断）
+            // 5. 开放式极简音乐资产导航栏（彻底告别 4 个胶囊按钮 + 4 个图标按钮的密集感）
             item {
-                val tabsScrollState = rememberScrollState()
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp, bottom = 2.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+                val tabItems = listOf(
+                    Triple("自建", myPlaylists.size, ConceptPrimary),
+                    Triple("收藏", favoritePlaylists.size, ConceptCoralAccent),
+                    Triple("关注", followedArtists.size, ConceptMintAccent),
+                    Triple("已购", purchasedSongs.size + purchasedAlbums.size, VipGold)
+                )
+
+                Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.Bottom
                     ) {
+                        // 左侧：开放式文字 Tab + 底部多彩指示条
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .weight(1f)
-                                .horizontalScroll(tabsScrollState)
+                            horizontalArrangement = Arrangement.spacedBy(20.dp),
+                            verticalAlignment = Alignment.Bottom
                         ) {
-                            val tabs = listOf(
-                                "自建 ${myPlaylists.size}",
-                                "收藏 ${favoritePlaylists.size}",
-                                "关注 ${followedArtists.size}",
-                                "已购 ${purchasedSongs.size + purchasedAlbums.size}"
-                            )
-                            tabs.forEachIndexed { idx, label ->
+                            tabItems.forEachIndexed { idx, (title, count, accent) ->
                                 val isSelected = selectedTab == idx
-                                Surface(
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = if (isSelected) ConceptPrimary.copy(alpha = 0.18f) else cardColor,
-                                    shadowElevation = if (!isDark && !isSelected) 2.dp else 0.dp,
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(16.dp))
                                         .clickable {
                                             viewModel.setSelectedAssetTab(idx)
                                             if (idx == 2 && isLoggedIn && followedArtists.isEmpty()) {
@@ -368,49 +359,69 @@ fun LibraryScreen(
                                                 viewModel.refreshPurchasedAssets()
                                             }
                                         }
+                                        .padding(top = 4.dp)
                                 ) {
-                                    Text(
-                                        text = label,
-                                        style = MaterialTheme.typography.labelLarge.copy(
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (isSelected) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = 12.5.sp
-                                        ),
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    Row(verticalAlignment = Alignment.Bottom) {
+                                        Text(
+                                            text = title,
+                                            style = MaterialTheme.typography.titleMedium.copy(
+                                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                                                color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = if (isSelected) 16.5.sp else 15.sp
+                                            )
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = count.toString(),
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isSelected) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                fontSize = 11.sp
+                                            ),
+                                            modifier = Modifier.padding(bottom = 2.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(7.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .width(20.dp)
+                                            .height(3.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isSelected) accent else Color.Transparent)
                                     )
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.width(4.dp))
-
+                        // 右侧：按当前 Tab 按需精简展示工具图标（杜绝 4 个图标同排堆砌）
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(0.dp)
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            modifier = Modifier.padding(bottom = 4.dp)
                         ) {
-                            IconButton(
-                                onClick = { showCreateDialog = true },
-                                modifier = Modifier.size(30.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Add,
-                                    contentDescription = "新建歌单",
-                                    tint = ConceptPrimary,
-                                    modifier = Modifier.size(19.dp)
-                                )
-                            }
-                            IconButton(
-                                onClick = { showImportDialog = true },
-                                modifier = Modifier.size(30.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.FileUpload,
-                                    contentDescription = "导入歌单",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(17.dp)
-                                )
+                            if (selectedTab == 0) {
+                                IconButton(
+                                    onClick = { showCreateDialog = true },
+                                    modifier = Modifier.size(30.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Add,
+                                        contentDescription = "新建歌单",
+                                        tint = ConceptPrimary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { showImportDialog = true },
+                                    modifier = Modifier.size(30.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.FileUpload,
+                                        contentDescription = "导入歌单",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
                             }
                             if (selectedTab == 0 || selectedTab == 1) {
                                 IconButton(
@@ -425,31 +436,34 @@ fun LibraryScreen(
                                         modifier = Modifier.size(17.dp)
                                     )
                                 }
-                            }
-                            IconButton(
-                                onClick = {
-                                    // 严格边界：仅刷新当前选中的资产分组 Tab
-                                    when (selectedTab) {
-                                        0, 1 -> viewModel.refreshPlaylistsOnly()
-                                        2 -> viewModel.refreshFollowedArtists()
-                                        3 -> viewModel.refreshPurchasedAssets()
-                                    }
-                                },
-                                modifier = Modifier.size(30.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Refresh,
-                                    contentDescription = "刷新",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                            } else {
+                                IconButton(
+                                    onClick = {
+                                        if (selectedTab == 2) viewModel.refreshFollowedArtists()
+                                        else if (selectedTab == 3) viewModel.refreshPurchasedAssets()
+                                    },
+                                    modifier = Modifier.size(30.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Refresh,
+                                        contentDescription = "刷新当前分组",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
                             }
                         }
                     }
+
+                    HorizontalDivider(
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
                 }
             }
 
-            // 6. 音乐库内容列表 (自建歌单 / 收藏歌单 / 关注歌手 / 已购资产)
+            // 6. 开放式无框音乐资产内容流 (自建歌单 / 收藏歌单 / 关注歌手 / 已购资产)
             when (selectedTab) {
                 0, 1 -> {
                     val currentDisplayPlaylists = if (selectedTab == 0) myPlaylists else favoritePlaylists
@@ -458,7 +472,7 @@ fun LibraryScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 36.dp),
+                                    .padding(vertical = 40.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
@@ -469,19 +483,15 @@ fun LibraryScreen(
                                 )
                                 if (selectedTab == 0) {
                                     Spacer(modifier = Modifier.height(14.dp))
-                                    Button(
-                                        onClick = { showCreateDialog = true },
-                                        colors = ButtonDefaults.buttonColors(containerColor = ConceptPrimary),
-                                        shape = RoundedCornerShape(18.dp),
-                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
-                                    ) {
+                                    TextButton(onClick = { showCreateDialog = true }) {
                                         Icon(
                                             imageVector = Icons.Rounded.Add,
                                             contentDescription = null,
+                                            tint = ConceptPrimary,
                                             modifier = Modifier.size(16.dp)
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("新建歌单", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        Text("新建歌单", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = ConceptPrimary)
                                     }
                                 }
                             }
@@ -497,8 +507,10 @@ fun LibraryScreen(
                         val chunked = currentDisplayPlaylists.chunked(2)
                         items(chunked, key = { it.first().id }) { rowItems ->
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
                                 rowItems.forEach { pl ->
                                     PlaylistGridItem(
@@ -515,13 +527,13 @@ fun LibraryScreen(
                     }
                 }
                 2 -> {
-                    // 关注歌手列表（对接官方 /v4/follow_list?plat=1）
+                    // 关注歌手列表（无外框开放式行排版 + 极光薄荷绿点缀）
                     if (followedArtists.isEmpty()) {
                         item {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 36.dp),
+                                    .padding(vertical = 40.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
@@ -531,27 +543,21 @@ fun LibraryScreen(
                                     )
                                 )
                                 if (isLoggedIn) {
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    FilledTonalButton(
-                                        onClick = { viewModel.refreshFollowedArtists() },
-                                        shape = RoundedCornerShape(18.dp)
-                                    ) {
-                                        Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    TextButton(onClick = { viewModel.refreshFollowedArtists() }) {
+                                        Icon(Icons.Rounded.Refresh, contentDescription = null, tint = ConceptMintAccent, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text("重新同步关注列表", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                                        Text("重新同步关注列表", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ConceptMintAccent)
                                     }
                                 }
                             }
                         }
                     } else {
                         items(followedArtists, key = { "artist_${it.id}_${it.name}" }) { artist ->
-                            Surface(
-                                shape = RoundedCornerShape(20.dp),
-                                color = cardColor,
-                                shadowElevation = if (isDark) 0.dp else 3.dp,
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(20.dp))
+                                    .clip(RoundedCornerShape(14.dp))
                                     .clickable {
                                         if (artist.id.isNotBlank()) onOpenArtist(artist.id)
                                     }
@@ -559,7 +565,7 @@ fun LibraryScreen(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(14.dp),
+                                        .padding(vertical = 10.dp, horizontal = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     if (artist.avatarUrl.isNotBlank()) {
@@ -568,24 +574,24 @@ fun LibraryScreen(
                                             contentDescription = artist.name,
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier
-                                                .size(52.dp)
+                                                .size(54.dp)
                                                 .clip(CircleShape)
                                                 .background(elevatedColor)
                                         )
                                     } else {
-                                        Surface(
-                                            modifier = Modifier.size(52.dp),
-                                            shape = CircleShape,
-                                            color = elevatedColor
+                                        Box(
+                                            modifier = Modifier
+                                                .size(54.dp)
+                                                .clip(CircleShape)
+                                                .background(ConceptMintAccent.copy(alpha = 0.16f)),
+                                            contentAlignment = Alignment.Center
                                         ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    imageVector = Icons.Rounded.Person,
-                                                    contentDescription = null,
-                                                    tint = ConceptPrimary,
-                                                    modifier = Modifier.size(26.dp)
-                                                )
-                                            }
+                                            Icon(
+                                                imageVector = Icons.Rounded.Person,
+                                                contentDescription = null,
+                                                tint = ConceptMintAccent,
+                                                modifier = Modifier.size(26.dp)
+                                            )
                                         }
                                     }
                                     Spacer(modifier = Modifier.width(14.dp))
@@ -601,33 +607,47 @@ fun LibraryScreen(
                                         val subText = buildList {
                                             if (artist.songCount > 0) add("单曲 ${artist.songCount} 首")
                                             if (artist.fansCount > 0) add("粉丝 ${artist.fansCount}")
-                                        }.joinToString(" · ").ifBlank { "已关注歌手 · 点击进入歌手主页" }
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = subText,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontSize = 12.sp
-                                        )
+                                        }.joinToString(" · ").ifBlank { "已关注歌手" }
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(5.dp)
+                                                    .clip(CircleShape)
+                                                    .background(ConceptMintAccent)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = subText,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = 12.sp
+                                            )
+                                        }
                                     }
                                     Icon(
-                                        imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                                        imageVector = Icons.Rounded.ChevronRight,
                                         contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                        modifier = Modifier.size(16.dp)
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                                        modifier = Modifier.size(18.dp)
                                     )
                                 }
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(start = 72.dp, end = 4.dp),
+                                    thickness = 0.5.dp,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                                )
                             }
                         }
                     }
                 }
                 3 -> {
-                    // 已购专辑与单曲列表
+                    // 已购专辑与单曲列表（无外框开放式行排版 + 琥珀金点缀）
                     if (purchasedAlbums.isEmpty() && purchasedSongs.isEmpty()) {
                         item {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 36.dp),
+                                    .padding(vertical = 40.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
@@ -641,22 +661,31 @@ fun LibraryScreen(
                     } else {
                         if (purchasedAlbums.isNotEmpty()) {
                             item {
-                                Text(
-                                    text = "已购专辑 (${purchasedAlbums.size})",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.padding(top = 2.dp, bottom = 2.dp)
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp, start = 4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(3.dp)
+                                            .height(13.dp)
+                                            .clip(CircleShape)
+                                            .background(VipGold)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "数字专辑 · ${purchasedAlbums.size}",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                             items(purchasedAlbums, key = { "album_${it.albumId}" }) { album ->
-                                Surface(
-                                    shape = RoundedCornerShape(20.dp),
-                                    color = cardColor,
-                                    shadowElevation = if (isDark) 0.dp else 3.dp,
+                                Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(20.dp))
+                                        .clip(RoundedCornerShape(14.dp))
                                         .clickable {
                                             if (album.albumId.isNotBlank()) onOpenAlbum(album.albumId)
                                         }
@@ -664,7 +693,7 @@ fun LibraryScreen(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(14.dp),
+                                            .padding(vertical = 10.dp, horizontal = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         AsyncImage(
@@ -672,7 +701,7 @@ fun LibraryScreen(
                                             contentDescription = album.albumName,
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier
-                                                .size(54.dp)
+                                                .size(56.dp)
                                                 .clip(RoundedCornerShape(14.dp))
                                                 .background(elevatedColor)
                                         )
@@ -686,46 +715,60 @@ fun LibraryScreen(
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
-                                            Spacer(modifier = Modifier.height(2.dp))
-                                            val countSuffix = if (album.songCount > 0) " (${album.songCount}首)" else ""
+                                            Spacer(modifier = Modifier.height(3.dp))
+                                            val countSuffix = if (album.songCount > 0) " · ${album.songCount} 首" else ""
                                             Text(
-                                                text = "${album.singerName} · 数字专辑$countSuffix",
+                                                text = "${album.singerName}$countSuffix",
                                                 color = if (isDark) VipGold else Color(0xFFB87900),
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Medium
                                             )
                                         }
                                         Icon(
-                                            imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                                            imageVector = Icons.Rounded.ChevronRight,
                                             contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                            modifier = Modifier.size(16.dp)
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                                            modifier = Modifier.size(18.dp)
                                         )
                                     }
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(start = 74.dp, end = 4.dp),
+                                        thickness = 0.5.dp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                                    )
                                 }
                             }
                         }
 
                         if (purchasedSongs.isNotEmpty()) {
                             item {
-                                Text(
-                                    text = "已购单曲 (${purchasedSongs.size})",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp, start = 4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(3.dp)
+                                            .height(13.dp)
+                                            .clip(CircleShape)
+                                            .background(ConceptPrimary)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "已购单曲 · ${purchasedSongs.size}",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                             val allPurchasedSongs = purchasedSongs.mapNotNull { it.song }
                             items(purchasedSongs, key = { "song_${it.songId}_${it.songName}" }) { item ->
                                 val s = item.song
-                                Surface(
-                                    shape = RoundedCornerShape(20.dp),
-                                    color = cardColor,
-                                    shadowElevation = if (isDark) 0.dp else 3.dp,
+                                Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(20.dp))
+                                        .clip(RoundedCornerShape(14.dp))
                                         .clickable {
                                             s?.let { songObj ->
                                                 onPlaySong(songObj, allPurchasedSongs.ifEmpty { listOf(songObj) })
@@ -735,7 +778,7 @@ fun LibraryScreen(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(12.dp),
+                                            .padding(vertical = 10.dp, horizontal = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         if (!s?.coverUrl.isNullOrBlank()) {
@@ -744,14 +787,14 @@ fun LibraryScreen(
                                                 contentDescription = item.songName,
                                                 contentScale = ContentScale.Crop,
                                                 modifier = Modifier
-                                                    .size(48.dp)
+                                                    .size(50.dp)
                                                     .clip(RoundedCornerShape(12.dp))
                                                     .background(elevatedColor)
                                             )
                                         } else {
                                             Box(
                                                 modifier = Modifier
-                                                    .size(48.dp)
+                                                    .size(50.dp)
                                                     .clip(RoundedCornerShape(12.dp))
                                                     .background(ConceptPrimary.copy(alpha = 0.14f)),
                                                 contentAlignment = Alignment.Center
@@ -764,7 +807,7 @@ fun LibraryScreen(
                                                 )
                                             }
                                         }
-                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Spacer(modifier = Modifier.width(14.dp))
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = item.songName,
@@ -796,6 +839,11 @@ fun LibraryScreen(
                                             }
                                         }
                                     }
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(start = 68.dp, end = 4.dp),
+                                        thickness = 0.5.dp,
+                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                                    )
                                 }
                             }
                         }
@@ -1050,6 +1098,7 @@ private fun UnifiedProfileAndGradeCard(
     val isDark = LocalIsDarkTheme.current
     val cardColor = conceptFloatingCardColor()
     val elevatedColor = conceptElevatedSurfaceColor()
+    val mintAccent = if (isDark) Color(0xFF26DEBF) else ConceptMintAccent
 
     val rotationAngle by animateFloatAsState(
         targetValue = if (isGradeSyncing) 360f else 0f,
@@ -1057,7 +1106,6 @@ private fun UnifiedProfileAndGradeCard(
         label = "gradeSyncRotation"
     )
 
-    // 计算当前等级经验进度（若接口未返回百分比，则按时长给出优雅的阶段进度展示）
     val progressValue = remember(userGrade) {
         if (userGrade.progressPercent.toInt() in 1..100) {
             (userGrade.progressPercent / 100f).coerceIn(0.08f, 1f)
@@ -1067,25 +1115,36 @@ private fun UnifiedProfileAndGradeCard(
         }
     }
 
+    val cardBrush = if (isDark) {
+        Brush.linearGradient(
+            listOf(Color(0xFF16243A), Color(0xFF131B2B))
+        )
+    } else {
+        Brush.linearGradient(
+            listOf(Color(0xFFFFFFFF), Color(0xFFF3F8FF))
+        )
+    }
+
     Surface(
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(26.dp),
         color = cardColor,
-        shadowElevation = if (isDark) 0.dp else 6.dp,
+        shadowElevation = if (isDark) 0.dp else 5.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp),
+                .background(cardBrush)
+                .padding(horizontal = 18.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 上半部分：头像 + 昵称/VIP/等级 + 账号管理按钮
+            // 上层：头像 + 昵称与 VIP 标识 + 极简文字链入口（去除胶囊按钮堆叠）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(modifier = Modifier.size(66.dp)) {
+                Box(modifier = Modifier.size(62.dp)) {
                     if (profile?.avatarUrl.isNullOrEmpty()) {
                         Surface(
                             modifier = Modifier.fillMaxSize(),
@@ -1097,7 +1156,7 @@ private fun UnifiedProfileAndGradeCard(
                                     imageVector = Icons.Rounded.Person,
                                     contentDescription = "账号头像",
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(34.dp)
+                                    modifier = Modifier.size(32.dp)
                                 )
                             }
                         }
@@ -1111,8 +1170,6 @@ private fun UnifiedProfileAndGradeCard(
                             contentScale = ContentScale.Crop
                         )
                     }
-
-
                 }
 
                 Column(
@@ -1136,22 +1193,22 @@ private fun UnifiedProfileAndGradeCard(
 
                         if (isLoggedIn) {
                             Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = VipGold.copy(alpha = 0.2f)
+                                shape = RoundedCornerShape(6.dp),
+                                color = VipGold.copy(alpha = 0.18f)
                             ) {
                                 Text(
                                     text = "VIP",
                                     color = if (isDark) VipGold else Color(0xFFB87900),
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Black,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp)
                                 )
                             }
                         }
                     }
 
                     Text(
-                        text = if (isLoggedIn) "酷狗概念版专属权益与听歌等级已同步" else "登录后同步我喜欢的音乐与听歌等级",
+                        text = if (isLoggedIn) "概念版黑胶无损与云端曲库已就绪" else "点击登录同步我喜欢的音乐与听歌等级",
                         style = MaterialTheme.typography.bodySmall.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 12.sp
@@ -1161,132 +1218,122 @@ private fun UnifiedProfileAndGradeCard(
                     )
                 }
 
-                FilledTonalButton(
-                    onClick = onAccountAction,
-                    shape = CircleShape,
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = elevatedColor,
-                        contentColor = MaterialTheme.colorScheme.onSurface
-                    ),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 7.dp),
-                    modifier = Modifier.height(34.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable(onClick = onAccountAction)
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
                 ) {
                     Text(
                         text = if (isLoggedIn) "账号管理" else "立即登录",
-                        fontSize = 12.sp,
+                        color = ConceptPrimary,
+                        fontSize = 12.5.sp,
                         fontWeight = FontWeight.Bold
+                    )
+                    Icon(
+                        imageVector = Icons.Rounded.ChevronRight,
+                        contentDescription = null,
+                        tint = ConceptPrimary,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
 
-            // 下半部分：融合在同一张卡片内的听歌等级与时长仪表盘
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = elevatedColor,
-                modifier = Modifier.fillMaxWidth()
+            HorizontalDivider(
+                thickness = 0.5.dp,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)
+            )
+
+            // 下层：开放式听歌等级与累计时长进度（消除内嵌子盒子与胶囊背景）
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Surface(
-                                color = ConceptPrimary.copy(alpha = 0.16f),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Headphones,
-                                        contentDescription = null,
-                                        tint = ConceptPrimary,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "Lv.${userGrade.level} 听歌等级",
-                                        color = ConceptPrimary,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.ExtraBold
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "累计 ${userGrade.displayListenTimeText}",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.5.sp
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable(enabled = !isGradeSyncing) { onSyncGrade() }
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = "同步云端",
-                                tint = ConceptPrimary,
-                                modifier = Modifier
-                                    .size(14.dp)
-                                    .rotate(rotationAngle)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (isGradeSyncing) "同步中..." else "同步云端",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = ConceptPrimary,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            )
-                        }
-                    }
-
-                    // 等级经验进度条
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.weight(1f)
                     ) {
-                        LinearProgressIndicator(
-                            progress = { progressValue },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(5.dp)
-                                .clip(CircleShape),
-                            color = ConceptPrimary,
-                            trackColor = ConceptPrimary.copy(alpha = 0.14f)
+                        Icon(
+                            imageVector = Icons.Rounded.Headphones,
+                            contentDescription = null,
+                            tint = mintAccent,
+                            modifier = Modifier.size(15.dp)
                         )
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
-                            text = if (userGrade.nextLevelRemainMinutes > 0) {
-                                "距 Lv.${userGrade.level + 1} 还需 ${userGrade.nextLevelRemainMinutes} 分钟"
-                            } else {
-                                "听歌时长实时上报"
-                            },
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 10.sp
+                            text = "Lv.${userGrade.level}",
+                            color = mintAccent,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "·  累计听歌 ${userGrade.displayListenTimeText}",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 12.5.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(enabled = !isGradeSyncing) { onSyncGrade() }
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Refresh,
+                            contentDescription = "同步云端",
+                            tint = ConceptPrimary,
+                            modifier = Modifier
+                                .size(13.5.dp)
+                                .rotate(rotationAngle)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = if (isGradeSyncing) "同步中" else "同步云端",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = ConceptPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    LinearProgressIndicator(
+                        progress = { progressValue },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(4.dp)
+                            .clip(CircleShape),
+                        color = ConceptPrimary,
+                        trackColor = ConceptPrimary.copy(alpha = 0.14f)
+                    )
+                    Text(
+                        text = if (userGrade.nextLevelRemainMinutes > 0) {
+                            "距 Lv.${userGrade.level + 1} 差 ${userGrade.nextLevelRemainMinutes} 分钟"
+                        } else {
+                            "听歌时长实时上报"
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 10.5.sp
+                    )
                 }
             }
         }

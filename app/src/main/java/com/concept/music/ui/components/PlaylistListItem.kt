@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -21,12 +22,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.Playlist
-import com.concept.music.ui.theme.LocalIsDarkTheme
+import com.concept.music.ui.theme.ConceptCoralAccent
+import com.concept.music.ui.theme.ConceptMintAccent
+import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
-import com.concept.music.ui.theme.conceptFloatingCardColor
+import kotlin.math.abs
 
 /**
- * 歌单列表项 (List View，圆润饱满无边框悬浮块，自适应深色/浅色主题)
+ * 歌单列表项 (开放式无框通透排版：去除独立圆角长方形卡片外壳，以留白、多彩微渐变封面与极细分割线营造开阔呼吸感)
  */
 @Composable
 fun PlaylistListItem(
@@ -34,28 +38,38 @@ fun PlaylistListItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val isDark = LocalIsDarkTheme.current
-    Surface(
+    val accentColor = when {
+        playlist.isLiked -> ConceptCoralAccent
+        abs(playlist.title.hashCode()) % 3 == 0 -> ConceptPrimary
+        abs(playlist.title.hashCode()) % 3 == 1 -> ConceptVioletAccent
+        else -> ConceptMintAccent
+    }
+
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp),
-        color = conceptFloatingCardColor(),
-        shadowElevation = if (isDark) 0.dp else 3.dp
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 10.dp, horizontal = 12.dp),
+                .padding(vertical = 10.dp, horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(58.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(conceptElevatedSurfaceColor()),
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        Brush.linearGradient(
+                            listOf(
+                                accentColor.copy(alpha = 0.22f),
+                                conceptElevatedSurfaceColor()
+                            )
+                        )
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 if (playlist.coverUrl.isNotEmpty()) {
@@ -66,32 +80,25 @@ fun PlaylistListItem(
                         modifier = Modifier.fillMaxSize()
                     )
                 } else if (playlist.isLiked) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color(0xFFFF5252).copy(alpha = 0.18f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Favorite,
-                            contentDescription = null,
-                            tint = Color(0xFFFF5252),
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Rounded.Favorite,
+                        contentDescription = null,
+                        tint = ConceptCoralAccent,
+                        modifier = Modifier.size(26.dp)
+                    )
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.LibraryMusic,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                        modifier = Modifier.size(26.dp)
+                        tint = accentColor,
+                        modifier = Modifier.size(25.dp)
                     )
                 }
             }
 
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 Text(
                     text = playlist.title,
@@ -104,23 +111,38 @@ fun PlaylistListItem(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Text(
-                    text = "${playlist.trackCount}首",
-                    style = MaterialTheme.typography.bodySmall.copy(
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 12.sp
-                    ),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(accentColor.copy(alpha = 0.75f))
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "${playlist.trackCount} 首歌曲",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             Icon(
                 imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
                 modifier = Modifier.size(18.dp)
             )
         }
+
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 74.dp, end = 4.dp),
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+        )
     }
 }
