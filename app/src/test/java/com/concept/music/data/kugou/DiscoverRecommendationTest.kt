@@ -271,4 +271,99 @@ class DiscoverRecommendationTest {
         val overlap = firstBatch.map { it.hash }.intersect(secondBatch.map { it.hash }.toSet())
         assertTrue("Personal FM refresh must return 20 brand new personalized songs", overlap.isEmpty())
     }
+
+    @Test
+    fun enrichSongsPrivilegeLiteAndParseSongStrictlyDistinguishSqLosslessFromHiRes() = runTest {
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String,
+                session: KugouSession?,
+                query: Map<String, String>,
+                body: JsonObject?,
+                host: String,
+                method: String,
+                web: Boolean,
+                headers: Map<String, String>,
+                device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+
+            override suspend fun callAdvanced(
+                path: String,
+                session: KugouSession?,
+                query: Map<String, String>,
+                body: JsonObject?,
+                host: String,
+                method: String,
+                web: Boolean,
+                headers: Map<String, String>,
+                device: DeviceIdentity?,
+                sign: Boolean,
+                includeDefaultParams: Boolean
+            ): ApiResponse {
+                if (path == "/v2/get_res_privilege/lite") {
+                    // Song 1: Normal 16-bit SQ FLAC (26MB, 920kbps) + Viper "super" stream + unverified/26MB level=6 "high"
+                    // Song 2: True 24-bit/96kHz Hi-Res Master (54MB, 2304kbps) + 16-bit SQ FLAC (27MB)
+                    val mockPriv = """
+                        {
+                            "status": 1,
+                            "data": [
+                                {
+                                    "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                    "relate_goods": [
+                                        {"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "level": 2, "quality": "128", "info": {"filesize": 3600000, "bitrate": 128}},
+                                        {"hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "level": 4, "quality": "320", "info": {"filesize": 9200000, "bitrate": 320}},
+                                        {"hash": "cccccccccccccccccccccccccccccccc", "level": 5, "quality": "flac", "info": {"filesize": 26500000, "bitrate": 920}},
+                                        {"hash": "dddddddddddddddddddddddddddddddd", "level": 6, "quality": "high", "info": {"filesize": 26800000, "bitrate": 940}},
+                                        {"hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "level": 6, "quality": "super", "info": {"filesize": 62000000, "bitrate": 2400}}
+                                    ]
+                                },
+                                {
+                                    "hash": "11111111111111111111111111111111",
+                                    "relate_goods": [
+                                        {"hash": "11111111111111111111111111111111", "level": 2, "quality": "128", "info": {"filesize": 3800000, "bitrate": 128}},
+                                        {"hash": "22222222222222222222222222222222", "level": 5, "quality": "flac", "info": {"filesize": 27000000, "bitrate": 950}},
+                                        {"hash": "33333333333333333333333333333333", "level": 6, "quality": "high", "info": {"filesize": 54000000, "bitrate": 2304}}
+                                    ]
+                                }
+                            ]
+                        }
+                    """.trimIndent()
+                    return ApiResponse(JsonParser.parseString(mockPriv).asJsonObject)
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+
+        val store = MemoryStore()
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+
+        val baseSongs = listOf(
+            com.concept.music.data.model.Song(
+                id = "1",
+                hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                hash128 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                title = "标准无损曲目",
+                artist = "歌手A"
+            ),
+            com.concept.music.data.model.Song(
+                id = "2",
+                hash = "11111111111111111111111111111111",
+                hash128 = "11111111111111111111111111111111",
+                title = "真母带HiRes曲目",
+                artist = "歌手B"
+            )
+        )
+
+        val enriched = repo.enrichSongsPrivilegeLite(baseSongs)
+        // Song 1 must be SQ Lossless (isLossless = true, isHiRes = false)
+        assertTrue(enriched[0].isLossless)
+        assertFalse("26MB 16-bit FLAC and synthetic super stream must NOT be labeled Hi-Res", enriched[0].isHiRes)
+
+        // Song 2 must be True Hi-Res (isHiRes = true, isLossless = true)
+        assertTrue(enriched[1].isHiRes)
+        assertTrue(enriched[1].isLossless)
+        assertEquals("33333333333333333333333333333333", enriched[1].hashHiRes)
+    }
 }

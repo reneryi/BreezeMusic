@@ -1,18 +1,23 @@
 package com.concept.music.ui.home
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,13 +29,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,22 +45,25 @@ import com.concept.music.data.model.FmChannel
 import com.concept.music.data.model.Song
 import com.concept.music.ui.components.PlayingAudioWaveIndicator
 import com.concept.music.ui.components.SongItemRow
+import com.concept.music.ui.theme.ConceptCoralAccent
+import com.concept.music.ui.theme.ConceptCyanAccent
+import com.concept.music.ui.theme.ConceptMintAccent
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.ConceptStageBackground
+import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.LocalIsDarkTheme
-import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
 
 /**
- * 精选场景电台专区独立总览页 (RadioScreen)
- * 与发现页单电台快捷抽屉完全区分，定位为「电台调频广播中心 + 全部分类电台双列矩阵 + 20首分类曲目漫游流」：
- * 1. 顶部：复古未来感 FM 实时调频舱（展示当前锁定电台的频率、旋转黑胶唱片、电台简介、一键收听、换一批 20 首、继续漫游 +20 首）；
- * 2. 中部：电台分类筛选胶囊（全部 / 推荐电台 / 心情场景 / 年代语种 / 曲风流派）+ 双列大气圆润电台矩阵（可一键展开/折叠全部电台）；
- * 3. 底部：当前调频电台专属曲库流（每次默认加载完整 20 首严格符合当前电台分类的歌曲，点击「继续漫游 +20首」每次真实追加 20 首新曲目）。
+ * 精选场景电台独立页面 (重构极简概念版风格)：
+ * 1. 做减法：删除顶部栏副标题、删除顶部栏与列表头重复的「换一批」按钮、删除冗长分类说明；
+ * 2. 调频舱集中操控：支持「播放全部」「换一批」「+20首」三键一体操控；
+ * 3. 修复选中电台卡片时的方形阴影透底与明暗色差 Bug（采用 100% 不透明高亮底色 + 精致描边 + 零透底阴影）；
+ * 4. 注入现代多彩点缀美学，不同分类电台呈现差异化点缀色。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,14 +98,14 @@ fun RadioScreen(
 
     var selectedCategory by remember { mutableStateOf("全部") }
     val categories = remember(fmChannels) {
-        listOf("全部") + fmChannels.map { it.category.ifBlank { "推荐电台" } }.distinct()
+        (listOf("全部") + fmChannels.map { it.category.ifBlank { "推荐电台" } }.distinct()).take(5)
     }
     val filteredStations = remember(fmChannels, selectedCategory) {
         if (selectedCategory == "全部") fmChannels
         else fmChannels.filter { (it.category.ifBlank { "推荐电台" }) == selectedCategory }
     }
 
-    var showAllStationsGrid by remember { mutableStateOf(true) }
+    var showAllStationsGrid by remember { mutableStateOf(false) }
     var stationSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var appending by remember { mutableStateOf(false) }
@@ -111,7 +120,7 @@ fun RadioScreen(
                 stationSongs = stationSongs + newUnique
                 Toast.makeText(
                     context,
-                    "已追加 ${newUnique.size} 首「${currentChannel.name}」分类新曲（当前共 ${stationSongs.size} 首）",
+                    "已追加 ${newUnique.size} 首「${currentChannel.name}」新曲",
                     Toast.LENGTH_SHORT
                 ).show()
             } else {
@@ -130,12 +139,11 @@ fun RadioScreen(
         dailySongs.mapNotNull { it.coverUrl.takeIf { u -> u.isNotBlank() } }
     }
 
-    // 计算每个电台对应的仿真 FM 赫兹频率号 (如 FM 98.6 MHz)
     fun fmFrequencyLabel(id: String): String {
         val hash = kotlin.math.abs(id.hashCode())
         val major = 88 + (hash % 20)
         val minor = (hash / 20) % 10
-        return "FM $major.$minor MHz"
+        return "FM $major.$minor"
     }
 
     val infiniteTransition = rememberInfiniteTransition(label = "tunerVinyl")
@@ -149,27 +157,30 @@ fun RadioScreen(
         label = "vinylRot"
     )
 
+    val expandArrowRotation by animateFloatAsState(
+        targetValue = if (showAllStationsGrid) 180f else 0f,
+        animationSpec = tween(durationMillis = 250),
+        label = "stationGridArrow"
+    )
+
+    val currentCategoryAccent = remember(currentChannel.category) {
+        radioCategoryAccentColor(currentChannel.category)
+    }
+
     ConceptStageBackground(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             containerColor = Color.Transparent,
             topBar = {
                 TopAppBar(
                     title = {
-                        Column {
-                            Text(
-                                text = "场景电台专区",
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
+                        Text(
+                            text = "场景电台",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 18.sp
                             )
-                            Text(
-                                text = "全部分类电台矩阵 · 每次固定漫游 20 首同分类新歌",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                        }
+                        )
                     },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
@@ -181,15 +192,41 @@ fun RadioScreen(
                         }
                     },
                     actions = {
-                        TextButton(
-                            onClick = {
-                                loadStationBatch(currentChannel.id, append = false)
-                                Toast.makeText(context, "已为您刷新 20 首「${currentChannel.name}」全新曲目", Toast.LENGTH_SHORT).show()
-                            }
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = currentCategoryAccent.copy(alpha = 0.14f),
+                            modifier = Modifier
+                                .padding(end = 12.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable { showAllStationsGrid = !showAllStationsGrid }
                         ) {
-                            Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp), tint = ConceptPrimary)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("换一批 (20首)", color = ConceptPrimary, fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Radio,
+                                    contentDescription = null,
+                                    tint = currentCategoryAccent,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = if (showAllStationsGrid) "收起电台 (${fmChannels.size})" else "切换电台 (${fmChannels.size})",
+                                    color = currentCategoryAccent,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Icon(
+                                    imageVector = Icons.Rounded.ExpandMore,
+                                    contentDescription = null,
+                                    tint = currentCategoryAccent,
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .rotate(expandArrowRotation)
+                                )
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
@@ -200,34 +237,43 @@ fun RadioScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 112.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp)
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 112.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // 1. 顶部沉浸式 FM 调频广播舱
+                // 1. 顶部沉浸式 FM 调频广播舱（唯一操作中心：播放全部 + 换一批 + +20首）
                 item {
                     val tunerBrush = if (isDark) {
                         Brush.linearGradient(
-                            listOf(Color(0xFF152C4E), Color(0xFF102039), Color(0xFF131A2B))
+                            listOf(
+                                currentCategoryAccent.copy(alpha = 0.28f),
+                                Color(0xFF132238),
+                                Color(0xFF121928)
+                            )
                         )
                     } else {
                         Brush.linearGradient(
-                            listOf(Color(0xFFD8ECFF), Color(0xFFE8F3FF), Color(0xFFF3EEFF))
+                            listOf(
+                                currentCategoryAccent.copy(alpha = 0.18f),
+                                Color(0xFFEAF4FF),
+                                Color(0xFFF6F3FF)
+                            )
                         )
                     }
                     val titleColor = if (isDark) Color.White else Color(0xFF0E1B2E)
                     val subColor = if (isDark) Color.White.copy(alpha = 0.72f) else Color(0xFF425875)
+                    val cardBaseColor = conceptFloatingCardColor()
 
                     Surface(
-                        shape = RoundedCornerShape(28.dp),
-                        color = Color.Transparent,
-                        shadowElevation = if (isDark) 8.dp else 6.dp,
+                        shape = RoundedCornerShape(26.dp),
+                        color = cardBaseColor,
+                        shadowElevation = if (isDark) 0.dp else 5.dp,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(tunerBrush)
-                                .padding(20.dp)
+                                .padding(18.dp)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -235,7 +281,7 @@ fun RadioScreen(
                             ) {
                                 // 旋转电台黑胶唱盘
                                 Box(
-                                    modifier = Modifier.size(92.dp),
+                                    modifier = Modifier.size(82.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Box(
@@ -259,7 +305,7 @@ fun RadioScreen(
                                             contentDescription = currentChannel.name,
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier
-                                                .size(68.dp)
+                                                .size(60.dp)
                                                 .graphicsLayer {
                                                     rotationZ = vinylRotation
                                                     shape = CircleShape
@@ -271,18 +317,18 @@ fun RadioScreen(
                                             imageVector = Icons.Rounded.Radio,
                                             contentDescription = null,
                                             tint = Color.White,
-                                            modifier = Modifier.size(34.dp)
+                                            modifier = Modifier.size(30.dp)
                                         )
                                     }
                                     Box(
                                         modifier = Modifier
-                                            .size(14.dp)
+                                            .size(12.dp)
                                             .clip(CircleShape)
                                             .background(if (isDark) Color(0xFF102039) else Color(0xFFE8F3FF))
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.width(16.dp))
+                                Spacer(modifier = Modifier.width(15.dp))
 
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(
@@ -290,38 +336,38 @@ fun RadioScreen(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = ConceptPrimary.copy(alpha = 0.18f)
+                                            shape = RoundedCornerShape(7.dp),
+                                            color = currentCategoryAccent.copy(alpha = 0.16f)
                                         ) {
                                             Text(
                                                 text = fmFrequencyLabel(currentChannel.id),
-                                                color = ConceptPrimary,
-                                                fontSize = 10.5.sp,
+                                                color = currentCategoryAccent,
+                                                fontSize = 10.sp,
                                                 fontWeight = FontWeight.Black,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
                                             )
                                         }
                                         Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = VipGold.copy(alpha = 0.18f)
+                                            shape = RoundedCornerShape(7.dp),
+                                            color = ConceptPrimary.copy(alpha = 0.14f)
                                         ) {
                                             Text(
                                                 text = currentChannel.category.ifBlank { "推荐电台" },
-                                                color = if (isDark) VipGold else Color(0xFFB87900),
+                                                color = ConceptPrimary,
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
                                             )
                                         }
                                     }
-                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Spacer(modifier = Modifier.height(6.dp))
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
                                             text = currentChannel.name,
                                             style = MaterialTheme.typography.titleLarge.copy(
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = titleColor,
-                                                fontSize = 21.sp
+                                                fontSize = 20.sp
                                             ),
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -331,9 +377,10 @@ fun RadioScreen(
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "${currentChannel.description} · ${currentChannel.listenerCountText}",
+                                        text = currentChannel.description.ifBlank { "随心漫游同频旋律" },
                                         style = MaterialTheme.typography.bodySmall.copy(
-                                            color = subColor
+                                            color = subColor,
+                                            fontSize = 12.sp
                                         ),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -341,11 +388,12 @@ fun RadioScreen(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(16.dp))
+                            Spacer(modifier = Modifier.height(14.dp))
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Button(
                                     onClick = {
@@ -354,31 +402,60 @@ fun RadioScreen(
                                         }
                                     },
                                     enabled = stationSongs.isNotEmpty(),
-                                    shape = RoundedCornerShape(20.dp),
+                                    shape = RoundedCornerShape(18.dp),
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = ConceptPrimary,
+                                        containerColor = currentCategoryAccent,
                                         contentColor = Color.White
                                     ),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("畅听本电台 (${stationSongs.size}首)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "播放 (${stationSongs.size})",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        maxLines = 1
+                                    )
+                                }
+
+                                FilledTonalButton(
+                                    onClick = {
+                                        loadStationBatch(currentChannel.id, append = false)
+                                        Toast.makeText(context, "已焕新「${currentChannel.name}」曲目", Toast.LENGTH_SHORT).show()
+                                    },
+                                    enabled = !loading && !appending,
+                                    shape = RoundedCornerShape(18.dp),
+                                    colors = ButtonDefaults.filledTonalButtonColors(
+                                        containerColor = if (isDark) Color.White.copy(alpha = 0.12f) else currentCategoryAccent.copy(alpha = 0.14f),
+                                        contentColor = if (isDark) Color.White else currentCategoryAccent
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
+                                    Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "换一批",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.5.sp
+                                    )
                                 }
 
                                 FilledTonalButton(
                                     onClick = { loadStationBatch(currentChannel.id, append = true) },
                                     enabled = !loading && !appending,
-                                    shape = RoundedCornerShape(20.dp),
+                                    shape = RoundedCornerShape(18.dp),
                                     colors = ButtonDefaults.filledTonalButtonColors(
                                         containerColor = if (isDark) Color.White.copy(alpha = 0.12f) else ConceptPrimary.copy(alpha = 0.14f),
                                         contentColor = if (isDark) Color.White else ConceptPrimary
-                                    )
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                                 ) {
-                                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(2.dp))
                                     Text(
-                                        text = if (appending) "漫游中..." else "继续漫游 +20首",
+                                        text = if (appending) "漫游中" else "+20首",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 12.5.sp
                                     )
@@ -388,66 +465,60 @@ fun RadioScreen(
                     }
                 }
 
-                // 2. 全部分类电台宫格矩阵（与单电台列表彻底区分，直观选择任意分类电台）
+                // 2. 分段式电台分类栏 + 平滑折叠电台矩阵
                 item {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // 免滑动分段式分类切换条
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = conceptElevatedSurfaceColor(),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(
-                                text = "全部分类电台 (${filteredStations.size})",
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            )
-                            TextButton(
-                                onClick = { showAllStationsGrid = !showAllStationsGrid },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Text(
-                                    text = if (showAllStationsGrid) "收起电台墙 ▲" else "展开电台墙 ▼",
-                                    color = ConceptPrimary,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(categories) { cat ->
-                                val selected = cat == selectedCategory
-                                Surface(
-                                    shape = RoundedCornerShape(18.dp),
-                                    color = if (selected) ConceptPrimary else conceptFloatingCardColor(),
-                                    shadowElevation = if (!isDark && !selected) 2.dp else 0.dp,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(18.dp))
-                                        .clickable {
-                                            selectedCategory = cat
-                                            showAllStationsGrid = true
-                                        }
-                                ) {
-                                    Text(
-                                        text = cat,
-                                        color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 12.5.sp,
-                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 7.dp)
-                                    )
+                                categories.forEach { cat ->
+                                    val selected = cat == selectedCategory
+                                    val tabAccent = radioCategoryAccentColor(cat)
+                                    Surface(
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (selected) tabAccent else Color.Transparent,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .clickable {
+                                                selectedCategory = cat
+                                                showAllStationsGrid = true
+                                            }
+                                    ) {
+                                        Text(
+                                            text = cat.removeSuffix("电台"),
+                                            color = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                            fontSize = 12.sp,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            modifier = Modifier.padding(vertical = 7.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
 
-                        if (showAllStationsGrid) {
+                        AnimatedVisibility(
+                            visible = showAllStationsGrid,
+                            enter = expandVertically(animationSpec = tween(260)) + fadeIn(animationSpec = tween(220)),
+                            exit = shrinkVertically(animationSpec = tween(240)) + fadeOut(animationSpec = tween(180))
+                        ) {
                             val stationRows = filteredStations.chunked(2)
-                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 stationRows.forEachIndexed { rowIdx, pair ->
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         pair.forEachIndexed { colIdx, ch ->
                                             val globalIdx = rowIdx * 2 + colIdx
@@ -458,9 +529,13 @@ fun RadioScreen(
                                                 frequencyText = fmFrequencyLabel(ch.id),
                                                 fallbackCover = fb,
                                                 isSelected = isCurrent,
-                                                onClick = { selectedChannelId = ch.id },
+                                                onClick = {
+                                                    selectedChannelId = ch.id
+                                                    showAllStationsGrid = false
+                                                },
                                                 onPlayImmediate = {
                                                     selectedChannelId = ch.id
+                                                    showAllStationsGrid = false
                                                     scope.launch {
                                                         val songs = viewModel.getFmChannelSongs(ch.id, size = 20, forceNextBatch = true)
                                                         stationSongs = songs
@@ -482,41 +557,39 @@ fun RadioScreen(
                     }
                 }
 
-                // 3. 当前调频电台 20 首专属分类曲目流
+                // 3. 精简后的电台漫游列表头（无重复按钮、无冗余小字）
                 item {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "「${currentChannel.name}」当前漫游队列 (${stationSongs.size}首)",
-                                style = MaterialTheme.typography.titleMedium.copy(
+                                text = "漫游列表",
+                                style = MaterialTheme.typography.titleSmall.copy(
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 15.sp
                                 )
                             )
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "曲目严格匹配【${currentChannel.category} · ${currentChannel.name}】分类",
-                                style = MaterialTheme.typography.labelSmall.copy(
+                                text = "${stationSongs.size} 首",
+                                style = MaterialTheme.typography.labelMedium.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             )
                         }
-                        FilledTonalButton(
-                            onClick = { loadStationBatch(currentChannel.id, append = false) },
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = ConceptPrimary.copy(alpha = 0.14f),
-                                contentColor = ConceptPrimary
-                            ),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("换20首新歌", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        if (!showAllStationsGrid) {
+                            Text(
+                                text = "点击右上角可切换更多电台",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                                )
+                            )
                         }
                     }
                 }
@@ -529,7 +602,7 @@ fun RadioScreen(
                                 .padding(vertical = 36.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            CircularProgressIndicator(color = ConceptPrimary)
+                            CircularProgressIndicator(color = currentCategoryAccent)
                         }
                     }
                 } else if (stationSongs.isEmpty()) {
@@ -540,7 +613,7 @@ fun RadioScreen(
                                 .padding(vertical = 36.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("暂未获取到电台曲目，请点击右上角「换一批」", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("暂未获取到电台曲目，请点击上方「换一批」", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 } else {
@@ -553,40 +626,27 @@ fun RadioScreen(
                             onMoreClick = { onSongMoreClick(song) }
                         )
                     }
-
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            FilledTonalButton(
-                                onClick = { loadStationBatch(currentChannel.id, append = true) },
-                                enabled = !appending,
-                                shape = RoundedCornerShape(22.dp),
-                                colors = ButtonDefaults.filledTonalButtonColors(
-                                    containerColor = conceptFloatingCardColor(),
-                                    contentColor = ConceptPrimary
-                                ),
-                                contentPadding = PaddingValues(horizontal = 22.dp, vertical = 10.dp)
-                            ) {
-                                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = if (appending) "正在漫游 20 首同分类新歌..." else "继续漫游 +20 首「${currentChannel.name}」好歌",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp
-                                )
-                            }
-                        }
-                    }
                 }
             }
         }
     }
 }
 
+private fun radioCategoryAccentColor(category: String): Color {
+    return when {
+        category.contains("年代") || category.contains("语种") -> ConceptCoralAccent
+        category.contains("曲风") || category.contains("流派") -> ConceptVioletAccent
+        category.contains("心情") || category.contains("场景") -> ConceptMintAccent
+        category.contains("推荐") -> ConceptCyanAccent
+        else -> ConceptPrimary
+    }
+}
+
+/**
+ * 电台墙双列宫格卡片：
+ * 修复选中态半透明底色叠加硬件阴影导致的方形灰块明暗差异问题 ——
+ * 采用 100% 不透明高亮容器色 + 主题色精致描边，选中态视觉纯粹统一。
+ */
 @Composable
 private fun RadioPlazaGridCard(
     channel: FmChannel,
@@ -599,22 +659,31 @@ private fun RadioPlazaGridCard(
 ) {
     val isDark = LocalIsDarkTheme.current
     val cover = channel.coverUrl.takeIf { it.isNotBlank() && !it.contains("20210519") } ?: fallbackCover
+    val accent = remember(channel.category) { radioCategoryAccentColor(channel.category) }
+
+    // 100% 不透明表面色，彻底杜绝半透明 Surface 透出底部矩形硬件阴影
+    val opaqueCardColor = when {
+        isSelected && isDark -> Color(0xFF1A2D46)
+        isSelected && !isDark -> Color(0xFFE6F3FF)
+        else -> conceptFloatingCardColor()
+    }
 
     Surface(
-        shape = RoundedCornerShape(24.dp),
-        color = if (isSelected) ConceptPrimary.copy(alpha = if (isDark) 0.24f else 0.16f) else conceptFloatingCardColor(),
-        shadowElevation = if (isDark) 0.dp else 4.dp,
+        shape = RoundedCornerShape(22.dp),
+        color = opaqueCardColor,
+        border = if (isSelected) BorderStroke(1.8.dp, accent) else null,
+        shadowElevation = if (isDark || isSelected) 0.dp else 3.dp,
         modifier = modifier
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(22.dp))
             .clickable(onClick = onClick)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(10.dp)) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(108.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Brush.linearGradient(listOf(ConceptPrimaryDark, Color(0xFF142848))))
+                    .height(102.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.85f), ConceptPrimaryDark)))
             ) {
                 if (cover.isNotBlank()) {
                     AsyncImage(
@@ -629,69 +698,69 @@ private fun RadioPlazaGridCard(
                         .fillMaxSize()
                         .background(
                             Brush.verticalGradient(
-                                listOf(Color.Black.copy(alpha = 0.28f), Color.Transparent, Color.Black.copy(alpha = 0.58f))
+                                listOf(Color.Black.copy(alpha = 0.25f), Color.Transparent, Color.Black.copy(alpha = 0.55f))
                             )
                         )
                 )
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (isSelected) ConceptPrimary else Color.Black.copy(alpha = 0.48f),
+                    shape = RoundedCornerShape(7.dp),
+                    color = if (isSelected) accent else Color.Black.copy(alpha = 0.46f),
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(8.dp)
+                        .padding(7.dp)
                 ) {
                     Text(
                         text = if (isSelected) "正在调频" else frequencyText,
                         color = Color.White,
                         fontSize = 9.5.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
 
                 Text(
-                    text = channel.category,
-                    color = Color.White.copy(alpha = 0.85f),
+                    text = channel.category.removeSuffix("电台"),
+                    color = Color.White.copy(alpha = 0.9f),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(start = 8.dp, bottom = 8.dp)
+                        .padding(start = 8.dp, bottom = 7.dp)
                 )
 
                 FilledIconButton(
                     onClick = onPlayImmediate,
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = ConceptPrimary),
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = accent),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(6.dp)
-                        .size(32.dp)
+                        .size(30.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.PlayArrow,
                         contentDescription = "播放电台",
                         tint = Color.White,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(17.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(7.dp))
 
             Text(
                 text = channel.name,
-                style = MaterialTheme.typography.titleSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    color = if (isSelected) ConceptPrimary else MaterialTheme.colorScheme.onSurface
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (isSelected) accent else MaterialTheme.colorScheme.onSurface
                 ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = channel.description,
                 style = MaterialTheme.typography.labelSmall.copy(
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 10.5.sp
                 ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

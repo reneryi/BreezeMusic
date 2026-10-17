@@ -15,11 +15,14 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class HomeViewModel : ViewModel() {
-    // 每日推荐
+    // 每日推荐（独立刷新边界）
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val dailyRecommendSongs: StateFlow<List<Song>> = _songs.asStateFlow()
 
-    // 官方私人随心听 FM（定位「猜你喜欢」，对接 5 大个性化推荐引擎，每次刷新拉取全新 20 首）
+    private val _dailyRefreshing = MutableStateFlow(false)
+    val dailyRefreshing: StateFlow<Boolean> = _dailyRefreshing.asStateFlow()
+
+    // 官方私人随心听 FM（定位「猜你喜欢」，独立刷新边界，仅刷新随心听自身）
     private val _personalFmSongs = MutableStateFlow<List<Song>>(emptyList())
     val personalFmSongs: StateFlow<List<Song>> = _personalFmSongs.asStateFlow()
 
@@ -29,7 +32,7 @@ class HomeViewModel : ViewModel() {
     private val _personalFmRefreshing = MutableStateFlow(false)
     val personalFmRefreshing: StateFlow<Boolean> = _personalFmRefreshing.asStateFlow()
 
-    // 新歌速递（严格审核当天往前推6天共7天内发行的新歌，数量随每日实际发歌量动态变化，按发行时间降序 + 同日首字母升序排列）
+    // 新歌速递（独立刷新边界：仅刷新当前选中分类的新歌，不影响其他模块）
     private val _selectedNewSongPeriod = MutableStateFlow("CHINESE")
     val selectedNewSongPeriod: StateFlow<String> = _selectedNewSongPeriod.asStateFlow()
 
@@ -59,14 +62,16 @@ class HomeViewModel : ViewModel() {
     val vipStatus = VipManager.vip.state.map { it.snapshot }
 
     private var request: Job? = null
-    private var loadedUser: String? = null
+    private var loadedUser: String? = "__UNINITIALIZED__"
+    private var hasInitialLoaded: Boolean = false
 
     init {
         viewModelScope.launch {
             accountState.collect { state ->
                 if (state.auth != AuthState.RESTORING) {
-                    if (state.currentId != loadedUser || _songs.value.isEmpty()) {
+                    if (state.currentId != loadedUser || !hasInitialLoaded) {
                         loadedUser = state.currentId
+                        hasInitialLoaded = true
                         refresh()
                     }
                 }
@@ -74,6 +79,9 @@ class HomeViewModel : ViewModel() {
         }
     }
 
+    /**
+     * 发现页整页下拉刷新：仅在用户于发现页主页主动下拉时触发
+     */
     fun refresh() {
         request?.cancel()
         val authState = accountState.value.auth
@@ -130,6 +138,25 @@ class HomeViewModel : ViewModel() {
         }
     }
 
+    /**
+     * 严格边界：仅刷新「每日推荐」模块，绝不触发随心听、新歌速递、排行榜或电台重拉
+     */
+    fun refreshDailyRecommend(onLoaded: (List<Song>) -> Unit = {}) {
+        if (_dailyRefreshing.value) return
+        viewModelScope.launch {
+            _dailyRefreshing.value = true
+            val daily = runCatching { VipManager.music.dailyRecommend() }.getOrDefault(emptyList())
+            if (daily.isNotEmpty()) {
+                _songs.value = daily
+            }
+            _dailyRefreshing.value = false
+            onLoaded(_songs.value)
+        }
+    }
+
+    /**
+     * 严格边界：仅刷新「私人随心听」模块，不影响任何其他模块
+     */
     fun refreshPersonalFm(onLoaded: (List<Song>) -> Unit = {}) {
         if (_personalFmRefreshing.value) return
         viewModelScope.launch {
@@ -176,6 +203,9 @@ class HomeViewModel : ViewModel() {
         }
     }
 
+    /**
+     * 严格边界：仅切换或刷新「新歌速递」当前选中分类
+     */
     fun selectNewSongPeriod(periodKey: String, forceRefresh: Boolean = false) {
         _selectedNewSongPeriod.value = periodKey
         val cached = newSongCache[periodKey]

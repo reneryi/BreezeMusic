@@ -210,8 +210,8 @@ fun PlaylistDetailScreen(
                             }
                         }
 
-                        // 刷新按钮
-                        IconButton(onClick = viewModel::refreshMusicLibrary) {
+                        // 刷新按钮（严格边界：仅刷新当前歌单，不触发全局资产重拉）
+                        IconButton(onClick = { viewModel.refreshCurrentPlaylistOnly(playlistId) }) {
                             Icon(
                                 imageVector = Icons.Rounded.Refresh,
                                 contentDescription = "刷新",

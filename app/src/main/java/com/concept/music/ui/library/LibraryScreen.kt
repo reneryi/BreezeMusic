@@ -362,9 +362,9 @@ fun LibraryScreen(
                                         .clip(RoundedCornerShape(16.dp))
                                         .clickable {
                                             viewModel.setSelectedAssetTab(idx)
-                                            if (idx == 2 && isLoggedIn) {
+                                            if (idx == 2 && isLoggedIn && followedArtists.isEmpty()) {
                                                 viewModel.refreshFollowedArtists()
-                                            } else if (idx == 3 && isLoggedIn) {
+                                            } else if (idx == 3 && isLoggedIn && purchasedSongs.isEmpty() && purchasedAlbums.isEmpty()) {
                                                 viewModel.refreshPurchasedAssets()
                                             }
                                         }
@@ -428,9 +428,12 @@ fun LibraryScreen(
                             }
                             IconButton(
                                 onClick = {
-                                    viewModel.refreshMusicLibrary()
-                                    viewModel.refreshPurchasedAssets()
-                                    viewModel.refreshFollowedArtists()
+                                    // 严格边界：仅刷新当前选中的资产分组 Tab
+                                    when (selectedTab) {
+                                        0, 1 -> viewModel.refreshPlaylistsOnly()
+                                        2 -> viewModel.refreshFollowedArtists()
+                                        3 -> viewModel.refreshPurchasedAssets()
+                                    }
                                 },
                                 modifier = Modifier.size(30.dp)
                             ) {

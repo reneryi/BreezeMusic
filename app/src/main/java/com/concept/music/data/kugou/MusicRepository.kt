@@ -36,6 +36,8 @@ class MusicApiRepository(
     // 记录每个电台与随心听的漫游偏移游标与已推去重池，确保每次刷新/换一批/继续漫游都获取 20 首全新曲目
     private val fmChannelCursorMap = ConcurrentHashMap<String, AtomicInteger>()
     private val fmChannelMetaMap = ConcurrentHashMap<String, FmChannel>()
+    private val fmChannelInitialSongsMap = ConcurrentHashMap<String, List<Song>>()
+    private val fmChannelPlaylistIdCache = ConcurrentHashMap<String, String>()
     private val seenFmChannelHashes = ConcurrentHashMap<String, MutableSet<String>>()
     private val personalFmPoolCursor = AtomicInteger(0)
     private val seenPersonalFmHashes = ConcurrentHashMap.newKeySet<String>()
@@ -731,8 +733,9 @@ class MusicApiRepository(
         if (!needEnrich) return songs
 
         val session = accounts.context()?.session
+        // 严禁在音质探针中请求 "super" (蝰蛇母带合成音效)，仅查询原生音源档位 128 / 320 / flac(SQ) / high(Hi-Res)
         val qualitiesArr = JsonArray().apply {
-            listOf("128", "320", "flac", "high", "super").forEach { add(it) }
+            listOf("128", "320", "flac", "high").forEach { add(it) }
         }
 
         val enrichedByHash = HashMap<String, JsonObject>()
@@ -791,23 +794,52 @@ class MusicApiRepository(
             var hqHash = s.hash320
             var sqHash = s.hashFlac
             var resHash = s.hashHiRes
+            var resSize = 0L
+            var sqSize = 0L
             var maxFileSize = s.fileSizeByte
 
             for (rg in privObj.objects("relate_goods")) {
                 val rgHash = rg.text("hash")?.takeIf { isValidHash(it) } ?: continue
-                val level = rg.number("level") ?: -1
-                val qStr = (rg.text("quality") ?: rg.text("type") ?: "").lowercase()
-                val sz = (rg.number("size") ?: rg.number("filesize") ?: 0).toLong()
+                val rgInfo = rg.obj("info")
+                val level = rg.number("level") ?: rgInfo?.number("level") ?: -1
+                val qStr = (rg.text("quality") ?: rg.text("type") ?: rgInfo?.text("quality") ?: "").lowercase()
+                val nameStr = (rg.text("name") ?: rg.text("extname") ?: rgInfo?.text("extname") ?: "").lowercase()
+                val sz = (rg.number("size") ?: rg.number("filesize") ?: rg.number("file_size")
+                    ?: rgInfo?.number("filesize") ?: rgInfo?.number("size") ?: 0).toLong()
+                val brRaw = (rg.number("bitrate") ?: rg.number("bitRate")
+                    ?: rgInfo?.number("bitrate") ?: rgInfo?.number("bitRate") ?: 0).toLong()
+                val reportedKbps = if (brRaw > 50000L) (brRaw / 1000L).toInt() else brRaw.toInt()
+                val computedKbps = if (reportedKbps > 0) reportedKbps else if (s.durationMs >= 60_000L && sz > 0L) {
+                    ((sz * 8L) / s.durationMs).toInt()
+                } else 0
+
                 when {
+                    // 严禁把蝰蛇母带/全景声/超清合成流 (level=0 / super / viper) 识别为原生 Hi-Res
+                    level == 0 || qStr == "super" || qStr.startsWith("viper") || qStr == "multitrack" ||
+                        nameStr.contains("蝰蛇") || nameStr.contains("全景") -> {
+                        // Ignore synthetic Viper streams
+                    }
+                    // 严格校验真 Hi-Res (24bit/48kHz 或 24bit/96kHz 母带)：
+                    // 必须满足真实码率 >= 1450 kbps 或文件体积 >= 42MB；若体积在 10MB~42MB 之间实为 16bit SQ 无损！
                     level == 6 || qStr == "hires" || qStr == "hi-res" || qStr == "res" || (qStr == "high" && level == 6) -> {
-                        if (resHash.isBlank()) resHash = rgHash
-                        if (sz > maxFileSize) maxFileSize = sz
+                        val isVerifiedHiRes = (computedKbps >= 1450 && (sz <= 0L || sz >= 36_000_000L)) ||
+                            (computedKbps <= 0 && sz >= 42_000_000L)
+                        if (isVerifiedHiRes) {
+                            if (resHash.isBlank()) resHash = rgHash
+                            if (sz > resSize) resSize = sz
+                            if (sz > maxFileSize) maxFileSize = sz
+                        } else if (sz in 10_000_000L until 42_000_000L || computedKbps in 500..1449) {
+                            if (sqHash.isBlank()) sqHash = rgHash
+                            if (sz > sqSize) sqSize = sz
+                            if (sz > maxFileSize) maxFileSize = sz
+                        }
                     }
                     level == 5 || qStr == "flac" || qStr == "sq" || qStr == "lossless" -> {
                         if (sqHash.isBlank()) sqHash = rgHash
+                        if (sz > sqSize) sqSize = sz
                         if (sz > maxFileSize) maxFileSize = sz
                     }
-                    level == 4 || qStr == "320" || qStr == "hq" -> {
+                    level == 4 || qStr == "320" || qStr == "hq" || (qStr == "high" && level != 6) -> {
                         if (hqHash.isBlank()) hqHash = rgHash
                         if (sz > maxFileSize) maxFileSize = sz
                     }
@@ -818,8 +850,22 @@ class MusicApiRepository(
                 }
             }
 
-            val hasHiRes = resHash.isNotBlank() && !resHash.equals(hqHash, ignoreCase = true) && !resHash.equals(stdHash, ignoreCase = true)
-            val hasFlac = sqHash.isNotBlank() || s.isLossless
+            // 二次校验：若 Hi-Res 文件体积未显著大于 SQ 无损文件体积 (< 1.3 倍) 或 hash 与 SQ 相同，则实为 SQ 无损
+            if (resHash.isNotBlank()) {
+                val sameAsLower = resHash.equals(sqHash, ignoreCase = true) ||
+                    resHash.equals(hqHash, ignoreCase = true) ||
+                    resHash.equals(stdHash, ignoreCase = true)
+                val notLargerThanSq = resSize > 0L && sqSize > 0L && resSize < (sqSize * 13L) / 10L
+                if (sameAsLower || notLargerThanSq) {
+                    if (sqHash.isBlank() && !resHash.equals(hqHash, ignoreCase = true) && !resHash.equals(stdHash, ignoreCase = true)) {
+                        sqHash = resHash
+                    }
+                    resHash = ""
+                }
+            }
+
+            val hasHiRes = resHash.isNotBlank()
+            val hasFlac = sqHash.isNotBlank() || (s.isLossless && !s.isHiRes)
             val has320 = hqHash.isNotBlank() || s.quality == "320"
 
             val qualities = buildList {
@@ -2320,7 +2366,19 @@ class MusicApiRepository(
             }
         }.getOrDefault(emptyList())
 
-        val baseList = if (rawRanks.isNotEmpty()) rawRanks else defaultRanks()
+        val priorityRankOrder = listOf(6666, 8888, 31308, 23784, 52144, 59703, 24971, 33162, 4681, 4673, 38623)
+        val sortedRawRanks = rawRanks.sortedWith(
+            compareBy<RankItem> { item ->
+                val pIdx = priorityRankOrder.indexOf(item.rankId)
+                when {
+                    pIdx >= 0 -> pIdx
+                    item.category == "官方热榜" -> 100
+                    item.category == "特色曲风" -> 200
+                    else -> 300
+                }
+            }
+        )
+        val baseList = if (sortedRawRanks.isNotEmpty()) sortedRawRanks else defaultRanks()
 
         // 实时校准前 8 个核心榜单的前三名预览曲目与封面（杜绝发现页榜单卡片展示旧缓存曲目）
         baseList.mapIndexed { idx, item ->
@@ -2753,26 +2811,15 @@ class MusicApiRepository(
     // =========================================================================
 
     private suspend fun collectUserTasteSeeds(): List<Song> = coroutineScope {
-        if (userTasteSeedsCache.size >= 15) {
+        // 严格界定刷新边界：若已有口味种子缓存，直接复用，绝不在刷新随心听时重拉每日推荐或用户歌单列表
+        if (userTasteSeedsCache.isNotEmpty()) {
             return@coroutineScope userTasteSeedsCache.toList()
         }
         val session = accounts.context()?.session
-        val dailyDef = async { runCatching { dailyRecommend() }.getOrDefault(emptyList()) }
-        val recentDef = async {
-            if (session != null) runCatching { latestListenSongs(pageSize = 35) }.getOrDefault(emptyList())
-            else emptyList()
-        }
-        val likedDef = async {
-            if (session != null && userTasteSeedsCache.isEmpty()) {
-                runCatching {
-                    val likedPl = userPlaylists().firstOrNull { it.isLiked }
-                    if (likedPl != null) fetchPlaylistSongsAll(likedPl.globalCollectionId.ifBlank { likedPl.id }, session).take(50)
-                    else emptyList()
-                }.getOrDefault(emptyList())
-            } else emptyList()
-        }
-
-        val combined = (recentDef.await() + likedDef.await() + dailyDef.await())
+        val recent = if (session != null) {
+            runCatching { latestListenSongs(pageSize = 30) }.getOrDefault(emptyList())
+        } else emptyList()
+        val combined = recent
             .filter { it.hash.isNotBlank() && it.title != "未知歌曲" }
             .distinctBy { it.hash.ifBlank { it.id }.lowercase() }
         recordUserTasteSeeds(combined)
@@ -3138,7 +3185,7 @@ class MusicApiRepository(
                     "clienttime" to clientTime,
                     "mid" to d.mid,
                     "key" to KugouSigner.paramsKey(clientTime),
-                    "rcmdsongcount" to 1,
+                    "rcmdsongcount" to 20,
                     "level" to 0,
                     "area_code" to 1,
                     "get_tracker" to 1,
@@ -3235,10 +3282,14 @@ class MusicApiRepository(
             if (id.isBlank() || !seen.add(id)) return@mapNotNull null
             val name = (ch.text("fmname") ?: ch.text("channel_name") ?: ch.text("name") ?: "").trim()
             if (name.isBlank()) return@mapNotNull null
+            val embeddedSongs = parseSongs(ch)
+            if (embeddedSongs.isNotEmpty()) {
+                fmChannelInitialSongsMap[id] = embeddedSongs
+            }
             val img = imageUrl(
                 ch.text("imgurl") ?: ch.text("imgUrl150") ?: ch.text("imgUrl100")
                     ?: ch.text("cover") ?: ch.text("pic") ?: ch.text("img")
-            )
+            ).ifBlank { embeddedSongs.firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl.orEmpty() }
             val desc = ch.text("desc") ?: ch.text("intro") ?: ch.text("description") ?: "全天候动态漫游伴听"
             val fmType = ch.number("fmtype") ?: ch.number("type") ?: 2
             val rawCat = ch.text("class_name") ?: ch.text("category") ?: ""
@@ -3364,13 +3415,22 @@ class MusicApiRepository(
         val stationMeta = fmChannelMetaMap[channelId] ?: defaultFmChannels().firstOrNull { it.id == channelId }
         val fmType = stationMeta?.fmType ?: 2
 
-        // 1. 若 channelId 为数字 fmid，调用官方 /v1/app_song_list_offset，同时请求 4 个连续 offset 切片以突破单次 5 首限制
-        if (channelId.all { it.isDigit() }) {
-            val baseOffset = (batchIndex * 20) % 240
+        // 0. 优先纳入 /v1/rcmd_list 或 /v1/class_fm_song 下发的该电台原生初始曲目池
+        fmChannelInitialSongsMap[channelId]?.let { initialList ->
+            if (initialList.isNotEmpty()) {
+                collectSongs(initialList)
+            }
+        }
+
+        // 1. 若 channelId 为数字 fmid，调用官方 /v1/app_song_list_offset (module/fm_songs.js)
+        // 同时请求 4 个连续 offset 切片并附加递增时间戳，确保拉取真实电台曲目流
+        if (channelId.all { it.isDigit() } && collected.size < size) {
+            val baseOffset = (batchIndex * 15) % 90
             val sliceDeferreds = (0 until 4).map { sliceIdx ->
                 async {
                     runCatching {
                         val sliceOffset = baseOffset + sliceIdx * 5
+                        val reqTime = clientTime + sliceIdx
                         val fmDataArr = JsonArray().apply {
                             add(JsonObject().apply {
                                 addProperty("fmid", channelId)
@@ -3383,11 +3443,11 @@ class MusicApiRepository(
                         val body = JsonObject().apply {
                             addProperty("appid", KugouSigner.APP_ID)
                             addProperty("area_code", 1)
-                            addProperty("clienttime", clientTime)
+                            addProperty("clienttime", reqTime)
                             addProperty("clientver", KugouSigner.CLIENT_VERSION)
                             add("data", fmDataArr)
                             addProperty("get_tracker", 1)
-                            addProperty("key", KugouSigner.paramsKey(clientTime))
+                            addProperty("key", KugouSigner.paramsKey(reqTime))
                             addProperty("mid", d.mid)
                             addProperty("uid", uidNum)
                         }
@@ -3416,7 +3476,29 @@ class MusicApiRepository(
             sliceDeferreds.forEach { def -> collectSongs(def.await()) }
         }
 
-        // 2. 若官方单次返回不足 20 首（如仅返回 5 首）或属于主题电台，使用严格匹配该电台分类的关键词池与分页补齐至完整 20 首
+        // 2. 若官方单次返回不足 20 首，优先匹配与该电台同名的官方精选主题歌单曲库，避免普通关键词搜索混入书名或标题杂曲
+        if (collected.size < size && stationMeta != null && stationMeta.name.isNotBlank()) {
+            runCatching {
+                val cachedPid = fmChannelPlaylistIdCache[channelId]
+                val targetPid = if (!cachedPid.isNullOrBlank()) {
+                    cachedPid
+                } else {
+                    val found = searchPlaylists(stationMeta.name, page = 1, pageSize = 5)
+                        .firstOrNull { it.id.isNotBlank() && it.trackCount >= 15 }?.id.orEmpty()
+                    if (found.isNotBlank()) fmChannelPlaylistIdCache[channelId] = found
+                    found
+                }
+                if (targetPid.isNotBlank()) {
+                    val plSongs = fetchPlaylistSongsAll(targetPid, session)
+                    if (plSongs.isNotEmpty()) {
+                        val shift = (batchIndex * 15) % plSongs.size
+                        collectSongs(plSongs.drop(shift) + plSongs.take(shift))
+                    }
+                }
+            }
+        }
+
+        // 3. 兜底：使用严格匹配该电台分类的关键词池补齐至完整 20 首
         val keywordRotations = resolveFmCategoryKeywords(channelId, stationMeta)
         var attempt = 0
         while (collected.size < size && attempt < 3) {
@@ -3430,7 +3512,8 @@ class MusicApiRepository(
             attempt++
         }
 
-        val finalSongs = collected.take(size)
+        val rawFinal = collected.take(size)
+        val finalSongs = runCatching { enrichSongsPrivilegeLite(rawFinal) }.getOrDefault(rawFinal)
         for (s in finalSongs) {
             val key = s.hash.ifBlank { s.id }.lowercase()
             if (key.isNotBlank()) seenSet.add(key)
@@ -4512,28 +4595,42 @@ class MusicApiRepository(
         val allRelateGoods = o.objects("relate_goods") + audioInfo?.objects("relate_goods").orEmpty() + base?.objects("relate_goods").orEmpty()
         for (rg in allRelateGoods) {
             val h = rg.text("hash")?.takeIf { isValidHash(it) } ?: continue
-            val levelNum = rg.number("level") ?: -1
-            val qStr = (rg.text("quality") ?: rg.text("type") ?: "").lowercase()
-            val nameStr = (rg.text("name") ?: rg.text("extname") ?: "").lowercase()
-            val sz = (rg.number("size") ?: rg.number("filesize") ?: rg.number("file_size") ?: 0).toLong()
+            val rgInfo = rg.obj("info")
+            val levelNum = rg.number("level") ?: rgInfo?.number("level") ?: -1
+            val qStr = (rg.text("quality") ?: rg.text("type") ?: rgInfo?.text("quality") ?: "").lowercase()
+            val nameStr = (rg.text("name") ?: rg.text("extname") ?: rgInfo?.text("extname") ?: "").lowercase()
+            val sz = (rg.number("size") ?: rg.number("filesize") ?: rg.number("file_size")
+                ?: rgInfo?.number("filesize") ?: rgInfo?.number("size") ?: 0).toLong()
+            val brRaw = (rg.number("bitrate") ?: rg.number("bitRate")
+                ?: rgInfo?.number("bitrate") ?: rgInfo?.number("bitRate") ?: 0).toLong()
+            val reportedKbps = if (brRaw > 50000L) (brRaw / 1000L).toInt() else brRaw.toInt()
+            val computedKbps = if (reportedKbps > 0) reportedKbps else if (durationMs >= 60_000L && sz > 0L) {
+                ((sz * 8L) / durationMs).toInt()
+            } else 0
 
             when {
                 qStr.contains("accompany") || qStr.contains("伴奏") || nameStr.contains("伴奏") -> {
                     if (relateAccHash.isBlank()) relateAccHash = h
                 }
-                // 跳过蝰蛇母带/全景声/超清等 level=0 的合成音效，避免把普通歌曲全部误标为 Hi-Res
+                // 跳过蝰蛇母带/全景声/超清等 level=0 或 super 的合成音效，杜绝把普通歌曲误标为 Hi-Res
                 levelNum == 0 || qStr.startsWith("viper") || qStr == "super" || qStr == "multitrack" ||
                     nameStr.contains("蝰蛇") || nameStr.contains("全景") -> {
                     // Do not mark synthetic Viper streams as native Hi-Res
                 }
-                // 真 Hi-Res: level == 6 或明确标记为 hires / res
+                // 严格校验真 Hi-Res (24bit/48kHz 或 24bit/96kHz 母带)：
+                // 必须具备真实高解析码率 (>= 1450 kbps) 或母带级体积 (>= 42MB)；10MB~42MB 的 FLAC 归入 SQ 无损！
                 levelNum == 6 || qStr == "hires" || qStr == "hi-res" || qStr == "res" || (qStr == "high" && levelNum == 6) -> {
-                    if (sz <= 0L || sz >= 15_000_000L) {
+                    val isVerifiedHiRes = (computedKbps >= 1450 && (sz <= 0L || sz >= 36_000_000L)) ||
+                        (computedKbps <= 0 && sz >= 42_000_000L)
+                    if (isVerifiedHiRes) {
                         if (relateResHash.isBlank()) relateResHash = h
                         if (relateResSize <= 0L && sz > 0L) relateResSize = sz
-                    } else if (sz >= 9_000_000L && relateSqHash.isBlank()) {
-                        relateSqHash = h
-                        relateSqSize = sz
+                    } else if (sz in 10_000_000L until 42_000_000L || computedKbps in 500..1449) {
+                        if (relateSqHash.isBlank()) relateSqHash = h
+                        if (relateSqSize <= 0L && sz > 0L) relateSqSize = sz
+                    } else if (sz in 4_500_000L until 10_000_000L && relateHqHash.isBlank()) {
+                        relateHqHash = h
+                        relateHqSize = sz
                     }
                 }
                 // 真 SQ 无损 (FLAC): level == 5 或明确标记为 flac / sq / lossless
@@ -4555,9 +4652,9 @@ class MusicApiRepository(
         }
 
         // 提取全格式品质特征码与文件大小（严禁将 hash_super / SuperFileHash 蝰蛇合成流当成原生 Hi-Res！）
-        val rawResSize = (o.number("ResFileSize") ?: o.number("HiResFileSize") ?: o.number("hiresfilesize")
-            ?: o.number("filesize_res") ?: audioInfo?.number("filesize_res")
-            ?: relateResSize.takeIf { it > 0 } ?: 0).toLong()
+        val topExplicitResSize = (o.number("ResFileSize") ?: o.number("HiResFileSize") ?: o.number("hiresfilesize")
+            ?: o.number("filesize_res") ?: audioInfo?.number("filesize_res") ?: 0).toLong()
+        val rawResSize = if (topExplicitResSize > 0L) topExplicitResSize else relateResSize
 
         val sqSize = (o.number("SQFileSize") ?: o.number("sqfilesize") ?: o.number("filesize_flac")
             ?: o.number("filesize_sq")
@@ -4573,7 +4670,7 @@ class MusicApiRepository(
             ?: audioInfo?.number("filesize_128") ?: audioInfo?.number("filesize")
             ?: relateStdSize.takeIf { it > 0 } ?: 0).toLong()
 
-        val sqHash = o.text("SQFileHash")?.takeIf { isValidHash(it) }
+        var sqHash = o.text("SQFileHash")?.takeIf { isValidHash(it) }
             ?: o.text("sqhash")?.takeIf { isValidHash(it) }
             ?: o.text("sq_hash")?.takeIf { isValidHash(it) }
             ?: o.text("hash_flac")?.takeIf { isValidHash(it) }
@@ -4583,21 +4680,37 @@ class MusicApiRepository(
             ?: audioInfo?.text("sqhash")?.takeIf { isValidHash(it) }
             ?: relateSqHash
 
-        // 在 KMR 接口中，若同时存在 hash_flac 且 audioInfo.filesize_high >= 18MB (> sqSize)，则 hash_high 为 Hi-Res
+        // 在 KMR 接口中，仅当同时存在 hash_flac 且 audioInfo.filesize_high >= 42MB 且 >= 1.3 * sqSize 时，hash_high 才为真 Hi-Res
         val audioInfoHighSize = (audioInfo?.number("filesize_high") ?: o.number("filesize_high") ?: 0).toLong()
         val audioInfoHighHash = (audioInfo?.text("hash_high") ?: o.text("hash_high"))?.takeIf { isValidHash(it) }
         val isKmrHighActuallyHiRes = audioInfoHighHash != null && sqHash.isNotBlank() &&
             !audioInfoHighHash.equals(sqHash, ignoreCase = true) &&
-            audioInfoHighSize >= 18_000_000L && (sqSize <= 0L || audioInfoHighSize > sqSize)
+            audioInfoHighSize >= 42_000_000L && (sqSize <= 0L || audioInfoHighSize >= (sqSize * 13L) / 10L)
 
-        val resHashCandidate = o.text("ResFileHash")?.takeIf { isValidHash(it) }
+        if (!isKmrHighActuallyHiRes && audioInfoHighHash != null && sqHash.isBlank() && audioInfoHighSize in 14_000_000L until 42_000_000L) {
+            sqHash = audioInfoHighHash
+        }
+
+        val explicitTopResHash = o.text("ResFileHash")?.takeIf { isValidHash(it) }
             ?: o.text("HiResFileHash")?.takeIf { isValidHash(it) }
             ?: o.text("res_hash")?.takeIf { isValidHash(it) }
             ?: o.text("hires_hash")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("hash_res")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("res_hash")?.takeIf { isValidHash(it) }
+
+        val verifiedExplicitResHash = explicitTopResHash?.takeIf { candidate ->
+            if (topExplicitResSize <= 0L) true
+            else topExplicitResSize >= 38_000_000L && (sqSize <= 0L || topExplicitResSize >= (sqSize * 13L) / 10L)
+        }
+        if (explicitTopResHash != null && verifiedExplicitResHash == null && sqHash.isBlank() && topExplicitResSize >= 12_000_000L) {
+            sqHash = explicitTopResHash
+        }
+
+        val resHashCandidate = verifiedExplicitResHash
             ?: (if (isKmrHighActuallyHiRes) audioInfoHighHash else null)
-            ?: relateResHash
+            ?: relateResHash.takeIf {
+                it.isNotBlank() && (relateResSize <= 0L || sqSize <= 0L || relateResSize >= (sqSize * 13L) / 10L)
+            }.orEmpty()
 
         val hqHash = o.text("HQFileHash")?.takeIf { isValidHash(it) }
             ?: o.text("320hash")?.takeIf { isValidHash(it) }

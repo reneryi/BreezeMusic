@@ -86,9 +86,21 @@ class LibraryViewModel(
     private val autoAttempts = mutableMapOf<String, Long>()
 
     val isGradeSyncing = ListeningGradeManager.isSyncing
+    private var loadedLibraryUserId: String? = "__UNINITIALIZED__"
+    private var loadedLibraryAuth: AuthState? = null
 
     init {
-        viewModelScope.launch { accountState.collect { loadMusicLibrary() } }
+        viewModelScope.launch {
+            accountState.collect { state ->
+                if (state.auth != AuthState.RESTORING) {
+                    if (state.currentId != loadedLibraryUserId || state.auth != loadedLibraryAuth) {
+                        loadedLibraryUserId = state.currentId
+                        loadedLibraryAuth = state.auth
+                        loadMusicLibrary()
+                    }
+                }
+            }
+        }
         viewModelScope.launch {
             ListeningGradeManager.gradeInfo.collect { info ->
                 _userGrade.value = info
@@ -108,9 +120,166 @@ class LibraryViewModel(
         return likedList.any { isSameSong(it, song) }
     }
 
+    /**
+     * 严格边界：打开歌单详情页时仅加载该歌单的曲目列表，不重复全量拉取听歌等级、已购资产、关注歌手或全部歌单
+     */
     fun openLibrarySection(section: String) {
         _librarySection.value = section
-        loadMusicLibrary()
+        loadSectionSongsOnly(section = section, forceRefresh = false)
+    }
+
+    /**
+     * 严格边界：仅刷新当前歌单详情页内的歌曲列表
+     */
+    fun refreshCurrentPlaylistOnly(playlistId: String) {
+        val section = when (playlistId) {
+            "like" -> "我喜欢"
+            "history" -> "最近"
+            else -> "歌单:$playlistId"
+        }
+        _librarySection.value = section
+        loadSectionSongsOnly(section = section, forceRefresh = true)
+    }
+
+    /**
+     * 严格边界：仅刷新「自建/收藏歌单」列表，不触发关注歌手、已购资产或听歌等级同步
+     */
+    fun refreshPlaylistsOnly() {
+        val userId = accountState.value.currentId ?: return
+        if (accountState.value.auth != AuthState.READY) return
+        viewModelScope.launch {
+            _libraryLoading.value = true
+            _libraryError.value = null
+            try {
+                val lists = VipManager.music.userPlaylists()
+                if (accounts.state.value.currentId == userId) {
+                    _playlists.value = lists
+                    val likedPl = lists.firstOrNull { it.isLiked }
+                    if (likedPl != null) {
+                        val likedTracks = runCatching { VipManager.music.playlistSongs(likedPl) }.getOrDefault(_likedSongs.value)
+                        _likedSongs.value = likedTracks
+                    }
+                }
+            } catch (e: Exception) {
+                if (accounts.state.value.currentId == userId) {
+                    _libraryError.value = e.message ?: "歌单列表刷新失败"
+                }
+            } finally {
+                if (accounts.state.value.currentId == userId) {
+                    _libraryLoading.value = false
+                }
+            }
+        }
+    }
+
+    private fun loadSectionSongsOnly(section: String, forceRefresh: Boolean) {
+        val userId = accountState.value.currentId
+        if (section == "最近") {
+            _libraryLoading.value = true
+            _libraryError.value = null
+            musicLibraryJob?.cancel()
+            musicLibraryJob = viewModelScope.launch {
+                val localHistory = VipManager.history.get(userId)
+                val cloudLatest = if (userId != null && accountState.value.auth == AuthState.READY) {
+                    runCatching { VipManager.music.latestListenSongs(pageSize = 50) }.getOrDefault(emptyList())
+                } else emptyList()
+                _librarySongs.value = if (cloudLatest.isNotEmpty()) {
+                    (cloudLatest + localHistory).distinctBy { it.hash.ifBlank { it.id } }
+                } else {
+                    localHistory
+                }
+                _libraryLoading.value = false
+            }
+            return
+        }
+
+        if (section == "我喜欢") {
+            if (!forceRefresh && _likedSongs.value.isNotEmpty()) {
+                _librarySongs.value = _likedSongs.value
+                return
+            }
+            musicLibraryJob?.cancel()
+            musicLibraryJob = viewModelScope.launch {
+                _libraryLoading.value = true
+                _libraryError.value = null
+                try {
+                    val lists = _playlists.value.ifEmpty {
+                        if (userId != null && accountState.value.auth == AuthState.READY) {
+                            runCatching { VipManager.music.userPlaylists() }.getOrDefault(emptyList()).also { _playlists.value = it }
+                        } else emptyList()
+                    }
+                    val likedPl = lists.firstOrNull { it.isLiked }
+                    val likedTracks = if (likedPl != null) {
+                        runCatching { VipManager.music.playlistSongs(likedPl) }.getOrDefault(_likedSongs.value)
+                    } else emptyList()
+                    _likedSongs.value = likedTracks
+                    _librarySongs.value = likedTracks
+                } finally {
+                    _libraryLoading.value = false
+                }
+            }
+            return
+        }
+
+        if (section.startsWith("歌单:")) {
+            val targetPlaylistId = section.removePrefix("歌单:")
+            musicLibraryJob?.cancel()
+            musicLibraryJob = viewModelScope.launch {
+                _libraryLoading.value = true
+                _libraryError.value = null
+                try {
+                    val lists = _playlists.value.ifEmpty {
+                        if (userId != null && accountState.value.auth == AuthState.READY) {
+                            runCatching { VipManager.music.userPlaylists() }.getOrDefault(emptyList()).also { _playlists.value = it }
+                        } else emptyList()
+                    }
+                    val selected = lists.firstOrNull {
+                        it.id == targetPlaylistId || it.globalCollectionId == targetPlaylistId || it.listCreateListid == targetPlaylistId
+                    }
+                    val extInfoDef = async { runCatching { VipManager.music.playlistInfo(targetPlaylistId) }.getOrNull() }
+                    val extSongsDef = async { runCatching { VipManager.music.fetchPlaylistSongsAll(targetPlaylistId) }.getOrDefault(emptyList()) }
+
+                    if (selected != null) {
+                        val tracks = runCatching { VipManager.music.playlistSongs(selected) }.getOrDefault(emptyList())
+                        val finalTracks = tracks.ifEmpty { extSongsDef.await() }
+                        _librarySongs.value = finalTracks
+                        val extInfo = extInfoDef.await()
+                        if (extInfo != null && (selected.description.isBlank() || selected.coverUrl.isBlank())) {
+                            val enriched = selected.copy(
+                                description = selected.description.ifBlank { extInfo.description },
+                                coverUrl = selected.coverUrl.ifBlank { extInfo.coverUrl.ifBlank { finalTracks.firstOrNull()?.coverUrl.orEmpty() } },
+                                trackCount = if (finalTracks.isNotEmpty()) finalTracks.size else selected.trackCount
+                            )
+                            _playlists.value = _playlists.value.map { if (it.id == selected.id) enriched else it }
+                        }
+                    } else {
+                        val extPlaylist = extInfoDef.await()
+                        val trackList = extSongsDef.await()
+                        val resolvedPl = (extPlaylist ?: Playlist(
+                            id = targetPlaylistId,
+                            title = "精选歌单",
+                            isCreatedByMe = false,
+                            globalCollectionId = targetPlaylistId
+                        )).let { pl ->
+                            pl.copy(
+                                coverUrl = pl.coverUrl.ifBlank { trackList.firstOrNull()?.coverUrl.orEmpty() },
+                                trackCount = if (trackList.isNotEmpty()) trackList.size else pl.trackCount,
+                                listCreateListid = pl.listCreateListid.ifBlank { targetPlaylistId }
+                            )
+                        }
+                        _playlists.value = (_playlists.value.filterNot {
+                            it.id == targetPlaylistId || it.id == resolvedPl.id || it.globalCollectionId == targetPlaylistId
+                        } + resolvedPl)
+                        _librarySongs.value = trackList
+                    }
+                } catch (e: Exception) {
+                    _libraryError.value = e.message ?: "歌单加载失败"
+                } finally {
+                    _libraryLoading.value = false
+                }
+            }
+            return
+        }
     }
 
     fun refreshMusicLibrary() = loadMusicLibrary()
