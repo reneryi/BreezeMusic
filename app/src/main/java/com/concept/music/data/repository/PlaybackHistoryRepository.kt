@@ -6,6 +6,7 @@ import com.concept.music.data.kugou.KugouSigner
 import com.concept.music.data.model.FmChannel
 import com.concept.music.data.model.Playlist
 import com.concept.music.data.model.RankItem
+import com.concept.music.data.model.AudioQuality
 import com.concept.music.data.model.Song
 import com.google.gson.reflect.TypeToken
 import java.util.concurrent.ConcurrentHashMap
@@ -32,7 +33,7 @@ class PlaybackHistoryRepository(private val context: Context) {
  */
 class DiscoverLocalCache(context: Context? = null) {
     private val prefs: SharedPreferences? = try {
-        context?.applicationContext?.getSharedPreferences("concept_discover_swr_cache", Context.MODE_PRIVATE)
+        context?.applicationContext?.getSharedPreferences("concept_discover_swr_cache_v2", Context.MODE_PRIVATE)
     } catch (_: Exception) {
         null
     }
@@ -47,12 +48,36 @@ class DiscoverLocalCache(context: Context? = null) {
     private val fmChannelListType = object : TypeToken<List<FmChannel>>() {}.type
     private val playlistListType = object : TypeToken<List<Playlist>>() {}.type
 
+    private fun sanitizeCachedSong(s: Song): Song {
+        if (!s.isHiRes) return s
+        val isVerifiedHiRes = s.hashHiRes.isNotBlank() &&
+            s.fileSizeByte >= 38_000_000L &&
+            (s.bitrateKbps <= 0 || s.bitrateKbps >= 1800) &&
+            !s.hashHiRes.equals(s.hashFlac, ignoreCase = true) &&
+            !s.hashHiRes.equals(s.hash320, ignoreCase = true) &&
+            !s.hashHiRes.equals(s.hash128, ignoreCase = true)
+        if (isVerifiedHiRes) return s
+        val downgradeFlac = s.hashFlac.ifBlank { s.hashHiRes }
+        val cleanedQualities = s.effectiveQualities.filter { it != AudioQuality.HI_RES }.let { q ->
+            if (downgradeFlac.isNotBlank() && AudioQuality.LOSSLESS !in q) q + AudioQuality.LOSSLESS else q
+        }.ifEmpty { listOf(AudioQuality.STANDARD) }
+        return s.copy(
+            hashHiRes = "",
+            hashFlac = downgradeFlac,
+            isHiRes = false,
+            isLossless = downgradeFlac.isNotBlank() || s.isLossless,
+            quality = if (downgradeFlac.isNotBlank() || s.isLossless) "flac" else "320",
+            availableQualities = cleanedQualities
+        )
+    }
+
     private fun getSongList(key: String): List<Song> {
         memorySongListMap[key]?.takeIf { it.isNotEmpty() }?.let { return it }
         return runCatching {
             val sp = prefs ?: return emptyList()
             val raw = sp.getString(key, null) ?: return emptyList()
-            val list: List<Song> = KugouSigner.gson.fromJson(raw, songListType) ?: emptyList()
+            val rawList: List<Song> = KugouSigner.gson.fromJson(raw, songListType) ?: emptyList()
+            val list = rawList.map { sanitizeCachedSong(it) }
             if (list.isNotEmpty()) {
                 memorySongListMap[key] = list
             }

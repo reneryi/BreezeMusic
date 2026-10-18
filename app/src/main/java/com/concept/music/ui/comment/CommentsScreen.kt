@@ -474,7 +474,7 @@ private fun RootCommentCard(
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = cardColor,
-        shadowElevation = if (isDark) 0.dp else 3.dp,
+        shadowElevation = 0.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp)) {

@@ -80,7 +80,7 @@ fun VipBannerCard(
             .softCardClickable(onClick = onClick),
         shape = RoundedCornerShape(24.dp),
         color = Color.Transparent,
-        shadowElevation = if (isDark) 0.dp else 5.dp
+        shadowElevation = 0.dp
     ) {
         Box(
             modifier = Modifier

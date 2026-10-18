@@ -56,6 +56,8 @@ import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.softCardClickable
+import com.concept.music.ui.theme.ConceptCategoryTabItem
+import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
@@ -273,7 +275,7 @@ fun RadioScreen(
                     Surface(
                         shape = RoundedCornerShape(26.dp),
                         color = cardBaseColor,
-                        shadowElevation = if (isDark) 0.dp else 5.dp,
+                        shadowElevation = 0.dp,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(
@@ -477,41 +479,26 @@ fun RadioScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         // 开放式极简电台分类指示栏（无胶囊外壳）
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(24.dp),
-                                verticalAlignment = Alignment.Bottom
-                            ) {
-                                categories.forEach { cat ->
-                                    val selected = cat == selectedCategory
-                                    val tabAccent = radioCategoryAccentColor(cat)
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier
-                                            .softClickable {
-                                                selectedCategory = cat
-                                                showAllStationsGrid = true
-                                            }
-                                            .padding(top = 4.dp)
-                                    ) {
-                                        Text(
-                                            text = cat.removeSuffix("电台"),
-                                            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
-                                            fontSize = 14.sp,
-                                            maxLines = 1
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .width(18.dp)
-                                                .height(3.dp)
-                                                .clip(CircleShape)
-                                                .background(if (selected) tabAccent else Color.Transparent)
-                                        )
-                                    }
+                            val radioTabItems = remember(categories) {
+                                categories.map { cat ->
+                                    ConceptCategoryTabItem(
+                                        key = cat,
+                                        label = cat.removeSuffix("电台"),
+                                        accentColor = radioCategoryAccentColor(cat)
+                                    )
                                 }
                             }
+                            ConceptSlidingCategoryTabs(
+                                tabs = radioTabItems,
+                                selectedKey = selectedCategory,
+                                onSelectTab = { cat ->
+                                    selectedCategory = cat
+                                    showAllStationsGrid = true
+                                },
+                                itemSpacing = 24.dp,
+                                fontSize = 14.sp,
+                                indicatorWidth = 18.dp
+                            )
                             HorizontalDivider(
                                 thickness = 0.5.dp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
@@ -682,7 +669,7 @@ private fun RadioPlazaGridCard(
         shape = RoundedCornerShape(22.dp),
         color = opaqueCardColor,
         border = if (isSelected) BorderStroke(1.8.dp, accent) else null,
-        shadowElevation = if (isDark || isSelected) 0.dp else 3.dp,
+        shadowElevation = 0.dp,
         modifier = modifier
             .softCardClickable(onClick = onClick)
     ) {

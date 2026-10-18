@@ -174,7 +174,7 @@ fun AudioEffectDialog(
             Surface(
                 shape = RoundedCornerShape(22.dp),
                 color = cardBg,
-                shadowElevation = if (isDark) 0.dp else 3.dp,
+                shadowElevation = 0.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -390,7 +390,7 @@ fun AudioEffectDialog(
             Surface(
                 shape = RoundedCornerShape(22.dp),
                 color = cardBg,
-                shadowElevation = if (isDark) 0.dp else 3.dp,
+                shadowElevation = 0.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {

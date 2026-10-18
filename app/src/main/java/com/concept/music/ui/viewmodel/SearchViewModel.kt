@@ -131,6 +131,10 @@ class SearchViewModel(
         }
     }
 
+    fun resetTabToDefault() {
+        _selectedTab.value = SearchTab.COMPLEX
+    }
+
     fun search(targetQuery: String = _query.value) {
         val trimmed = targetQuery.trim()
         if (trimmed.isBlank()) return
@@ -138,6 +142,8 @@ class SearchViewModel(
         _suggestions.value = emptyList()
         _query.value = trimmed
         _lastSearchedKeyword.value = trimmed
+        // 每次发起新搜索时始终默认回归「综合」结果页，避免残留上一次的专辑/歌单分类记忆
+        _selectedTab.value = SearchTab.COMPLEX
         _hasSearched.value = true
 
         // 加入历史记录并持久化
@@ -263,6 +269,7 @@ class SearchViewModel(
         _query.value = ""
         lastComplexKeyword = ""
         _lastSearchedKeyword.value = ""
+        _selectedTab.value = SearchTab.COMPLEX
         _hasSearched.value = false
         _suggestions.value = emptyList()
         _complexResult.value = ComplexSearchResult()

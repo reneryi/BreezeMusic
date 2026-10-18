@@ -1,6 +1,13 @@
 package com.concept.music.ui.search
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -43,6 +50,8 @@ import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.softCardClickable
+import com.concept.music.ui.theme.ConceptCategoryTabItem
+import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.SearchViewModel
 
@@ -87,6 +96,7 @@ fun SearchScreen(
         } else if (hasSearched || query.isNotEmpty()) {
             viewModel.clearQuery()
         } else {
+            viewModel.resetTabToDefault()
             onBack()
         }
     }
@@ -129,6 +139,7 @@ fun SearchScreen(
                                     } else if (hasSearched || query.isNotEmpty()) {
                                         viewModel.clearQuery()
                                     } else {
+                                        viewModel.resetTabToDefault()
                                         onBack()
                                     }
                                 }
@@ -196,47 +207,35 @@ fun SearchScreen(
                 )
             }
 
-            // 开放式极简分类导航栏（采用柔和弹性点击反馈，彻底消除直角矩形闪烁框）
+            // 开放式极简分类导航栏（支持左右滑动渐变彩色指示横条与丝滑动画）
             if (hasSearched && query.isNotEmpty()) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(28.dp),
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        SearchTab.entries.forEach { tab ->
-                            val isSelected = selectedTab == tab
-                            val tabAccent = when (tab) {
-                                SearchTab.COMPLEX -> ConceptPrimary
-                                SearchTab.SONG -> ConceptMintAccent
-                                SearchTab.ALBUM -> ConceptAmberAccent
-                                SearchTab.PLAYLIST -> ConceptVioletAccent
-                            }
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier
-                                    .softClickable { viewModel.selectTab(tab) }
-                                    .padding(top = 4.dp)
-                            ) {
-                                Text(
-                                    text = tab.label,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
-                                    fontSize = if (isSelected) 15.5.sp else 14.5.sp
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .width(20.dp)
-                                        .height(3.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isSelected) tabAccent else Color.Transparent)
-                                )
-                            }
+                val searchTabItems = remember {
+                    SearchTab.entries.map { tab ->
+                        val tabAccent = when (tab) {
+                            SearchTab.COMPLEX -> ConceptPrimary
+                            SearchTab.SONG -> ConceptMintAccent
+                            SearchTab.ALBUM -> ConceptAmberAccent
+                            SearchTab.PLAYLIST -> ConceptVioletAccent
                         }
+                        ConceptCategoryTabItem(
+                            key = tab.name,
+                            label = tab.label,
+                            accentColor = tabAccent
+                        )
                     }
+                }
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    ConceptSlidingCategoryTabs(
+                        tabs = searchTabItems,
+                        selectedKey = selectedTab.name,
+                        onSelectTab = { name ->
+                            runCatching { SearchTab.valueOf(name) }.getOrNull()?.let { viewModel.selectTab(it) }
+                        },
+                        itemSpacing = 28.dp,
+                        fontSize = 14.5.sp,
+                        indicatorWidth = 20.dp,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+                    )
                     HorizontalDivider(
                         thickness = 0.5.dp,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
@@ -306,10 +305,22 @@ fun SearchScreen(
                         }
                     }
 
-                    // 3. 搜索结果展示
+                    // 3. 搜索结果展示（带平滑分类切换过渡动画）
                     hasSearched && query.isNotEmpty() -> {
                         val displayKw = lastSearchedKeyword.ifBlank { query }
-                        when (selectedTab) {
+                        AnimatedContent(
+                            targetState = selectedTab,
+                            transitionSpec = {
+                                val direction = if (targetState.ordinal >= initialState.ordinal) 1 else -1
+                                (slideInHorizontally(animationSpec = tween(250)) { fullWidth -> direction * (fullWidth / 7) } +
+                                    fadeIn(animationSpec = tween(230))) togetherWith
+                                    (slideOutHorizontally(animationSpec = tween(190)) { fullWidth -> -direction * (fullWidth / 9) } +
+                                        fadeOut(animationSpec = tween(150)))
+                            },
+                            label = "searchTabContentTransition",
+                            modifier = Modifier.fillMaxSize()
+                        ) { activeTab ->
+                        when (activeTab) {
                             SearchTab.COMPLEX -> {
                                 val isComplexEmpty = complexResult.songs.isEmpty() &&
                                     complexResult.artists.isEmpty() &&
@@ -409,6 +420,7 @@ fun SearchScreen(
                                 }
                             }
                         }
+                        }
                     }
 
                     // 4. 搜索历史与引导页
@@ -452,7 +464,7 @@ fun SearchScreen(
                                             Surface(
                                                 color = cardColor,
                                                 shape = RoundedCornerShape(16.dp),
-                                                shadowElevation = if (isDark) 0.dp else 1.dp,
+                                                shadowElevation = 0.dp,
                                                 modifier = Modifier.clip(RoundedCornerShape(16.dp))
                                             ) {
                                                 Row(

@@ -59,6 +59,8 @@ import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.softCardClickable
+import com.concept.music.ui.theme.ConceptCategoryTabItem
+import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.LibraryViewModel
 import kotlinx.coroutines.launch
@@ -240,7 +242,7 @@ fun LibraryScreen(
                 Surface(
                     shape = RoundedCornerShape(24.dp),
                     color = Color.Transparent,
-                    shadowElevation = if (isDark) 0.dp else 3.dp,
+                    shadowElevation = 0.dp,
                     modifier = Modifier
                         .fillMaxWidth()
                         .softCardClickable { showFocusPodSheet = true }
@@ -330,132 +332,91 @@ fun LibraryScreen(
 
             // 5. 开放式极简音乐资产导航栏（彻底告别 4 个胶囊按钮 + 4 个图标按钮的密集感）
             item {
-                val tabItems = listOf(
-                    Triple("自建", myPlaylists.size, ConceptPrimary),
-                    Triple("收藏", favoritePlaylists.size, ConceptCoralAccent),
-                    Triple("关注", followedArtists.size, ConceptMintAccent),
-                    Triple("已购", purchasedSongs.size + purchasedAlbums.size, VipGold)
+                val assetTabs = listOf(
+                    ConceptCategoryTabItem("0", "自建", myPlaylists.size.toString(), ConceptPrimary),
+                    ConceptCategoryTabItem("1", "收藏", favoritePlaylists.size.toString(), ConceptCoralAccent),
+                    ConceptCategoryTabItem("2", "关注", followedArtists.size.toString(), ConceptMintAccent),
+                    ConceptCategoryTabItem("3", "已购", (purchasedSongs.size + purchasedAlbums.size).toString(), VipGold)
                 )
 
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        // 左侧：开放式文字 Tab + 底部多彩指示条
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(20.dp),
-                            verticalAlignment = Alignment.Bottom
-                        ) {
-                            tabItems.forEachIndexed { idx, (title, count, accent) ->
-                                val isSelected = selectedTab == idx
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .softClickable {
-                                            viewModel.setSelectedAssetTab(idx)
-                                            if (idx == 2 && isLoggedIn && followedArtists.isEmpty()) {
-                                                viewModel.refreshFollowedArtists()
-                                            } else if (idx == 3 && isLoggedIn && purchasedSongs.isEmpty() && purchasedAlbums.isEmpty()) {
-                                                viewModel.refreshPurchasedAssets()
-                                            }
-                                        }
-                                        .padding(top = 4.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.Bottom) {
-                                        Text(
-                                            text = title,
-                                            style = MaterialTheme.typography.titleMedium.copy(
-                                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
-                                                color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                fontSize = if (isSelected) 16.5.sp else 15.sp
-                                            )
-                                        )
-                                        Spacer(modifier = Modifier.width(3.dp))
-                                        Text(
-                                            text = count.toString(),
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (isSelected) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                                fontSize = 11.sp
-                                            ),
-                                            modifier = Modifier.padding(bottom = 2.dp)
+                    ConceptSlidingCategoryTabs(
+                        tabs = assetTabs,
+                        selectedKey = selectedTab.toString(),
+                        onSelectTab = { keyStr ->
+                            val idx = keyStr.toIntOrNull() ?: 0
+                            viewModel.setSelectedAssetTab(idx)
+                            if (idx == 2 && isLoggedIn && followedArtists.isEmpty()) {
+                                viewModel.refreshFollowedArtists()
+                            } else if (idx == 3 && isLoggedIn && purchasedSongs.isEmpty() && purchasedAlbums.isEmpty()) {
+                                viewModel.refreshPurchasedAssets()
+                            }
+                        },
+                        itemSpacing = 20.dp,
+                        fontSize = 15.5.sp,
+                        indicatorWidth = 20.dp,
+                        trailingContent = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                modifier = Modifier.padding(bottom = 2.dp)
+                            ) {
+                                if (selectedTab == 0) {
+                                    IconButton(
+                                        onClick = { showCreateDialog = true },
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Add,
+                                            contentDescription = "新建歌单",
+                                            tint = ConceptPrimary,
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
-                                    Spacer(modifier = Modifier.height(7.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .width(20.dp)
-                                            .height(3.dp)
-                                            .clip(CircleShape)
-                                            .background(if (isSelected) accent else Color.Transparent)
-                                    )
+                                    IconButton(
+                                        onClick = { showImportDialog = true },
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.FileUpload,
+                                            contentDescription = "导入歌单",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                }
+                                if (selectedTab == 0 || selectedTab == 1) {
+                                    IconButton(
+                                        onClick = { viewModel.toggleGridView() },
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        @Suppress("DEPRECATION")
+                                        Icon(
+                                            imageVector = if (isGridView) Icons.Rounded.ViewList else Icons.Rounded.GridView,
+                                            contentDescription = if (isGridView) "切换为列表视图" else "切换为网格视图",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                } else {
+                                    IconButton(
+                                        onClick = {
+                                            if (selectedTab == 2) viewModel.refreshFollowedArtists()
+                                            else if (selectedTab == 3) viewModel.refreshPurchasedAssets()
+                                        },
+                                        modifier = Modifier.size(30.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Refresh,
+                                            contentDescription = "刷新当前分组",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
-
-                        // 右侧：按当前 Tab 按需精简展示工具图标（杜绝 4 个图标同排堆砌）
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                            modifier = Modifier.padding(bottom = 4.dp)
-                        ) {
-                            if (selectedTab == 0) {
-                                IconButton(
-                                    onClick = { showCreateDialog = true },
-                                    modifier = Modifier.size(30.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Add,
-                                        contentDescription = "新建歌单",
-                                        tint = ConceptPrimary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { showImportDialog = true },
-                                    modifier = Modifier.size(30.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.FileUpload,
-                                        contentDescription = "导入歌单",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(17.dp)
-                                    )
-                                }
-                            }
-                            if (selectedTab == 0 || selectedTab == 1) {
-                                IconButton(
-                                    onClick = { viewModel.toggleGridView() },
-                                    modifier = Modifier.size(30.dp)
-                                ) {
-                                    @Suppress("DEPRECATION")
-                                    Icon(
-                                        imageVector = if (isGridView) Icons.Rounded.ViewList else Icons.Rounded.GridView,
-                                        contentDescription = if (isGridView) "切换为列表视图" else "切换为网格视图",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(17.dp)
-                                    )
-                                }
-                            } else {
-                                IconButton(
-                                    onClick = {
-                                        if (selectedTab == 2) viewModel.refreshFollowedArtists()
-                                        else if (selectedTab == 3) viewModel.refreshPurchasedAssets()
-                                    },
-                                    modifier = Modifier.size(30.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Refresh,
-                                        contentDescription = "刷新当前分组",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(17.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    )
 
                     HorizontalDivider(
                         thickness = 0.5.dp,
@@ -1354,7 +1315,7 @@ private fun MediaShortcutCard(
     Surface(
         shape = RoundedCornerShape(24.dp),
         color = Color.Transparent,
-        shadowElevation = if (isDark) 0.dp else 4.dp,
+        shadowElevation = 0.dp,
         modifier = modifier
             .softCardClickable(onClick = onClick)
     ) {

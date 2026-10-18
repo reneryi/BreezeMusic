@@ -1,5 +1,8 @@
 package com.concept.music.data.model
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class UserGradeInfo(
     val level: Int = 1,
     val score: Long = 0L,
@@ -23,6 +26,7 @@ data class UserGradeInfo(
         }
 }
 
+@Immutable
 data class FollowedArtist(
     val id: String,
     val name: String,
@@ -31,6 +35,7 @@ data class FollowedArtist(
     val fansCount: Long = 0L
 )
 
+@Immutable
 data class PurchasedSongItem(
     val songId: String,
     val songName: String,
@@ -39,6 +44,7 @@ data class PurchasedSongItem(
     val song: Song? = null
 )
 
+@Immutable
 data class PurchasedAlbumItem(
     val albumId: String,
     val albumName: String,

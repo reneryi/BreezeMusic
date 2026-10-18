@@ -237,7 +237,7 @@ private fun VipCenterContentBody(
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = Color.Transparent,
-            shadowElevation = if (isDark) 8.dp else 6.dp,
+            shadowElevation = 0.dp,
             border = BorderStroke(
                 0.8.dp,
                 if (isDark) goldAccent.copy(alpha = 0.26f) else goldAccent.copy(alpha = 0.22f)
@@ -406,7 +406,7 @@ private fun VipCenterContentBody(
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = cardBgColor,
-            shadowElevation = if (isDark) 0.dp else 5.dp,
+            shadowElevation = 0.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
@@ -526,7 +526,7 @@ private fun VipCenterContentBody(
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = cardBgColor,
-            shadowElevation = if (isDark) 0.dp else 5.dp,
+            shadowElevation = 0.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
@@ -635,7 +635,7 @@ private fun VipCenterContentBody(
             Surface(
                 shape = RoundedCornerShape(24.dp),
                 color = cardBgColor,
-                shadowElevation = if (isDark) 0.dp else 5.dp,
+                shadowElevation = 0.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(

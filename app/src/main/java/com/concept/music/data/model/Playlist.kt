@@ -1,5 +1,8 @@
 package com.concept.music.data.model
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class Playlist(
     val id: String,
     val title: String,

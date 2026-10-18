@@ -135,7 +135,7 @@ fun FocusPodBottomSheet(
             Surface(
                 shape = RoundedCornerShape(24.dp),
                 color = Color.Transparent,
-                shadowElevation = if (isDark) 0.dp else 4.dp,
+                shadowElevation = 0.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Box(

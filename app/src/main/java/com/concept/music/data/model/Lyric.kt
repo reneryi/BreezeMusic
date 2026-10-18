@@ -1,11 +1,15 @@
 package com.concept.music.data.model
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class LyricWord(
     val startTimeMs: Long,
     val durationMs: Long,
     val text: String
 )
 
+@Immutable
 data class LyricLine(
     val startTimeMs: Long,
     val durationMs: Long,
@@ -17,6 +21,7 @@ data class LyricLine(
     val hasWordTiming: Boolean get() = words.isNotEmpty()
 }
 
+@Immutable
 data class LyricData(
     val lines: List<LyricLine> = emptyList(),
     val rawText: String = "",

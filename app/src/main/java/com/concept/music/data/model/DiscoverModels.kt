@@ -1,8 +1,11 @@
 package com.concept.music.data.model
 
+import androidx.compose.runtime.Immutable
+
 /**
  * 酷狗官方排行榜数据模型
  */
+@Immutable
 data class RankItem(
     val rankId: Int,
     val rankName: String,
@@ -17,6 +20,7 @@ data class RankItem(
 /**
  * 酷狗官方电台频道模型
  */
+@Immutable
 data class FmChannel(
     val id: String,
     val name: String,
@@ -34,6 +38,7 @@ data class FmChannel(
 /**
  * 新歌速递分组/批次模型（支持今日最新、近3日、近5日及语种分类）
  */
+@Immutable
 data class NewSongPeriodGroup(
     val key: String,
     val label: String,

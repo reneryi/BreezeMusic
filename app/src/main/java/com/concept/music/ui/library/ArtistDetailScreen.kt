@@ -42,6 +42,8 @@ import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.softCardClickable
+import com.concept.music.ui.theme.ConceptCategoryTabItem
+import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.softClickable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -439,58 +441,20 @@ fun ArtistDetailScreen(
 
                         Spacer(modifier = Modifier.height(18.dp))
 
-                        // 开放式极简栏目导航栏（单曲 / 专辑 / 歌手百科 + 多彩底部指示条）
-                        val tabConfigs = listOf(
-                            Triple("单曲", totalSongCountDisplay.toString(), ConceptPrimary),
-                            Triple("专辑", totalAlbumCountDisplay.toString(), ConceptAmberAccent),
-                            Triple("歌手百科", "", ConceptVioletAccent)
+                        // 开放式极简栏目导航栏（单曲 / 专辑 / 歌手百科 + 左右滑动渐变彩色底部指示横条）
+                        val artistTabItems = listOf(
+                            ConceptCategoryTabItem("0", "单曲", totalSongCountDisplay.toString(), ConceptPrimary),
+                            ConceptCategoryTabItem("1", "专辑", totalAlbumCountDisplay.toString(), ConceptAmberAccent),
+                            ConceptCategoryTabItem("2", "歌手百科", "", ConceptVioletAccent)
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(28.dp),
-                            verticalAlignment = Alignment.Bottom
-                        ) {
-                            tabConfigs.forEachIndexed { idx, (label, countText, tabAccent) ->
-                                val selected = selectedTab == idx
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .softClickable { selectedTab = idx }
-                                        .padding(top = 4.dp)
-                                ) {
-                                    Row(verticalAlignment = Alignment.Bottom) {
-                                        Text(
-                                            text = label,
-                                            style = MaterialTheme.typography.titleMedium.copy(
-                                                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
-                                                color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                fontSize = if (selected) 16.sp else 15.sp
-                                            )
-                                        )
-                                        if (countText.isNotEmpty()) {
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = countText,
-                                                style = MaterialTheme.typography.labelSmall.copy(
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = if (selected) tabAccent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                                    fontSize = 11.sp
-                                                ),
-                                                modifier = Modifier.padding(bottom = 2.dp)
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(7.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .width(22.dp)
-                                            .height(3.dp)
-                                            .clip(CircleShape)
-                                            .background(if (selected) tabAccent else Color.Transparent)
-                                    )
-                                }
-                            }
-                        }
+                        ConceptSlidingCategoryTabs(
+                            tabs = artistTabItems,
+                            selectedKey = selectedTab.toString(),
+                            onSelectTab = { keyStr -> selectedTab = keyStr.toIntOrNull() ?: 0 },
+                            itemSpacing = 28.dp,
+                            fontSize = 15.sp,
+                            indicatorWidth = 22.dp
+                        )
                         HorizontalDivider(
                             thickness = 0.5.dp,
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)

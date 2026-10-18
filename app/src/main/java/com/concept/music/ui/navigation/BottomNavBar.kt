@@ -124,21 +124,14 @@ fun BottomNavBar(
                     ConceptPrimary.copy(alpha = 0.24f)
                 }
 
-                // 底层左右滑动流体胶囊指示器
+                // 底层左右滑动流体胶囊指示器（无边框线、无生硬3D投影）
                 Box(
                     modifier = Modifier
                         .offset(x = pillOffsetX)
                         .width(dynamicPillWidth)
                         .height(40.dp)
-                        .shadow(
-                            elevation = if (isDark) 8.dp else 4.dp,
-                            shape = CircleShape,
-                            ambientColor = ConceptPrimary.copy(alpha = 0.25f),
-                            spotColor = ConceptPrimary.copy(alpha = 0.30f)
-                        )
                         .clip(CircleShape)
                         .background(pillBrush)
-                        .border(0.8.dp, pillBorderColor, CircleShape)
                 )
 
                 // 顶层双态图标与标签交互行

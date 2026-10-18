@@ -45,6 +45,44 @@ class MusicApiRepository(
     private val userTasteSeedsCache = java.util.concurrent.CopyOnWriteArrayList<Song>()
     private val rankLatestVolMap = ConcurrentHashMap<String, Int>()
     private val albumPublishDateCache = ConcurrentHashMap<String, String>()
+    private val albumCompanyCache = ConcurrentHashMap<String, String>()
+
+    internal data class SongStreamSpec(
+        val hash: String,
+        val sizeBytes: Long,
+        val bitrateKbps: Int,
+        val extName: String = ""
+    )
+
+    internal data class SongTechMeta(
+        val specs: Map<AudioQuality, SongStreamSpec> = emptyMap(),
+        val albumName: String = "",
+        val publishDate: String = "",
+        val company: String = "",
+        val durationMs: Long = 0L
+    )
+
+    private val songTechMetaCache = ConcurrentHashMap<String, SongTechMeta>()
+
+    private fun cacheSongTechMeta(keys: Iterable<String>, meta: SongTechMeta) {
+        for (rawKey in keys) {
+            val k = rawKey.trim().lowercase()
+            if (k.isNotBlank() && k != "0") {
+                val existing = songTechMetaCache[k]
+                if (existing == null) {
+                    songTechMetaCache[k] = meta
+                } else {
+                    songTechMetaCache[k] = SongTechMeta(
+                        specs = existing.specs + meta.specs,
+                        albumName = meta.albumName.ifBlank { existing.albumName },
+                        publishDate = meta.publishDate.ifBlank { existing.publishDate },
+                        company = meta.company.ifBlank { existing.company },
+                        durationMs = if (meta.durationMs > 0L) meta.durationMs else existing.durationMs
+                    )
+                }
+            }
+        }
+    }
     @Volatile
     private var lastPersonalFmSong: Song? = null
 
@@ -204,8 +242,9 @@ class MusicApiRepository(
         } else null
 
         if (!primarySongs.isNullOrEmpty()) {
-            recordUserTasteSeeds(primarySongs)
-            return primarySongs
+            val enrichedPrimary = runCatching { enrichSongsPrivilegeLite(primarySongs) }.getOrDefault(primarySongs)
+            recordUserTasteSeeds(enrichedPrimary)
+            return enrichedPrimary
         }
 
         // 当个性化日推暂未生成或未登录时，自动平滑加载概念精选推荐，确保首屏不出现 0 首
@@ -730,11 +769,9 @@ class MusicApiRepository(
      */
     suspend fun enrichSongsPrivilegeLite(songs: List<Song>): List<Song> {
         if (songs.isEmpty()) return songs
-        val needEnrich = songs.any { !it.isLossless && !it.isHiRes && it.hashFlac.isBlank() && it.hashHiRes.isBlank() }
-        if (!needEnrich) return songs
 
         val session = accounts.context()?.session
-        // 严禁在音质探针中请求 "super" (蝰蛇母带合成音效)，仅查询原生音源档位 128 / 320 / flac(SQ) / high(Hi-Res)
+        // 严格对齐 MakcRe/KuGouMusicApi module/privilege_lite.js：仅查询原生音源档位 128 / 320 / flac(SQ) / high(Hi-Res)
         val qualitiesArr = JsonArray().apply {
             listOf("128", "320", "flac", "high").forEach { add(it) }
         }
@@ -745,13 +782,14 @@ class MusicApiRepository(
                 async {
                     val resourceArr = JsonArray()
                     for (s in chunk) {
-                        val baseHash = s.hash128.ifBlank { s.hash }.trim().lowercase()
+                        val baseHash = s.hash128.ifBlank { s.hash320.ifBlank { s.hashFlac.ifBlank { s.hash } } }.trim().lowercase()
                         if (isValidHash(baseHash)) {
                             resourceArr.add(JsonObject().apply {
                                 addProperty("hash", baseHash)
                                 add("qualities", qualitiesArr)
                                 val albIdNum = s.albumId.toLongOrNull() ?: 0L
                                 if (albIdNum > 0L) addProperty("album_id", albIdNum)
+                                if (s.albumAudioId > 0L) addProperty("album_audio_id", s.albumAudioId)
                             })
                         }
                     }
@@ -793,85 +831,127 @@ class MusicApiRepository(
         if (enrichedByHash.isEmpty()) return songs
 
         return songs.map { s ->
-            val key = s.hash128.ifBlank { s.hash }.trim().lowercase()
-            val privObj = enrichedByHash[key] ?: enrichedByHash[s.hash.trim().lowercase()] ?: return@map s
-            var stdHash = s.hash128
-            var hqHash = s.hash320
+            val lookupKey = s.hash128.ifBlank { s.hash320.ifBlank { s.hashFlac.ifBlank { s.hash } } }.trim().lowercase()
+            val privObj = enrichedByHash[lookupKey] ?: enrichedByHash[s.hash.trim().lowercase()] ?: return@map s
+            val relateGoods = privObj.objects("relate_goods")
+            val transParam = privObj.obj("trans_param")
+
+            var stdHash = s.hash128.ifBlank { transParam?.text("ogg_128_hash")?.takeIf { isValidHash(it) }.orEmpty() }
+            var hqHash = s.hash320.ifBlank { transParam?.text("ogg_320_hash")?.takeIf { isValidHash(it) }.orEmpty() }
             var sqHash = s.hashFlac
-            var resHash = s.hashHiRes
+            // 若接口返回了 relate_goods，则以 relate_goods 的严格校验结果为准，清除此前可能误标的 hashHiRes
+            var resHash = if (relateGoods.isNotEmpty()) "" else s.hashHiRes
             var resSize = 0L
             var sqSize = 0L
-            var maxFileSize = s.fileSizeByte
+            var hqSize = (transParam?.number("ogg_320_filesize") ?: 0).toLong()
+            var stdSize = (transParam?.number("ogg_128_filesize") ?: 0).toLong()
+            var resKbps = 0
+            var sqKbps = 0
+            var hqKbps = if (hqSize > 0L) 320 else 0
+            var stdKbps = if (stdSize > 0L) 128 else 0
+            var effectiveDurMs = s.durationMs
+            val specsMap = mutableMapOf<AudioQuality, SongStreamSpec>()
 
-            for (rg in privObj.objects("relate_goods")) {
+            // 先扫描一遍获取准确的 sqSize (level=5) 和 durationMs
+            for (rg in relateGoods) {
+                val rgInfo = rg.obj("info")
+                val durRaw = (rg.number("duration") ?: rgInfo?.number("duration") ?: rgInfo?.number("timelength") ?: 0).toLong()
+                if (effectiveDurMs <= 0L && durRaw > 0L) {
+                    effectiveDurMs = if (durRaw in 1 until 10000) durRaw * 1000L else durRaw
+                }
+                val level = rg.number("level") ?: rgInfo?.number("level") ?: -1
+                val qStr = (rg.text("quality") ?: rg.text("type") ?: rgInfo?.text("quality") ?: "").lowercase()
+                val sz = (rg.number("size") ?: rg.number("filesize") ?: rg.number("file_size")
+                    ?: rgInfo?.number("filesize") ?: rgInfo?.number("size") ?: 0).toLong()
+                if ((level == 5 || qStr == "flac" || qStr == "sq" || qStr == "lossless") && sz > sqSize) {
+                    sqSize = sz
+                }
+            }
+
+            for (rg in relateGoods) {
                 val rgHash = rg.text("hash")?.takeIf { isValidHash(it) } ?: continue
                 val rgInfo = rg.obj("info")
                 val level = rg.number("level") ?: rgInfo?.number("level") ?: -1
                 val qStr = (rg.text("quality") ?: rg.text("type") ?: rgInfo?.text("quality") ?: "").lowercase()
-                val nameStr = (rg.text("name") ?: rg.text("extname") ?: rgInfo?.text("extname") ?: "").lowercase()
+                val extStr = (rg.text("extname") ?: rgInfo?.text("extname") ?: rg.text("name") ?: "").lowercase()
                 val sz = (rg.number("size") ?: rg.number("filesize") ?: rg.number("file_size")
                     ?: rgInfo?.number("filesize") ?: rgInfo?.number("size") ?: 0).toLong()
                 val brRaw = (rg.number("bitrate") ?: rg.number("bitRate")
                     ?: rgInfo?.number("bitrate") ?: rgInfo?.number("bitRate") ?: 0).toLong()
                 val reportedKbps = if (brRaw > 50000L) (brRaw / 1000L).toInt() else brRaw.toInt()
-                val computedKbps = if (reportedKbps > 0) reportedKbps else if (s.durationMs >= 60_000L && sz > 0L) {
-                    ((sz * 8L) / s.durationMs).toInt()
+                // 对于无损/高解析音频，始终优先用真实文件字节数与时长计算精确码率，避免接口静态枚举值误导
+                val sizeDerivedKbps = if (effectiveDurMs >= 30_000L && sz > 0L) {
+                    ((sz * 8L) / effectiveDurMs).toInt()
                 } else 0
+                val realKbps = if (sizeDerivedKbps > 0) sizeDerivedKbps else reportedKbps
 
                 when {
-                    // 严禁把蝰蛇母带/全景声/超清合成流 (level=0 / super / viper) 识别为原生 Hi-Res
-                    level == 0 || qStr == "super" || qStr.startsWith("viper") || qStr == "multitrack" ||
-                        nameStr.contains("蝰蛇") || nameStr.contains("全景") -> {
-                        // Ignore synthetic Viper streams
+                    // 严禁把蝰蛇母带/全景声/超清合成流 (level=0 / level=7 / super / viper) 识别为原生 Hi-Res
+                    level == 0 || level == 7 || qStr == "super" || qStr.startsWith("viper") || qStr == "multitrack" ||
+                        extStr.contains("蝰蛇") || extStr.contains("全景") -> {
+                        // Ignore synthetic Viper / DSD streams
                     }
-                    // 严格校验真 Hi-Res (24bit/48kHz 或 24bit/96kHz 母带)：
-                    // 必须满足真实码率 >= 1450 kbps 或文件体积 >= 42MB；若体积在 10MB~42MB 之间实为 16bit SQ 无损！
+                    // 严格校验真 Hi-Res (24bit/96kHz 母带)：
+                    // 必须具备有效文件大小 (sz > 0)，且真实码率 >= 1800 kbps（或体积 >= 46MB），且显著大于 16bit SQ 无损体积 (>= 1.45倍)！
                     level == 6 || qStr == "hires" || qStr == "hi-res" || qStr == "res" || (qStr == "high" && level == 6) -> {
-                        val isVerifiedHiRes = (computedKbps >= 1450 && (sz <= 0L || sz >= 36_000_000L)) ||
-                            (computedKbps <= 0 && sz >= 42_000_000L)
-                        if (isVerifiedHiRes) {
+                        val largerThanSq = sqSize <= 0L || sz >= (sqSize * 145L) / 100L
+                        val isTrueHiRes = sz > 0L && largerThanSq && (
+                            (sizeDerivedKbps >= 1800 && sz >= 38_000_000L) ||
+                                (sizeDerivedKbps == 0 && sz >= 48_000_000L && reportedKbps >= 1800)
+                            )
+                        if (isTrueHiRes) {
                             if (resHash.isBlank()) resHash = rgHash
                             if (sz > resSize) resSize = sz
-                            if (sz > maxFileSize) maxFileSize = sz
-                        } else if (sz in 10_000_000L until 42_000_000L || computedKbps in 500..1449) {
+                            if (realKbps > resKbps) resKbps = realKbps
+                            specsMap[AudioQuality.HI_RES] = SongStreamSpec(rgHash, sz, realKbps.takeIf { it > 0 } ?: 2304, extStr.ifBlank { "flac" })
+                        } else if (sz in 12_000_000L until 48_000_000L || realKbps in 550..1799) {
+                            // 48kHz/16bit~24bit 普通无损归入 SQ 无损档位，杜绝虚标 Hi-Res
                             if (sqHash.isBlank()) sqHash = rgHash
                             if (sz > sqSize) sqSize = sz
-                            if (sz > maxFileSize) maxFileSize = sz
+                            if (realKbps > sqKbps) sqKbps = realKbps
+                            if (AudioQuality.LOSSLESS !in specsMap) {
+                                specsMap[AudioQuality.LOSSLESS] = SongStreamSpec(rgHash, sz, realKbps.takeIf { it > 0 } ?: 960, extStr.ifBlank { "flac" })
+                            }
                         }
                     }
                     level == 5 || qStr == "flac" || qStr == "sq" || qStr == "lossless" -> {
                         if (sqHash.isBlank()) sqHash = rgHash
                         if (sz > sqSize) sqSize = sz
-                        if (sz > maxFileSize) maxFileSize = sz
+                        if (realKbps > sqKbps) sqKbps = realKbps
+                        specsMap[AudioQuality.LOSSLESS] = SongStreamSpec(rgHash, sz, realKbps.takeIf { it in 400..1800 } ?: 920, extStr.ifBlank { "flac" })
                     }
                     level == 4 || qStr == "320" || qStr == "hq" || (qStr == "high" && level != 6) -> {
                         if (hqHash.isBlank()) hqHash = rgHash
-                        if (sz > maxFileSize) maxFileSize = sz
+                        if (sz > hqSize) hqSize = sz
+                        hqKbps = 320
+                        specsMap[AudioQuality.HIGH] = SongStreamSpec(rgHash, sz, 320, extStr.ifBlank { "mp3" })
                     }
                     level == 1 || level == 2 || qStr == "128" -> {
                         if (stdHash.isBlank()) stdHash = rgHash
-                        if (maxFileSize <= 0L && sz > 0L) maxFileSize = sz
+                        if (sz > stdSize) stdSize = sz
+                        stdKbps = 128
+                        specsMap[AudioQuality.STANDARD] = SongStreamSpec(rgHash, sz, 128, extStr.ifBlank { "mp3" })
                     }
                 }
             }
 
-            // 二次校验：若 Hi-Res 文件体积未显著大于 SQ 无损文件体积 (< 1.3 倍) 或 hash 与 SQ 相同，则实为 SQ 无损
             if (resHash.isNotBlank()) {
                 val sameAsLower = resHash.equals(sqHash, ignoreCase = true) ||
                     resHash.equals(hqHash, ignoreCase = true) ||
                     resHash.equals(stdHash, ignoreCase = true)
-                val notLargerThanSq = resSize > 0L && sqSize > 0L && resSize < (sqSize * 13L) / 10L
+                val notLargerThanSq = resSize > 0L && sqSize > 0L && resSize < (sqSize * 145L) / 100L
                 if (sameAsLower || notLargerThanSq) {
                     if (sqHash.isBlank() && !resHash.equals(hqHash, ignoreCase = true) && !resHash.equals(stdHash, ignoreCase = true)) {
                         sqHash = resHash
                     }
                     resHash = ""
+                    specsMap.remove(AudioQuality.HI_RES)
                 }
             }
 
-            val hasHiRes = resHash.isNotBlank()
-            val hasFlac = sqHash.isNotBlank() || (s.isLossless && !s.isHiRes)
-            val has320 = hqHash.isNotBlank() || s.quality == "320"
+            val hasHiRes = resHash.isNotBlank() && resSize >= 38_000_000L
+            val hasFlac = sqHash.isNotBlank() || sqSize >= 12_000_000L || (s.isLossless && !s.isHiRes)
+            val has320 = hqHash.isNotBlank() || hqSize > 0L || s.quality == "320"
 
             val qualities = buildList {
                 add(AudioQuality.STANDARD)
@@ -886,33 +966,64 @@ class MusicApiRepository(
                 stdHash.isNotBlank() -> stdHash
                 else -> s.hash
             }
+            val bestSize = when {
+                hasHiRes && resSize > 0L -> resSize
+                hasFlac && sqSize > 0L -> sqSize
+                has320 && hqSize > 0L -> hqSize
+                stdSize > 0L -> stdSize
+                else -> s.fileSizeByte
+            }
+            val bestKbps = when {
+                hasHiRes && resKbps > 0 -> resKbps
+                hasFlac && sqKbps > 0 -> sqKbps
+                has320 -> 320
+                stdKbps > 0 -> stdKbps
+                effectiveDurMs >= 30_000L && bestSize > 0L -> ((bestSize * 8L) / effectiveDurMs).toInt()
+                else -> s.bitrateKbps
+            }
+
             val isVipPriv = s.isVip || privObj.number("privilege") == 10 || privObj.number("pay_type") == 3
             val privCover = imageUrl(
                 privObj.text("sizable_cover") ?: privObj.text("album_img") ?: privObj.text("union_cover")
-                    ?: privObj.obj("trans_param")?.text("union_cover")
+                    ?: transParam?.text("union_cover")
                     ?: privObj.obj("album_info")?.text("sizable_cover")
             )
             val privAlbumId = (privObj.text("album_id") ?: privObj.obj("album_info")?.text("album_id") ?: "")
                 .takeIf { it != "0" }.orEmpty()
+            val privAlbumName = (privObj.text("album_name") ?: privObj.obj("album_info")?.text("album_name") ?: "").trim()
             val privPubDate = normalizePublishDate(
                 privObj.text("publish_date") ?: privObj.text("publish_time") ?: privObj.text("publishtime")
                     ?: privObj.obj("album_info")?.text("publish_date")
-                    ?: privObj.obj("trans_param")?.text("publish_date")
+                    ?: transParam?.text("publish_date")
             )
+
+            cacheSongTechMeta(
+                keys = listOf(s.id, primaryHash, stdHash, hqHash, sqHash, resHash),
+                meta = SongTechMeta(
+                    specs = specsMap,
+                    albumName = privAlbumName.ifBlank { s.album },
+                    publishDate = privPubDate.ifBlank { s.publishDate },
+                    durationMs = effectiveDurMs
+                )
+            )
+
             s.copy(
                 hash = primaryHash,
                 hash128 = stdHash,
                 hash320 = hqHash,
                 hashFlac = sqHash,
                 hashHiRes = if (hasHiRes) resHash else "",
+                album = s.album.ifBlank { privAlbumName },
                 albumId = s.albumId.ifBlank { privAlbumId },
                 coverUrl = s.coverUrl.ifBlank { privCover },
+                durationMs = effectiveDurMs,
                 isHiRes = hasHiRes,
                 isLossless = hasFlac || hasHiRes,
                 isVip = isVipPriv,
                 quality = if (hasHiRes) "high" else if (hasFlac) "flac" else if (has320) "320" else "128",
                 availableQualities = qualities,
-                fileSizeByte = maxFileSize,
+                bitrateKbps = bestKbps,
+                fileSizeByte = bestSize,
                 publishDate = s.publishDate.ifBlank { privPubDate }
             )
         }
@@ -984,7 +1095,7 @@ class MusicApiRepository(
         extName: String?
     ): Pair<AudioQuality, Int> {
         val durationSec = (durationMs / 1000.0).coerceAtLeast(1.0)
-        val computedKbps = if (fileSizeBytes > 0 && durationMs > 0) {
+        val computedKbps = if (fileSizeBytes > 0 && durationMs >= 15_000L) {
             ((fileSizeBytes * 8.0) / durationSec / 1000.0).toInt()
         } else 0
 
@@ -994,24 +1105,37 @@ class MusicApiRepository(
             else -> bitrateRaw.toInt()
         }
 
-        val finalKbps = if (reportedKbps > 0) reportedKbps else computedKbps
         val urlLower = url.lowercase()
         val extLower = (extName ?: "").lowercase()
         val isExplicitLossy = extLower.contains("mp3") || extLower.contains("m4a") || extLower.contains("aac") || extLower.contains("ogg") ||
-                urlLower.endsWith(".mp3") || urlLower.contains(".mp3?") || urlLower.endsWith(".m4a") || urlLower.contains(".m4a?")
+            urlLower.endsWith(".mp3") || urlLower.contains(".mp3?") || urlLower.endsWith(".m4a") || urlLower.contains(".m4a?") ||
+            urlLower.endsWith(".ogg") || urlLower.contains(".ogg?")
         val isExplicitFlac = extLower.contains("flac") || extLower.contains("wav") || extLower.contains("ape") ||
-                urlLower.contains(".flac") || urlLower.contains(".wav")
+            urlLower.contains(".flac") || urlLower.contains(".wav")
+
+        // 对于 FLAC 无损流，酷狗 tracker 常返回静态枚举 bitRate (如 320 / 999 / 2000)，优先采用真实文件大小与时长反推的实际码率
+        val finalKbps = when {
+            (isExplicitFlac || fileSizeBytes >= 12_000_000L) && computedKbps in 400..6500 -> computedKbps
+            reportedKbps in 64..450 && isExplicitLossy -> reportedKbps
+            computedKbps in 64..6500 -> computedKbps
+            reportedKbps > 0 -> reportedKbps
+            else -> 0
+        }
 
         val quality = when {
             isExplicitLossy -> {
-                if (finalKbps >= 250) AudioQuality.HIGH else AudioQuality.STANDARD
+                if (finalKbps >= 220) AudioQuality.HIGH else AudioQuality.STANDARD
             }
             isExplicitFlac -> {
-                if (finalKbps >= 1500) AudioQuality.HI_RES else AudioQuality.LOSSLESS
+                if ((finalKbps >= 1400 || reportedKbps >= 1400) && (fileSizeBytes <= 0L || fileSizeBytes >= 38_000_000L)) {
+                    AudioQuality.HI_RES
+                } else {
+                    AudioQuality.LOSSLESS
+                }
             }
-            finalKbps >= 1500 -> AudioQuality.HI_RES
-            finalKbps >= 500 -> AudioQuality.LOSSLESS
-            finalKbps >= 200 -> AudioQuality.HIGH
+            (finalKbps >= 1400 || reportedKbps >= 1400) && fileSizeBytes >= 38_000_000L -> AudioQuality.HI_RES
+            finalKbps >= 500 || fileSizeBytes >= 12_000_000L -> AudioQuality.LOSSLESS
+            finalKbps >= 220 -> AudioQuality.HIGH
             else -> AudioQuality.STANDARD
         }
 
@@ -1029,11 +1153,12 @@ class MusicApiRepository(
         val keyRaw = "${targetHash.lowercase()}185672dd44712f60bb1736df5a377e823116${d.mid}${session.userId}"
         val trackerKey = KugouSigner.md5(keyRaw)
 
+        // 不请求 "super" (蝰蛇合成音效)，仅请求原生音频档位
         val targetQualities = when (preferredQuality) {
             AudioQuality.STANDARD -> listOf("128", "320")
             AudioQuality.HIGH -> listOf("320", "128")
             AudioQuality.LOSSLESS -> listOf("flac", "320", "128")
-            AudioQuality.HI_RES -> listOf("high", "super", "flac", "320", "128")
+            AudioQuality.HI_RES -> listOf("high", "flac", "320", "128")
         }
 
         val qualitiesArr = JsonArray().apply {
@@ -1125,7 +1250,9 @@ class MusicApiRepository(
         val playUrl = extractPlayUrl(data) ?: return null
         val bitrate = (data.number("bitrate") ?: data.number("bitRate") ?: 0).toLong()
         val extName = data.text("extname") ?: data.text("extName")
-        val (actualQuality, kbps) = deduceQuality(playUrl, bitrate, fileSize, song.durationMs, extName)
+        val respDurSec = (data.number("timeLength") ?: data.number("timelength") ?: 0).toLong()
+        val effectiveDurMs = song.durationMs.takeIf { it > 0L } ?: if (respDurSec in 1..10000) respDurSec * 1000L else respDurSec
+        val (actualQuality, kbps) = deduceQuality(playUrl, bitrate, fileSize, effectiveDurMs, extName)
         val (climaxStart, climaxEnd) = extractClimaxRange(data)
 
         return PlaybackResult(
@@ -1271,7 +1398,9 @@ class MusicApiRepository(
                     val fSize = (it.data.number("fileSize") ?: it.data.number("file_size") ?: 0).toLong()
                     val bRate = (it.data.number("bitRate") ?: it.data.number("bitrate") ?: 0).toLong()
                     val ext = it.data.text("extName") ?: it.data.text("extname")
-                    val (q, kbps) = deduceQuality(url, bRate, fSize, song.durationMs, ext)
+                    val respDurSec = (it.data.number("timeLength") ?: it.data.number("timelength") ?: 0).toLong()
+                    val effectiveDurMs = song.durationMs.takeIf { it > 0L } ?: if (respDurSec in 1..10000) respDurSec * 1000L else respDurSec
+                    val (q, kbps) = deduceQuality(url, bRate, fSize, effectiveDurMs, ext)
                     val (cStart, cEnd) = extractClimaxRange(it.data)
                     return PlaybackResult(url, q, kbps, fSize, cStart, cEnd)
                 }
@@ -1367,7 +1496,8 @@ class MusicApiRepository(
                 includeDefaultParams = true
             ).requireSuccess()
             val dataObj = response.data.obj("data") ?: response.data
-            val songs = parseSongs(response.data)
+            val rawSongs = parseSongs(response.data)
+            val songs = runCatching { enrichSongsPrivilegeLite(rawSongs) }.getOrDefault(rawSongs)
             val total = dataObj.number("total") ?: songs.size
             SearchResult(songs = songs, total = total, page = page, pageSize = pageSize)
         }.getOrNull()
@@ -4662,31 +4792,167 @@ class MusicApiRepository(
         return true
     }
 
-    // 歌曲技术参数与音频详情
+    /**
+     * 歌曲技术参数与音频详情（严格对齐当前实际播放档位或音源最高已验证档位，消除音质标签与码率/大小不匹配的矛盾）
+     */
     fun songDetail(song: Song): SongDetailInfo {
-        val qualityDesc = when {
-            song.isHiRes -> "Hi-Res 母带无损 (FLAC 24bit/96kHz)"
-            song.isLossless -> "SQ 无损音质 (FLAC 16bit/44.1kHz)"
-            song.quality == "320" -> "HQ 超高品 (320kbps MP3)"
-            else -> "标准音质 (128kbps MP3)"
+        val cachedMeta = songTechMetaCache[song.id.lowercase()]
+            ?: songTechMetaCache[song.hash.lowercase()]
+            ?: songTechMetaCache[song.hash128.lowercase()]
+
+        val activeQuality = song.actualPlayQuality ?: when {
+            song.isHiRes && song.hashHiRes.isNotBlank() -> AudioQuality.HI_RES
+            song.isLossless || song.hashFlac.isNotBlank() -> AudioQuality.LOSSLESS
+            song.hash320.isNotBlank() || song.quality == "320" -> AudioQuality.HIGH
+            else -> AudioQuality.STANDARD
         }
-        val sampleRate = if (song.isHiRes) "96.0 kHz / 24 bit" else "44.1 kHz / 16 bit"
-        val bitRate = if (song.bitrateKbps > 0) "${song.bitrateKbps} kbps" else if (song.isHiRes) "2304 kbps" else if (song.isLossless) "920 kbps" else "320 kbps"
-        val fileSize = if (song.fileSizeByte > 0) {
-            String.format(java.util.Locale.getDefault(), "%.1f MB", song.fileSizeByte / (1024.0 * 1024.0))
-        } else if (song.isHiRes) "48.5 MB" else if (song.isLossless) "25.2 MB" else "7.8 MB"
+
+        val tierSpec = cachedMeta?.specs?.get(activeQuality)
+        val effectiveDurMs = song.durationMs.takeIf { it > 0L } ?: cachedMeta?.durationMs ?: 0L
+
+        // 若当前曲目正在以 activeQuality 播放且带有实测流大小，则优先使用实测流大小，否则使用对应音质档位的精确大小
+        val resolvedSizeBytes = when {
+            song.actualPlayQuality == activeQuality && song.fileSizeByte > 0L -> song.fileSizeByte
+            tierSpec != null && tierSpec.sizeBytes > 0L -> tierSpec.sizeBytes
+            song.fileSizeByte > 0L && activeQuality == song.highestQuality -> song.fileSizeByte
+            effectiveDurMs >= 30_000L -> {
+                val estKbps = when (activeQuality) {
+                    AudioQuality.HI_RES -> 2304L
+                    AudioQuality.LOSSLESS -> 920L
+                    AudioQuality.HIGH -> 320L
+                    AudioQuality.STANDARD -> 128L
+                }
+                (effectiveDurMs * estKbps) / 8L
+            }
+            else -> 0L
+        }
+
+        val sizeDerivedKbps = if (resolvedSizeBytes > 0L && effectiveDurMs >= 30_000L) {
+            ((resolvedSizeBytes * 8L) / effectiveDurMs).toInt()
+        } else 0
+
+        val resolvedKbps = when (activeQuality) {
+            AudioQuality.HI_RES -> {
+                val raw = if (song.actualPlayQuality == AudioQuality.HI_RES && song.bitrateKbps >= 1600) song.bitrateKbps
+                else tierSpec?.bitrateKbps?.takeIf { it >= 1600 }
+                    ?: sizeDerivedKbps.takeIf { it >= 1600 }
+                    ?: 2304
+                raw
+            }
+            AudioQuality.LOSSLESS -> {
+                val raw = if (song.actualPlayQuality == AudioQuality.LOSSLESS && song.bitrateKbps in 450..1799) song.bitrateKbps
+                else tierSpec?.bitrateKbps?.takeIf { it in 450..1799 }
+                    ?: sizeDerivedKbps.takeIf { it in 450..1799 }
+                    ?: 920
+                raw
+            }
+            AudioQuality.HIGH -> {
+                if (song.actualPlayQuality == AudioQuality.HIGH && song.bitrateKbps in 220..400) song.bitrateKbps
+                else tierSpec?.bitrateKbps?.takeIf { it in 220..400 } ?: 320
+            }
+            AudioQuality.STANDARD -> {
+                if (song.actualPlayQuality == AudioQuality.STANDARD && song.bitrateKbps in 64..200) song.bitrateKbps
+                else tierSpec?.bitrateKbps?.takeIf { it in 64..200 } ?: 128
+            }
+        }
+
+        val extUpper = (tierSpec?.extName ?: when (activeQuality) {
+            AudioQuality.HI_RES, AudioQuality.LOSSLESS -> "flac"
+            else -> "mp3"
+        }).uppercase()
+
+        val sampleRate = when (activeQuality) {
+            AudioQuality.HI_RES -> when {
+                resolvedKbps >= 3600 -> "192.0 kHz / 24 bit"
+                resolvedKbps >= 2100 -> "96.0 kHz / 24 bit"
+                else -> "48.0 kHz / 24 bit"
+            }
+            AudioQuality.LOSSLESS -> if (resolvedKbps >= 1060) "48.0 kHz / 16 bit" else "44.1 kHz / 16 bit"
+            AudioQuality.HIGH -> "44.1 kHz / 16 bit (有损高品)"
+            AudioQuality.STANDARD -> "44.1 kHz (有损标准)"
+        }
+
+        val qualityDesc = when (activeQuality) {
+            AudioQuality.HI_RES -> "Hi-Res 母带无损 ($extUpper ${sampleRate.substringBefore(" /")} / 24bit)"
+            AudioQuality.LOSSLESS -> "SQ 无损音质 ($extUpper ${sampleRate.substringBefore(" /")} / 16bit)"
+            AudioQuality.HIGH -> "HQ 超高品 (${resolvedKbps}kbps $extUpper)"
+            AudioQuality.STANDARD -> "标准音质 (${resolvedKbps}kbps $extUpper)"
+        }
+
+        val fileSizeStr = if (resolvedSizeBytes > 0L) {
+            String.format(java.util.Locale.getDefault(), "%.2f MB", resolvedSizeBytes / (1024.0 * 1024.0))
+        } else "未知大小"
+
+        val targetHash = (tierSpec?.hash?.takeIf { it.isNotBlank() }
+            ?: song.hashForQuality(activeQuality).ifBlank { song.hash }).uppercase()
+
+        val pubDate = song.publishDate.ifBlank {
+            cachedMeta?.publishDate.orEmpty().ifBlank {
+                albumPublishDateCache[song.albumId.trim()].orEmpty()
+            }
+        }
+        val companyName = cachedMeta?.company.orEmpty().ifBlank {
+            albumCompanyCache[song.albumId.trim()].orEmpty()
+        }.ifBlank { "正版数字曲库" }
+        val albumTitle = song.album.ifBlank { cachedMeta?.albumName.orEmpty() }.ifBlank { "单曲发行" }
 
         return SongDetailInfo(
             song = song,
-            albumName = song.album.ifBlank { "单曲专辑" },
+            albumName = albumTitle,
             singerName = song.artist,
-            publishTime = "精选收录",
-            company = "酷狗音乐",
+            publishTime = pubDate.ifBlank { "未知日期" },
+            company = companyName,
             audioQuality = qualityDesc,
             sampleRate = sampleRate,
-            bitRate = bitRate,
-            fileSize = fileSize,
-            fileHash = (song.hashHiRes.ifBlank { song.hashFlac.ifBlank { song.hash320.ifBlank { song.hash } } }).uppercase()
+            bitRate = "$resolvedKbps kbps",
+            fileSize = fileSizeStr,
+            fileHash = targetHash
+        )
+    }
+
+    /**
+     * 异步实时补全单曲完整技术参数与唱片公司/发行时间详情
+     * 对接 MakcRe/KuGouMusicApi:
+     * 1. /v2/get_res_privilege/lite (module/privilege_lite.js) 获取各档位精确 filesize, bitrate, extname 与 hash
+     * 2. /kmr/v2/albums (module/album.js) 与 /kmr/v2/audio (module/krm_audio.js) 获取 publish_company 与 publish_date
+     */
+    suspend fun fetchSongDetail(song: Song): SongDetailInfo = coroutineScope {
+        val enrichedSongDef = async {
+            runCatching { enrichSongsPrivilegeLite(listOf(song)).firstOrNull() }.getOrNull() ?: song
+        }
+        val albumDetailDef = async {
+            if (song.albumId.isNotBlank() && song.albumId != "0") {
+                runCatching { albumDetail(song.albumId) }.getOrNull()
+            } else null
+        }
+        val enrichedSong = enrichedSongDef.await().let { s ->
+            // 保留原曲目正在播放的实时音质档位与实测流参数
+            if (song.actualPlayQuality != null) {
+                s.copy(
+                    actualPlayQuality = song.actualPlayQuality,
+                    bitrateKbps = song.bitrateKbps.takeIf { it > 0 } ?: s.bitrateKbps,
+                    fileSizeByte = song.fileSizeByte.takeIf { it > 0L } ?: s.fileSizeByte
+                )
+            } else s
+        }
+        val alb = albumDetailDef.await()
+        if (alb != null) {
+            if (alb.publishDate.isNotBlank()) albumPublishDateCache[alb.id] = normalizePublishDate(alb.publishDate)
+            if (alb.company.isNotBlank()) albumCompanyCache[alb.id] = alb.company
+            cacheSongTechMeta(
+                keys = listOf(enrichedSong.id, enrichedSong.hash, enrichedSong.hash128),
+                meta = SongTechMeta(
+                    albumName = alb.name,
+                    publishDate = normalizePublishDate(alb.publishDate),
+                    company = alb.company
+                )
+            )
+        }
+        songDetail(
+            enrichedSong.copy(
+                album = enrichedSong.album.ifBlank { alb?.name.orEmpty() },
+                publishDate = enrichedSong.publishDate.ifBlank { normalizePublishDate(alb?.publishDate) }
+            )
         )
     }
 
@@ -4861,7 +5127,7 @@ class MusicApiRepository(
             ?: base?.text("album_audio_id") ?: audioInfo?.text("album_audio_id") ?: o.text("id"))?.toLongOrNull() ?: audioId
 
         // 严格对齐 MakcRe/KuGouMusicApi module/privilege_lite.js 的 relate_goods 等级规范：
-        // level: 1/2 = 128k, 4 = 320k(HQ), 5 = flac(SQ 无损), 6 = Hi-Res, 0 = 蝰蛇/多轨合成音效（非原生 Hi-Res）
+        // level: 1/2 = 128k, 4 = 320k(HQ), 5 = flac(SQ 无损), 6 = Hi-Res, 0/7 = 蝰蛇/多轨合成音效（非原生 Hi-Res）
         var relateResHash = ""
         var relateSqHash = ""
         var relateHqHash = ""
@@ -4871,7 +5137,24 @@ class MusicApiRepository(
         var relateSqSize = 0L
         var relateHqSize = 0L
         var relateStdSize = 0L
+        var effectiveDurMs = durationMs
         val allRelateGoods = o.objects("relate_goods") + audioInfo?.objects("relate_goods").orEmpty() + base?.objects("relate_goods").orEmpty()
+
+        for (rg in allRelateGoods) {
+            val rgInfo = rg.obj("info")
+            val durRaw = (rg.number("duration") ?: rgInfo?.number("duration") ?: rgInfo?.number("timelength") ?: 0).toLong()
+            if (effectiveDurMs <= 0L && durRaw > 0L) {
+                effectiveDurMs = if (durRaw in 1 until 10000) durRaw * 1000L else durRaw
+            }
+            val levelNum = rg.number("level") ?: rgInfo?.number("level") ?: -1
+            val qStr = (rg.text("quality") ?: rg.text("type") ?: rgInfo?.text("quality") ?: "").lowercase()
+            val sz = (rg.number("size") ?: rg.number("filesize") ?: rg.number("file_size")
+                ?: rgInfo?.number("filesize") ?: rgInfo?.number("size") ?: 0).toLong()
+            if ((levelNum == 5 || qStr.contains("flac") || qStr.contains("sq") || qStr.contains("lossless")) && sz > relateSqSize) {
+                relateSqSize = sz
+            }
+        }
+
         for (rg in allRelateGoods) {
             val h = rg.text("hash")?.takeIf { isValidHash(it) } ?: continue
             val rgInfo = rg.obj("info")
@@ -4883,31 +5166,36 @@ class MusicApiRepository(
             val brRaw = (rg.number("bitrate") ?: rg.number("bitRate")
                 ?: rgInfo?.number("bitrate") ?: rgInfo?.number("bitRate") ?: 0).toLong()
             val reportedKbps = if (brRaw > 50000L) (brRaw / 1000L).toInt() else brRaw.toInt()
-            val computedKbps = if (reportedKbps > 0) reportedKbps else if (durationMs >= 60_000L && sz > 0L) {
-                ((sz * 8L) / durationMs).toInt()
+            // 始终优先由真实文件字节数与时长反推实际码率，避免接口静态枚举值导致假 Hi-Res
+            val sizeDerivedKbps = if (effectiveDurMs >= 30_000L && sz > 0L) {
+                ((sz * 8L) / effectiveDurMs).toInt()
             } else 0
+            val realKbps = if (sizeDerivedKbps > 0) sizeDerivedKbps else reportedKbps
 
             when {
                 qStr.contains("accompany") || qStr.contains("伴奏") || nameStr.contains("伴奏") -> {
                     if (relateAccHash.isBlank()) relateAccHash = h
                 }
-                // 跳过蝰蛇母带/全景声/超清等 level=0 或 super 的合成音效，杜绝把普通歌曲误标为 Hi-Res
-                levelNum == 0 || qStr.startsWith("viper") || qStr == "super" || qStr == "multitrack" ||
+                // 跳过蝰蛇母带/全景声/超清等 level=0/7 或 super 的合成音效，杜绝把普通歌曲误标为 Hi-Res
+                levelNum == 0 || levelNum == 7 || qStr.startsWith("viper") || qStr == "super" || qStr == "multitrack" ||
                     nameStr.contains("蝰蛇") || nameStr.contains("全景") -> {
                     // Do not mark synthetic Viper streams as native Hi-Res
                 }
-                // 严格校验真 Hi-Res (24bit/48kHz 或 24bit/96kHz 母带)：
-                // 必须具备真实高解析码率 (>= 1450 kbps) 或母带级体积 (>= 42MB)；10MB~42MB 的 FLAC 归入 SQ 无损！
+                // 严格校验真 Hi-Res (24bit/96kHz 母带)：
+                // 必须有明确文件体积 (sz > 0) 且实际码率 >= 1800 kbps（或体积 >= 48MB），且显著大于 SQ 无损体积 (>= 1.45倍)
                 levelNum == 6 || qStr == "hires" || qStr == "hi-res" || qStr == "res" || (qStr == "high" && levelNum == 6) -> {
-                    val isVerifiedHiRes = (computedKbps >= 1450 && (sz <= 0L || sz >= 36_000_000L)) ||
-                        (computedKbps <= 0 && sz >= 42_000_000L)
+                    val largerThanSq = relateSqSize <= 0L || sz >= (relateSqSize * 145L) / 100L
+                    val isVerifiedHiRes = sz > 0L && largerThanSq && (
+                        (sizeDerivedKbps >= 1800 && sz >= 38_000_000L) ||
+                            (sizeDerivedKbps == 0 && sz >= 48_000_000L && reportedKbps >= 1800)
+                        )
                     if (isVerifiedHiRes) {
                         if (relateResHash.isBlank()) relateResHash = h
                         if (relateResSize <= 0L && sz > 0L) relateResSize = sz
-                    } else if (sz in 10_000_000L until 42_000_000L || computedKbps in 500..1449) {
+                    } else if (sz in 12_000_000L until 48_000_000L || realKbps in 550..1799) {
                         if (relateSqHash.isBlank()) relateSqHash = h
                         if (relateSqSize <= 0L && sz > 0L) relateSqSize = sz
-                    } else if (sz in 4_500_000L until 10_000_000L && relateHqHash.isBlank()) {
+                    } else if (sz in 4_500_000L until 12_000_000L && relateHqHash.isBlank()) {
                         relateHqHash = h
                         relateHqSize = sz
                     }
@@ -4943,10 +5231,12 @@ class MusicApiRepository(
         val hqSize = (o.number("HQFileSize") ?: o.number("320filesize") ?: o.number("filesize_320")
             ?: o.number("filesize_hq")
             ?: audioInfo?.number("filesize_320") ?: audioInfo?.number("320filesize")
+            ?: transParam?.number("ogg_320_filesize")
             ?: relateHqSize.takeIf { it > 0 } ?: 0).toLong()
 
         val stdSize = (o.number("FileSize") ?: o.number("filesize") ?: o.number("filesize_128")
             ?: audioInfo?.number("filesize_128") ?: audioInfo?.number("filesize")
+            ?: transParam?.number("ogg_128_filesize")
             ?: relateStdSize.takeIf { it > 0 } ?: 0).toLong()
 
         var sqHash = o.text("SQFileHash")?.takeIf { isValidHash(it) }
@@ -4959,14 +5249,17 @@ class MusicApiRepository(
             ?: audioInfo?.text("sqhash")?.takeIf { isValidHash(it) }
             ?: relateSqHash
 
-        // 在 KMR 接口中，仅当同时存在 hash_flac 且 audioInfo.filesize_high >= 42MB 且 >= 1.3 * sqSize 时，hash_high 才为真 Hi-Res
+        // 在 KMR 接口中，仅当同时存在 hash_flac 且 audioInfo.filesize_high >= 46MB 且 >= 1.45 * sqSize 时，hash_high 才为真 Hi-Res
         val audioInfoHighSize = (audioInfo?.number("filesize_high") ?: o.number("filesize_high") ?: 0).toLong()
         val audioInfoHighHash = (audioInfo?.text("hash_high") ?: o.text("hash_high"))?.takeIf { isValidHash(it) }
+        val highDerivedKbps = if (effectiveDurMs >= 30_000L && audioInfoHighSize > 0L) ((audioInfoHighSize * 8L) / effectiveDurMs).toInt() else 0
         val isKmrHighActuallyHiRes = audioInfoHighHash != null && sqHash.isNotBlank() &&
             !audioInfoHighHash.equals(sqHash, ignoreCase = true) &&
-            audioInfoHighSize >= 42_000_000L && (sqSize <= 0L || audioInfoHighSize >= (sqSize * 13L) / 10L)
+            audioInfoHighSize >= 46_000_000L &&
+            (highDerivedKbps <= 0 || highDerivedKbps >= 1800) &&
+            (sqSize <= 0L || audioInfoHighSize >= (sqSize * 145L) / 100L)
 
-        if (!isKmrHighActuallyHiRes && audioInfoHighHash != null && sqHash.isBlank() && audioInfoHighSize in 14_000_000L until 42_000_000L) {
+        if (!isKmrHighActuallyHiRes && audioInfoHighHash != null && sqHash.isBlank() && audioInfoHighSize in 14_000_000L until 46_000_000L) {
             sqHash = audioInfoHighHash
         }
 
@@ -4977,9 +5270,12 @@ class MusicApiRepository(
             ?: audioInfo?.text("hash_res")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("res_hash")?.takeIf { isValidHash(it) }
 
-        val verifiedExplicitResHash = explicitTopResHash?.takeIf { candidate ->
-            if (topExplicitResSize <= 0L) true
-            else topExplicitResSize >= 38_000_000L && (sqSize <= 0L || topExplicitResSize >= (sqSize * 13L) / 10L)
+        val topResDerivedKbps = if (effectiveDurMs >= 30_000L && topExplicitResSize > 0L) ((topExplicitResSize * 8L) / effectiveDurMs).toInt() else 0
+        // 严禁在 topExplicitResSize <= 0L 时盲目信任 ResFileHash！必须同时满足 >= 46MB（或实算码率 >= 1800kbps 且 >= 38MB）且 >= 1.45 * sqSize
+        val verifiedExplicitResHash = explicitTopResHash?.takeIf {
+            topExplicitResSize >= 38_000_000L &&
+                (topResDerivedKbps >= 1800 || (topResDerivedKbps == 0 && topExplicitResSize >= 48_000_000L)) &&
+                (sqSize <= 0L || topExplicitResSize >= (sqSize * 145L) / 100L)
         }
         if (explicitTopResHash != null && verifiedExplicitResHash == null && sqHash.isBlank() && topExplicitResSize >= 12_000_000L) {
             sqHash = explicitTopResHash
@@ -4988,7 +5284,7 @@ class MusicApiRepository(
         val resHashCandidate = verifiedExplicitResHash
             ?: (if (isKmrHighActuallyHiRes) audioInfoHighHash else null)
             ?: relateResHash.takeIf {
-                it.isNotBlank() && (relateResSize <= 0L || sqSize <= 0L || relateResSize >= (sqSize * 13L) / 10L)
+                it.isNotBlank() && relateResSize >= 38_000_000L && (sqSize <= 0L || relateResSize >= (sqSize * 145L) / 100L)
             }.orEmpty()
 
         val hqHash = o.text("HQFileHash")?.takeIf { isValidHash(it) }
@@ -5024,12 +5320,14 @@ class MusicApiRepository(
 
         val resHash = resHashCandidate.takeIf {
             it.isNotBlank() &&
+                resSize >= 38_000_000L &&
                 !it.equals(sqHash, ignoreCase = true) &&
                 !it.equals(hqHash, ignoreCase = true) &&
                 !it.equals(stdHash, ignoreCase = true)
         }.orEmpty()
 
-        val hasHiRes = resHash.isNotBlank() || o.number("is_hires") == 1
+        // 彻底移除 o.number("is_hires") == 1 盲目置信逻辑，仅当存在通过体积与码率双重核验的 resHash 时才标记为 Hi-Res！
+        val hasHiRes = resHash.isNotBlank()
 
         val hasFlac = sqHash.isNotBlank() || sqSize > 0L || o.number("is_flac") == 1 || o.number("is_lossless") == 1
             || o.text("has_flac") == "1" || o.text("quality")?.contains("flac", ignoreCase = true) == true
@@ -5089,8 +5387,43 @@ class MusicApiRepository(
             ?: deprecated?.text("publish_date")
         val publishDate = normalizePublishDate(rawPublishDate)
 
+        val finalDurMs = effectiveDurMs.takeIf { it > 0L } ?: durationMs
+        val estimatedKbps = when {
+            finalDurMs >= 30_000L && maxFileSize > 0L -> ((maxFileSize * 8L) / finalDurMs).toInt()
+            hasHiRes -> 2304
+            hasFlac -> 920
+            has320 -> 320
+            else -> 128
+        }
+        val parsedSpecs = buildMap {
+            if (stdHash.isNotBlank() || stdSize > 0L) {
+                put(AudioQuality.STANDARD, SongStreamSpec(stdHash.ifBlank { primaryHash }, stdSize, 128, "mp3"))
+            }
+            if (hqHash.isNotBlank() || hqSize > 0L) {
+                put(AudioQuality.HIGH, SongStreamSpec(hqHash, hqSize, 320, "mp3"))
+            }
+            if (sqHash.isNotBlank() || sqSize > 0L) {
+                val sqK = if (finalDurMs >= 30_000L && sqSize > 0L) ((sqSize * 8L) / finalDurMs).toInt() else 920
+                put(AudioQuality.LOSSLESS, SongStreamSpec(sqHash, sqSize, sqK, "flac"))
+            }
+            if (hasHiRes && resHash.isNotBlank()) {
+                val resK = if (finalDurMs >= 30_000L && resSize > 0L) ((resSize * 8L) / finalDurMs).toInt() else 2304
+                put(AudioQuality.HI_RES, SongStreamSpec(resHash, resSize, resK, "flac"))
+            }
+        }
+        val resolvedSongId = audioId.takeIf { it > 0 }?.toString() ?: primaryHash
+        cacheSongTechMeta(
+            keys = listOf(resolvedSongId, primaryHash, stdHash, hqHash, sqHash, resHash),
+            meta = SongTechMeta(
+                specs = parsedSpecs,
+                albumName = album,
+                publishDate = publishDate,
+                durationMs = finalDurMs
+            )
+        )
+
         return Song(
-            id = audioId.takeIf { it > 0 }?.toString() ?: primaryHash,
+            id = resolvedSongId,
             hash = primaryHash,
             hash128 = stdHash,
             hash320 = hqHash,
@@ -5103,7 +5436,7 @@ class MusicApiRepository(
             album = album,
             albumId = albumId,
             coverUrl = cover,
-            durationMs = durationMs,
+            durationMs = finalDurMs,
             isVip = isVip,
             isFreePrivilege = isFreePrivilege,
             isLossless = isLossless,
@@ -5114,6 +5447,7 @@ class MusicApiRepository(
             quality = if (hasHiRes) "high" else if (hasFlac) "flac" else if (has320) "320" else "128",
             fileId = fileId,
             availableQualities = qualities,
+            bitrateKbps = estimatedKbps,
             fileSizeByte = maxFileSize,
             publishDate = publishDate
         )

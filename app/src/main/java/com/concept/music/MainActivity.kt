@@ -80,6 +80,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestHighRefreshRateDisplayMode()
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
@@ -88,6 +89,39 @@ class MainActivity : ComponentActivity() {
         setContent {
             ConceptMusicTheme {
                 MainContent()
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        requestHighRefreshRateDisplayMode()
+    }
+
+    /**
+     * 主动申请屏幕支持的最高物理刷新率档位（120Hz / 144Hz），消除国产系统对第三方应用默认限帧 60Hz/90Hz 的问题
+     */
+    private fun requestHighRefreshRateDisplayMode() {
+        runCatching {
+            val currentDisplay = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                display
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay
+            } ?: return
+            val modes = currentDisplay.supportedModes
+            val currentMode = currentDisplay.mode
+            val bestMode = modes
+                .filter { it.physicalWidth == currentMode.physicalWidth && it.physicalHeight == currentMode.physicalHeight }
+                .maxByOrNull { it.refreshRate }
+                ?: modes.maxByOrNull { it.refreshRate }
+            if (bestMode != null && bestMode.refreshRate >= 90f) {
+                val params = window.attributes
+                if (params.preferredDisplayModeId != bestMode.modeId || params.preferredRefreshRate != bestMode.refreshRate) {
+                    params.preferredDisplayModeId = bestMode.modeId
+                    params.preferredRefreshRate = bestMode.refreshRate
+                    window.attributes = params
+                }
             }
         }
     }
@@ -270,6 +304,7 @@ fun MainContent(
                             musicPlayerViewModel.playSong(song, list)
                         },
                         onSearchClick = {
+                            searchViewModel.resetTabToDefault()
                             navController.navigate("search") { launchSingleTop = true }
                         },
                         onOpenDailyRecommend = {
@@ -373,6 +408,7 @@ fun MainContent(
                             navController.navigate("playlist_detail/$playlistId") { launchSingleTop = true }
                         },
                         onOpenSearch = {
+                            searchViewModel.resetTabToDefault()
                             navController.navigate("search") { launchSingleTop = true }
                         },
                         onOpenSettings = {

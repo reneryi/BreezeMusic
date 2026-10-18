@@ -1,5 +1,8 @@
 package com.concept.music.data.model
 
+import androidx.compose.runtime.Immutable
+
+@Immutable
 data class SongComment(
     val id: String,
     val userId: String,
@@ -19,6 +22,7 @@ data class SongComment(
     val replies: List<SongComment> = emptyList()
 )
 
+@Immutable
 data class SongDetailInfo(
     val song: Song,
     val albumName: String = "",

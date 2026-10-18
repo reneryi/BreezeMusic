@@ -8,6 +8,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +38,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
@@ -237,20 +241,25 @@ fun PlayingAudioWaveIndicator(
         label = "bar3"
     )
 
-    Row(
+    // 采用 Canvas 硬件加速绘制跳动音律柱，仅在 Draw 阶段更新，完全消除每帧 Layout 重排开销（保障 120fps 满帧滚动）
+    Canvas(
         modifier = modifier
             .width(18.dp)
-            .height(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.5.dp),
-        verticalAlignment = Alignment.Bottom
+            .height(16.dp)
     ) {
-        listOf(bar1, bar2, bar3).forEach { fraction ->
-            Box(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height((16f * fraction).dp)
-                    .clip(CircleShape)
-                    .background(color)
+        val barW = 3.dp.toPx()
+        val gap = 2.5.dp.toPx()
+        val maxH = size.height
+        val radius = CornerRadius(barW / 2f, barW / 2f)
+        val fractions = floatArrayOf(bar1, bar2, bar3)
+        for (i in 0..2) {
+            val h = (maxH * fractions[i]).coerceAtLeast(barW)
+            val left = i * (barW + gap)
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(left, maxH - h),
+                size = Size(barW, h),
+                cornerRadius = radius
             )
         }
     }

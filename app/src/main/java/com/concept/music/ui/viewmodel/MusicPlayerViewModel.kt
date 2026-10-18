@@ -2,6 +2,7 @@ package com.concept.music.ui.viewmodel
 
 import android.app.Application
 import android.content.ComponentName
+import androidx.compose.runtime.Immutable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
@@ -53,6 +54,7 @@ enum class LyricAlignment {
     LEFT
 }
 
+@Immutable
 data class PlayerUiState(
     val currentSong: Song? = null,
     val isPlaying: Boolean = false,
@@ -322,14 +324,30 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }.getOrDefault(emptyList())
         } else emptyList()
 
-        val savedIndex = prefs.getInt("saved_current_index", 0)
-            .coerceIn(0, (restoredQueue.size - 1).coerceAtLeast(0))
-        val restoredSong = restoredQueue.getOrNull(savedIndex)?.let { s ->
-            // 净化旧持久化队列中因早期 hash_high 误标产生的假 Hi-Res 标记
-            val realHiRes = s.hashHiRes.isNotBlank() && !s.hashHiRes.equals(s.hash320, ignoreCase = true) && !s.hashHiRes.equals(s.hash128, ignoreCase = true)
-            val cleanedQualities = if (!realHiRes) s.effectiveQualities.filter { it != AudioQuality.HI_RES }.ifEmpty { listOf(AudioQuality.STANDARD) } else s.effectiveQualities
-            s.copy(isHiRes = realHiRes, availableQualities = cleanedQualities)
+        fun sanitizePersistedSong(s: Song): Song {
+            val realHiRes = s.isHiRes && s.hashHiRes.isNotBlank() &&
+                s.fileSizeByte >= 38_000_000L &&
+                (s.bitrateKbps <= 0 || s.bitrateKbps >= 1800) &&
+                !s.hashHiRes.equals(s.hashFlac, ignoreCase = true) &&
+                !s.hashHiRes.equals(s.hash320, ignoreCase = true) &&
+                !s.hashHiRes.equals(s.hash128, ignoreCase = true)
+            if (realHiRes) return s
+            val flacFallback = s.hashFlac.ifBlank { if (s.fileSizeByte >= 12_000_000L) s.hashHiRes else "" }
+            val cleanedQualities = s.effectiveQualities.filter { it != AudioQuality.HI_RES }.let { q ->
+                if (flacFallback.isNotBlank() && AudioQuality.LOSSLESS !in q) q + AudioQuality.LOSSLESS else q
+            }.ifEmpty { listOf(AudioQuality.STANDARD) }
+            return s.copy(
+                hashHiRes = "",
+                hashFlac = flacFallback,
+                isHiRes = false,
+                isLossless = flacFallback.isNotBlank() || (s.isLossless && !s.isHiRes),
+                availableQualities = cleanedQualities
+            )
         }
+        val sanitizedQueue = restoredQueue.map { sanitizePersistedSong(it) }
+        val savedIndex = prefs.getInt("saved_current_index", 0)
+            .coerceIn(0, (sanitizedQueue.size - 1).coerceAtLeast(0))
+        val restoredSong = sanitizedQueue.getOrNull(savedIndex)
         val savedPosMs = prefs.getLong("saved_position_ms", 0L).coerceAtLeast(0L)
 
         // 严格根据恢复曲目真实支持的音质档位计算初始标签，杜绝无 Hi-Res 歌曲在右上角错误显示 Hi-Res
@@ -354,7 +372,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             wifiOnlyLossless = savedWifiOnly,
             pauseOnHeadsetDisconnect = savedPauseHeadset,
             autoPlayOnStartup = savedAutoPlay,
-            playlistQueue = restoredQueue,
+            playlistQueue = sanitizedQueue,
             currentIndex = savedIndex,
             currentSong = restoredSong,
             currentPositionMs = if (restoredSong != null) savedPosMs else 0L,
@@ -1350,18 +1368,19 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val buf = if (isResolving || !hasMedia) 0L else player.bufferedPosition.coerceAtLeast(0)
         val isPlayingNow = if (isResolving || !hasMedia) false else player.isPlaying
 
-        // 同步环境音混音舱与桌面小组件播放状态 ([INNOV-03], [INNOV-04])
-        AmbientSoundManager.onMusicPlayStateChanged(isPlayingNow)
-        if (song != null && mutableState.value.isPlaying != isPlayingNow) {
-            ConceptMusicWidgetUpdater.updateState(
-                context = getApplication(),
-                songTitle = song.title,
-                artist = song.artist,
-                isPlaying = isPlayingNow
-            )
-        }
-
         val st = mutableState.value
+        // 仅当播放状态真正改变时才通知环境音混音舱与桌面小组件，避免每 150ms 重复触发
+        if (st.isPlaying != isPlayingNow) {
+            AmbientSoundManager.onMusicPlayStateChanged(isPlayingNow)
+            if (song != null) {
+                ConceptMusicWidgetUpdater.updateState(
+                    context = getApplication(),
+                    songTitle = song.title,
+                    artist = song.artist,
+                    isPlaying = isPlayingNow
+                )
+            }
+        }
 
         // 「副歌刷刷」高潮速听自动跨轨淡出与切歌逻辑 ([INNOV-01])
         if (st.climaxModeEnabled && !st.climaxUnlockedForCurrentSong && song != null && isPlayingNow) {
@@ -1385,13 +1404,31 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
 
-        mutableState.value = st.copy(
-            isPlaying = isPlayingNow,
-            currentPositionMs = pos,
-            durationMs = dur,
-            bufferedPositionMs = buf,
-            loading = isResolving || (hasMedia && player.playbackState == Player.STATE_BUFFERING)
-        )
+        val newLoading = isResolving || (hasMedia && player.playbackState == Player.STATE_BUFFERING)
+        val updatedSongWithDur = if (song != null && song.durationMs <= 0L && dur > 0L) {
+            song.copy(durationMs = dur)
+        } else song
+        val updatedDetail = if (updatedSongWithDur !== song && updatedSongWithDur != null) {
+            VipManager.music.songDetail(updatedSongWithDur)
+        } else st.songDetail
+
+        // 当暂停且无任何状态变化时不发射新 State，彻底杜绝后台空转重绘
+        if (st.isPlaying != isPlayingNow ||
+            st.currentPositionMs != pos ||
+            st.durationMs != dur ||
+            st.loading != newLoading ||
+            updatedSongWithDur !== song
+        ) {
+            mutableState.value = st.copy(
+                currentSong = updatedSongWithDur,
+                songDetail = updatedDetail,
+                isPlaying = isPlayingNow,
+                currentPositionMs = pos,
+                durationMs = dur,
+                bufferedPositionMs = buf,
+                loading = newLoading
+            )
+        }
         if (!isResolving) {
             updateLyricIndex(pos)
         }

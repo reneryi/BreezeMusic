@@ -1,5 +1,7 @@
 package com.concept.music.data.model
 
+import androidx.compose.runtime.Immutable
+
 enum class SearchTab(val label: String) {
     COMPLEX("综合"),
     SONG("单曲"),
@@ -21,6 +23,7 @@ enum class SearchIntent {
     PLAYLIST
 }
 
+@Immutable
 data class AlbumItem(
     val id: String,
     val name: String,
@@ -32,6 +35,7 @@ data class AlbumItem(
     val company: String = ""
 )
 
+@Immutable
 data class PlaylistItem(
     val id: String,
     val name: String,
@@ -42,6 +46,7 @@ data class PlaylistItem(
     val intro: String = ""
 )
 
+@Immutable
 data class ArtistItem(
     val id: String,
     val name: String,
@@ -51,6 +56,7 @@ data class ArtistItem(
     val intro: String = ""
 )
 
+@Immutable
 data class ComplexSearchResult(
     val songs: List<Song> = emptyList(),
     val albums: List<AlbumItem> = emptyList(),

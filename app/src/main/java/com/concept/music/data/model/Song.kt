@@ -1,5 +1,7 @@
 package com.concept.music.data.model
 
+import androidx.compose.runtime.Immutable
+
 enum class AudioQuality(val apiValue: String, val label: String) {
     STANDARD("128", "标准 128K"),
     HIGH("320", "高品 320K"),
@@ -16,6 +18,7 @@ enum class AudioQuality(val apiValue: String, val label: String) {
     }
 }
 
+@Immutable
 data class Song(
     val id: String,
     val hash: String = "",
@@ -119,6 +122,7 @@ data class Song(
         }
 }
 
+@Immutable
 data class SearchResult(
     val songs: List<Song> = emptyList(),
     val total: Int = 0,

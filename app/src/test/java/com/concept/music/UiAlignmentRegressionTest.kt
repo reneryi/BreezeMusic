@@ -284,4 +284,75 @@ class UiAlignmentRegressionTest {
         repo.clear()
         assertTrue(repo.get().isEmpty())
     }
+
+    @Test
+    fun testSearchTabAlwaysResetsToComplexOnNewSearchOrExit() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = com.concept.music.ui.viewmodel.SearchViewModel()
+            assertEquals(SearchTab.COMPLEX, vm.selectedTab.value)
+
+            // 模拟第一次搜索并切换到「专辑」页
+            vm.search("周杰伦")
+            vm.selectTab(SearchTab.ALBUM)
+            assertEquals(SearchTab.ALBUM, vm.selectedTab.value)
+
+            // 模拟返回退出搜索 (clearQuery)，必须重置回「综合」(COMPLEX)
+            vm.clearQuery()
+            assertEquals(SearchTab.COMPLEX, vm.selectedTab.value)
+
+            // 模拟在「专辑」页直接输入新词发起下一次搜索，也必须自动归位到「综合」(COMPLEX)
+            vm.selectTab(SearchTab.ALBUM)
+            assertEquals(SearchTab.ALBUM, vm.selectedTab.value)
+            vm.search("林俊杰")
+            assertEquals(SearchTab.COMPLEX, vm.selectedTab.value)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun testParseSongRejectsUnverifiedHiResAndSongDetailMatchesActualPlayQuality() {
+        val store = MemoryStore()
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+        }
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+
+        // 1. 仅有 is_hires=1 或 ResFileHash 但缺少有效母带文件大小 (ResFileSize=0) 的歌曲绝不能被误标为 Hi-Res
+        val fakeHiResJson = com.google.gson.JsonParser.parseString(
+            """
+            {
+                "SongName": "普通流行歌",
+                "SingerName": "测试歌手",
+                "FileHash": "11111111111111111111111111111111",
+                "SQFileHash": "22222222222222222222222222222222",
+                "SQFileSize": 25000000,
+                "ResFileHash": "33333333333333333333333333333333",
+                "ResFileSize": 0,
+                "is_hires": 1,
+                "duration": 210
+            }
+            """
+        ).asJsonObject
+        val parsedFake = repo.parseSong(fakeHiResJson)
+        assertFalse("Unverified ResFileHash with 0 size must NOT be marked Hi-Res", parsedFake.isHiRes)
+        assertTrue("Should be marked as SQ Lossless instead", parsedFake.isLossless)
+
+        // 2. 当一首支持高音质的歌曲实际以 320K (AudioQuality.HIGH) 播放时，songDetail 必须展示 320K 对应的真实参数而非虚标 96kHz/24bit
+        val playingAt320 = parsedFake.copy(
+            actualPlayQuality = AudioQuality.HIGH,
+            bitrateKbps = 320,
+            fileSizeByte = 8_400_000L
+        )
+        val detail = repo.songDetail(playingAt320)
+        assertTrue(detail.audioQuality.contains("320kbps"))
+        assertEquals("320 kbps", detail.bitRate)
+        assertTrue(detail.sampleRate.contains("44.1 kHz"))
+    }
 }

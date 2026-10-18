@@ -791,7 +791,7 @@ private fun SettingsSectionCard(
     Surface(
         shape = RoundedCornerShape(24.dp),
         color = conceptFloatingCardColor(),
-        shadowElevation = if (isDark) 0.dp else 3.dp,
+        shadowElevation = 0.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(18.dp)) {

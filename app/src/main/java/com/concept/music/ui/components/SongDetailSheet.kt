@@ -12,6 +12,9 @@ import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import com.concept.music.data.vip.VipManager
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +40,13 @@ fun SongDetailSheet(
     val context = LocalContext.current
     val isDark = LocalIsDarkTheme.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val liveDetail by produceState(
+        initialValue = detail,
+        key1 = detail.song.id,
+        key2 = detail.song.actualPlayQuality
+    ) {
+        value = runCatching { VipManager.music.fetchSongDetail(detail.song) }.getOrDefault(detail)
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -91,7 +101,7 @@ fun SongDetailSheet(
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
                     Text(
-                        text = detail.song.title,
+                        text = liveDetail.song.title,
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface
@@ -101,7 +111,7 @@ fun SongDetailSheet(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "${detail.singerName} · ${detail.albumName}",
+                        text = "${liveDetail.singerName} · ${liveDetail.albumName}",
                         style = MaterialTheme.typography.bodySmall.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         ),
@@ -120,21 +130,28 @@ fun SongDetailSheet(
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(13.dp)
                 ) {
-                    DetailRow(label = "音质规格", value = detail.audioQuality, isHighlight = detail.song.isHiRes, isDark = isDark)
-                    DetailRow(label = "采样精度", value = detail.sampleRate, isDark = isDark)
-                    DetailRow(label = "音频码率", value = detail.bitRate, isDark = isDark)
-                    DetailRow(label = "文件大小", value = detail.fileSize, isDark = isDark)
-                    DetailRow(label = "所属专辑", value = detail.albumName, isDark = isDark)
-                    DetailRow(label = "唱片公司", value = detail.company, isDark = isDark)
+                    val isHiResActive = liveDetail.audioQuality.startsWith("Hi-Res")
+                    DetailRow(label = "音质规格", value = liveDetail.audioQuality, isHighlight = isHiResActive, isDark = isDark)
+                    DetailRow(label = "采样精度", value = liveDetail.sampleRate, isDark = isDark)
+                    DetailRow(label = "音频码率", value = liveDetail.bitRate, isDark = isDark)
+                    DetailRow(label = "文件大小", value = liveDetail.fileSize, isDark = isDark)
+                    if (liveDetail.song.durationMs > 0L) {
+                        DetailRow(label = "音频时长", value = liveDetail.song.durationFormatted, isDark = isDark)
+                    }
+                    DetailRow(label = "所属专辑", value = liveDetail.albumName, isDark = isDark)
+                    if (liveDetail.publishTime.isNotBlank() && liveDetail.publishTime != "未知日期") {
+                        DetailRow(label = "发行时间", value = liveDetail.publishTime, isDark = isDark)
+                    }
+                    DetailRow(label = "唱片公司", value = liveDetail.company, isDark = isDark)
 
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .softClickable {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("Song Hash", detail.fileHash))
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Song Hash", liveDetail.fileHash))
                                 Toast.makeText(context, "音频 Hash 已复制到剪贴板", Toast.LENGTH_SHORT).show()
                             }
                             .padding(vertical = 2.dp),
@@ -147,7 +164,7 @@ fun SongDetailSheet(
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = if (detail.fileHash.length > 16) detail.fileHash.take(16) + "..." else detail.fileHash,
+                                text = if (liveDetail.fileHash.length > 16) liveDetail.fileHash.take(16) + "..." else liveDetail.fileHash,
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = ConceptPrimary,
                                     fontWeight = FontWeight.Medium
