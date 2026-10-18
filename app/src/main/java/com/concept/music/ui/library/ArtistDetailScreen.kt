@@ -41,6 +41,8 @@ import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.conceptFloatingCardColor
+import com.concept.music.ui.theme.softCardClickable
+import com.concept.music.ui.theme.softClickable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -383,8 +385,7 @@ fun ArtistDetailScreen(
                                             shape = CircleShape,
                                             color = if (isFollowed) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f) else ConceptCoralAccent,
                                             modifier = Modifier
-                                                .clip(CircleShape)
-                                                .clickable { artist?.let { onToggleFollow(it) } }
+                                                .softCardClickable { artist?.let { onToggleFollow(it) } }
                                         ) {
                                             Text(
                                                 text = if (isFollowed) "已关注" else "+ 关注",
@@ -430,7 +431,7 @@ fun ArtistDetailScreen(
                                         ),
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.clickable { selectedTab = 2 }
+                                        modifier = Modifier.softClickable { selectedTab = 2 }
                                     )
                                 }
                             }
@@ -454,7 +455,7 @@ fun ArtistDetailScreen(
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
-                                        .clickable { selectedTab = idx }
+                                        .softClickable { selectedTab = idx }
                                         .padding(top = 4.dp)
                                 ) {
                                     Row(verticalAlignment = Alignment.Bottom) {
@@ -563,8 +564,7 @@ fun ArtistDetailScreen(
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(18.dp))
-                                            .clickable(enabled = filteredSongs.isNotEmpty()) {
+                                            .softClickable(enabled = filteredSongs.isNotEmpty()) {
                                                 if (filteredSongs.isNotEmpty()) {
                                                     onSongClick(filteredSongs.first(), filteredSongs)
                                                 }
@@ -610,7 +610,7 @@ fun ArtistDetailScreen(
                                             color = if (sortMethod == "hot") ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontWeight = if (sortMethod == "hot") FontWeight.ExtraBold else FontWeight.Medium,
                                             fontSize = 13.5.sp,
-                                            modifier = Modifier.clickable { reloadSongsBySort("hot") }
+                                            modifier = Modifier.softClickable { reloadSongsBySort("hot") }
                                         )
                                         Text(
                                             text = "|",
@@ -622,7 +622,7 @@ fun ArtistDetailScreen(
                                             color = if (sortMethod == "new") ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                                             fontWeight = if (sortMethod == "new") FontWeight.ExtraBold else FontWeight.Medium,
                                             fontSize = 13.5.sp,
-                                            modifier = Modifier.clickable { reloadSongsBySort("new") }
+                                            modifier = Modifier.softClickable { reloadSongsBySort("new") }
                                         )
                                     }
                                 }
@@ -792,8 +792,7 @@ private fun ArtistAlbumRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
+            .softClickable(onClick = onClick)
     ) {
         Row(
             modifier = Modifier

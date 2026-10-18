@@ -7,6 +7,20 @@ enum class SearchTab(val label: String) {
     PLAYLIST("歌单")
 }
 
+/**
+ * 综合搜索意图识别枚举
+ * - SONG: 搜索具体歌曲名（如“勋章”），置顶该歌曲原版及翻唱/Live版本，按需展示原唱歌手，过滤同名冷门艺人及无关歌单/专辑
+ * - ARTIST: 搜索歌手名（如“鹿晗”），置顶歌手数字名片，依次展示代表单曲、专辑与精选歌单
+ * - ALBUM: 搜索专辑名，优先展示匹配专辑与曲目，弱化或隐藏无关歌单与同名冷门歌手
+ * - PLAYLIST: 搜索主题歌单，优先展示精选歌单与相关曲目
+ */
+enum class SearchIntent {
+    SONG,
+    ARTIST,
+    ALBUM,
+    PLAYLIST
+}
+
 data class AlbumItem(
     val id: String,
     val name: String,
@@ -41,5 +55,7 @@ data class ComplexSearchResult(
     val songs: List<Song> = emptyList(),
     val albums: List<AlbumItem> = emptyList(),
     val playlists: List<PlaylistItem> = emptyList(),
-    val artists: List<ArtistItem> = emptyList()
+    val artists: List<ArtistItem> = emptyList(),
+    val intent: SearchIntent = SearchIntent.SONG,
+    val primaryArtist: ArtistItem? = null
 )

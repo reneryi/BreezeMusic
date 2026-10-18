@@ -1,5 +1,7 @@
 package com.concept.music.ui.components
 
+import com.concept.music.ui.theme.softClickable
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -48,8 +50,7 @@ fun PlaylistListItem(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
+            .softClickable(onClick = onClick)
     ) {
         Row(
             modifier = Modifier

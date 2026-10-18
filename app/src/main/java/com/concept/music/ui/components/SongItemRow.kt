@@ -1,5 +1,7 @@
 package com.concept.music.ui.components
 
+import com.concept.music.ui.theme.softClickable
+
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -81,7 +83,7 @@ fun SongItemRow(
             .background(
                 if (isPlaying) ConceptPrimary.copy(alpha = 0.12f) else Color.Transparent
             )
-            .clickable(onClick = onClick)
+            .softClickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

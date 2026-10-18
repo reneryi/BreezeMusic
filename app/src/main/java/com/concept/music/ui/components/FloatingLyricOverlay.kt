@@ -20,7 +20,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -37,13 +36,14 @@ import com.concept.music.data.model.LyricData
 import com.concept.music.data.model.Song
 import com.concept.music.service.SystemLyricBridge
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
 import kotlin.math.roundToInt
 
 /**
  * 全局悬浮 KRC 逐字流光歌词胶囊 ([INNOV-05])
  * 可在发现页、歌单页、搜索页、我的页等全场景顶层自由拖拽悬浮，
- * 实时渲染毫秒级 KRC 卡拉 OK 字内流光染色与双语翻译，支持防误触锁定。
+ * 实时渲染毫秒级 KRC 卡拉 OK 字内流光染色与双语翻译，支持防误触锁定并自适应明暗主题。
  */
 @Composable
 fun FloatingLyricOverlay(
@@ -55,8 +55,18 @@ fun FloatingLyricOverlay(
     modifier: Modifier = Modifier
 ) {
     val state by SystemLyricBridge.state.collectAsState()
+    val isDark = LocalIsDarkTheme.current
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(160f) }
+
+    val capsuleBg = if (isDark) {
+        Color(0xFF0E1524).copy(alpha = if (state.floatingCapsuleLocked) 0.78f else 0.92f)
+    } else {
+        Color(0xFFFFFFFF).copy(alpha = if (state.floatingCapsuleLocked) 0.88f else 0.96f)
+    }
+    val unplayedWordColor = if (isDark) Color.White.copy(alpha = 0.55f) else Color(0xFF475569)
+    val subTextColor = if (isDark) Color.White.copy(alpha = 0.68f) else Color(0xFF64748B)
+    val iconMutedColor = if (isDark) Color.White.copy(alpha = 0.55f) else Color(0xFF64748B)
 
     AnimatedVisibility(
         visible = state.floatingCapsuleEnabled && song != null,
@@ -88,20 +98,20 @@ fun FloatingLyricOverlay(
                     }
                 },
                 shape = RoundedCornerShape(22.dp),
-                color = Color(0xFF0E131A).copy(alpha = if (state.floatingCapsuleLocked) 0.72f else 0.88f),
+                color = capsuleBg,
                 border = BorderStroke(
                     width = 1.dp,
                     brush = Brush.horizontalGradient(
                         listOf(
                             ConceptPrimary.copy(alpha = 0.55f),
                             VipGold.copy(alpha = 0.35f),
-                            Color.White.copy(alpha = 0.15f)
+                            ConceptPrimary.copy(alpha = 0.20f)
                         )
                     )
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .shadow(16.dp, RoundedCornerShape(22.dp))
+                    .shadow(if (isDark) 16.dp else 10.dp, RoundedCornerShape(22.dp))
             ) {
                 Row(
                     modifier = Modifier
@@ -113,7 +123,7 @@ fun FloatingLyricOverlay(
                         modifier = Modifier
                             .size(28.dp)
                             .clip(CircleShape)
-                            .background(ConceptPrimary.copy(alpha = 0.18f)),
+                            .background(ConceptPrimary.copy(alpha = 0.16f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -131,7 +141,6 @@ fun FloatingLyricOverlay(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         if (currentLine != null && currentLine.words.isNotEmpty()) {
-                            // KRC 毫秒级逐字流光渲染
                             val annotated = buildAnnotatedString {
                                 currentLine.words.forEach { word ->
                                     val wordEnd = word.startTimeMs + word.durationMs
@@ -152,8 +161,8 @@ fun FloatingLyricOverlay(
                                             val brush = Brush.horizontalGradient(
                                                 0.0f to ConceptPrimary,
                                                 (prog - 0.08f).coerceAtLeast(0f) to ConceptPrimary,
-                                                (prog + 0.08f).coerceAtMost(1f) to Color.White.copy(alpha = 0.5f),
-                                                1.0f to Color.White.copy(alpha = 0.5f)
+                                                (prog + 0.08f).coerceAtMost(1f) to unplayedWordColor,
+                                                1.0f to unplayedWordColor
                                             )
                                             withStyle(
                                                 SpanStyle(
@@ -167,7 +176,7 @@ fun FloatingLyricOverlay(
                                         else -> {
                                             withStyle(
                                                 SpanStyle(
-                                                    color = Color.White.copy(alpha = 0.55f),
+                                                    color = unplayedWordColor,
                                                     fontWeight = FontWeight.Medium
                                                 )
                                             ) {
@@ -204,7 +213,7 @@ fun FloatingLyricOverlay(
                             Text(
                                 text = currentLine?.translation.orEmpty(),
                                 style = MaterialTheme.typography.labelSmall.copy(
-                                    color = Color.White.copy(alpha = 0.68f),
+                                    color = subTextColor,
                                     fontSize = 11.sp
                                 ),
                                 maxLines = 1,
@@ -216,7 +225,6 @@ fun FloatingLyricOverlay(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    // 锁定/解锁按钮
                     IconButton(
                         onClick = { SystemLyricBridge.setFloatingCapsuleLocked(!state.floatingCapsuleLocked) },
                         modifier = Modifier.size(28.dp)
@@ -224,7 +232,7 @@ fun FloatingLyricOverlay(
                         Icon(
                             imageVector = if (state.floatingCapsuleLocked) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
                             contentDescription = "锁定悬浮词",
-                            tint = if (state.floatingCapsuleLocked) VipGold else Color.White.copy(alpha = 0.6f),
+                            tint = if (state.floatingCapsuleLocked) VipGold else iconMutedColor,
                             modifier = Modifier.size(15.dp)
                         )
                     }
@@ -237,7 +245,7 @@ fun FloatingLyricOverlay(
                             Icon(
                                 imageVector = Icons.Rounded.Close,
                                 contentDescription = "关闭悬浮词",
-                                tint = Color.White.copy(alpha = 0.5f),
+                                tint = iconMutedColor,
                                 modifier = Modifier.size(15.dp)
                             )
                         }

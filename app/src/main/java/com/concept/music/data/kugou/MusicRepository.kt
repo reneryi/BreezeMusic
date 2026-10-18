@@ -11,6 +11,7 @@ import com.concept.music.data.model.PlaylistItem
 import com.concept.music.data.model.PurchasedAlbumItem
 import com.concept.music.data.model.PurchasedSongItem
 import com.concept.music.data.model.RankItem
+import com.concept.music.data.model.SearchIntent
 import com.concept.music.data.model.SearchResult
 import com.concept.music.data.model.Song
 import com.concept.music.data.model.SongComment
@@ -738,51 +739,55 @@ class MusicApiRepository(
             listOf("128", "320", "flac", "high").forEach { add(it) }
         }
 
-        val enrichedByHash = HashMap<String, JsonObject>()
-        for (chunk in songs.chunked(35)) {
-            val resourceArr = JsonArray()
-            for (s in chunk) {
-                val baseHash = s.hash128.ifBlank { s.hash }.trim().lowercase()
-                if (isValidHash(baseHash)) {
-                    resourceArr.add(JsonObject().apply {
-                        addProperty("hash", baseHash)
-                        add("qualities", qualitiesArr)
-                        val albIdNum = s.albumId.toLongOrNull() ?: 0L
-                        if (albIdNum > 0L) addProperty("album_id", albIdNum)
-                    })
-                }
-            }
-            if (resourceArr.size() == 0) continue
+        val enrichedByHash = ConcurrentHashMap<String, JsonObject>()
+        coroutineScope {
+            songs.chunked(45).map { chunk ->
+                async {
+                    val resourceArr = JsonArray()
+                    for (s in chunk) {
+                        val baseHash = s.hash128.ifBlank { s.hash }.trim().lowercase()
+                        if (isValidHash(baseHash)) {
+                            resourceArr.add(JsonObject().apply {
+                                addProperty("hash", baseHash)
+                                add("qualities", qualitiesArr)
+                                val albIdNum = s.albumId.toLongOrNull() ?: 0L
+                                if (albIdNum > 0L) addProperty("album_id", albIdNum)
+                            })
+                        }
+                    }
+                    if (resourceArr.size() == 0) return@async
 
-            val body = JsonObject().apply {
-                addProperty("appid", KugouSigner.APP_ID)
-                addProperty("area_code", 1)
-                addProperty("behavior", "play")
-                addProperty("clientver", KugouSigner.CLIENT_VERSION)
-                addProperty("need_hash_offset", 1)
-                addProperty("relate", 1)
-                add("resource", resourceArr)
-                addProperty("vip_type", 0)
-            }
+                    val body = JsonObject().apply {
+                        addProperty("appid", KugouSigner.APP_ID)
+                        addProperty("area_code", 1)
+                        addProperty("behavior", "play")
+                        addProperty("clientver", KugouSigner.CLIENT_VERSION)
+                        addProperty("need_hash_offset", 1)
+                        addProperty("relate", 1)
+                        add("resource", resourceArr)
+                        addProperty("vip_type", 0)
+                    }
 
-            runCatching {
-                val resp = transport.callAdvanced(
-                    path = "/v2/get_res_privilege/lite",
-                    method = "POST",
-                    session = session,
-                    body = body,
-                    headers = mapOf("x-router" to "media.store.kugou.com"),
-                    sign = true,
-                    includeDefaultParams = true
-                )
-                val dataArr = resp.body.arr("data") ?: resp.data.arr("data") ?: resp.data.arr("resource")
-                dataArr?.filter { it.isJsonObject }?.map { it.asJsonObject }?.forEach { item ->
-                    val h = (item.text("hash") ?: "").lowercase()
-                    if (h.isNotBlank()) {
-                        enrichedByHash[h] = item
+                    runCatching {
+                        val resp = transport.callAdvanced(
+                            path = "/v2/get_res_privilege/lite",
+                            method = "POST",
+                            session = session,
+                            body = body,
+                            headers = mapOf("x-router" to "media.store.kugou.com"),
+                            sign = true,
+                            includeDefaultParams = true
+                        )
+                        val dataArr = resp.body.arr("data") ?: resp.data.arr("data") ?: resp.data.arr("resource")
+                        dataArr?.filter { it.isJsonObject }?.map { it.asJsonObject }?.forEach { item ->
+                            val h = (item.text("hash") ?: "").lowercase()
+                            if (h.isNotBlank()) {
+                                enrichedByHash[h] = item
+                            }
+                        }
                     }
                 }
-            }
+            }.forEach { it.await() }
         }
 
         if (enrichedByHash.isEmpty()) return songs
@@ -1448,35 +1453,89 @@ class MusicApiRepository(
         }
     }
 
+    internal fun normalizeSearchToken(raw: String): String {
+        return raw.trim().lowercase()
+            .replace(Regex("""[\s《》〈〉「」『』【】()（）\[\]"'“”‘’·\-_:：,，.。!！?？/\\]+"""), "")
+    }
+
+    internal fun extractBaseSongTitle(rawTitle: String): String {
+        val bookMatch = Regex("""《([^》]+)》""").find(rawTitle)
+        val baseCandidate = if (bookMatch != null && bookMatch.groupValues[1].isNotBlank()) {
+            bookMatch.groupValues[1]
+        } else {
+            rawTitle
+        }
+        val stripped = baseCandidate
+            .replace(Regex("""[（(\[【][^）)\]】]*(?:live|现场|伴奏|inst|remix|版|dj|cover|翻唱|合唱|独唱|0\.\d+x|1\.\d+x|加速|慢速|降调|升调|氛围|片段|纯享|原声|ost|medals)[^）)\]】]*[）)\]】]""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""[（(\[【][^）)\]】]*[）)\]】]"""), "")
+            .trim()
+        return normalizeSearchToken(stripped.ifBlank { baseCandidate })
+    }
+
     suspend fun searchComplex(keyword: String): ComplexSearchResult = coroutineScope {
         if (keyword.isBlank()) return@coroutineScope ComplexSearchResult()
 
-        val songsDeferred = async { runCatching { searchSongs(keyword, page = 1, pageSize = 30) }.getOrNull() }
+        val songsDeferred = async { runCatching { searchSongs(keyword, page = 1, pageSize = 35) }.getOrNull() }
         val albumsDeferred = async { runCatching { searchAlbums(keyword, page = 1, pageSize = 12) }.getOrNull() }
         val playlistsDeferred = async { runCatching { searchPlaylists(keyword, page = 1, pageSize = 12) }.getOrNull() }
         val artistsDeferred = async { runCatching { searchArtists(keyword, page = 1, pageSize = 10, allowSongFallback = false) }.getOrNull() }
 
-        val songs = songsDeferred.await()?.songs ?: emptyList()
-        val albums = albumsDeferred.await() ?: emptyList()
-        val playlists = playlistsDeferred.await() ?: emptyList()
+        val rawSongs = songsDeferred.await()?.songs ?: emptyList()
+        val rawAlbums = albumsDeferred.await() ?: emptyList()
+        val rawPlaylists = playlistsDeferred.await() ?: emptyList()
         val rawArtists = artistsDeferred.await() ?: emptyList()
 
-        val cleanKw = keyword.trim().lowercase()
-        val topSongArtists = songs.take(5)
-            .flatMap { it.artist.split("、", "/", "&", ",") }
-            .map { it.trim() }
-            .filter { it.isNotBlank() && it != "未知歌手" && it != "群星" }
+        val cleanKw = keyword.trim()
+        val normKw = normalizeSearchToken(cleanKw)
+        if (normKw.isEmpty()) {
+            return@coroutineScope ComplexSearchResult(
+                songs = rawSongs,
+                albums = rawAlbums,
+                playlists = rawPlaylists,
+                artists = emptyList(),
+                intent = SearchIntent.SONG
+            )
+        }
 
+        // 统计前 10 首歌曲中各歌手出现的频次与曲目名匹配情况
+        val top10Songs = rawSongs.take(10)
+        fun splitArtists(artistStr: String): List<String> =
+            artistStr.split("、", "/", "&", ",", "，", "feat.", "Feat.", "FT.")
+                .map { it.trim() }
+                .filter { it.isNotBlank() && it != "未知歌手" && it != "群星" }
+
+        val artistAppearanceCount = HashMap<String, Int>()
+        for (s in top10Songs) {
+            for (a in splitArtists(s.artist)) {
+                val key = normalizeSearchToken(a)
+                if (key.isNotBlank()) {
+                    artistAppearanceCount[key] = (artistAppearanceCount[key] ?: 0) + 1
+                }
+            }
+        }
+
+        // 统计前 10 首歌曲中歌名（或核心歌名）与搜索词匹配的曲目数
+        val songTitleMatchCount = top10Songs.count { s ->
+            val normTitle = normalizeSearchToken(s.title)
+            val baseTitle = extractBaseSongTitle(s.title)
+            normTitle == normKw || baseTitle == normKw ||
+                (normKw.length >= 2 && (normTitle.startsWith(normKw) || baseTitle.contains(normKw)))
+        }
+
+        // 构建候选歌手池（合并接口返回歌手与前排歌曲的主唱歌手）
         val candidatePool = mutableListOf<ArtistItem>()
         candidatePool.addAll(rawArtists.filter { it.id.isNotBlank() && it.id != "0" })
-        for (song in songs.take(8)) {
+        for (song in top10Songs) {
             if (song.artistId.isNotBlank() && song.artistId != "0") {
-                val primaryArtistName = song.artist.split("、", "/", "&", ",").firstOrNull()?.trim().orEmpty()
-                if (primaryArtistName.isNotBlank() && candidatePool.none { it.id == song.artistId || it.name.equals(primaryArtistName, ignoreCase = true) }) {
+                val primaryName = splitArtists(song.artist).firstOrNull().orEmpty()
+                if (primaryName.isNotBlank() && candidatePool.none {
+                        it.id == song.artistId || normalizeSearchToken(it.name) == normalizeSearchToken(primaryName)
+                    }
+                ) {
                     candidatePool.add(
                         ArtistItem(
                             id = song.artistId,
-                            name = primaryArtistName,
+                            name = primaryName,
                             avatarUrl = song.coverUrl
                         )
                     )
@@ -1484,46 +1543,253 @@ class MusicApiRepository(
             }
         }
 
-        val matchedArtists = candidatePool
-            .map { artist ->
-                val nameLower = artist.name.trim().lowercase()
-                val score = when {
-                    nameLower == cleanKw -> 100
-                    cleanKw.contains(nameLower) && nameLower.length >= 2 -> 90
-                    nameLower.contains(cleanKw) && cleanKw.length >= 2 -> 80
-                    topSongArtists.any { it.equals(artist.name.trim(), ignoreCase = true) } -> 85
-                    else -> 0
-                }
-                artist to score
+        // 识别搜索词是否直接命中知名歌手本人（排除同名冷门网红/用户，如搜索“勋章”时单曲数为5且不在前排歌曲唱歌的“勋章”歌手）
+        val verifiedDirectArtists = candidatePool.mapNotNull { artist ->
+            val normArtist = normalizeSearchToken(artist.name)
+            if (normArtist.isEmpty()) return@mapNotNull null
+            val appearances = artistAppearanceCount[normArtist] ?: 0
+            val isCatalogRich = artist.songCount >= 25 || artist.albumCount >= 3
+            val isExactName = normArtist == normKw
+            val isPrefixOrContained = normKw.length >= 2 && (normArtist.startsWith(normKw) || normKw.startsWith(normArtist))
+
+            // 核心防误判规则：若歌手名虽然等于搜索词（如“勋章”），但前排热门单曲没有一首是TA唱的，且前排单曲歌名本身就是“勋章”，
+            // 说明用户搜的是歌曲《勋章》，该歌手只是撞名冷门账号，必须剔除！
+            if (appearances == 0 && songTitleMatchCount >= 2) {
+                return@mapNotNull null
             }
-            .filter { it.second >= 80 }
+            if (appearances == 0 && !isCatalogRich) {
+                return@mapNotNull null
+            }
+
+            val score = when {
+                isExactName && appearances >= 3 -> 120 + appearances * 5
+                isExactName && isCatalogRich && songTitleMatchCount == 0 -> 105
+                isExactName && appearances >= 1 && isCatalogRich -> 95
+                isPrefixOrContained && appearances >= 5 -> 92
+                else -> 0
+            }
+            if (score >= 90) artist to score else null
+        }
             .sortedWith(compareByDescending<Pair<ArtistItem, Int>> { it.second }.thenByDescending { it.first.songCount })
             .map { it.first }
-            .distinctBy { it.id.ifBlank { it.name } }
-            .take(2)
+            .distinctBy { normalizeSearchToken(it.name) }
             .toMutableList()
 
-        if (matchedArtists.isNotEmpty()) {
-            val first = matchedArtists[0]
-            if (first.id.isNotBlank() && (first.avatarUrl.isBlank() || (first.songCount == 0 && first.albumCount == 0))) {
-                val detailed = runCatching { artistDetail(first.id) }.getOrNull()
-                if (detailed != null) {
-                    matchedArtists[0] = first.copy(
-                        name = detailed.name.ifBlank { first.name },
-                        avatarUrl = detailed.avatarUrl.ifBlank { first.avatarUrl },
-                        songCount = if (detailed.songCount > 0) detailed.songCount else first.songCount,
-                        albumCount = if (detailed.albumCount > 0) detailed.albumCount else first.albumCount,
-                        intro = detailed.intro.ifBlank { first.intro }
-                    )
+        // 判断显式意图后缀或特征词
+        val explicitPlaylistQuery = cleanKw.endsWith("歌单") || cleanKw.endsWith("合集") || cleanKw.endsWith("精选集") ||
+            cleanKw.contains("歌单") || cleanKw.contains("背景音乐") || cleanKw.contains("助眠")
+        val explicitAlbumQuery = cleanKw.endsWith("专辑") || cleanKw.endsWith("原声带") || cleanKw.endsWith("OST", ignoreCase = true)
+
+        val exactAlbumMatch = rawAlbums.firstOrNull { alb ->
+            val normAlb = normalizeSearchToken(alb.name)
+            normAlb == normKw && alb.songCount >= 2
+        }
+        val exactPlaylistMatch = rawPlaylists.firstOrNull { pl ->
+            val normPl = normalizeSearchToken(pl.name)
+            (normPl == normKw || normPl.contains(normKw)) && pl.trackCount >= 8
+        }
+
+        // 综合判定用户的真实搜索意图 SearchIntent
+        val searchIntent: SearchIntent = when {
+            explicitPlaylistQuery && rawPlaylists.isNotEmpty() -> SearchIntent.PLAYLIST
+            explicitAlbumQuery && rawAlbums.isNotEmpty() -> SearchIntent.ALBUM
+            // 当存在高置信度直接匹配歌手，且大部分前排歌曲都是该歌手演唱（如搜“鹿晗”，前10首全是鹿晗唱的）
+            verifiedDirectArtists.isNotEmpty() && (
+                (artistAppearanceCount[normalizeSearchToken(verifiedDirectArtists.first().name)] ?: 0) >= 4 ||
+                    songTitleMatchCount <= 1
+                ) -> SearchIntent.ARTIST
+            // 若前排有多首同名歌曲及翻唱/Live版本（如搜“勋章”），即使存在同名专辑《勋章》，也优先判定为单曲意图 SONG
+            songTitleMatchCount >= 2 -> SearchIntent.SONG
+            exactAlbumMatch != null && songTitleMatchCount == 0 -> SearchIntent.ALBUM
+            exactPlaylistMatch != null && songTitleMatchCount == 0 && verifiedDirectArtists.isEmpty() -> SearchIntent.PLAYLIST
+            verifiedDirectArtists.isNotEmpty() -> SearchIntent.ARTIST
+            else -> SearchIntent.SONG
+        }
+
+        // 根据搜索意图对单曲进行精细化优先级重排（确保搜歌名时：原唱正版 -> 官方Live -> 优质翻唱 -> 变调/衍生版 -> 其他）
+        val rankedSongs = if (searchIntent == SearchIntent.SONG) {
+            // 找出精确匹配歌名的曲目中最常出现的原唱/主流歌手（优先拥有 Hi-Res / 无损 SQ / VIP 标识的歌手）
+            val exactTitleSongs = rawSongs.filter {
+                normalizeSearchToken(it.title) == normKw || extractBaseSongTitle(it.title) == normKw
+            }
+            val dominantOriginalArtistNorm = exactTitleSongs
+                .flatMap { s ->
+                    val weight = (if (s.isHiRes) 4 else if (s.isLossless) 3 else 1) +
+                        (if (s.isVip) 2 else 0) +
+                        (if (normalizeSearchToken(s.title) == normKw) 3 else 0)
+                    splitArtists(s.artist).map { normalizeSearchToken(it) to weight }
                 }
+                .groupBy({ it.first }, { it.second })
+                .mapValues { it.value.sum() }
+                .maxByOrNull { it.value }?.key.orEmpty()
+
+            fun songRankScore(s: Song, originalIndex: Int): Int {
+                val normTitle = normalizeSearchToken(s.title)
+                val baseTitle = extractBaseSongTitle(s.title)
+                val songArtistNorms = splitArtists(s.artist).map { normalizeSearchToken(it) }
+                val isDominantArtist = dominantOriginalArtistNorm.isNotBlank() && songArtistNorms.contains(dominantOriginalArtistNorm)
+                val isQueryInArtistAndTitle = songArtistNorms.any { normKw.contains(it) && it.length >= 2 } &&
+                    baseTitle.isNotBlank() && normKw.contains(baseTitle)
+
+                val titleLower = s.title.lowercase()
+                val isDerivative = titleLower.contains("0.8x") || titleLower.contains("0.9x") ||
+                    titleLower.contains("1.1x") || titleLower.contains("1.2x") ||
+                    titleLower.contains("dj") || titleLower.contains("伴奏") ||
+                    titleLower.contains("铃声") || titleLower.contains("片段")
+                val isLive = titleLower.contains("live") || titleLower.contains("现场") || titleLower.contains("演唱会")
+
+                var score = 0
+                when {
+                    // 1. 歌名完全一致（无任何后缀）或“歌手+歌名”组合精准命中
+                    normTitle == normKw || isQueryInArtistAndTitle -> {
+                        score += 1000
+                        if (isDominantArtist) score += 350
+                    }
+                    // 2. 核心歌名完全一致（如《勋章 (Medals)(Live)》、《小枫〈勋章 (0.8X版)〉》）
+                    baseTitle == normKw -> {
+                        score += 750
+                        if (isDominantArtist && isLive) score += 220 // 原唱官方 Live 紧随原版之后
+                        else if (isDominantArtist) score += 180
+                    }
+                    // 3. 歌名以前缀或包含形式匹配搜索词
+                    normTitle.startsWith(normKw) || baseTitle.contains(normKw) -> {
+                        score += 450
+                        if (isDominantArtist) score += 100
+                    }
+                    // 4. 其它关联曲目
+                    else -> {
+                        score += 100
+                    }
+                }
+
+                // 音质与正版权重加成（原版母带/无损优先于普通翻唱）
+                if (s.isHiRes) score += 65
+                else if (s.isLossless) score += 45
+                if (s.isVip) score += 25
+                if (s.coverUrl.isNotBlank()) score += 15
+
+                // 衍生/倍速/伴奏降权，确保原版与正经翻唱排在前面
+                if (isDerivative) score -= 160
+
+                // 保持同档位下的原始热度顺序
+                score -= originalIndex * 2
+                return score
+            }
+
+            rawSongs.mapIndexed { idx, s -> s to songRankScore(s, idx) }
+                .sortedByDescending { it.second }
+                .map { it.first }
+        } else if (searchIntent == SearchIntent.ARTIST && verifiedDirectArtists.isNotEmpty()) {
+            val targetArtistNorm = normalizeSearchToken(verifiedDirectArtists.first().name)
+            rawSongs.sortedByDescending { s ->
+                val byTarget = splitArtists(s.artist).any { normalizeSearchToken(it) == targetArtistNorm }
+                (if (byTarget) 100 else 0) + (if (s.isHiRes) 20 else if (s.isLossless) 10 else 0)
+            }
+        } else {
+            rawSongs
+        }
+
+        // 解析原唱歌手或主歌手信息
+        var primaryArtistItem: ArtistItem? = null
+        val finalArtists: List<ArtistItem> = when (searchIntent) {
+            SearchIntent.ARTIST -> {
+                if (verifiedDirectArtists.isNotEmpty()) {
+                    val first = verifiedDirectArtists[0]
+                    val enrichedFirst = if (first.id.isNotBlank() && (first.avatarUrl.isBlank() || (first.songCount == 0 && first.albumCount == 0))) {
+                        runCatching { artistDetail(first.id) }.getOrNull()?.let { detailed ->
+                            first.copy(
+                                name = detailed.name.ifBlank { first.name },
+                                avatarUrl = detailed.avatarUrl.ifBlank { first.avatarUrl },
+                                songCount = if (detailed.songCount > 0) detailed.songCount else first.songCount,
+                                albumCount = if (detailed.albumCount > 0) detailed.albumCount else first.albumCount,
+                                intro = detailed.intro.ifBlank { first.intro }
+                            )
+                        } ?: first
+                    } else first
+                    verifiedDirectArtists[0] = enrichedFirst
+                    primaryArtistItem = enrichedFirst
+                }
+                verifiedDirectArtists.take(2)
+            }
+            SearchIntent.SONG -> {
+                // 单曲意图下：绝不把同名冷门歌手放入 artists，仅提取排名第一的原唱歌手作为可选关联信息
+                val topHit = rankedSongs.firstOrNull()
+                if (topHit != null) {
+                    val origArtistName = splitArtists(topHit.artist).firstOrNull().orEmpty()
+                    val origArtistNorm = normalizeSearchToken(origArtistName)
+                    if (origArtistNorm.isNotBlank()) {
+                        val fromPool = candidatePool.firstOrNull { normalizeSearchToken(it.name) == origArtistNorm }
+                        val baseOrig = fromPool ?: if (topHit.artistId.isNotBlank() && topHit.artistId != "0") {
+                            ArtistItem(
+                                id = topHit.artistId,
+                                name = origArtistName,
+                                avatarUrl = topHit.coverUrl
+                            )
+                        } else null
+                        if (baseOrig != null && baseOrig.id.isNotBlank() && baseOrig.id != "0") {
+                            primaryArtistItem = if (baseOrig.songCount == 0 && baseOrig.albumCount == 0) {
+                                runCatching { artistDetail(baseOrig.id) }.getOrNull()?.let { detailed ->
+                                    baseOrig.copy(
+                                        name = detailed.name.ifBlank { baseOrig.name },
+                                        avatarUrl = detailed.avatarUrl.ifBlank { baseOrig.avatarUrl },
+                                        songCount = if (detailed.songCount > 0) detailed.songCount else baseOrig.songCount,
+                                        albumCount = if (detailed.albumCount > 0) detailed.albumCount else baseOrig.albumCount,
+                                        intro = detailed.intro.ifBlank { baseOrig.intro }
+                                    )
+                                } ?: baseOrig
+                            } else baseOrig
+                        }
+                    }
+                }
+                emptyList()
+            }
+            else -> emptyList()
+        }
+
+        // 根据搜索意图过滤与排序专辑、歌单（在综合页隐藏与意图无关的杂乱模块）
+        val finalAlbums = when (searchIntent) {
+            SearchIntent.SONG -> emptyList()
+            SearchIntent.PLAYLIST -> emptyList()
+            SearchIntent.ALBUM -> rawAlbums.sortedByDescending { alb ->
+                val normAlb = normalizeSearchToken(alb.name)
+                when {
+                    normAlb == normKw -> 100
+                    normAlb.startsWith(normKw) -> 80
+                    normAlb.contains(normKw) -> 60
+                    else -> 10
+                }
+            }
+            SearchIntent.ARTIST -> {
+                val targetName = primaryArtistItem?.name.orEmpty()
+                val targetNorm = normalizeSearchToken(targetName)
+                rawAlbums.filter { alb ->
+                    targetNorm.isEmpty() || normalizeSearchToken(alb.artist).contains(targetNorm) ||
+                        normalizeSearchToken(alb.name).contains(targetNorm)
+                }.ifEmpty { rawAlbums.take(6) }
             }
         }
 
+        val finalPlaylists = when (searchIntent) {
+            SearchIntent.SONG -> emptyList()
+            SearchIntent.ALBUM -> emptyList()
+            SearchIntent.PLAYLIST -> rawPlaylists.sortedByDescending { pl ->
+                val normPl = normalizeSearchToken(pl.name)
+                when {
+                    normPl == normKw -> 100
+                    normPl.contains(normKw) -> 80
+                    else -> 20
+                }
+            }
+            SearchIntent.ARTIST -> rawPlaylists
+        }
+
         ComplexSearchResult(
-            songs = songs,
-            albums = albums,
-            playlists = playlists,
-            artists = matchedArtists
+            songs = rankedSongs,
+            albums = finalAlbums,
+            playlists = finalPlaylists,
+            artists = finalArtists,
+            intent = searchIntent,
+            primaryArtist = primaryArtistItem
         )
     }
 
@@ -2380,10 +2646,10 @@ class MusicApiRepository(
         )
         val baseList = if (sortedRawRanks.isNotEmpty()) sortedRawRanks else defaultRanks()
 
-        // 实时校准前 8 个核心榜单的前三名预览曲目与封面（杜绝发现页榜单卡片展示旧缓存曲目）
+        // 仅对前 4 个核心展示榜单在缺失预览曲目时按需补全，避免首屏并发数十个请求拖慢加载速度
         baseList.mapIndexed { idx, item ->
             async {
-                if (idx < 8 || item.topSongsPreview.isEmpty()) {
+                if (idx < 4 && item.topSongsPreview.isEmpty()) {
                     val liveTop = runCatching { rankSongs(item.rankId, page = 1, pageSize = 5, enrichPrivilege = false) }
                         .getOrDefault(emptyList())
                     if (liveTop.isNotEmpty()) {
@@ -2570,45 +2836,49 @@ class MusicApiRepository(
 
         if (missingAlbumIds.isNotEmpty()) {
             val session = accounts.context()?.session
-            for (chunk in missingAlbumIds.chunked(40)) {
-                runCatching {
-                    val itemArr = JsonArray().apply {
-                        chunk.forEach { aid ->
-                            add(JsonObject().apply {
-                                val numId = aid.toLongOrNull()
-                                if (numId != null) addProperty("album_id", numId)
-                                else addProperty("album_id", aid)
-                            })
+            coroutineScope {
+                missingAlbumIds.chunked(45).map { chunk ->
+                    async {
+                        runCatching {
+                            val itemArr = JsonArray().apply {
+                                chunk.forEach { aid ->
+                                    add(JsonObject().apply {
+                                        val numId = aid.toLongOrNull()
+                                        if (numId != null) addProperty("album_id", numId)
+                                        else addProperty("album_id", aid)
+                                    })
+                                }
+                            }
+                            val body = JsonObject().apply {
+                                add("data", itemArr)
+                                addProperty("is_buy", 0)
+                                addProperty("fields", "album_id,album_name,publish_date,sizable_cover,author_name")
+                            }
+                            val resp = transport.callAdvanced(
+                                path = "/kmr/v2/albums",
+                                method = "POST",
+                                session = session,
+                                body = body,
+                                headers = mapOf(
+                                    "x-router" to "openapi.kugou.com",
+                                    "kg-tid" to "255"
+                                ),
+                                sign = true,
+                                includeDefaultParams = true
+                            )
+                            val arr = resp.data.arr("data") ?: resp.body.arr("data")
+                            arr?.filter { it.isJsonObject }?.map { it.asJsonObject }?.forEach { obj ->
+                                val aid = (obj.text("album_id") ?: obj.text("albumid") ?: "").trim()
+                                val pub = normalizePublishDate(
+                                    obj.text("publish_date") ?: obj.text("publishtime") ?: obj.text("publish_time")
+                                )
+                                if (aid.isNotBlank() && pub.isNotBlank()) {
+                                    albumPublishDateCache[aid] = pub
+                                }
+                            }
                         }
                     }
-                    val body = JsonObject().apply {
-                        add("data", itemArr)
-                        addProperty("is_buy", 0)
-                        addProperty("fields", "album_id,album_name,publish_date,sizable_cover,author_name")
-                    }
-                    val resp = transport.callAdvanced(
-                        path = "/kmr/v2/albums",
-                        method = "POST",
-                        session = session,
-                        body = body,
-                        headers = mapOf(
-                            "x-router" to "openapi.kugou.com",
-                            "kg-tid" to "255"
-                        ),
-                        sign = true,
-                        includeDefaultParams = true
-                    )
-                    val arr = resp.data.arr("data") ?: resp.body.arr("data")
-                    arr?.filter { it.isJsonObject }?.map { it.asJsonObject }?.forEach { obj ->
-                        val aid = (obj.text("album_id") ?: obj.text("albumid") ?: "").trim()
-                        val pub = normalizePublishDate(
-                            obj.text("publish_date") ?: obj.text("publishtime") ?: obj.text("publish_time")
-                        )
-                        if (aid.isNotBlank() && pub.isNotBlank()) {
-                            albumPublishDateCache[aid] = pub
-                        }
-                    }
-                }
+                }.forEach { it.await() }
             }
         }
 
@@ -2725,23 +2995,23 @@ class MusicApiRepository(
 
         val rawCandidates: List<Song> = when (periodKey.uppercase()) {
             "CHINESE", "21608" -> {
-                fetchCandidatePoolForRank(rankId = 21608, fallbackChartRankId = 31308, pageCount = 4)
+                fetchCandidatePoolForRank(rankId = 21608, fallbackChartRankId = 31308, pageCount = 2)
             }
             "WESTERN", "21609" -> {
-                fetchCandidatePoolForRank(rankId = 21609, fallbackChartRankId = 31310, pageCount = 4)
+                fetchCandidatePoolForRank(rankId = 21609, fallbackChartRankId = 31310, pageCount = 2)
             }
             "JPKR", "21610" -> {
-                fetchCandidatePoolForRank(rankId = 21610, fallbackChartRankId = 31311, pageCount = 4)
+                fetchCandidatePoolForRank(rankId = 21610, fallbackChartRankId = 31311, pageCount = 2)
             }
             "CANTON", "21611" -> {
-                fetchCandidatePoolForRank(rankId = 21611, fallbackChartRankId = 31313, pageCount = 4)
+                fetchCandidatePoolForRank(rankId = 21611, fallbackChartRankId = 31313, pageCount = 2)
             }
             else -> {
-                // 综合首发：汇总华语(21608)、欧美(21609)、日韩(21610)、粤语(21611) 全部近7日候选新歌
-                val cnDef = async { fetchCandidatePoolForRank(rankId = 21608, fallbackChartRankId = 31308, pageCount = 3) }
-                val westDef = async { fetchCandidatePoolForRank(rankId = 21609, fallbackChartRankId = 31310, pageCount = 2) }
-                val jpkrDef = async { fetchCandidatePoolForRank(rankId = 21610, fallbackChartRankId = 31311, pageCount = 2) }
-                val cantonDef = async { fetchCandidatePoolForRank(rankId = 21611, fallbackChartRankId = 31313, pageCount = 2) }
+                // 综合首发：并发汇总华语(21608)、欧美(21609)、日韩(21610)、粤语(21611) 近7日候选新歌
+                val cnDef = async { fetchCandidatePoolForRank(rankId = 21608, fallbackChartRankId = 31308, pageCount = 2) }
+                val westDef = async { fetchCandidatePoolForRank(rankId = 21609, fallbackChartRankId = 31310, pageCount = 1) }
+                val jpkrDef = async { fetchCandidatePoolForRank(rankId = 21610, fallbackChartRankId = 31311, pageCount = 1) }
+                val cantonDef = async { fetchCandidatePoolForRank(rankId = 21611, fallbackChartRankId = 31313, pageCount = 1) }
                 cnDef.await() + westDef.await() + jpkrDef.await() + cantonDef.await()
             }
         }
@@ -3166,7 +3436,7 @@ class MusicApiRepository(
     // 电台 / FM 体系（对齐 MakcRe/KuGouMusicApi: fm_recommend, fm_class, fm_songs）
     // =========================================================================
 
-    suspend fun fmChannels(): List<FmChannel> {
+    suspend fun fmChannels(): List<FmChannel> = coroutineScope {
         defaultFmChannels().forEach { fmChannelMetaMap[it.id] = it }
 
         val session = accounts.context()?.session
@@ -3174,87 +3444,96 @@ class MusicApiRepository(
         val clientTime = System.currentTimeMillis() / 1000
         val uidNum = session?.userId?.toLongOrNull() ?: 0L
 
-        val rcmdList = runCatching {
-            val response = transport.callAdvanced(
-                path = "/v1/rcmd_list",
-                method = "POST",
-                session = session,
-                body = json(
-                    "appid" to KugouSigner.APP_ID,
-                    "clientver" to KugouSigner.CLIENT_VERSION,
-                    "clienttime" to clientTime,
-                    "mid" to d.mid,
-                    "key" to KugouSigner.paramsKey(clientTime),
-                    "rcmdsongcount" to 20,
-                    "level" to 0,
-                    "area_code" to 1,
-                    "get_tracker" to 1,
-                    "uid" to uidNum
-                ),
-                headers = mapOf("x-router" to "fm.service.kugou.com"),
-                sign = true,
-                includeDefaultParams = true
-            ).requireSuccess()
-            parseFmChannelsFromResponse(response.data, defaultCategory = "推荐电台")
-        }.getOrNull().orEmpty()
+        val rcmdDef = async {
+            runCatching {
+                val response = transport.callAdvanced(
+                    path = "/v1/rcmd_list",
+                    method = "POST",
+                    session = session,
+                    body = json(
+                        "appid" to KugouSigner.APP_ID,
+                        "clientver" to KugouSigner.CLIENT_VERSION,
+                        "clienttime" to clientTime,
+                        "mid" to d.mid,
+                        "key" to KugouSigner.paramsKey(clientTime),
+                        "rcmdsongcount" to 20,
+                        "level" to 0,
+                        "area_code" to 1,
+                        "get_tracker" to 1,
+                        "uid" to uidNum
+                    ),
+                    headers = mapOf("x-router" to "fm.service.kugou.com"),
+                    sign = true,
+                    includeDefaultParams = true
+                ).requireSuccess()
+                parseFmChannelsFromResponse(response.data, defaultCategory = "推荐电台")
+            }.getOrNull().orEmpty()
+        }
 
-        val classList = runCatching {
-            val response = transport.callAdvanced(
-                path = "/v1/class_fm_song",
-                method = "POST",
-                session = session,
-                body = json(
-                    "kguid" to uidNum,
-                    "clienttime" to clientTime,
-                    "mid" to d.mid,
-                    "platform" to "android",
-                    "clientver" to KugouSigner.CLIENT_VERSION,
-                    "uid" to uidNum,
-                    "get_tracker" to 1,
-                    "key" to KugouSigner.paramsKey(clientTime),
-                    "appid" to KugouSigner.APP_ID
-                ),
-                headers = mapOf("x-router" to "fm.service.kugou.com"),
-                sign = true,
-                includeDefaultParams = true
-            ).requireSuccess()
-            parseFmChannelsFromResponse(response.data, defaultCategory = "分类电台")
-        }.getOrNull().orEmpty()
+        val classDef = async {
+            runCatching {
+                val response = transport.callAdvanced(
+                    path = "/v1/class_fm_song",
+                    method = "POST",
+                    session = session,
+                    body = json(
+                        "kguid" to uidNum,
+                        "clienttime" to clientTime,
+                        "mid" to d.mid,
+                        "platform" to "android",
+                        "clientver" to KugouSigner.CLIENT_VERSION,
+                        "uid" to uidNum,
+                        "get_tracker" to 1,
+                        "key" to KugouSigner.paramsKey(clientTime),
+                        "appid" to KugouSigner.APP_ID
+                    ),
+                    headers = mapOf("x-router" to "fm.service.kugou.com"),
+                    sign = true,
+                    includeDefaultParams = true
+                ).requireSuccess()
+                parseFmChannelsFromResponse(response.data, defaultCategory = "分类电台")
+            }.getOrNull().orEmpty()
+        }
 
-        val timeList = runCatching {
-            val response = transport.callAdvanced(
-                path = "/v1/time_fm_info",
-                method = "GET",
-                query = mapOf("operator" to "7", "plat" to "0", "type" to "11", "area_code" to "1", "req_multi" to "1"),
-                headers = mapOf("x-router" to "fm.service.kugou.com"),
-                sign = false,
-                includeDefaultParams = true
-            ).requireSuccess()
-            parseFmChannelsFromResponse(response.data, defaultCategory = "心情场景")
-        }.getOrNull().orEmpty()
+        val timeDef = async {
+            runCatching {
+                val response = transport.callAdvanced(
+                    path = "/v1/time_fm_info",
+                    method = "GET",
+                    query = mapOf("operator" to "7", "plat" to "0", "type" to "11", "area_code" to "1", "req_multi" to "1"),
+                    headers = mapOf("x-router" to "fm.service.kugou.com"),
+                    sign = false,
+                    includeDefaultParams = true
+                ).requireSuccess()
+                parseFmChannelsFromResponse(response.data, defaultCategory = "心情场景")
+            }.getOrNull().orEmpty()
+        }
+
+        val rcmdList = rcmdDef.await()
+        val classList = classDef.await()
+        val timeList = timeDef.await()
 
         val combined = (rcmdList + classList + timeList + defaultFmChannels()).distinctBy { it.id }
         combined.forEach { fmChannelMetaMap[it.id] = it }
 
-        return coroutineScope {
-            combined.map { fm ->
-                async {
-                    if (fm.coverUrl.isNotBlank() && !fm.coverUrl.contains("20210519")) {
-                        fm
-                    } else {
-                        val realCover = runCatching {
-                            searchPlaylists(fm.name, page = 1, pageSize = 3)
+        combined.mapIndexed { idx, fm ->
+            async {
+                if (fm.coverUrl.isNotBlank() && !fm.coverUrl.contains("20210519")) {
+                    fm
+                } else if (idx < 8) {
+                    val realCover = runCatching {
+                        fmChannelInitialSongsMap[fm.id]?.firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl
+                            ?: searchPlaylists(fm.name, page = 1, pageSize = 2)
                                 .firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl
-                                ?: fmSongs(fm.id, size = 5, forceNextBatch = false)
-                                    .firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl
-                        }.getOrNull().orEmpty()
-                        val updated = if (realCover.isNotBlank()) fm.copy(coverUrl = realCover) else fm
-                        fmChannelMetaMap[updated.id] = updated
-                        updated
-                    }
+                    }.getOrNull().orEmpty()
+                    val updated = if (realCover.isNotBlank()) fm.copy(coverUrl = realCover) else fm
+                    fmChannelMetaMap[updated.id] = updated
+                    updated
+                } else {
+                    fm
                 }
-            }.map { it.await() }
-        }
+            }
+        }.map { it.await() }
     }
 
     private fun parseFmChannelsFromResponse(root: JsonObject, defaultCategory: String): List<FmChannel> {

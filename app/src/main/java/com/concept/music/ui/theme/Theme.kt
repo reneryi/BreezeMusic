@@ -5,6 +5,12 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.os.Build
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -18,15 +24,21 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
@@ -150,10 +162,121 @@ fun conceptSheetContainerColor(): Color {
     return if (LocalIsDarkTheme.current) Color(0xFF111826) else Color(0xFFF8FBFF)
 }
 
+/**
+ * 柔和唯美无框点击反馈修饰符：
+ * - 彻底消除生硬突兀的默认方形水波纹闪烁框（indication = null）
+ * - 代之以轻盈的弹性按压微缩放与柔和透明度呼吸过渡，贴合全局柔和唯美风格
+ */
+fun Modifier.softClickable(
+    enabled: Boolean = true,
+    pressScale: Float = 0.94f,
+    pressAlpha: Float = 0.72f,
+    onClick: () -> Unit
+): Modifier = composed {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed && enabled) pressScale else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "softClickScale"
+    )
+    val alpha by animateFloatAsState(
+        targetValue = if (isPressed && enabled) pressAlpha else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "softClickAlpha"
+    )
+    this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+            this.alpha = alpha
+        }
+        .clickable(
+            interactionSource = interactionSource,
+            indication = null,
+            enabled = enabled,
+            onClick = onClick
+        )
+}
+
+/**
+ * 柔和圆润卡片/列表项点击反馈修饰符：
+ * - 裁剪为圆润几何边界，按压时呈现轻微弹性内缩与柔和光泽，无生硬方框闪烁
+ */
+fun Modifier.softCardClickable(
+    enabled: Boolean = true,
+    shape: Shape = RoundedCornerShape(18.dp),
+    pressScale: Float = 0.98f,
+    pressAlpha: Float = 0.86f,
+    onClick: () -> Unit
+): Modifier = composed {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed && enabled) pressScale else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "softCardScale"
+    )
+    val alpha by animateFloatAsState(
+        targetValue = if (isPressed && enabled) pressAlpha else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "softCardAlpha"
+    )
+    this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+            this.alpha = alpha
+        }
+        .clip(shape)
+        .clickable(
+            interactionSource = interactionSource,
+            indication = null,
+            enabled = enabled,
+            onClick = onClick
+        )
+}
+
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
     else -> null
+}
+
+/**
+ * 当全屏深色沉浸式层（如全屏播放页）覆盖在浅色主题之上时，动态同步系统状态栏与导航栏图标为浅色亮字，
+ * 关闭后自动恢复当前主题对应的状态栏图标明暗度。
+ */
+@Composable
+fun SystemBarAppearanceEffect(forceDarkBars: Boolean) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val isDarkTheme = LocalIsDarkTheme.current
+    if (!view.isInEditMode) {
+        DisposableEffect(forceDarkBars, isDarkTheme) {
+            val window = context.findActivity()?.window
+            val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+            val effectiveDark = forceDarkBars || isDarkTheme
+            controller?.isAppearanceLightStatusBars = !effectiveDark
+            controller?.isAppearanceLightNavigationBars = !effectiveDark
+            onDispose {
+                controller?.isAppearanceLightStatusBars = !isDarkTheme
+                controller?.isAppearanceLightNavigationBars = !isDarkTheme
+            }
+        }
+    }
 }
 
 @Composable
@@ -187,6 +310,7 @@ fun ConceptMusicTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = context.findActivity()?.window ?: return@SideEffect
+            WindowCompat.setDecorFitsSystemWindows(window, false)
             val insetsController = WindowCompat.getInsetsController(window, view)
             insetsController.isAppearanceLightStatusBars = !isDark
             insetsController.isAppearanceLightNavigationBars = !isDark

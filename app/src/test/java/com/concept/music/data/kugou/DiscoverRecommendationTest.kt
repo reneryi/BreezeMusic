@@ -366,4 +366,140 @@ class DiscoverRecommendationTest {
         assertTrue(enriched[1].isLossless)
         assertEquals("33333333333333333333333333333333", enriched[1].hashHiRes)
     }
+
+    @Test
+    fun searchComplexDistinguishesSongIntentFromArtistIntentAndFiltersFakeNamesakeArtist() = runTest {
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String,
+                session: KugouSession?,
+                query: Map<String, String>,
+                body: JsonObject?,
+                host: String,
+                method: String,
+                web: Boolean,
+                headers: Map<String, String>,
+                device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+
+            override suspend fun callAdvanced(
+                path: String,
+                session: KugouSession?,
+                query: Map<String, String>,
+                body: JsonObject?,
+                host: String,
+                method: String,
+                web: Boolean,
+                headers: Map<String, String>,
+                device: DeviceIdentity?,
+                sign: Boolean,
+                includeDefaultParams: Boolean
+            ): ApiResponse {
+                val kw = query["keyword"].orEmpty()
+                if (kw == "勋章") {
+                    when (path) {
+                        "/v2/search/song" -> {
+                            val mockSongs = """
+                                {
+                                    "status": 1,
+                                    "data": {
+                                        "total": 6,
+                                        "lists": [
+                                            {"SongName": "勋章", "SingerName": "鹿晗", "AuthorId": 10086, "AlbumName": "勋章", "FileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1", "SQFileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1", "ResFileHash": "ccccccccccccccccccccccccccccccc1", "ResFileSize": 52000000, "ResBitrate": 2304, "Privilege": 10},
+                                            {"SongName": "勋章 (Medals)(Live)", "SingerName": "鹿晗", "AuthorId": 10086, "AlbumName": "2018鹿晗RE:X巡回演唱会", "FileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2", "SQFileHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2", "Privilege": 10},
+                                            {"SongName": "勋章", "SingerName": "请叫我靓仔", "AuthorId": 99001, "FileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3"},
+                                            {"SongName": "小枫《勋章 (0.8X版)(氛围感)》", "SingerName": "宝藏歌单挖掘姬", "AuthorId": 99002, "FileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa4"},
+                                            {"SongName": "勋章 (Live)", "SingerName": "鹿晗", "AuthorId": 10086, "FileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa5"}
+                                        ]
+                                    }
+                                }
+                            """.trimIndent()
+                            return ApiResponse(JsonParser.parseString(mockSongs).asJsonObject)
+                        }
+                        "/v1/search/author" -> {
+                            // 模拟接口返回一个同名叫“勋章”但只有5首歌的冷门用户歌手
+                            val mockAuthors = """
+                                {
+                                    "status": 1,
+                                    "data": {
+                                        "lists": [
+                                            {"AuthorID": 77777, "AuthorName": "勋章", "AudioCount": 5, "AlbumCount": 0}
+                                        ]
+                                    }
+                                }
+                            """.trimIndent()
+                            return ApiResponse(JsonParser.parseString(mockAuthors).asJsonObject)
+                        }
+                        "/v1/search/special" -> {
+                            val mockPlaylists = """
+                                {
+                                    "status": 1,
+                                    "data": {
+                                        "lists": [
+                                            {"specialid": 12345, "specialname": "无关歌单测试", "song_count": 30}
+                                        ]
+                                    }
+                                }
+                            """.trimIndent()
+                            return ApiResponse(JsonParser.parseString(mockPlaylists).asJsonObject)
+                        }
+                    }
+                }
+                if (kw == "鹿晗") {
+                    when (path) {
+                        "/v2/search/song" -> {
+                            val mockSongs = """
+                                {
+                                    "status": 1,
+                                    "data": {
+                                        "total": 4,
+                                        "lists": [
+                                            {"SongName": "勋章", "SingerName": "鹿晗", "AuthorId": 10086, "FileHash": "11111111111111111111111111111111"},
+                                            {"SongName": "我们的明天", "SingerName": "鹿晗", "AuthorId": 10086, "FileHash": "22222222222222222222222222222222"},
+                                            {"SongName": "致爱 Your Song", "SingerName": "鹿晗", "AuthorId": 10086, "FileHash": "33333333333333333333333333333333"},
+                                            {"SongName": "吹吹风", "SingerName": "鹿晗", "AuthorId": 10086, "FileHash": "44444444444444444444444444444444"}
+                                        ]
+                                    }
+                                }
+                            """.trimIndent()
+                            return ApiResponse(JsonParser.parseString(mockSongs).asJsonObject)
+                        }
+                        "/v1/search/author" -> {
+                            val mockAuthors = """
+                                {
+                                    "status": 1,
+                                    "data": {
+                                        "lists": [
+                                            {"AuthorID": 10086, "AuthorName": "鹿晗", "AudioCount": 542, "AlbumCount": 63}
+                                        ]
+                                    }
+                                }
+                            """.trimIndent()
+                            return ApiResponse(JsonParser.parseString(mockAuthors).asJsonObject)
+                        }
+                    }
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+
+        val store = MemoryStore()
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+
+        // 1. 搜索单曲「勋章」：应识别为 SONG 意图，剔除名为“勋章”的冷门歌手，隐藏无关歌单，且原唱版本排第一
+        val songSearch = repo.searchComplex("勋章")
+        assertEquals(com.concept.music.data.model.SearchIntent.SONG, songSearch.intent)
+        assertTrue("Namesake obscure artist '勋章' must be filtered out", songSearch.artists.isEmpty())
+        assertTrue("Irrelevant playlists must be hidden in SONG intent", songSearch.playlists.isEmpty())
+        assertEquals("鹿晗", songSearch.songs.first().artist)
+        assertEquals("鹿晗", songSearch.primaryArtist?.name)
+
+        // 2. 搜索歌手「鹿晗」：应识别为 ARTIST 意图，保留歌手卡片置顶
+        val artistSearch = repo.searchComplex("鹿晗")
+        assertEquals(com.concept.music.data.model.SearchIntent.ARTIST, artistSearch.intent)
+        assertEquals(1, artistSearch.artists.size)
+        assertEquals("鹿晗", artistSearch.artists.first().name)
+    }
 }

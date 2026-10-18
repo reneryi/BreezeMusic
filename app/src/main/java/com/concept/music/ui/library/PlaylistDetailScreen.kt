@@ -46,6 +46,9 @@ import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.conceptFloatingCardColor
+import com.concept.music.ui.theme.conceptSheetContainerColor
+import com.concept.music.ui.theme.softCardClickable
+import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.LibraryViewModel
 import kotlinx.coroutines.launch
 
@@ -337,7 +340,7 @@ fun PlaylistDetailScreen(
                                         Column(
                                             horizontalAlignment = Alignment.CenterHorizontally,
                                             modifier = Modifier
-                                                .clickable { sortMode = mode }
+                                                .softClickable { sortMode = mode }
                                                 .padding(vertical = 2.dp)
                                         ) {
                                             Text(
@@ -539,8 +542,7 @@ fun PlaylistDetailScreen(
                     shadowElevation = 8.dp,
                     modifier = Modifier
                         .height(42.dp)
-                        .clip(CircleShape)
-                        .clickable {
+                        .softCardClickable {
                             if (playingSongIndex >= 0) {
                                 coroutineScope.launch {
                                     // LazyColumn 前 2 项为 Header 与搜索栏，曲目索引从 2 开始；留出 2 行上下文使定位更直观
@@ -665,6 +667,8 @@ fun PlaylistDetailScreen(
         val targetSong = selectedSongForMenu!!
         ModalBottomSheet(
             onDismissRequest = { selectedSongForMenu = null },
+            containerColor = conceptSheetContainerColor(),
+            contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
         ) {
             Column(
@@ -723,7 +727,7 @@ fun PlaylistDetailScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
+                        .softClickable {
                             val s = targetSong
                             selectedSongForMenu = null
                             songToAddToPlaylist = s
@@ -748,7 +752,7 @@ fun PlaylistDetailScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
+                            .softClickable {
                                 val s = targetSong
                                 selectedSongForMenu = null
                                 viewModel.removeSongFromPlaylist(currentPlaylist.listId, s) { _, msg ->
@@ -911,8 +915,7 @@ private fun PlaylistHeaderCard(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(18.dp))
-                            .clickable(enabled = songCount > 0, onClick = onPlayAll)
+                            .softClickable(enabled = songCount > 0, onClick = onPlayAll)
                     ) {
                         Box(
                             modifier = Modifier
@@ -942,8 +945,7 @@ private fun PlaylistHeaderCard(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable(onClick = onCollectClick)
+                                .softClickable(onClick = onCollectClick)
                                 .padding(horizontal = 6.dp, vertical = 4.dp)
                         ) {
                             Icon(
@@ -970,7 +972,7 @@ private fun PlaylistHeaderCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { isDescExpanded = !isDescExpanded }
+                    .softClickable { isDescExpanded = !isDescExpanded }
             ) {
                 Text(
                     text = playlist!!.description.trim(),

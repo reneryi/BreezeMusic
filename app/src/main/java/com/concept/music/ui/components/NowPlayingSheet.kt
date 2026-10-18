@@ -7,10 +7,12 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.AnimatedContent
@@ -72,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -84,7 +87,13 @@ import com.concept.music.data.model.Song
 import com.concept.music.data.model.SongDetailInfo
 import com.concept.music.service.SystemLyricBridge
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.SystemBarAppearanceEffect
 import com.concept.music.ui.theme.VipGold
+import com.concept.music.ui.theme.conceptElevatedSurfaceColor
+import com.concept.music.ui.theme.conceptSheetContainerColor
+import com.concept.music.ui.theme.isConceptDarkTheme
+import com.concept.music.ui.theme.softCardClickable
+import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.CoverStyle
 import com.concept.music.ui.viewmodel.LyricAlignment
 import com.concept.music.ui.viewmodel.PlayMode
@@ -93,6 +102,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -160,7 +170,6 @@ fun NowPlayingSheet(
     if (song == null) return
 
     val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showLyricView by remember { mutableStateOf(false) }
     var showQueueSheet by remember { mutableStateOf(false) }
     var showQualityDialog by remember { mutableStateOf(false) }
@@ -173,6 +182,29 @@ fun NowPlayingSheet(
     var showFocusPodSheet by remember { mutableStateOf(false) }
     var showDoubleTapHeart by remember { mutableStateOf(false) }
     var showMoreControlSheet by remember { mutableStateOf(false) }
+
+    // 拦截系统返回键：若正处于全屏歌词则先返回封面，否则收起播放页
+    BackHandler {
+        if (showLyricView) {
+            showLyricView = false
+        } else {
+            onDismiss()
+        }
+    }
+
+    // 播放页采用沉浸式流体暗黑背景，同步将系统状态栏与导航栏图标设为浅色，彻底消除顶部状态栏割裂白条
+    SystemBarAppearanceEffect(forceDarkBars = true)
+
+    // 支持顶部区域下滑手势收起播放页
+    var verticalDragOffset by remember { mutableFloatStateOf(0f) }
+    val animatedVerticalOffset by animateFloatAsState(
+        targetValue = verticalDragOffset.coerceAtLeast(0f),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "playerVerticalOffset"
+    )
 
     // [MOT-02] 状态提升：将唱片/封面旋转角度状态提升至 NowPlayingSheet 顶层，切换歌词/封面不重置相位
     val rotationAnim = remember(song.id) { Animatable(0f) }
@@ -214,75 +246,105 @@ fun NowPlayingSheet(
         label = "meshSecondary"
     )
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        dragHandle = null,
-        containerColor = Color(0xFF0A0E17)
+    // 全屏 Edge-to-Edge 沉浸式播放页容器（彻底消除 ModalBottomSheet 预留系统状态栏导致的顶部独立白条）
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .offset { IntOffset(0, animatedVerticalOffset.roundToInt()) }
+            .background(Color(0xFF0A0E17))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {}
+            )
     ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            // 1. 沉浸式氛围背景（统一采用 24x24 超轻量降采样柔光背景，彻底杜绝全屏 RenderEffect 高斯模糊引发的 Skia AGTM 解析风暴与 GPU 抢占）
-            if (song.coverUrl.isNotEmpty()) {
-                val bgImageModel = remember(song.coverUrl) {
-                    ImageRequest.Builder(context)
-                        .data(song.coverUrl)
-                        .size(24, 24)
-                        .allowHardware(false)
-                        .crossfade(true)
-                        .build()
-                }
-                AsyncImage(
-                    model = bgImageModel,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    filterQuality = FilterQuality.High,
-                    modifier = Modifier.fillMaxSize()
-                )
+        // 1. 沉浸式氛围背景（统一采用 24x24 超轻量降采样柔光背景，彻底杜绝全屏 RenderEffect 高斯模糊引发的 Skia AGTM 解析风暴与 GPU 抢占）
+        if (song.coverUrl.isNotEmpty()) {
+            val bgImageModel = remember(song.coverUrl) {
+                ImageRequest.Builder(context)
+                    .data(song.coverUrl)
+                    .size(24, 24)
+                    .allowHardware(false)
+                    .crossfade(true)
+                    .build()
             }
-            // 渐变暗黑柔光遮罩 + [UI-01] 动态流光双核径向网格渐变
+            AsyncImage(
+                model = bgImageModel,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                filterQuality = FilterQuality.High,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        // 渐变暗黑柔光遮罩 + [UI-01] 动态流光双核径向网格渐变
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0xD80A0E17),
+                            Color(0xE8101726),
+                            Color(0xF60A0E17)
+                        )
+                    )
+                )
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            meshColorPrimary.copy(alpha = 0.52f),
+                            Color.Transparent
+                        ),
+                        center = Offset(220f, 380f),
+                        radius = 950f
+                    )
+                )
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            meshColorSecondary.copy(alpha = 0.45f),
+                            Color.Transparent
+                        ),
+                        center = Offset(820f, 1380f),
+                        radius = 1050f
+                    )
+                )
+        )
+
+        // 2. 主体内容布局 (Edge-to-Edge 状态栏与导航栏内边距)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // 顶部控制栏 (支持下滑收起、歌曲名、歌手、真实音质胶囊)
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0xD80A0E17),
-                                Color(0xE8101726),
-                                Color(0xF60A0E17)
-                            )
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragStart = { verticalDragOffset = 0f },
+                            onVerticalDrag = { change, dragAmount ->
+                                if (dragAmount > 0f || verticalDragOffset > 0f) {
+                                    change.consume()
+                                    verticalDragOffset = (verticalDragOffset + dragAmount).coerceAtLeast(0f)
+                                }
+                            },
+                            onDragCancel = { verticalDragOffset = 0f },
+                            onDragEnd = {
+                                if (verticalDragOffset > 150f) {
+                                    verticalDragOffset = 0f
+                                    onDismiss()
+                                } else {
+                                    verticalDragOffset = 0f
+                                }
+                            }
                         )
-                    )
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                meshColorPrimary.copy(alpha = 0.52f),
-                                Color.Transparent
-                            ),
-                            center = Offset(220f, 380f),
-                            radius = 950f
-                        )
-                    )
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                meshColorSecondary.copy(alpha = 0.45f),
-                                Color.Transparent
-                            ),
-                            center = Offset(820f, 1380f),
-                            radius = 1050f
-                        )
-                    )
-            )
-
-            // 2. 主体内容布局 (概念版极简布局，非拟态，对齐图一)
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-                    .padding(horizontal = 20.dp, vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    }
             ) {
-                // 顶部控制栏 (下拉收起、歌曲名、歌手、真实音质胶囊)
                 TopHeaderBar(
                     title = song.title,
                     artist = song.artist,
@@ -291,457 +353,443 @@ fun NowPlayingSheet(
                     onDismiss = onDismiss,
                     onQualityClick = { showQualityDialog = true }
                 )
+            }
 
-                // 顶部状态胶囊栏（[INNOV-01] 副歌刷刷模式 + 听整首解锁按钮 + 睡眠定时 + 倍速变调）
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            // 顶部状态胶囊栏（[INNOV-01] 副歌刷刷模式 + 听整首解锁按钮 + 睡眠定时 + 倍速变调）
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // [INNOV-01] 副歌刷刷（高潮速听）胶囊开关
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (climaxModeEnabled) VipGold.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.08f),
+                    border = BorderStroke(
+                        0.6.dp,
+                        if (climaxModeEnabled) VipGold.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.16f)
+                    ),
+                    modifier = Modifier.softCardClickable(onClick = onToggleClimaxMode)
                 ) {
-                    // [INNOV-01] 副歌刷刷（高潮速听）胶囊开关
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Whatshot,
+                            contentDescription = "副歌刷刷",
+                            tint = if (climaxModeEnabled) VipGold else Color.White.copy(alpha = 0.65f),
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        val climaxLabel = when {
+                            !climaxModeEnabled -> "副歌刷刷"
+                            climaxUnlockedForCurrentSong -> "副歌刷刷 · 已解锁整首"
+                            else -> "副歌速听 ${formatDuration(song.effectiveClimaxStartMs)}-${formatDuration(song.effectiveClimaxEndMs)}"
+                        }
+                        Text(
+                            text = climaxLabel,
+                            color = if (climaxModeEnabled) VipGold else Color.White.copy(alpha = 0.72f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                // 当处于副歌刷刷且尚未解锁本曲整首时，展示一键「听整首」高亮胶囊
+                if (climaxModeEnabled && !climaxUnlockedForCurrentSong) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = if (climaxModeEnabled) VipGold.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.08f),
-                        border = BorderStroke(
-                            0.6.dp,
-                            if (climaxModeEnabled) VipGold.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.16f)
-                        ),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable(onClick = onToggleClimaxMode)
+                        color = ConceptPrimary.copy(alpha = 0.22f),
+                        border = BorderStroke(0.6.dp, ConceptPrimary.copy(alpha = 0.65f)),
+                        modifier = Modifier.softCardClickable {
+                            onUnlockFullTrack()
+                            Toast.makeText(context, "已解锁本曲完整播放", Toast.LENGTH_SHORT).show()
+                        }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.Whatshot,
-                                contentDescription = "副歌刷刷",
-                                tint = if (climaxModeEnabled) VipGold else Color.White.copy(alpha = 0.65f),
-                                modifier = Modifier.size(12.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            val climaxLabel = when {
-                                !climaxModeEnabled -> "副歌刷刷"
-                                climaxUnlockedForCurrentSong -> "副歌刷刷 · 已解锁整首"
-                                else -> "副歌速听 ${formatDuration(song.effectiveClimaxStartMs)}-${formatDuration(song.effectiveClimaxEndMs)}"
-                            }
-                            Text(
-                                text = climaxLabel,
-                                color = if (climaxModeEnabled) VipGold else Color.White.copy(alpha = 0.72f),
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-
-                    // 当处于副歌刷刷且尚未解锁本曲整首时，展示一键「听整首」高亮胶囊
-                    if (climaxModeEnabled && !climaxUnlockedForCurrentSong) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = ConceptPrimary.copy(alpha = 0.22f),
-                            border = BorderStroke(0.6.dp, ConceptPrimary.copy(alpha = 0.65f)),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    onUnlockFullTrack()
-                                    Toast.makeText(context, "已解锁本曲完整播放", Toast.LENGTH_SHORT).show()
-                                }
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.LockOpen,
-                                    contentDescription = "听整首",
-                                    tint = ConceptPrimary,
-                                    modifier = Modifier.size(11.dp)
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-                                Text(
-                                    text = "听整首",
-                                    color = ConceptPrimary,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-
-                    // [P1-3] 原唱 / 伴奏 (KTV 模式) 胶囊切换
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (accompanyModeEnabled) ConceptPrimary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.08f),
-                        border = BorderStroke(
-                            0.6.dp,
-                            if (accompanyModeEnabled) ConceptPrimary.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.16f)
-                        ),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable {
-                                onToggleAccompanyMode()
-                                Toast.makeText(
-                                    context,
-                                    if (!accompanyModeEnabled) "已切换至伴奏模式 (KTV)" else "已恢复原唱模式",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Mic,
-                                contentDescription = "伴奏切换",
-                                tint = if (accompanyModeEnabled) ConceptPrimary else Color.White.copy(alpha = 0.65f),
-                                modifier = Modifier.size(12.dp)
+                                imageVector = Icons.Rounded.LockOpen,
+                                contentDescription = "听整首",
+                                tint = ConceptPrimary,
+                                modifier = Modifier.size(11.dp)
                             )
                             Spacer(modifier = Modifier.width(3.dp))
                             Text(
-                                text = if (accompanyModeEnabled) "伴奏中" else "伴奏",
-                                color = if (accompanyModeEnabled) ConceptPrimary else Color.White.copy(alpha = 0.72f),
+                                text = "听整首",
+                                color = ConceptPrimary,
                                 fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
+                }
 
-                    // [创新点1] 概念胶囊工作台 (Focus Pod) 快捷入口
+                // [P1-3] 原唱 / 伴奏 (KTV 模式) 胶囊切换
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (accompanyModeEnabled) ConceptPrimary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.08f),
+                    border = BorderStroke(
+                        0.6.dp,
+                        if (accompanyModeEnabled) ConceptPrimary.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.16f)
+                    ),
+                    modifier = Modifier.softCardClickable {
+                        onToggleAccompanyMode()
+                        Toast.makeText(
+                            context,
+                            if (!accompanyModeEnabled) "已切换至伴奏模式 (KTV)" else "已恢复原唱模式",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Mic,
+                            contentDescription = "伴奏切换",
+                            tint = if (accompanyModeEnabled) ConceptPrimary else Color.White.copy(alpha = 0.65f),
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = if (accompanyModeEnabled) "伴奏中" else "伴奏",
+                            color = if (accompanyModeEnabled) ConceptPrimary else Color.White.copy(alpha = 0.72f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                // [创新点1] 概念胶囊工作台 (Focus Pod) 快捷入口
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color.White.copy(alpha = 0.08f),
+                    border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.16f)),
+                    modifier = Modifier.softCardClickable { showFocusPodSheet = true }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.SelfImprovement,
+                            contentDescription = "概念胶囊",
+                            tint = ConceptPrimary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = "心流舱",
+                            color = Color.White.copy(alpha = 0.78f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                if (sleepTimerRemainingSec > 0L || sleepStopAfterCurrentSong) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = Color.White.copy(alpha = 0.08f),
-                        border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.16f)),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { showFocusPodSheet = true }
+                        color = ConceptPrimary.copy(alpha = 0.16f),
+                        border = BorderStroke(0.5.dp, ConceptPrimary.copy(alpha = 0.4f)),
+                        modifier = Modifier.softCardClickable { showSleepTimerDialog = true }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.SelfImprovement,
-                                contentDescription = "概念胶囊",
+                                imageVector = Icons.Rounded.Bedtime,
+                                contentDescription = null,
                                 tint = ConceptPrimary,
                                 modifier = Modifier.size(12.dp)
                             )
-                            Spacer(modifier = Modifier.width(3.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            val timerText = if (sleepTimerRemainingSec > 0L) {
+                                formatDuration(sleepTimerRemainingSec * 1000L)
+                            } else {
+                                "播完当前停"
+                            }
                             Text(
-                                text = "心流舱",
-                                color = Color.White.copy(alpha = 0.78f),
+                                text = timerText,
+                                color = ConceptPrimary,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
-
-                    if (sleepTimerRemainingSec > 0L || sleepStopAfterCurrentSong) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = ConceptPrimary.copy(alpha = 0.16f),
-                            border = BorderStroke(0.5.dp, ConceptPrimary.copy(alpha = 0.4f)),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { showSleepTimerDialog = true }
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Bedtime,
-                                    contentDescription = null,
-                                    tint = ConceptPrimary,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                val timerText = if (sleepTimerRemainingSec > 0L) {
-                                    formatDuration(sleepTimerRemainingSec * 1000L)
-                                } else {
-                                    "播完当前停"
-                                }
-                                Text(
-                                    text = timerText,
-                                    color = ConceptPrimary,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
-                    if (playbackSpeed != 1.0f || playbackPitch != 1.0f) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = VipGold.copy(alpha = 0.16f),
-                            border = BorderStroke(0.5.dp, VipGold.copy(alpha = 0.4f)),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { showSpeedPitchDialog = true }
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Speed,
-                                    contentDescription = null,
-                                    tint = VipGold,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "${String.format(java.util.Locale.getDefault(), "%.2f", playbackSpeed)}x",
-                                    color = VipGold,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    }
                 }
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                // 主舞台区（丝滑 AnimatedContent 3D 缩放转场：四大多态机芯封面 VS 全屏沉浸歌词）
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AnimatedContent(
-                        targetState = showLyricView,
-                        transitionSpec = {
-                            (fadeIn(tween(260)) + scaleIn(initialScale = 0.94f, animationSpec = tween(260))) togetherWith
-                                (fadeOut(tween(180)) + scaleOut(targetScale = 0.96f, animationSpec = tween(180)))
-                        },
-                        label = "stageSwitch"
-                    ) { isLyricStage ->
-                        if (!isLyricStage) {
-                            Column(
-                                modifier = Modifier.fillMaxSize(),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                var dragDeltaX by remember { mutableFloatStateOf(0f) }
-                                LaunchedEffect(showDoubleTapHeart) {
-                                    if (showDoubleTapHeart) {
-                                        delay(750L)
-                                        showDoubleTapHeart = false
-                                    }
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .pointerInput(song.id, isFavorite) {
-                                            detectTapGestures(
-                                                onTap = { showLyricView = true },
-                                                onDoubleTap = {
-                                                    showDoubleTapHeart = true
-                                                    if (!isFavorite) {
-                                                        onToggleFavorite()
-                                                    }
-                                                }
-                                            )
-                                        }
-                                        .pointerInput(song.id) {
-                                            detectHorizontalDragGestures(
-                                                onDragStart = { dragDeltaX = 0f },
-                                                onHorizontalDrag = { change, dragAmount ->
-                                                    change.consume()
-                                                    dragDeltaX += dragAmount
-                                                },
-                                                onDragEnd = {
-                                                    if (dragDeltaX < -110f) {
-                                                        onNext()
-                                                    } else if (dragDeltaX > 110f) {
-                                                        onPrevious()
-                                                    }
-                                                    dragDeltaX = 0f
-                                                }
-                                            )
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    when (coverStyle) {
-                                        CoverStyle.VINYL -> {
-                                            VinylRecordView(
-                                                coverUrl = song.coverUrl,
-                                                isPlaying = isPlaying,
-                                                rotationProvider = { rotationAnim.value % 360f }
-                                            )
-                                        }
-                                        CoverStyle.CASSETTE -> {
-                                            TransparentCassetteDeckView(
-                                                song = song,
-                                                isPlaying = isPlaying,
-                                                rotationProvider = { rotationAnim.value % 360f },
-                                                currentPositionMs = currentPositionMs,
-                                                durationMs = durationMs
-                                            )
-                                        }
-                                        CoverStyle.POSTER -> {
-                                            MagazinePosterCoverView(
-                                                song = song,
-                                                lyricData = lyricData,
-                                                currentLyricIndex = currentLyricIndex,
-                                                currentPositionMs = currentPositionMs,
-                                                showTranslation = showTranslation
-                                            )
-                                        }
-                                        CoverStyle.CIRCLE -> {
-                                            CircleCoverView(
-                                                coverUrl = song.coverUrl,
-                                                rotationProvider = { rotationAnim.value % 360f }
-                                            )
-                                        }
-                                    }
-                                    androidx.compose.animation.AnimatedVisibility(
-                                        visible = showDoubleTapHeart,
-                                        enter = fadeIn(tween(120)),
-                                        exit = fadeOut(tween(320))
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Favorite,
-                                            contentDescription = null,
-                                            tint = Color(0xFFFF5252).copy(alpha = 0.92f),
-                                            modifier = Modifier.size(92.dp)
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(16.dp))
-
-                                if (coverStyle != CoverStyle.POSTER) {
-                                    LyricPreviewBar(
-                                        lyricData = lyricData,
-                                        currentLyricIndex = currentLyricIndex,
-                                        showTranslation = showTranslation,
-                                        onClick = { showLyricView = true }
-                                    )
-                                } else {
-                                    Surface(
-                                        color = Color.White.copy(alpha = 0.08f),
-                                        shape = RoundedCornerShape(14.dp),
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .clickable { showLyricView = true }
-                                    ) {
-                                        Text(
-                                            text = "杂志海报机芯 · 轻触展开全屏歌词",
-                                            color = Color.White.copy(alpha = 0.65f),
-                                            fontSize = 11.sp,
-                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        } else {
-                            ImmersiveLyricView(
-                                lyricData = lyricData,
-                                currentLyricIndex = currentLyricIndex,
-                                currentPositionMs = currentPositionMs,
-                                showTranslation = showTranslation,
-                                showPhonetic = showPhonetic,
-                                lyricFontSize = lyricFontSize,
-                                lyricAlignment = lyricAlignment,
-                                lyricWordByWord = lyricWordByWord,
-                                onLineClick = onSeekToLyricLine,
-                                onToggleTranslation = onToggleTranslation,
-                                onTogglePhonetic = onTogglePhonetic,
-                                onOpenPoster = { showLyricPosterDialog = true },
-                                onOpenSettings = { showLyricSettingsDialog = true },
-                                onCloseLyric = { showLyricView = false }
+                if (playbackSpeed != 1.0f || playbackPitch != 1.0f) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = VipGold.copy(alpha = 0.16f),
+                        border = BorderStroke(0.5.dp, VipGold.copy(alpha = 0.4f)),
+                        modifier = Modifier.softCardClickable { showSpeedPitchDialog = true }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Speed,
+                                contentDescription = null,
+                                tint = VipGold,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "${String.format(java.util.Locale.getDefault(), "%.2f", playbackSpeed)}x",
+                                color = VipGold,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
                 }
+            }
 
-                // 现代对称式五键快捷功能船坞（取代原先压在封面右侧的突兀双圆按钮）
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // 1. 喜欢收藏
-                    IconButton(onClick = onToggleFavorite) {
-                        Icon(
-                            imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                            contentDescription = "我喜欢",
-                            tint = if (isFavorite) Color(0xFFFF5252) else Color.White.copy(alpha = 0.8f),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
+            Spacer(modifier = Modifier.height(6.dp))
 
-                    // 2. 音效与白噪音混音舱
-                    IconButton(onClick = { showAudioEffectDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Rounded.GraphicEq,
-                            contentDescription = "蝰蛇音效与白噪音",
-                            tint = ConceptPrimary,
-                            modifier = Modifier.size(23.dp)
-                        )
-                    }
+            // 主舞台区（丝滑 AnimatedContent 3D 缩放转场：四大多态机芯封面 VS 全屏沉浸歌词）
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                AnimatedContent(
+                    targetState = showLyricView,
+                    transitionSpec = {
+                        (fadeIn(tween(260)) + scaleIn(initialScale = 0.94f, animationSpec = tween(260))) togetherWith
+                            (fadeOut(tween(180)) + scaleOut(targetScale = 0.96f, animationSpec = tween(180)))
+                    },
+                    label = "stageSwitch"
+                ) { isLyricStage ->
+                    if (!isLyricStage) {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            var dragDeltaX by remember { mutableFloatStateOf(0f) }
+                            LaunchedEffect(showDoubleTapHeart) {
+                                if (showDoubleTapHeart) {
+                                    delay(750L)
+                                    showDoubleTapHeart = false
+                                }
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .pointerInput(song.id, isFavorite) {
+                                        detectTapGestures(
+                                            onTap = { showLyricView = true },
+                                            onDoubleTap = {
+                                                showDoubleTapHeart = true
+                                                if (!isFavorite) {
+                                                    onToggleFavorite()
+                                                }
+                                            }
+                                        )
+                                    }
+                                    .pointerInput(song.id) {
+                                        detectHorizontalDragGestures(
+                                            onDragStart = { dragDeltaX = 0f },
+                                            onHorizontalDrag = { change, dragAmount ->
+                                                change.consume()
+                                                dragDeltaX += dragAmount
+                                            },
+                                            onDragEnd = {
+                                                if (dragDeltaX < -110f) {
+                                                    onNext()
+                                                } else if (dragDeltaX > 110f) {
+                                                    onPrevious()
+                                                }
+                                                dragDeltaX = 0f
+                                            }
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                when (coverStyle) {
+                                    CoverStyle.VINYL -> {
+                                        VinylRecordView(
+                                            coverUrl = song.coverUrl,
+                                            isPlaying = isPlaying,
+                                            rotationProvider = { rotationAnim.value % 360f }
+                                        )
+                                    }
+                                    CoverStyle.CASSETTE -> {
+                                        TransparentCassetteDeckView(
+                                            song = song,
+                                            isPlaying = isPlaying,
+                                            rotationProvider = { rotationAnim.value % 360f },
+                                            currentPositionMs = currentPositionMs,
+                                            durationMs = durationMs
+                                        )
+                                    }
+                                    CoverStyle.POSTER -> {
+                                        MagazinePosterCoverView(
+                                            song = song,
+                                            lyricData = lyricData,
+                                            currentLyricIndex = currentLyricIndex,
+                                            currentPositionMs = currentPositionMs,
+                                            showTranslation = showTranslation
+                                        )
+                                    }
+                                    CoverStyle.CIRCLE -> {
+                                        CircleCoverView(
+                                            coverUrl = song.coverUrl,
+                                            rotationProvider = { rotationAnim.value % 360f }
+                                        )
+                                    }
+                                }
+                                androidx.compose.animation.AnimatedVisibility(
+                                    visible = showDoubleTapHeart,
+                                    enter = fadeIn(tween(120)),
+                                    exit = fadeOut(tween(320))
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Favorite,
+                                        contentDescription = null,
+                                        tint = Color(0xFFFF5252).copy(alpha = 0.92f),
+                                        modifier = Modifier.size(92.dp)
+                                    )
+                                }
+                            }
 
-                    // 3. 加入其他歌单
-                    IconButton(onClick = onAddToPlaylist) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                            contentDescription = "加入歌单",
-                            tint = Color.White.copy(alpha = 0.8f),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
+                            Spacer(modifier = Modifier.height(16.dp))
 
-                    // 4. 歌词金句黑胶海报
-                    IconButton(onClick = { showLyricPosterDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Rounded.PhotoFilter,
-                            contentDescription = "歌词黑胶海报",
-                            tint = Color.White.copy(alpha = 0.8f),
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    // 5. 更多功能 Bento 控制台
-                    IconButton(onClick = { showMoreControlSheet = true }) {
-                        Icon(
-                            imageVector = Icons.Rounded.GridView,
-                            contentDescription = "更多功能控制台",
-                            tint = Color.White.copy(alpha = 0.85f),
-                            modifier = Modifier.size(22.dp)
+                            if (coverStyle != CoverStyle.POSTER) {
+                                LyricPreviewBar(
+                                    lyricData = lyricData,
+                                    currentLyricIndex = currentLyricIndex,
+                                    showTranslation = showTranslation,
+                                    onClick = { showLyricView = true }
+                                )
+                            } else {
+                                Surface(
+                                    color = Color.White.copy(alpha = 0.08f),
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier.softCardClickable { showLyricView = true }
+                                ) {
+                                    Text(
+                                        text = "杂志海报机芯 · 轻触展开全屏歌词",
+                                        color = Color.White.copy(alpha = 0.65f),
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        ImmersiveLyricView(
+                            lyricData = lyricData,
+                            currentLyricIndex = currentLyricIndex,
+                            currentPositionMs = currentPositionMs,
+                            showTranslation = showTranslation,
+                            showPhonetic = showPhonetic,
+                            lyricFontSize = lyricFontSize,
+                            lyricAlignment = lyricAlignment,
+                            lyricWordByWord = lyricWordByWord,
+                            onLineClick = onSeekToLyricLine,
+                            onToggleTranslation = onToggleTranslation,
+                            onTogglePhonetic = onTogglePhonetic,
+                            onOpenPoster = { showLyricPosterDialog = true },
+                            onOpenSettings = { showLyricSettingsDialog = true },
+                            onCloseLyric = { showLyricView = false }
                         )
                     }
                 }
-
-                // 底部播放控制台 (进度条Slider + 高潮区间金标、中层三键控制、最底栏：循环模式、XX评论⌃、队列)
-                PlayerControlsSection(
-                    currentPositionMs = currentPositionMs,
-                    durationMs = durationMs,
-                    climaxStartMs = song.effectiveClimaxStartMs,
-                    climaxEndMs = song.effectiveClimaxEndMs,
-                    highlightClimaxRange = climaxModeEnabled && !climaxUnlockedForCurrentSong,
-                    isPlaying = isPlaying,
-                    playMode = playMode,
-                    commentCount = commentCount,
-                    onSeekTo = onSeekTo,
-                    onTogglePlay = onTogglePlay,
-                    onPrevious = onPrevious,
-                    onNext = onNext,
-                    onCyclePlayMode = onCyclePlayMode,
-                    onOpenComments = onOpenComments,
-                    onQueueClick = { showQueueSheet = true }
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
             }
+
+            // 现代对称式五键快捷功能船坞
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 1. 喜欢收藏
+                IconButton(onClick = onToggleFavorite) {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                        contentDescription = "我喜欢",
+                        tint = if (isFavorite) Color(0xFFFF5252) else Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                // 2. 音效与白噪音混音舱
+                IconButton(onClick = { showAudioEffectDialog = true }) {
+                    Icon(
+                        imageVector = Icons.Rounded.GraphicEq,
+                        contentDescription = "蝰蛇音效与白噪音",
+                        tint = ConceptPrimary,
+                        modifier = Modifier.size(23.dp)
+                    )
+                }
+
+                // 3. 加入其他歌单
+                IconButton(onClick = onAddToPlaylist) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                        contentDescription = "加入歌单",
+                        tint = Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                // 4. 歌词金句黑胶海报
+                IconButton(onClick = { showLyricPosterDialog = true }) {
+                    Icon(
+                        imageVector = Icons.Rounded.PhotoFilter,
+                        contentDescription = "歌词黑胶海报",
+                        tint = Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                // 5. 更多功能 Bento 控制台
+                IconButton(onClick = { showMoreControlSheet = true }) {
+                    Icon(
+                        imageVector = Icons.Rounded.GridView,
+                        contentDescription = "更多功能控制台",
+                        tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            }
+
+            // 底部播放控制台 (进度条Slider + 高潮区间金标、中层三键控制、最底栏：循环模式、XX评论⌃、队列)
+            PlayerControlsSection(
+                currentPositionMs = currentPositionMs,
+                durationMs = durationMs,
+                climaxStartMs = song.effectiveClimaxStartMs,
+                climaxEndMs = song.effectiveClimaxEndMs,
+                highlightClimaxRange = climaxModeEnabled && !climaxUnlockedForCurrentSong,
+                isPlaying = isPlaying,
+                playMode = playMode,
+                commentCount = commentCount,
+                onSeekTo = onSeekTo,
+                onTogglePlay = onTogglePlay,
+                onPrevious = onPrevious,
+                onNext = onNext,
+                onCyclePlayMode = onCyclePlayMode,
+                onOpenComments = onOpenComments,
+                onQueueClick = { showQueueSheet = true }
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
         }
     }
 
-    // 播放队列弹窗 ([维度2 + 创新点2] 自动居中定位 + AI 情绪漫游重排 + 封面与音质高定美化)
+    // 播放队列弹窗 ([维度2 + 创新点2] 自动居中定位 + AI 情绪漫游重排 + 封面与音质高定美化 + 主题自适应)
     if (showQueueSheet) {
         QueueBottomSheet(
             queue = queue,
@@ -760,7 +808,7 @@ fun NowPlayingSheet(
         )
     }
 
-    // 全新设计的 Bento 网格化「更多功能控制台」抽屉（替代原先简陋的 DropdownMenu）
+    // 全新设计的 Bento 网格化「更多功能控制台」抽屉（主题自适应）
     if (showMoreControlSheet) {
         PlayerMoreControlSheet(
             song = song,
@@ -977,9 +1025,7 @@ private fun TopHeaderBar(
                 if (isGoldQuality) VipGold.copy(alpha = 0.5f) else ConceptPrimary.copy(alpha = 0.45f)
             ),
             shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
-                .clickable(onClick = onQualityClick)
+            modifier = Modifier.softCardClickable(onClick = onQualityClick)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -1175,9 +1221,6 @@ private fun CircleCoverView(
 
 /**
  * [INNOV-02] 概念多态机芯 B：透明机械磁带机芯 (Transparent Cassette Deck)
- * - 双齿轮随播放状态同步旋转
- * - 左右磁带卷径随播放进度 [currentPositionMs / durationMs] 实时消长（左卷缩小、右卷增大）
- * - 底部磁头走带轨迹与导轮物理细节刻画
  */
 @Composable
 private fun TransparentCassetteDeckView(
@@ -1210,7 +1253,6 @@ private fun TransparentCassetteDeckView(
             .border(1.5.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(22.dp)),
         contentAlignment = Alignment.Center
     ) {
-        // 半透明封面底纹映射
         if (song.coverUrl.isNotBlank()) {
             AsyncImage(
                 model = song.coverUrl,
@@ -1222,12 +1264,10 @@ private fun TransparentCassetteDeckView(
             )
         }
 
-        // 机械磁带核心 Canvas (外壳螺丝、贴纸窗、左右消长磁带卷、六齿机械转轮、底部磁头导轨)
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
 
-            // 1. 四角金属机械螺丝
             val screwR = 4.5.dp.toPx()
             val screwOffsets = listOf(
                 Offset(16.dp.toPx(), 16.dp.toPx()),
@@ -1245,7 +1285,6 @@ private fun TransparentCassetteDeckView(
                 )
             }
 
-            // 2. 上层复古赛博贴纸标签区边框与装饰彩条
             val labelLeft = w * 0.08f
             val labelTop = h * 0.11f
             val labelWidth = w * 0.84f
@@ -1269,7 +1308,6 @@ private fun TransparentCassetteDeckView(
                 cornerRadius = CornerRadius(1.dp.toPx(), 1.dp.toPx())
             )
 
-            // 3. 中央透明视窗框
             val winLeft = w * 0.15f
             val winTop = h * 0.34f
             val winWidth = w * 0.70f
@@ -1288,7 +1326,6 @@ private fun TransparentCassetteDeckView(
                 style = Stroke(width = 1.dp.toPx())
             )
 
-            // 4. 左右磁带卷中心与随进度实时消长的磁带半径
             val leftCenter = Offset(w * 0.32f, h * 0.53f)
             val rightCenter = Offset(w * 0.68f, h * 0.53f)
             val maxSpoolR = 44.dp.toPx()
@@ -1296,7 +1333,6 @@ private fun TransparentCassetteDeckView(
             val leftTapeR = maxSpoolR - (maxSpoolR - minSpoolR) * progress
             val rightTapeR = minSpoolR + (maxSpoolR - minSpoolR) * progress
 
-            // 底部走带导轮与磁头座梯形仓
             val headTrapPath = Path().apply {
                 moveTo(w * 0.22f, h)
                 lineTo(w * 0.27f, h * 0.81f)
@@ -1311,7 +1347,6 @@ private fun TransparentCassetteDeckView(
                 style = Stroke(width = 1.dp.toPx())
             )
 
-            // 磁带走带连接线（左卷 -> 左导轮 -> 磁头 -> 右导轮 -> 右卷）
             val leftRoller = Offset(w * 0.24f, h * 0.87f)
             val rightRoller = Offset(w * 0.76f, h * 0.87f)
             val tapeLineColor = Color(0xFF5D4234)
@@ -1334,7 +1369,6 @@ private fun TransparentCassetteDeckView(
                 strokeWidth = 1.5.dp.toPx()
             )
 
-            // 磁头金属感应块
             drawRoundRect(
                 color = if (isPlaying) ConceptPrimary.copy(alpha = 0.85f) else Color(0xFF7D8594),
                 topLeft = Offset(w * 0.46f, h * 0.84f),
@@ -1342,9 +1376,7 @@ private fun TransparentCassetteDeckView(
                 cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx())
             )
 
-            // 绘制左右两个消长磁带盘 + 6齿旋转齿轮
             fun drawSpool(center: Offset, tapeRadius: Float, angle: Float) {
-                // 棕色磁带盘体与同心纹理
                 drawCircle(color = Color(0xFF281B15), radius = tapeRadius, center = center)
                 drawCircle(
                     color = Color.White.copy(alpha = 0.07f),
@@ -1352,12 +1384,10 @@ private fun TransparentCassetteDeckView(
                     center = center,
                     style = Stroke(width = 1.dp.toPx())
                 )
-                // 白色卷芯外环
                 val coreR = 19.dp.toPx()
                 drawCircle(color = Color(0xFFDDE3EC), radius = coreR, center = center)
                 drawCircle(color = Color(0xFF141820), radius = coreR * 0.76f, center = center)
 
-                // 6齿旋转机械内芯
                 rotate(degrees = angle, pivot = center) {
                     for (i in 0 until 6) {
                         rotate(degrees = i * 60f, pivot = center) {
@@ -1370,7 +1400,6 @@ private fun TransparentCassetteDeckView(
                         }
                     }
                 }
-                // 中心轴承深孔
                 drawCircle(color = Color(0xFF090B0E), radius = 6.dp.toPx(), center = center)
             }
 
@@ -1379,7 +1408,6 @@ private fun TransparentCassetteDeckView(
             drawSpool(rightCenter, rightTapeR, deg)
         }
 
-        // 顶部贴纸歌曲标题与 SIDE-A 铭牌文字层
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -1424,8 +1452,6 @@ private fun TransparentCassetteDeckView(
 
 /**
  * [INNOV-02] 概念多态机芯 C：杂志海报机芯 (Magazine Poster Mode)
- * - 大圆角先锋艺术画报构图 + 顶部期刊编号与音频规格印记
- * - 封面底部内嵌实时 KRC 逐字高亮大字报歌词与双语对照
  */
 @Composable
 private fun MagazinePosterCoverView(
@@ -1445,7 +1471,6 @@ private fun MagazinePosterCoverView(
             .background(Color(0xFF171A22))
             .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(26.dp))
     ) {
-        // 1. 全画幅高精度专辑封面
         if (song.coverUrl.isNotBlank()) {
             AsyncImage(
                 model = song.coverUrl,
@@ -1467,7 +1492,6 @@ private fun MagazinePosterCoverView(
             }
         }
 
-        // 2. 杂志级上下暗角渐变遮罩，保证大字报歌词可读性
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -1481,7 +1505,6 @@ private fun MagazinePosterCoverView(
                 )
         )
 
-        // 3. 顶部先锋期刊刊头
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -1512,7 +1535,6 @@ private fun MagazinePosterCoverView(
             }
         }
 
-        // 4. 底部内嵌 KRC 逐字高亮大字报歌词与曲目签名
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
@@ -1625,8 +1647,7 @@ private fun LyricPreviewBar(
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
         modifier = Modifier
             .fillMaxWidth(0.9f)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .softCardClickable(onClick = onClick)
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -1671,7 +1692,7 @@ private fun LyricPreviewBar(
 }
 
 /**
- * 全屏沉浸歌词视图 (居中双行滚动，右侧悬浮纵向药丸【译】与【歌词设置】按钮，参考图二)
+ * 全屏沉浸歌词视图 (居中双行滚动，右侧悬浮纵向药丸【译】与【歌词设置】按钮)
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1769,7 +1790,6 @@ private fun ImmersiveLyricView(
                     val isScrubTarget = isUserScrubbing && index == scrubLineIndex
                     val distance = abs(index - currentLyricIndex)
 
-                    // [MOT-01] 空间景深缩放与渐变透明度
                     val lineScale by animateFloatAsState(
                         targetValue = when {
                             isCurrent -> 1.0f
@@ -1793,8 +1813,7 @@ private fun ImmersiveLyricView(
                                 scaleY = lineScale
                             }
                             .then(if (depthBlurDp > 0.dp) Modifier.blur(depthBlurDp) else Modifier)
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable {
+                            .softClickable {
                                 isUserScrubbing = false
                                 onLineClick(index)
                             }
@@ -1805,7 +1824,6 @@ private fun ImmersiveLyricView(
                             horizontalAlignment = horizontalAlignment,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            // [创新点3] 真·音译注音层（罗马音 / 粤拼 / 韩文音译）展示在原文上方
                             val phoneticText = line.phonetic
                             if (showPhonetic && !phoneticText.isNullOrBlank()) {
                                 Text(
@@ -1823,7 +1841,6 @@ private fun ImmersiveLyricView(
                             }
 
                             if (isCurrent && line.hasWordTiming && lyricWordByWord) {
-                                // [MOT-01] KRC 逐字流体横扫渐变 + 正在唱字上浮与微幅脉冲放大 (统一字重杜绝宽度抖动)
                                 FlowRow(
                                     horizontalArrangement = if (lyricAlignment == LyricAlignment.CENTER) Arrangement.Center else Arrangement.Start,
                                     verticalArrangement = Arrangement.Center,
@@ -1891,7 +1908,6 @@ private fun ImmersiveLyricView(
                                     }
                                 }
                             } else {
-                                // 常规行渲染（结合距离阶梯透明度）
                                 val distanceAlpha = when {
                                     isScrubTarget -> 0.92f
                                     distance == 1 -> 0.68f
@@ -1914,7 +1930,6 @@ private fun ImmersiveLyricView(
                                 )
                             }
 
-                            // 中文双行翻译展示 (若开启且存在翻译，参考图二)
                             val trans = line.translation
                             if (showTranslation && !trans.isNullOrBlank()) {
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -1937,7 +1952,6 @@ private fun ImmersiveLyricView(
                 }
             }
 
-            // 手动滑动歌词时的中心时间轴准星与一键跳转胶囊 ([BUG-06] & [INT-02])
             AnimatedVisibility(
                 visible = isUserScrubbing && scrubLineIndex in lyricData.lines.indices,
                 enter = fadeIn(tween(180)),
@@ -1952,7 +1966,7 @@ private fun ImmersiveLyricView(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(end = 44.dp) // 避让右侧悬浮药丸按钮
+                        .padding(end = 44.dp)
                 ) {
                     Surface(
                         shape = RoundedCornerShape(10.dp),
@@ -1977,12 +1991,10 @@ private fun ImmersiveLyricView(
                     Surface(
                         shape = RoundedCornerShape(14.dp),
                         color = ConceptPrimary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable {
-                                isUserScrubbing = false
-                                onLineClick(scrubLineIndex)
-                            }
+                        modifier = Modifier.softCardClickable {
+                            isUserScrubbing = false
+                            onLineClick(scrubLineIndex)
+                        }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -2017,9 +2029,7 @@ private fun ImmersiveLyricView(
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = Color.White.copy(alpha = 0.08f),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable(onClick = onCloseLyric)
+                modifier = Modifier.softCardClickable(onClick = onCloseLyric)
             ) {
                 Text(
                     text = "轻触返回封面",
@@ -2030,7 +2040,7 @@ private fun ImmersiveLyricView(
             }
         }
 
-        // 右侧悬浮纵向控制栏 (【音】音译注音开关、【译】中文翻译开关、【海报】黑胶歌词卡生成、【歌词设置】)
+        // 右侧悬浮纵向控制栏
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
@@ -2038,14 +2048,11 @@ private fun ImmersiveLyricView(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // [创新点3] 药丸状【音】音译注音开关按钮
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = if (showPhonetic) ConceptPrimary.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.1f),
                 border = BorderStroke(1.dp, if (showPhonetic) ConceptPrimary else Color.White.copy(alpha = 0.2f)),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { onTogglePhonetic() }
+                modifier = Modifier.softCardClickable { onTogglePhonetic() }
             ) {
                 Box(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -2060,14 +2067,11 @@ private fun ImmersiveLyricView(
                 }
             }
 
-            // 药丸状【译】开关按钮
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = if (showTranslation) ConceptPrimary.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.1f),
                 border = BorderStroke(1.dp, if (showTranslation) ConceptPrimary else Color.White.copy(alpha = 0.2f)),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { onToggleTranslation() }
+                modifier = Modifier.softCardClickable { onToggleTranslation() }
             ) {
                 Box(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
@@ -2082,7 +2086,6 @@ private fun ImmersiveLyricView(
                 }
             }
 
-            // [创新点5] 【歌词金句黑胶海报】生成按钮
             IconButton(
                 onClick = onOpenPoster,
                 modifier = Modifier
@@ -2097,7 +2100,6 @@ private fun ImmersiveLyricView(
                 )
             }
 
-            // 【歌词设置】按钮 (调音/齿轮图标)
             IconButton(
                 onClick = onOpenSettings,
                 modifier = Modifier
@@ -2138,7 +2140,6 @@ private fun LyricSettingsDialog(
         title = { Text("歌词显示设置", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                // 字号调节
                 Column {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -2156,7 +2157,6 @@ private fun LyricSettingsDialog(
                     )
                 }
 
-                // 歌词对齐方式
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -2177,7 +2177,6 @@ private fun LyricSettingsDialog(
                     }
                 }
 
-                // 逐字卡拉OK动效
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -2191,9 +2190,8 @@ private fun LyricSettingsDialog(
                     )
                 }
 
-                HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
-                // [INNOV-05] 全局悬浮逐字歌词胶囊
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -2214,7 +2212,6 @@ private fun LyricSettingsDialog(
                     )
                 }
 
-                // [INNOV-05] 系统状态栏歌词广播
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -2243,7 +2240,7 @@ private fun LyricSettingsDialog(
 }
 
 /**
- * 底部播放控制台 (仿照图一：进度滑块 + [INNOV-01] 副歌黄金区间高亮锚点、中层三键控制、最底栏：循环模式、XX评论⌃、队列)
+ * 底部播放控制台
  */
 @Composable
 private fun PlayerControlsSection(
@@ -2279,7 +2276,6 @@ private fun PlayerControlsSection(
             .padding(horizontal = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 1. 上层进度条 Slider + [INNOV-01] 副歌高潮黄金区间光轨标记
         Box(
             modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center
@@ -2347,7 +2343,7 @@ private fun PlayerControlsSection(
                         fontSize = 10.sp,
                         fontWeight = if (highlightClimaxRange) FontWeight.Bold else FontWeight.Normal
                     ),
-                    modifier = Modifier.clickable { onSeekTo(climaxStartMs) }
+                    modifier = Modifier.softClickable { onSeekTo(climaxStartMs) }
                 )
             }
             Text(
@@ -2361,13 +2357,11 @@ private fun PlayerControlsSection(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // 2. 中层控制：上一首、大圆播放/暂停、下一首
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 上一首
             IconButton(
                 onClick = onPrevious,
                 modifier = Modifier.size(52.dp)
@@ -2382,14 +2376,12 @@ private fun PlayerControlsSection(
 
             Spacer(modifier = Modifier.width(36.dp))
 
-            // 大圆播放/暂停
             Surface(
                 color = ConceptPrimary,
                 shape = CircleShape,
                 modifier = Modifier
                     .size(68.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onTogglePlay),
+                    .softCardClickable(onClick = onTogglePlay),
                 shadowElevation = 8.dp
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -2404,7 +2396,6 @@ private fun PlayerControlsSection(
 
             Spacer(modifier = Modifier.width(36.dp))
 
-            // 下一首
             IconButton(
                 onClick = onNext,
                 modifier = Modifier.size(52.dp)
@@ -2420,7 +2411,6 @@ private fun PlayerControlsSection(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // 3. 最底栏布局 (仿照图一：左侧循环模式、中间【XX 评论 ⌃】、右侧播放列表)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2428,7 +2418,6 @@ private fun PlayerControlsSection(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 左侧：播放循环模式切换按钮
             IconButton(
                 onClick = {
                     onCyclePlayMode()
@@ -2454,14 +2443,11 @@ private fun PlayerControlsSection(
                 )
             }
 
-            // 中间：【XX 评论 ⌃】 (仿照图一，如“评论 ⌃”或“54 评论 ⌃”，点击直接进入独立全屏评论页面)
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = Color.White.copy(alpha = 0.08f),
                 border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable(onClick = onOpenComments)
+                modifier = Modifier.softCardClickable(onClick = onOpenComments)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -2485,7 +2471,6 @@ private fun PlayerControlsSection(
                 }
             }
 
-            // 右侧：播放列表/队列按钮
             IconButton(
                 onClick = onQueueClick,
                 modifier = Modifier.size(40.dp)
@@ -2502,11 +2487,11 @@ private fun PlayerControlsSection(
 }
 
 /**
- * 播放队列 BottomSheet（高定视觉升级版：含封面缩略图、动态音波、音质标签、循环模式切换与 AI 漫游重排）
+ * 播放队列 BottomSheet（公开可复用组件，支持从底部悬浮控制条或播放页打开，全面适配浅色/深色主题）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun QueueBottomSheet(
+fun QueueBottomSheet(
     queue: List<Song>,
     currentIndex: Int,
     playMode: PlayMode = PlayMode.REPEAT_ALL,
@@ -2520,7 +2505,14 @@ private fun QueueBottomSheet(
 ) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var activeMoodMode by remember { mutableStateOf("") }
+
+    val isDark = isConceptDarkTheme()
+    val sheetBg = conceptSheetContainerColor()
+    val cardBg = conceptElevatedSurfaceColor()
+    val textPrimary = MaterialTheme.colorScheme.onSurface
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
 
     LaunchedEffect(currentIndex) {
         if (currentIndex in queue.indices) {
@@ -2530,7 +2522,9 @@ private fun QueueBottomSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF0E1422),
+        sheetState = sheetState,
+        containerColor = sheetBg,
+        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     ) {
         Column(
@@ -2553,16 +2547,16 @@ private fun QueueBottomSheet(
                         text = "播放队列",
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.ExtraBold,
-                            color = Color.White,
+                            color = textPrimary,
                             fontSize = 18.sp
                         )
                     )
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = ConceptPrimary.copy(alpha = 0.16f)
+                        color = ConceptPrimary.copy(alpha = 0.14f)
                     ) {
                         Text(
-                            text = "${currentIndex + 1} / ${queue.size}",
+                            text = "${(currentIndex + 1).coerceAtMost(queue.size.coerceAtLeast(1))} / ${queue.size}",
                             color = ConceptPrimary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
@@ -2577,18 +2571,17 @@ private fun QueueBottomSheet(
                     }
                     Surface(
                         shape = RoundedCornerShape(10.dp),
-                        color = Color.White.copy(alpha = 0.07f),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .clickable(onClick = onCyclePlayMode)
+                        color = cardBg,
+                        border = BorderStroke(0.6.dp, textPrimary.copy(alpha = 0.08f)),
+                        modifier = Modifier.softCardClickable(onClick = onCyclePlayMode)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
-                            Icon(modeIcon, contentDescription = null, tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(13.dp))
+                            Icon(modeIcon, contentDescription = null, tint = textSecondary, modifier = Modifier.size(13.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(modeName, color = Color.White.copy(alpha = 0.8f), fontSize = 11.sp)
+                            Text(modeName, color = textSecondary, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
@@ -2608,12 +2601,12 @@ private fun QueueBottomSheet(
                 }
             }
 
-            // [创新点2] AI 情绪与声学漫游过渡 (Harmonic & Mood DJ) 玻璃卡片重排栏
+            // [创新点2] AI 情绪与声学漫游过渡 (Harmonic & Mood DJ) 卡片重排栏
             if (queue.size > 2) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFF151E31),
-                    border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.08f)),
+                    color = cardBg,
+                    border = BorderStroke(0.6.dp, textPrimary.copy(alpha = 0.07f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp)
@@ -2633,7 +2626,7 @@ private fun QueueBottomSheet(
                         )
                         Text(
                             text = "AI 漫游:",
-                            color = Color.White.copy(alpha = 0.72f),
+                            color = textSecondary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -2645,15 +2638,14 @@ private fun QueueBottomSheet(
                             val isSelected = activeMoodMode == modeKey
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = if (isSelected) ConceptPrimary else ConceptPrimary.copy(alpha = 0.14f),
+                                color = if (isSelected) ConceptPrimary else ConceptPrimary.copy(alpha = 0.12f),
                                 border = BorderStroke(
                                     0.6.dp,
-                                    if (isSelected) ConceptPrimary else ConceptPrimary.copy(alpha = 0.38f)
+                                    if (isSelected) ConceptPrimary else ConceptPrimary.copy(alpha = 0.32f)
                                 ),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .clickable {
+                                    .softCardClickable {
                                         activeMoodMode = modeKey
                                         val msg = onReorderQueueByMood(modeKey)
                                         if (msg.isNotBlank()) {
@@ -2679,140 +2671,169 @@ private fun QueueBottomSheet(
                 }
             }
 
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.heightIn(max = 440.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                itemsIndexed(queue, key = { idx, item -> "${item.id}_$idx" }) { index, item ->
-                    val isPlayingThis = index == currentIndex
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (isPlayingThis) ConceptPrimary.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.03f),
-                        border = if (isPlayingThis) BorderStroke(0.8.dp, ConceptPrimary.copy(alpha = 0.45f)) else null,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .clickable { onSongClick(item) }
-                    ) {
-                        Row(
+            if (queue.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
+                            contentDescription = null,
+                            tint = textSecondary.copy(alpha = 0.45f),
+                            modifier = Modifier.size(44.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "播放队列为空，去挑选喜欢的音乐吧",
+                            color = textSecondary,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.heightIn(max = 440.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    itemsIndexed(queue, key = { idx, item -> "${item.id}_$idx" }) { index, item ->
+                        val isPlayingThis = index == currentIndex
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isPlayingThis) {
+                                ConceptPrimary.copy(alpha = if (isDark) 0.16f else 0.10f)
+                            } else {
+                                cardBg.copy(alpha = if (isDark) 0.55f else 0.72f)
+                            },
+                            border = if (isPlayingThis) {
+                                BorderStroke(0.8.dp, ConceptPrimary.copy(alpha = 0.45f))
+                            } else {
+                                BorderStroke(0.5.dp, textPrimary.copy(alpha = 0.04f))
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .softCardClickable { onSongClick(item) }
                         ) {
-                            Box(
-                                modifier = Modifier.width(28.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                if (isPlayingThis) {
-                                    PlayingAudioWaveIndicator()
-                                } else {
-                                    Text(
-                                        text = (index + 1).toString().padStart(2, '0'),
-                                        color = Color.White.copy(alpha = 0.42f),
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                }
-                            }
-
-                            // 歌曲圆角小封面
-                            Box(
+                            Row(
                                 modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFF1C2436)),
-                                contentAlignment = Alignment.Center
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (item.coverUrl.isNotBlank()) {
-                                    AsyncImage(
-                                        model = item.coverUrl,
-                                        contentDescription = item.title,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Rounded.MusicNote,
-                                        contentDescription = null,
-                                        tint = Color.White.copy(alpha = 0.4f),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.width(10.dp))
-
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = item.title,
-                                    color = if (isPlayingThis) ConceptPrimary else Color.White,
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        fontWeight = if (isPlayingThis) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 14.sp
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (item.isHiRes) {
-                                        BadgeTag(text = "Hi-Res", color = VipGold)
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                    } else if (item.isLossless) {
-                                        BadgeTag(text = "SQ", color = ConceptPrimary)
-                                        Spacer(modifier = Modifier.width(4.dp))
+                                Box(
+                                    modifier = Modifier.width(28.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    if (isPlayingThis) {
+                                        PlayingAudioWaveIndicator()
+                                    } else {
+                                        Text(
+                                            text = (index + 1).toString().padStart(2, '0'),
+                                            color = textSecondary.copy(alpha = 0.65f),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
                                     }
+                                }
+
+                                // 歌曲圆角小封面
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(ConceptPrimary.copy(alpha = 0.10f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (item.coverUrl.isNotBlank()) {
+                                        AsyncImage(
+                                            model = item.coverUrl,
+                                            contentDescription = item.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Rounded.MusicNote,
+                                            contentDescription = null,
+                                            tint = ConceptPrimary.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.width(10.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = item.artist,
-                                        color = if (isPlayingThis) ConceptPrimary.copy(alpha = 0.78f) else Color.White.copy(alpha = 0.55f),
-                                        fontSize = 11.5.sp,
+                                        text = item.title,
+                                        color = if (isPlayingThis) ConceptPrimary else textPrimary,
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            fontWeight = if (isPlayingThis) FontWeight.Bold else FontWeight.Medium,
+                                            fontSize = 14.sp
+                                        ),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (item.isHiRes) {
+                                            BadgeTag(text = "Hi-Res", color = VipGold)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                        } else if (item.isLossless) {
+                                            BadgeTag(text = "SQ", color = ConceptPrimary)
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                        }
+                                        Text(
+                                            text = item.artist,
+                                            color = if (isPlayingThis) ConceptPrimary.copy(alpha = 0.82f) else textSecondary,
+                                            fontSize = 11.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
-                            }
 
-                            if (!isPlayingThis && index != currentIndex + 1) {
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color.White.copy(alpha = 0.06f),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
+                                if (!isPlayingThis && index != currentIndex + 1) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = textPrimary.copy(alpha = 0.06f),
+                                        modifier = Modifier.softCardClickable {
                                             val targetIdx = (currentIndex + 1).coerceIn(0, queue.lastIndex)
                                             onMoveQueueItem(index, targetIdx)
                                             Toast.makeText(context, "已将「${item.title}」移至下一首播放", Toast.LENGTH_SHORT).show()
                                         }
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.VerticalAlignTop,
-                                            contentDescription = "下一首播",
-                                            tint = Color.White.copy(alpha = 0.65f),
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(2.dp))
-                                        Text("置顶", color = Color.White.copy(alpha = 0.65f), fontSize = 10.sp)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.VerticalAlignTop,
+                                                contentDescription = "下一首播",
+                                                tint = textSecondary,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(2.dp))
+                                            Text("置顶", color = textSecondary, fontSize = 10.sp)
+                                        }
                                     }
+                                    Spacer(modifier = Modifier.width(4.dp))
                                 }
-                                Spacer(modifier = Modifier.width(4.dp))
-                            }
 
-                            IconButton(
-                                onClick = { onRemoveSong(item) },
-                                modifier = Modifier.size(30.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Close,
-                                    contentDescription = "移除",
-                                    tint = Color.White.copy(alpha = 0.42f),
-                                    modifier = Modifier.size(16.dp)
-                                )
+                                IconButton(
+                                    onClick = { onRemoveSong(item) },
+                                    modifier = Modifier.size(30.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Close,
+                                        contentDescription = "移除",
+                                        tint = textSecondary.copy(alpha = 0.65f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -2825,7 +2846,7 @@ private fun QueueBottomSheet(
 }
 
 /**
- * 全新 Bento 网格化播放页「更多功能控制台」抽屉（彻底取代简陋的文字 DropdownMenu）
+ * 全新 Bento 网格化播放页「更多功能控制台」抽屉（自适应浅色/深色主题）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2852,10 +2873,18 @@ private fun PlayerMoreControlSheet(
 ) {
     val systemLyricState by SystemLyricBridge.state.collectAsState()
     val floatingLyricEnabled = systemLyricState.floatingCapsuleEnabled
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    val sheetBg = conceptSheetContainerColor()
+    val tileBg = conceptElevatedSurfaceColor()
+    val textPrimary = MaterialTheme.colorScheme.onSurface
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF0E1422),
+        sheetState = sheetState,
+        containerColor = sheetBg,
+        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     ) {
         Column(
@@ -2874,7 +2903,7 @@ private fun PlayerMoreControlSheet(
                     modifier = Modifier
                         .size(50.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF1B2436)),
+                        .background(ConceptPrimary.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center
                 ) {
                     if (song.coverUrl.isNotBlank()) {
@@ -2892,7 +2921,7 @@ private fun PlayerMoreControlSheet(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = song.title,
-                        color = Color.White,
+                        color = textPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         maxLines = 1,
@@ -2900,7 +2929,7 @@ private fun PlayerMoreControlSheet(
                     )
                     Text(
                         text = "${song.artist} · ${song.album.ifBlank { "单曲" }}",
-                        color = Color.White.copy(alpha = 0.58f),
+                        color = textSecondary,
                         fontSize = 12.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -2910,7 +2939,7 @@ private fun PlayerMoreControlSheet(
                     onClick = onAddToPlaylist,
                     shape = RoundedCornerShape(14.dp),
                     colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = ConceptPrimary.copy(alpha = 0.18f),
+                        containerColor = ConceptPrimary.copy(alpha = 0.16f),
                         contentColor = ConceptPrimary
                     ),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
@@ -2925,7 +2954,7 @@ private fun PlayerMoreControlSheet(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = "概念多态机芯皮肤",
-                    color = Color.White.copy(alpha = 0.72f),
+                    color = textSecondary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -2943,15 +2972,14 @@ private fun PlayerMoreControlSheet(
                         }
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = if (selected) ConceptPrimary.copy(alpha = 0.20f) else Color(0xFF161F31),
+                            color = if (selected) ConceptPrimary.copy(alpha = 0.16f) else tileBg,
                             border = BorderStroke(
                                 if (selected) 1.2.dp else 0.6.dp,
-                                if (selected) ConceptPrimary else Color.White.copy(alpha = 0.08f)
+                                if (selected) ConceptPrimary else textPrimary.copy(alpha = 0.08f)
                             ),
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable { onSelectCoverStyle(style) }
+                                .softCardClickable { onSelectCoverStyle(style) }
                         ) {
                             Column(
                                 modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp),
@@ -2961,12 +2989,12 @@ private fun PlayerMoreControlSheet(
                                 Icon(
                                     imageVector = icon,
                                     contentDescription = style.label,
-                                    tint = if (selected) ConceptPrimary else Color.White.copy(alpha = 0.7f),
+                                    tint = if (selected) ConceptPrimary else textSecondary,
                                     modifier = Modifier.size(22.dp)
                                 )
                                 Text(
                                     text = style.label,
-                                    color = if (selected) ConceptPrimary else Color.White.copy(alpha = 0.85f),
+                                    color = if (selected) ConceptPrimary else textPrimary,
                                     fontSize = 11.sp,
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                     maxLines = 1
@@ -2981,7 +3009,7 @@ private fun PlayerMoreControlSheet(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = "音频实验室与播放工具",
-                    color = Color.White.copy(alpha = 0.72f),
+                    color = textSecondary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -3071,12 +3099,11 @@ private fun PlayerMoreControlSheet(
             // 4. 底部音频技术参数按钮
             Surface(
                 shape = RoundedCornerShape(14.dp),
-                color = Color(0xFF161F31),
-                border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.08f)),
+                color = tileBg,
+                border = BorderStroke(0.6.dp, textPrimary.copy(alpha = 0.08f)),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .clickable(onClick = onOpenSongDetail)
+                    .softCardClickable(onClick = onOpenSongDetail)
             ) {
                 Row(
                     modifier = Modifier
@@ -3088,9 +3115,9 @@ private fun PlayerMoreControlSheet(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Rounded.Info, contentDescription = null, tint = ConceptPrimary, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text("查看音频技术参数、采样率与文件特征码 (Hash)", color = Color.White.copy(alpha = 0.88f), fontSize = 12.5.sp)
+                        Text("查看音频技术参数、采样率与文件特征码 (Hash)", color = textPrimary, fontSize = 12.5.sp)
                     }
-                    Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(18.dp))
+                    Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = textSecondary, modifier = Modifier.size(18.dp))
                 }
             }
 
@@ -3109,16 +3136,18 @@ private fun BentoControlTile(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val tileBg = conceptElevatedSurfaceColor()
+    val textPrimary = MaterialTheme.colorScheme.onSurface
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = if (active) activeColor.copy(alpha = 0.18f) else Color(0xFF161F31),
+        color = if (active) activeColor.copy(alpha = 0.16f) else tileBg,
         border = BorderStroke(
             if (active) 1.dp else 0.6.dp,
-            if (active) activeColor.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.07f)
+            if (active) activeColor.copy(alpha = 0.55f) else textPrimary.copy(alpha = 0.07f)
         ),
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+        modifier = modifier.softCardClickable(onClick = onClick)
     ) {
         Column(
             modifier = Modifier.padding(vertical = 12.dp, horizontal = 6.dp),
@@ -3128,19 +3157,19 @@ private fun BentoControlTile(
             Icon(
                 imageVector = icon,
                 contentDescription = title,
-                tint = if (active) activeColor else Color.White.copy(alpha = 0.8f),
+                tint = if (active) activeColor else textPrimary.copy(alpha = 0.82f),
                 modifier = Modifier.size(21.dp)
             )
             Text(
                 text = title,
-                color = if (active) activeColor else Color.White.copy(alpha = 0.9f),
+                color = if (active) activeColor else textPrimary,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1
             )
             Text(
                 text = subtitle,
-                color = if (active) activeColor.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.48f),
+                color = if (active) activeColor.copy(alpha = 0.85f) else textSecondary,
                 fontSize = 9.5.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -3189,8 +3218,7 @@ private fun QualitySelectDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onSelect() }
+                            .softClickable { onSelect() }
                             .padding(vertical = 10.dp, horizontal = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -3365,7 +3393,6 @@ private fun SpeedPitchDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                // 播放倍速
                 Column {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -3400,7 +3427,6 @@ private fun SpeedPitchDialog(
                     }
                 }
 
-                // 音调 Pitch
                 Column {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -3424,7 +3450,6 @@ private fun SpeedPitchDialog(
                     )
                 }
 
-                // 倍速联动变调开关（仿黑胶慢放/快放声效）
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -3500,7 +3525,6 @@ private suspend fun extractCoverMeshColors(
             val hsv = FloatArray(3)
             android.graphics.Color.RGBToHSV(rAvg, gAvg, bAvg, hsv)
             hsv[0] = (hsv[0] + hueShift) % 360f
-            // [维度4] 钳制封面动态取色明度在 15%..28% 区间，确保白色歌词在任何亮色封面上都具备 WCAG AA 高对比度
             hsv[1] = hsv[1].coerceIn(0.38f, 0.72f)
             hsv[2] = hsv[2].coerceIn(0.15f, 0.28f)
             return Color(android.graphics.Color.HSVToColor(hsv))
@@ -3526,7 +3550,6 @@ private fun formatDuration(ms: Long): String {
     val seconds = totalSeconds % 60
     return String.format(java.util.Locale.getDefault(), "%02d:%02d", minutes, seconds)
 }
-
 
 /**
  * [维度1] 实时检测当前音频输出路由（蓝牙耳机 / 有线耳机 / USB DAC / 扬声器）

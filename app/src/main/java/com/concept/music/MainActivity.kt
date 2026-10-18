@@ -7,15 +7,15 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +41,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.concept.music.data.kugou.AuthState
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
 import com.concept.music.ui.account.AccountsScreen
@@ -52,8 +53,10 @@ import com.concept.music.ui.components.CreatePlaylistDialog
 import com.concept.music.ui.components.FloatingLyricOverlay
 import com.concept.music.ui.components.MiniPlayerBar
 import com.concept.music.ui.components.NowPlayingSheet
+import com.concept.music.ui.components.QueueBottomSheet
 import com.concept.music.ui.components.SongActionBottomSheet
 import com.concept.music.ui.components.SongDetailSheet
+import com.concept.music.ui.components.VipCenterScreen
 import com.concept.music.ui.home.DailyRecommendScreen
 import com.concept.music.ui.home.HomeScreen
 import com.concept.music.ui.home.NewSongExpressScreen
@@ -115,6 +118,7 @@ fun MainContent(
     val followedArtists by libraryViewModel.followedArtists.collectAsState()
 
     var showNowPlaying by remember { mutableStateOf(false) }
+    var showGlobalQueueSheet by remember { mutableStateOf(false) }
     var showCommentsScreen by remember { mutableStateOf(false) }
 
     var actionSheetSong by remember { mutableStateOf<Song?>(null) }
@@ -150,16 +154,17 @@ fun MainContent(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             bottomBar = {
                 val isSubDetail = currentRoute.startsWith("playlist_detail") ||
-                        currentRoute.startsWith("album_detail") ||
-                        currentRoute.startsWith("artist_detail") ||
-                        currentRoute == "daily_recommend" ||
-                        currentRoute == "new_song_express" ||
-                        currentRoute.startsWith("rank_detail") ||
-                        currentRoute.startsWith("radio_station") ||
-                        currentRoute == "search" ||
-                        currentRoute == "settings"
+                    currentRoute.startsWith("album_detail") ||
+                    currentRoute.startsWith("artist_detail") ||
+                    currentRoute == "daily_recommend" ||
+                    currentRoute == "new_song_express" ||
+                    currentRoute.startsWith("rank_detail") ||
+                    currentRoute.startsWith("radio_station") ||
+                    currentRoute == "search" ||
+                    currentRoute == "settings" ||
+                    currentRoute == "vip_center"
 
-                if (currentRoute != "login" && currentRoute != "accounts" && currentRoute != "settings") {
+                if (currentRoute != "login" && currentRoute != "accounts" && currentRoute != "settings" && currentRoute != "vip_center") {
                     Column {
                         playerUiState.error?.let { error ->
                             Text(
@@ -185,7 +190,7 @@ fun MainContent(
                                 onNextClick = { musicPlayerViewModel.skipToNext() },
                                 onPreviousClick = { musicPlayerViewModel.skipToPrevious() },
                                 onBarClick = { showNowPlaying = true },
-                                onQueueClick = { showNowPlaying = true },
+                                onQueueClick = { showGlobalQueueSheet = true },
                                 modifier = if (isSubDetail) Modifier.navigationBarsPadding() else Modifier
                             )
                         }
@@ -373,6 +378,9 @@ fun MainContent(
                         onOpenSettings = {
                             navController.navigate("settings") { launchSingleTop = true }
                         },
+                        onOpenVipCenter = {
+                            navController.navigate("vip_center") { launchSingleTop = true }
+                        },
                         onOpenArtist = { artistId ->
                             navController.navigate("artist_detail/$artistId") { launchSingleTop = true }
                         },
@@ -382,6 +390,23 @@ fun MainContent(
                         onPlaySong = { song, list ->
                             musicPlayerViewModel.playSong(song, list)
                         }
+                    )
+                }
+
+                // VIP 权益中心与守护沙盒独立页面（替代原固定深色抽屉，完整适配浅色/深色主题）
+                composable("vip_center") {
+                    val account by libraryViewModel.accountState.collectAsState()
+                    val vip by libraryViewModel.vipState.collectAsState()
+                    val isLoggedIn = account.auth == AuthState.READY
+                    VipCenterScreen(
+                        state = vip,
+                        loggedIn = isLoggedIn,
+                        autoClaim = account.current?.autoClaim ?: false,
+                        onBack = { navController.popBackStack() },
+                        onClaim = { libraryViewModel.claimVip() },
+                        onAutoChange = { libraryViewModel.setAuto(it) },
+                        onRefresh = { libraryViewModel.refreshAccount() },
+                        onLogin = openLogin
                     )
                 }
 
@@ -512,80 +537,111 @@ fun MainContent(
             }
         }
 
-        // 沉浸式全屏播放器
-        if (showNowPlaying && playerUiState.currentSong != null) {
-            val currentSong = playerUiState.currentSong!!
-            val isCurrentSongLiked = libraryViewModel.isSongLiked(currentSong, likedSongs)
-
-            NowPlayingSheet(
-                song = currentSong,
-                isPlaying = playerUiState.isPlaying,
-                currentPositionMs = playerUiState.currentPositionMs,
-                durationMs = playerUiState.durationMs,
-                playMode = playerUiState.playMode,
-                currentQualityLabel = playerUiState.currentQualityLabel,
-                lyricData = playerUiState.currentLyric,
-                currentLyricIndex = playerUiState.currentLyricIndex,
+        // 从底部悬浮控制条点击队列按钮直接弹出的播放队列抽屉
+        if (showGlobalQueueSheet && !showNowPlaying) {
+            QueueBottomSheet(
                 queue = playerUiState.playlistQueue,
                 currentIndex = playerUiState.currentIndex,
-                coverStyle = playerUiState.coverStyle,
-                onSelectCoverStyle = { musicPlayerViewModel.setCoverStyle(it) },
-                showTranslation = playerUiState.showTranslation,
-                showPhonetic = playerUiState.showPhonetic,
-                onToggleTranslation = { musicPlayerViewModel.toggleTranslation() },
-                onTogglePhonetic = { musicPlayerViewModel.togglePhonetic() },
-                lyricFontSize = playerUiState.lyricFontSize,
-                lyricAlignment = playerUiState.lyricAlignment,
-                lyricWordByWord = playerUiState.lyricWordByWord,
-                commentCount = playerUiState.commentCount,
-                playbackSpeed = playerUiState.playbackSpeed,
-                playbackPitch = playerUiState.playbackPitch,
-                linkPitchToSpeed = playerUiState.linkPitchToSpeed,
-                sleepTimerRemainingSec = playerUiState.sleepTimerRemainingSec,
-                sleepStopAfterCurrentSong = playerUiState.sleepStopAfterCurrentSong,
-                climaxModeEnabled = playerUiState.climaxModeEnabled,
-                climaxUnlockedForCurrentSong = playerUiState.climaxUnlockedForCurrentSong,
-                accompanyModeEnabled = playerUiState.accompanyModeEnabled,
-                isFavorite = isCurrentSongLiked,
-                onToggleFavorite = {
-                    libraryViewModel.toggleFavorite(currentSong) { _, _, msg ->
-                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                    }
-                },
-                onAddToPlaylist = {
-                    songToAddToPlaylist = currentSong
-                },
-                onSetLyricFontSize = { musicPlayerViewModel.setLyricFontSize(it) },
-                onSetLyricAlignment = { musicPlayerViewModel.setLyricAlignment(it) },
-                onSetLyricWordByWord = { musicPlayerViewModel.setLyricWordByWord(it) },
-                onOpenComments = {
-                    musicPlayerViewModel.loadComments(isRefresh = true)
-                    showCommentsScreen = true
-                },
-                onSetPlaybackSpeed = { musicPlayerViewModel.setPlaybackSpeed(it) },
-                onSetPlaybackPitch = { musicPlayerViewModel.setPlaybackPitch(it) },
-                onSetLinkPitchToSpeed = { musicPlayerViewModel.setLinkPitchToSpeed(it) },
-                onResetSpeedAndPitch = { musicPlayerViewModel.resetSpeedAndPitch() },
-                onSetSleepTimer = { mins, stopAfter -> musicPlayerViewModel.setSleepTimer(mins, stopAfter) },
-                onCancelSleepTimer = { musicPlayerViewModel.cancelSleepTimer() },
-                onToggleClimaxMode = { musicPlayerViewModel.toggleClimaxMode() },
-                onUnlockFullTrack = { musicPlayerViewModel.unlockFullTrackForCurrentSong() },
-                onToggleAccompanyMode = { musicPlayerViewModel.toggleAccompanyMode() },
-                onReorderQueueByMood = { mode -> musicPlayerViewModel.reorderQueueByMood(mode) },
-                onMoveQueueItem = { fromIdx, toIdx -> musicPlayerViewModel.moveQueueItem(fromIdx, toIdx) },
-                songDetail = playerUiState.songDetail,
-                onDismiss = { showNowPlaying = false },
-                onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
-                onPrevious = { musicPlayerViewModel.skipToPrevious() },
-                onNext = { musicPlayerViewModel.skipToNext() },
-                onSeekTo = { musicPlayerViewModel.seekTo(it) },
-                onSeekToLyricLine = { musicPlayerViewModel.seekToLyricLine(it) },
+                playMode = playerUiState.playMode,
                 onCyclePlayMode = { musicPlayerViewModel.cyclePlayMode() },
-                onSelectQuality = { musicPlayerViewModel.setPreferredQuality(it) },
-                onPlayQueueSong = { musicPlayerViewModel.playSong(it, playerUiState.playlistQueue) },
-                onRemoveFromQueue = { musicPlayerViewModel.removeFromQueue(it) },
-                onClearQueue = { musicPlayerViewModel.clearQueue() }
+                onDismiss = { showGlobalQueueSheet = false },
+                onSongClick = { song ->
+                    musicPlayerViewModel.playSong(song, playerUiState.playlistQueue)
+                    showGlobalQueueSheet = false
+                },
+                onRemoveSong = { musicPlayerViewModel.removeFromQueue(it) },
+                onClear = { musicPlayerViewModel.clearQueue() },
+                onReorderQueueByMood = { mode -> musicPlayerViewModel.reorderQueueByMood(mode) },
+                onMoveQueueItem = { fromIdx, toIdx -> musicPlayerViewModel.moveQueueItem(fromIdx, toIdx) }
             )
+        }
+
+        // 沉浸式全屏 Edge-to-Edge 播放器（平滑上下滑入/滑出转场，100% 覆盖顶部系统状态栏）
+        AnimatedVisibility(
+            visible = showNowPlaying && playerUiState.currentSong != null,
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = tween(320, easing = FastOutSlowInEasing)
+            ) + fadeIn(tween(220)),
+            exit = slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = tween(260, easing = FastOutSlowInEasing)
+            ) + fadeOut(tween(200))
+        ) {
+            val currentSong = playerUiState.currentSong
+            if (currentSong != null) {
+                val isCurrentSongLiked = libraryViewModel.isSongLiked(currentSong, likedSongs)
+
+                NowPlayingSheet(
+                    song = currentSong,
+                    isPlaying = playerUiState.isPlaying,
+                    currentPositionMs = playerUiState.currentPositionMs,
+                    durationMs = playerUiState.durationMs,
+                    playMode = playerUiState.playMode,
+                    currentQualityLabel = playerUiState.currentQualityLabel,
+                    lyricData = playerUiState.currentLyric,
+                    currentLyricIndex = playerUiState.currentLyricIndex,
+                    queue = playerUiState.playlistQueue,
+                    currentIndex = playerUiState.currentIndex,
+                    coverStyle = playerUiState.coverStyle,
+                    onSelectCoverStyle = { musicPlayerViewModel.setCoverStyle(it) },
+                    showTranslation = playerUiState.showTranslation,
+                    showPhonetic = playerUiState.showPhonetic,
+                    onToggleTranslation = { musicPlayerViewModel.toggleTranslation() },
+                    onTogglePhonetic = { musicPlayerViewModel.togglePhonetic() },
+                    lyricFontSize = playerUiState.lyricFontSize,
+                    lyricAlignment = playerUiState.lyricAlignment,
+                    lyricWordByWord = playerUiState.lyricWordByWord,
+                    commentCount = playerUiState.commentCount,
+                    playbackSpeed = playerUiState.playbackSpeed,
+                    playbackPitch = playerUiState.playbackPitch,
+                    linkPitchToSpeed = playerUiState.linkPitchToSpeed,
+                    sleepTimerRemainingSec = playerUiState.sleepTimerRemainingSec,
+                    sleepStopAfterCurrentSong = playerUiState.sleepStopAfterCurrentSong,
+                    climaxModeEnabled = playerUiState.climaxModeEnabled,
+                    climaxUnlockedForCurrentSong = playerUiState.climaxUnlockedForCurrentSong,
+                    accompanyModeEnabled = playerUiState.accompanyModeEnabled,
+                    isFavorite = isCurrentSongLiked,
+                    onToggleFavorite = {
+                        libraryViewModel.toggleFavorite(currentSong) { _, _, msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onAddToPlaylist = {
+                        songToAddToPlaylist = currentSong
+                    },
+                    onSetLyricFontSize = { musicPlayerViewModel.setLyricFontSize(it) },
+                    onSetLyricAlignment = { musicPlayerViewModel.setLyricAlignment(it) },
+                    onSetLyricWordByWord = { musicPlayerViewModel.setLyricWordByWord(it) },
+                    onOpenComments = {
+                        musicPlayerViewModel.loadComments(isRefresh = true)
+                        showCommentsScreen = true
+                    },
+                    onSetPlaybackSpeed = { musicPlayerViewModel.setPlaybackSpeed(it) },
+                    onSetPlaybackPitch = { musicPlayerViewModel.setPlaybackPitch(it) },
+                    onSetLinkPitchToSpeed = { musicPlayerViewModel.setLinkPitchToSpeed(it) },
+                    onResetSpeedAndPitch = { musicPlayerViewModel.resetSpeedAndPitch() },
+                    onSetSleepTimer = { mins, stopAfter -> musicPlayerViewModel.setSleepTimer(mins, stopAfter) },
+                    onCancelSleepTimer = { musicPlayerViewModel.cancelSleepTimer() },
+                    onToggleClimaxMode = { musicPlayerViewModel.toggleClimaxMode() },
+                    onUnlockFullTrack = { musicPlayerViewModel.unlockFullTrackForCurrentSong() },
+                    onToggleAccompanyMode = { musicPlayerViewModel.toggleAccompanyMode() },
+                    onReorderQueueByMood = { mode -> musicPlayerViewModel.reorderQueueByMood(mode) },
+                    onMoveQueueItem = { fromIdx, toIdx -> musicPlayerViewModel.moveQueueItem(fromIdx, toIdx) },
+                    songDetail = playerUiState.songDetail,
+                    onDismiss = { showNowPlaying = false },
+                    onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
+                    onPrevious = { musicPlayerViewModel.skipToPrevious() },
+                    onNext = { musicPlayerViewModel.skipToNext() },
+                    onSeekTo = { musicPlayerViewModel.seekTo(it) },
+                    onSeekToLyricLine = { musicPlayerViewModel.seekToLyricLine(it) },
+                    onCyclePlayMode = { musicPlayerViewModel.cyclePlayMode() },
+                    onSelectQuality = { musicPlayerViewModel.setPreferredQuality(it) },
+                    onPlayQueueSong = { musicPlayerViewModel.playSong(it, playerUiState.playlistQueue) },
+                    onRemoveFromQueue = { musicPlayerViewModel.removeFromQueue(it) },
+                    onClearQueue = { musicPlayerViewModel.clearQueue() }
+                )
+            }
         }
 
         if (showCommentsScreen && playerUiState.currentSong != null) {

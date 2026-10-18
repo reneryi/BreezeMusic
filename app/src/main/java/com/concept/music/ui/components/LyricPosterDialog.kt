@@ -1,5 +1,7 @@
 package com.concept.music.ui.components
 
+import com.concept.music.ui.theme.softCardClickable
+
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
@@ -245,7 +247,7 @@ fun LyricPosterDialog(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
-                                .clickable {
+                                .softCardClickable {
                                     selectedIndices = if (checked) {
                                         selectedIndices - idx
                                     } else if (selectedIndices.size < 4) {

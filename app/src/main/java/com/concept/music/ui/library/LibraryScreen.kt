@@ -58,6 +58,8 @@ import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
+import com.concept.music.ui.theme.softCardClickable
+import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.LibraryViewModel
 import kotlinx.coroutines.launch
 
@@ -76,6 +78,7 @@ fun LibraryScreen(
     onOpenPlaylist: (String) -> Unit,
     onOpenSearch: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onOpenVipCenter: (() -> Unit)? = null,
     onOpenArtist: (String) -> Unit = {},
     onOpenAlbum: (String) -> Unit = {},
     onPlaySong: (Song, List<Song>) -> Unit = { _, _ -> },
@@ -178,7 +181,7 @@ fun LibraryScreen(
                 VipBannerCard(
                     state = vip,
                     loggedIn = isLoggedIn,
-                    onClick = { showVipCenterSheet = true },
+                    onClick = { if (onOpenVipCenter != null) onOpenVipCenter() else showVipCenterSheet = true },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(14.dp))
@@ -240,8 +243,7 @@ fun LibraryScreen(
                     shadowElevation = if (isDark) 0.dp else 3.dp,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(24.dp))
-                        .clickable { showFocusPodSheet = true }
+                        .softCardClickable { showFocusPodSheet = true }
                 ) {
                     Row(
                         modifier = Modifier
@@ -351,7 +353,7 @@ fun LibraryScreen(
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier
-                                        .clickable {
+                                        .softClickable {
                                             viewModel.setSelectedAssetTab(idx)
                                             if (idx == 2 && isLoggedIn && followedArtists.isEmpty()) {
                                                 viewModel.refreshFollowedArtists()
@@ -557,8 +559,7 @@ fun LibraryScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .clickable {
+                                    .softClickable {
                                         if (artist.id.isNotBlank()) onOpenArtist(artist.id)
                                     }
                             ) {
@@ -685,8 +686,7 @@ fun LibraryScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .clickable {
+                                        .softClickable {
                                             if (album.albumId.isNotBlank()) onOpenAlbum(album.albumId)
                                         }
                                 ) {
@@ -768,8 +768,7 @@ fun LibraryScreen(
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .clickable {
+                                        .softClickable {
                                             s?.let { songObj ->
                                                 onPlaySong(songObj, allPurchasedSongs.ifEmpty { listOf(songObj) })
                                             }
@@ -1221,8 +1220,7 @@ private fun UnifiedProfileAndGradeCard(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable(onClick = onAccountAction)
+                        .softClickable(onClick = onAccountAction)
                         .padding(horizontal = 6.dp, vertical = 4.dp)
                 ) {
                     Text(
@@ -1288,8 +1286,7 @@ private fun UnifiedProfileAndGradeCard(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(enabled = !isGradeSyncing) { onSyncGrade() }
+                            .softClickable(enabled = !isGradeSyncing) { onSyncGrade() }
                             .padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
                         Icon(
@@ -1359,8 +1356,7 @@ private fun MediaShortcutCard(
         color = Color.Transparent,
         shadowElevation = if (isDark) 0.dp else 4.dp,
         modifier = modifier
-            .clip(RoundedCornerShape(24.dp))
-            .clickable(onClick = onClick)
+            .softCardClickable(onClick = onClick)
     ) {
         Box(
             modifier = Modifier

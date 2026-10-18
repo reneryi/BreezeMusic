@@ -1,5 +1,7 @@
 package com.concept.music.ui.components
 
+import com.concept.music.ui.theme.softCardClickable
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -75,8 +77,7 @@ fun VipBannerCard(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .clickable(onClick = onClick),
+            .softCardClickable(onClick = onClick),
         shape = RoundedCornerShape(24.dp),
         color = Color.Transparent,
         shadowElevation = if (isDark) 0.dp else 5.dp

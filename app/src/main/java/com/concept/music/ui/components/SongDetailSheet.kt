@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,7 +14,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -28,6 +26,7 @@ import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
+import com.concept.music.ui.theme.softClickable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,9 +36,12 @@ fun SongDetailSheet(
 ) {
     val context = LocalContext.current
     val isDark = LocalIsDarkTheme.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        windowInsets = WindowInsets(0, 0, 0, 0),
         containerColor = conceptSheetContainerColor(),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = {
@@ -57,6 +59,7 @@ fun SongDetailSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 8.dp)
+                .navigationBarsPadding()
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -129,8 +132,7 @@ fun SongDetailSheet(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
+                            .softClickable {
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 clipboard.setPrimaryClip(ClipData.newPlainText("Song Hash", detail.fileHash))
                                 Toast.makeText(context, "音频 Hash 已复制到剪贴板", Toast.LENGTH_SHORT).show()

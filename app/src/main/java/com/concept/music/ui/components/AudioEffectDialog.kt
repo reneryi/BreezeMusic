@@ -1,7 +1,7 @@
 package com.concept.music.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -10,7 +10,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,12 +19,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.concept.music.service.AudioEffectManager
 import com.concept.music.service.EffectPreset
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.LocalIsDarkTheme
+import com.concept.music.ui.theme.conceptElevatedSurfaceColor
+import com.concept.music.ui.theme.conceptFloatingCardColor
+import com.concept.music.ui.theme.conceptSheetContainerColor
+import com.concept.music.ui.theme.softCardClickable
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,10 +37,19 @@ fun AudioEffectDialog(
 ) {
     val state by AudioEffectManager.state.collectAsState()
     val scrollState = rememberScrollState()
+    val isDark = LocalIsDarkTheme.current
+    val sheetBg = conceptSheetContainerColor()
+    val cardBg = conceptFloatingCardColor()
+    val elevatedBg = conceptElevatedSurfaceColor()
+    val primaryText = MaterialTheme.colorScheme.onSurface
+    val subText = MaterialTheme.colorScheme.onSurfaceVariant
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF16191F),
+        sheetState = sheetState,
+        windowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = sheetBg,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
         dragHandle = {
             Surface(
@@ -46,7 +58,7 @@ fun AudioEffectDialog(
                     .width(42.dp)
                     .height(4.dp),
                 shape = CircleShape,
-                color = Color.White.copy(alpha = 0.2f)
+                color = subText.copy(alpha = 0.28f)
             ) {}
         }
     ) {
@@ -54,6 +66,7 @@ fun AudioEffectDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 8.dp)
+                .navigationBarsPadding()
                 .verticalScroll(scrollState)
         ) {
             // 顶部标题与总开关
@@ -73,8 +86,8 @@ fun AudioEffectDialog(
                     Text(
                         text = "蝰蛇声效 & 专业均衡器",
                         style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = primaryText,
                             fontSize = 18.sp
                         )
                     )
@@ -96,7 +109,7 @@ fun AudioEffectDialog(
             Text(
                 text = "特色声效预设",
                 style = MaterialTheme.typography.labelMedium.copy(
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = subText,
                     fontWeight = FontWeight.SemiBold
                 )
             )
@@ -123,13 +136,14 @@ fun AudioEffectDialog(
                 items(presets) { preset ->
                     val isSelected = state.currentPreset == preset
                     Surface(
-                        color = if (isSelected) ConceptPrimary else Color(0xFF222631),
+                        color = if (isSelected) ConceptPrimary else elevatedBg,
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable(enabled = state.isEnabled) {
-                                AudioEffectManager.setPreset(preset)
-                            }
+                            .softCardClickable(
+                                enabled = state.isEnabled,
+                                shape = RoundedCornerShape(16.dp),
+                                onClick = { AudioEffectManager.setPreset(preset) }
+                            )
                     ) {
                         Column(
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -139,14 +153,14 @@ fun AudioEffectDialog(
                                 text = preset.label,
                                 style = MaterialTheme.typography.bodyMedium.copy(
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (isSelected) Color(0xFF0F1115) else Color.White
+                                    color = if (isSelected) Color.White else primaryText
                                 )
                             )
                             Text(
                                 text = preset.desc,
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontSize = 10.sp,
-                                    color = if (isSelected) Color(0xFF0F1115).copy(alpha = 0.8f) else Color.White.copy(alpha = 0.45f)
+                                    color = if (isSelected) Color.White.copy(alpha = 0.85f) else subText
                                 )
                             )
                         }
@@ -157,9 +171,10 @@ fun AudioEffectDialog(
             Spacer(modifier = Modifier.height(20.dp))
 
             // 详细声效调节推杆
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E222A)),
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = cardBg,
+                shadowElevation = if (isDark) 0.dp else 3.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -171,7 +186,7 @@ fun AudioEffectDialog(
                     ) {
                         Text(
                             text = "超重低音增强 (BassBoost)",
-                            style = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontWeight = FontWeight.SemiBold)
+                            style = MaterialTheme.typography.bodyMedium.copy(color = primaryText, fontWeight = FontWeight.SemiBold)
                         )
                         Text(
                             text = "${state.bassBoostStrength / 10}%",
@@ -186,7 +201,7 @@ fun AudioEffectDialog(
                         colors = SliderDefaults.colors(
                             thumbColor = ConceptPrimary,
                             activeTrackColor = ConceptPrimary,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.15f)
+                            inactiveTrackColor = ConceptPrimary.copy(alpha = 0.16f)
                         )
                     )
 
@@ -200,7 +215,7 @@ fun AudioEffectDialog(
                     ) {
                         Text(
                             text = "3D 虚拟空间环绕 (Surround)",
-                            style = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontWeight = FontWeight.SemiBold)
+                            style = MaterialTheme.typography.bodyMedium.copy(color = primaryText, fontWeight = FontWeight.SemiBold)
                         )
                         Text(
                             text = "${state.virtualizerStrength / 10}%",
@@ -215,7 +230,7 @@ fun AudioEffectDialog(
                         colors = SliderDefaults.colors(
                             thumbColor = ConceptPrimary,
                             activeTrackColor = ConceptPrimary,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.15f)
+                            inactiveTrackColor = ConceptPrimary.copy(alpha = 0.16f)
                         )
                     )
 
@@ -229,7 +244,7 @@ fun AudioEffectDialog(
                     ) {
                         Text(
                             text = "人声动态与响度增益 (Loudness)",
-                            style = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontWeight = FontWeight.SemiBold)
+                            style = MaterialTheme.typography.bodyMedium.copy(color = primaryText, fontWeight = FontWeight.SemiBold)
                         )
                         Text(
                             text = "+${state.loudnessGainMb / 100} dB",
@@ -244,7 +259,7 @@ fun AudioEffectDialog(
                         colors = SliderDefaults.colors(
                             thumbColor = ConceptPrimary,
                             activeTrackColor = ConceptPrimary,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.15f)
+                            inactiveTrackColor = ConceptPrimary.copy(alpha = 0.16f)
                         )
                     )
 
@@ -253,7 +268,7 @@ fun AudioEffectDialog(
                     // 声场混响模式 (ReverbMode)
                     Text(
                         text = "声场混响模式 (Reverb)",
-                        style = MaterialTheme.typography.bodyMedium.copy(color = Color.White, fontWeight = FontWeight.SemiBold)
+                        style = MaterialTheme.typography.bodyMedium.copy(color = primaryText, fontWeight = FontWeight.SemiBold)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     LazyRow(
@@ -263,22 +278,23 @@ fun AudioEffectDialog(
                         items(com.concept.music.service.ReverbMode.values()) { mode ->
                             val isModeSelected = state.reverbMode == mode
                             Surface(
-                                color = if (isModeSelected) ConceptPrimary.copy(alpha = 0.25f) else Color(0xFF262A35),
+                                color = if (isModeSelected) ConceptPrimary.copy(alpha = 0.18f) else elevatedBg,
                                 shape = RoundedCornerShape(12.dp),
-                                border = if (isModeSelected) androidx.compose.foundation.BorderStroke(1.dp, ConceptPrimary) else null,
+                                border = if (isModeSelected) BorderStroke(1.dp, ConceptPrimary) else null,
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable(enabled = state.isEnabled) {
-                                        AudioEffectManager.setReverbMode(mode)
-                                    }
+                                    .softCardClickable(
+                                        enabled = state.isEnabled,
+                                        shape = RoundedCornerShape(12.dp),
+                                        onClick = { AudioEffectManager.setReverbMode(mode) }
+                                    )
                             ) {
                                 Text(
                                     text = mode.label,
                                     style = MaterialTheme.typography.bodySmall.copy(
-                                        color = if (isModeSelected) ConceptPrimary else Color.White.copy(alpha = 0.7f),
-                                        fontWeight = if (isModeSelected) FontWeight.Bold else FontWeight.Normal
+                                        color = if (isModeSelected) ConceptPrimary else subText,
+                                        fontWeight = if (isModeSelected) FontWeight.Bold else FontWeight.Medium
                                     ),
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                 )
                             }
                         }
@@ -292,7 +308,7 @@ fun AudioEffectDialog(
             Text(
                 text = "5段专业均衡器",
                 style = MaterialTheme.typography.labelMedium.copy(
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = subText,
                     fontWeight = FontWeight.SemiBold
                 )
             )
@@ -316,7 +332,7 @@ fun AudioEffectDialog(
                             text = if (level > 0) String.format(java.util.Locale.getDefault(), "+%.1fdB", dbVal)
                             else String.format(java.util.Locale.getDefault(), "%.1fdB", dbVal),
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = if (level != 0) ConceptPrimary else Color.White.copy(alpha = 0.45f),
+                                color = if (level != 0) ConceptPrimary else subText,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -328,15 +344,14 @@ fun AudioEffectDialog(
                                 .height(132.dp)
                                 .width(38.dp)
                                 .clip(RoundedCornerShape(19.dp))
-                                .background(Color(0xFF222631)),
+                                .background(elevatedBg),
                             contentAlignment = Alignment.Center
                         ) {
-                            // 0dB 中心参考刻度线
                             Box(
                                 modifier = Modifier
                                     .width(18.dp)
                                     .height(1.dp)
-                                    .background(Color.White.copy(alpha = 0.16f))
+                                    .background(subText.copy(alpha = 0.25f))
                             )
                             Slider(
                                 value = level.toFloat(),
@@ -346,10 +361,7 @@ fun AudioEffectDialog(
                                 colors = SliderDefaults.colors(
                                     thumbColor = ConceptPrimary,
                                     activeTrackColor = ConceptPrimary,
-                                    inactiveTrackColor = Color.White.copy(alpha = 0.14f),
-                                    disabledThumbColor = Color.White.copy(alpha = 0.3f),
-                                    disabledActiveTrackColor = Color.White.copy(alpha = 0.2f),
-                                    disabledInactiveTrackColor = Color.White.copy(alpha = 0.08f)
+                                    inactiveTrackColor = ConceptPrimary.copy(alpha = 0.16f)
                                 ),
                                 modifier = Modifier
                                     .requiredWidth(116.dp)
@@ -363,7 +375,7 @@ fun AudioEffectDialog(
                         Text(
                             text = freqLabels.getOrElse(index) { "" },
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = Color.White.copy(alpha = 0.6f),
+                                color = subText,
                                 fontSize = 10.sp
                             )
                         )
@@ -375,9 +387,10 @@ fun AudioEffectDialog(
 
             // 4. 心流环境音混音舱 ([INNOV-04])
             val ambientState by com.concept.music.service.AmbientSoundManager.state.collectAsState()
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E222A)),
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = cardBg,
+                shadowElevation = if (isDark) 0.dp else 3.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -390,14 +403,14 @@ fun AudioEffectDialog(
                             Text(
                                 text = "心流环境音混音舱 (Ambient Mixer)",
                                 style = MaterialTheme.typography.titleSmall.copy(
-                                    color = Color.White,
+                                    color = primaryText,
                                     fontWeight = FontWeight.Bold
                                 )
                             )
                             Text(
                                 text = "实时程序化 DSP 合成环境声，可与音乐叠加或独立助眠",
                                 style = MaterialTheme.typography.labelSmall.copy(
-                                    color = Color.White.copy(alpha = 0.55f)
+                                    color = subText
                                 )
                             )
                         }
@@ -413,7 +426,6 @@ fun AudioEffectDialog(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // 快捷声景胶囊
                     val quickScenes = listOf(
                         "rain_study" to "🌧️ 雨夜自习",
                         "retro_vinyl" to "💿 黑胶茶歇",
@@ -426,13 +438,13 @@ fun AudioEffectDialog(
                     ) {
                         items(quickScenes) { (key, label) ->
                             Surface(
-                                color = Color(0xFF282D3A),
+                                color = elevatedBg,
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        com.concept.music.service.AmbientSoundManager.applyQuickScene(key)
-                                    }
+                                    .softCardClickable(
+                                        shape = RoundedCornerShape(12.dp),
+                                        onClick = { com.concept.music.service.AmbientSoundManager.applyQuickScene(key) }
+                                    )
                             ) {
                                 Text(
                                     text = label,
@@ -459,14 +471,14 @@ fun AudioEffectDialog(
                                 Text(
                                     text = channel.title,
                                     style = MaterialTheme.typography.bodySmall.copy(
-                                        color = Color.White,
+                                        color = primaryText,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                 )
                                 Text(
                                     text = channel.subtitle,
                                     style = MaterialTheme.typography.labelSmall.copy(
-                                        color = Color.White.copy(alpha = 0.45f),
+                                        color = subText,
                                         fontSize = 10.sp
                                     )
                                 )
@@ -474,7 +486,7 @@ fun AudioEffectDialog(
                             Text(
                                 text = "${(lvl * 100).toInt()}%",
                                 style = MaterialTheme.typography.labelMedium.copy(
-                                    color = if (lvl > 0.01f && ambientState.masterEnabled) ConceptPrimary else Color.White.copy(alpha = 0.4f),
+                                    color = if (lvl > 0.01f && ambientState.masterEnabled) ConceptPrimary else subText,
                                     fontWeight = FontWeight.Bold
                                 )
                             )
@@ -486,7 +498,7 @@ fun AudioEffectDialog(
                             colors = SliderDefaults.colors(
                                 thumbColor = ConceptPrimary,
                                 activeTrackColor = ConceptPrimary,
-                                inactiveTrackColor = Color.White.copy(alpha = 0.15f)
+                                inactiveTrackColor = ConceptPrimary.copy(alpha = 0.16f)
                             )
                         )
                     }
@@ -498,7 +510,7 @@ fun AudioEffectDialog(
                     ) {
                         Text(
                             text = "仅在主音乐播放时叠加（关闭则暂停音乐后仍持续发声）",
-                            style = MaterialTheme.typography.labelSmall.copy(color = Color.White.copy(alpha = 0.65f)),
+                            style = MaterialTheme.typography.labelSmall.copy(color = subText),
                             modifier = Modifier.weight(1f)
                         )
                         Switch(
@@ -513,7 +525,7 @@ fun AudioEffectDialog(
                 }
             }
 
-            Spacer(modifier = Modifier.height(30.dp))
+            Spacer(modifier = Modifier.height(28.dp))
         }
     }
 }

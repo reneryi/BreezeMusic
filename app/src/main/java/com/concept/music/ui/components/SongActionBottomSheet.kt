@@ -2,7 +2,6 @@ package com.concept.music.ui.components
 
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,6 +27,8 @@ import com.concept.music.data.model.Song
 import com.concept.music.service.AudioCacheManager
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
+import com.concept.music.ui.theme.conceptSheetContainerColor
+import com.concept.music.ui.theme.softCardClickable
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -49,10 +50,13 @@ fun SongActionBottomSheet(
     var isPinned by remember(song.id, song.hash) {
         mutableStateOf(AudioCacheManager.isSongPinned(context, song))
     }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surface,
+        sheetState = sheetState,
+        windowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = conceptSheetContainerColor(),
         shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
         dragHandle = {
             Surface(
@@ -139,7 +143,6 @@ fun SongActionBottomSheet(
                     }
                 }
 
-                // 右侧快捷红心按钮
                 IconButton(
                     onClick = {
                         onToggleFavorite()
@@ -196,7 +199,6 @@ fun SongActionBottomSheet(
                 }
             )
 
-            // [维度6] 固定离线收藏（免受 LRU 淘汰与一键清缓存影响）
             SongActionMenuItem(
                 icon = if (isPinned) Icons.Rounded.PushPin else Icons.Rounded.OfflinePin,
                 title = if (isPinned) "已固定离线保护（点击解除）" else "固定离线收藏（清理缓存时不删除）",
@@ -223,7 +225,6 @@ fun SongActionBottomSheet(
                 )
             }
 
-            // [维度2] 多歌手拆分展示与歌手详情页跳转
             if (onOpenArtist != null && song.artist.isNotBlank()) {
                 val artistNames = song.artist.split("、", "/", "&", "，", ",")
                     .map { it.trim() }
@@ -297,8 +298,10 @@ private fun SongActionMenuItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .softCardClickable(
+                shape = RoundedCornerShape(12.dp),
+                onClick = onClick
+            )
             .padding(horizontal = 8.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

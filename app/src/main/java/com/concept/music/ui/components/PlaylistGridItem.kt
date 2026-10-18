@@ -1,5 +1,7 @@
 package com.concept.music.ui.components
 
+import com.concept.music.ui.theme.softCardClickable
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -46,8 +48,7 @@ fun PlaylistGridItem(
 
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
+            .softCardClickable(onClick = onClick)
             .padding(vertical = 4.dp)
     ) {
         Box(

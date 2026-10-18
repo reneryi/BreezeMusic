@@ -55,6 +55,8 @@ import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
+import com.concept.music.ui.theme.softCardClickable
+import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
 
@@ -132,7 +134,13 @@ fun RadioScreen(
     }
 
     LaunchedEffect(selectedChannelId) {
-        loadStationBatch(selectedChannelId, append = false)
+        val cached = viewModel.getCachedFmChannelSongs(selectedChannelId)
+        if (cached.isNotEmpty()) {
+            stationSongs = cached
+            loading = false
+        } else {
+            loadStationBatch(selectedChannelId, append = false)
+        }
     }
 
     val fallbackCovers = remember(dailySongs) {
@@ -197,8 +205,7 @@ fun RadioScreen(
                             color = currentCategoryAccent.copy(alpha = 0.14f),
                             modifier = Modifier
                                 .padding(end = 12.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable { showAllStationsGrid = !showAllStationsGrid }
+                                .softCardClickable { showAllStationsGrid = !showAllStationsGrid }
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -481,7 +488,7 @@ fun RadioScreen(
                                     Column(
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         modifier = Modifier
-                                            .clickable {
+                                            .softClickable {
                                                 selectedCategory = cat
                                                 showAllStationsGrid = true
                                             }
@@ -677,8 +684,7 @@ private fun RadioPlazaGridCard(
         border = if (isSelected) BorderStroke(1.8.dp, accent) else null,
         shadowElevation = if (isDark || isSelected) 0.dp else 3.dp,
         modifier = modifier
-            .clip(RoundedCornerShape(22.dp))
-            .clickable(onClick = onClick)
+            .softCardClickable(onClick = onClick)
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
             Box(

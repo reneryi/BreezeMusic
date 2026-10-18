@@ -2,6 +2,7 @@ package com.concept.music.data.vip
 
 import android.content.Context
 import com.concept.music.data.kugou.*
+import com.concept.music.data.repository.DiscoverLocalCache
 import com.concept.music.data.repository.PlaybackHistoryRepository
 import com.concept.music.data.repository.SearchHistoryRepository
 import kotlinx.coroutines.CoroutineScope
@@ -21,11 +22,13 @@ object VipManager {
     lateinit var lyric: LyricRepository; private set
     lateinit var history: PlaybackHistoryRepository; private set
     var searchHistoryRepo: SearchHistoryRepository = SearchHistoryRepository(null); private set
+    var discoverCache: DiscoverLocalCache = DiscoverLocalCache(null); private set
     lateinit var device: () -> DeviceIdentity; private set
 
     fun initialize(context: Context) {
         if (::accounts.isInitialized) return
-        val store = EncryptedSessionStore(context.applicationContext)
+        val appCtx = context.applicationContext
+        val store = EncryptedSessionStore(appCtx)
         val transport = DirectKugouTransport(store::device)
         device = store::device
         auth = AuthRepository(transport, store)
@@ -39,9 +42,10 @@ object VipManager {
             onVipActivated = { music.clearPlaybackCache() }
         )
         lyric = LyricRepository(transport, store::device)
-        history = PlaybackHistoryRepository(context.applicationContext)
-        searchHistoryRepo = SearchHistoryRepository(context.applicationContext)
-        ListeningGradeManager.initialize(context.applicationContext)
+        history = PlaybackHistoryRepository(appCtx)
+        searchHistoryRepo = SearchHistoryRepository(appCtx)
+        discoverCache = DiscoverLocalCache(appCtx)
+        ListeningGradeManager.initialize(appCtx)
 
         // [P0-1] 启动时若本地尚未注册 dfid ("-")，在后台静默向酷狗概念版网关申请持久化 dfid
         if (store.device().dfid == "-") {

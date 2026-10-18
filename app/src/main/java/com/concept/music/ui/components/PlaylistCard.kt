@@ -1,5 +1,7 @@
 package com.concept.music.ui.components
 
+import com.concept.music.ui.theme.softCardClickable
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -42,7 +44,7 @@ fun PlaylistCard(
     Column(
         modifier = modifier
             .width(136.dp)
-            .clickable(onClick = onClick)
+            .softCardClickable(onClick = onClick)
     ) {
         Box(
             modifier = Modifier

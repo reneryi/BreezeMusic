@@ -37,6 +37,7 @@ import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.conceptFloatingCardColor
+import com.concept.music.ui.theme.softClickable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -243,7 +244,7 @@ fun AlbumDetailScreen(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { isIntroExpanded = !isIntroExpanded }
+                                    .softClickable { isIntroExpanded = !isIntroExpanded }
                             ) {
                                 Text(
                                     text = album!!.intro.trim(),
@@ -269,8 +270,7 @@ fun AlbumDetailScreen(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(18.dp))
-                                .clickable(enabled = filteredSongs.isNotEmpty()) {
+                                .softClickable(enabled = filteredSongs.isNotEmpty()) {
                                     if (filteredSongs.isNotEmpty()) {
                                         onSongClick(filteredSongs.first(), filteredSongs)
                                     }
