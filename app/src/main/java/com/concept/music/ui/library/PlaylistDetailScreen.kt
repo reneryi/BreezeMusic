@@ -668,7 +668,7 @@ fun PlaylistDetailScreen(
         ModalBottomSheet(
             onDismissRequest = { selectedSongForMenu = null },
             containerColor = conceptSheetContainerColor(),
-            contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+            windowInsets = WindowInsets(0, 0, 0, 0),
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
         ) {
             Column(

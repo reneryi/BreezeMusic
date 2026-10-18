@@ -2524,7 +2524,7 @@ fun QueueBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = sheetBg,
-        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+        windowInsets = WindowInsets(0, 0, 0, 0),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     ) {
         Column(
@@ -2884,7 +2884,7 @@ private fun PlayerMoreControlSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = sheetBg,
-        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+        windowInsets = WindowInsets(0, 0, 0, 0),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     ) {
         Column(

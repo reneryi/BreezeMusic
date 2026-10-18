@@ -89,6 +89,12 @@ object ThemeManager {
 
 val LocalIsDarkTheme = staticCompositionLocalOf { true }
 
+/**
+ * 便捷获取当前概念版主题是否处于深色状态
+ */
+@Composable
+fun isConceptDarkTheme(): Boolean = LocalIsDarkTheme.current
+
 // 全局圆润饱满几何形状系统
 val ConceptShapes = Shapes(
     extraSmall = RoundedCornerShape(10.dp),

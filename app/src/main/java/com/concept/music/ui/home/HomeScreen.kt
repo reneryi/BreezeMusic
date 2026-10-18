@@ -524,7 +524,7 @@ fun HomeScreen(
             onDismissRequest = { showPersonalFmSheet = false },
             sheetState = pfmSheetState,
             containerColor = conceptSheetContainerColor(),
-            contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+            windowInsets = WindowInsets(0, 0, 0, 0),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
         ) {
             Column(
@@ -666,7 +666,7 @@ fun HomeScreen(
             onDismissRequest = { quickFmStation = null },
             sheetState = qfmSheetState,
             containerColor = conceptSheetContainerColor(),
-            contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+            windowInsets = WindowInsets(0, 0, 0, 0),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
         ) {
             Column(
@@ -2387,7 +2387,7 @@ private fun RankGridPickerSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = conceptSheetContainerColor(),
-        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+        windowInsets = WindowInsets(0, 0, 0, 0),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     ) {
         Column(
