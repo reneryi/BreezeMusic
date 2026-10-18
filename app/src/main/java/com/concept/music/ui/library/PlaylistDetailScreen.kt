@@ -48,6 +48,10 @@ import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
 import com.concept.music.ui.theme.softCardClickable
+import com.concept.music.ui.theme.ConceptCategoryTabItem
+import com.concept.music.ui.theme.ConceptFluidRefreshIcon
+import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
+import com.concept.music.ui.theme.horizontalCategorySwipe
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.LibraryViewModel
 import kotlinx.coroutines.launch
@@ -217,11 +221,18 @@ fun PlaylistDetailScreen(
                         }
 
                         // 刷新按钮（严格边界：仅刷新当前歌单，不触发全局资产重拉）
-                        IconButton(onClick = { viewModel.refreshCurrentPlaylistOnly(playlistId) }) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = "刷新",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        var plRefreshSpin by remember { mutableIntStateOf(0) }
+                        IconButton(
+                            onClick = {
+                                plRefreshSpin += 1
+                                viewModel.refreshCurrentPlaylistOnly(playlistId)
+                            }
+                        ) {
+                            ConceptFluidRefreshIcon(
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                isRefreshing = loading,
+                                spinTrigger = plRefreshSpin,
+                                modifier = Modifier.size(19.dp)
                             )
                         }
                     }
@@ -309,15 +320,34 @@ fun PlaylistDetailScreen(
                                     .heightIn(min = 48.dp)
                             )
 
-                            // 开放式极简排序栏（去除 4 个带边框胶囊盒）
+                            // 开放式极简排序栏（带左右平滑滑动横条动画）
+                            val sortTabItems = remember {
+                                PlaylistSortMode.entries.map { mode ->
+                                    ConceptCategoryTabItem(
+                                        key = mode.name,
+                                        label = mode.label,
+                                        accentColor = ConceptPrimary
+                                    )
+                                }
+                            }
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .horizontalCategorySwipe(
+                                        currentIndex = sortMode.ordinal,
+                                        itemCount = PlaylistSortMode.entries.size,
+                                        onSelectIndex = { nextIdx ->
+                                            PlaylistSortMode.entries.getOrNull(nextIdx)?.let { sortMode = it }
+                                        }
+                                    ),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(bottom = 6.dp)
+                                ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Rounded.Sort,
                                         contentDescription = "排序",
@@ -331,35 +361,17 @@ fun PlaylistDetailScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                                ) {
-                                    PlaylistSortMode.entries.forEach { mode ->
-                                        val selected = sortMode == mode
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            modifier = Modifier
-                                                .softClickable { sortMode = mode }
-                                                .padding(vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = mode.label,
-                                                color = if (selected) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                fontSize = 12.sp,
-                                                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium
-                                            )
-                                            Spacer(modifier = Modifier.height(3.dp))
-                                            Box(
-                                                modifier = Modifier
-                                                    .width(14.dp)
-                                                    .height(2.5.dp)
-                                                    .clip(CircleShape)
-                                                    .background(if (selected) ConceptPrimary else Color.Transparent)
-                                            )
-                                        }
-                                    }
-                                }
+                                ConceptSlidingCategoryTabs(
+                                    tabs = sortTabItems,
+                                    selectedKey = sortMode.name,
+                                    onSelectTab = { key ->
+                                        PlaylistSortMode.entries.find { it.name == key }?.let { sortMode = it }
+                                    },
+                                    itemSpacing = 16.dp,
+                                    fontSize = 12.5.sp,
+                                    indicatorWidth = 16.dp,
+                                    fillWidth = false
+                                )
                             }
 
                             // 批量多选操作栏

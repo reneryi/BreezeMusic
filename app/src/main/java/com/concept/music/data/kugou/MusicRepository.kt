@@ -4008,31 +4008,67 @@ class MusicApiRepository(
             val data = response.data.obj("data") ?: response.data
             val level = data.number("p_grade") ?: data.number("pGrade")
                 ?: data.number("grade") ?: data.number("level") ?: 0
-            val score = data.number("p_current_point")?.toLong() ?: data.number("pCurrentPoint")?.toLong()
-                ?: data.number("score")?.toLong() ?: 0L
-            val nextScore = data.number("p_next_grade_point")?.toLong() ?: data.number("pNextGradePoint")?.toLong()
-                ?: data.number("next_score")?.toLong() ?: 100L
-            val currentGradeBasePoint = data.number("p_grade_point")?.toLong() ?: data.number("pGradePoint")?.toLong() ?: 0L
-            val totalSec = data.number("d_sec")?.toLong() ?: data.number("dSec")?.toLong()
-                ?: data.number("duration")?.toLong() ?: data.number("listen_time")?.toLong() ?: 0L
-            val totalMin = totalSec / 60
+            val score = data.text("p_current_point")?.toLongOrNull()
+                ?: data.text("pCurrentPoint")?.toLongOrNull()
+                ?: data.text("score")?.toLongOrNull() ?: 0L
+            val nextScore = data.text("p_next_grade_point")?.toLongOrNull()
+                ?: data.text("pNextGradePoint")?.toLongOrNull()
+                ?: data.text("next_score")?.toLongOrNull() ?: 0L
+            val currentGradeBasePoint = data.text("p_grade_point")?.toLongOrNull()
+                ?: data.text("pGradePoint")?.toLongOrNull() ?: 0L
 
-            val progress = if (nextScore > 0L) {
-                if (nextScore > currentGradeBasePoint && score >= currentGradeBasePoint) {
-                    ((score - currentGradeBasePoint).toFloat() / (nextScore - currentGradeBasePoint).toFloat()).coerceIn(0f, 1f)
-                } else {
-                    (score.toFloat() / nextScore.toFloat()).coerceIn(0f, 1f)
+            val dSecField = data.text("d_sec")?.toLongOrNull()
+                ?: data.text("dSec")?.toLongOrNull()
+                ?: data.text("listen_sec")?.toLongOrNull() ?: 0L
+            val durationMinField = data.text("duration")?.toLongOrNull()
+                ?: data.text("d_min")?.toLongOrNull()
+                ?: data.text("listen_time")?.toLongOrNull() ?: 0L
+
+            // 若接口同时返回精确秒数 d_sec 与分钟数 duration，优先取精度更高的秒数；若 d_sec 被服务端整百/整小时截断而 duration 含分钟余数，则保留精确分钟
+            val totalSec = when {
+                dSecField > 0L && durationMinField > 0L -> {
+                    val dSecMins = dSecField / 60L
+                    if (dSecMins % 60L == 0L && durationMinField % 60L != 0L && kotlin.math.abs(dSecMins - durationMinField) <= 60L) {
+                        durationMinField * 60L + (dSecField % 60L)
+                    } else {
+                        dSecField
+                    }
                 }
-            } else 0f
+                dSecField > 0L -> dSecField
+                durationMinField > 0L -> {
+                    // 区分 duration 是分钟还是秒（超过 2,000,000 通常为秒）
+                    if (durationMinField > 2_000_000L) durationMinField else durationMinField * 60L
+                }
+                else -> 0L
+            }
+            val totalMin = totalSec / 60L
+
+            val remainSecFromServer = data.text("remain_d_sec")?.toLongOrNull()
+                ?: data.text("need_d_sec")?.toLongOrNull()
+                ?: data.text("upgrade_d_sec")?.toLongOrNull()
+                ?: data.text("next_d_sec")?.toLongOrNull()?.let { nextD ->
+                    if (nextD > totalSec) nextD - totalSec else 0L
+                } ?: 0L
+
+            val (progressPct, remainMins) = UserGradeInfo.computeLevelProgressAndRemain(
+                level = level,
+                totalMinutes = totalMin,
+                totalSeconds = totalSec,
+                score = score,
+                nextScore = nextScore,
+                currentBaseScore = currentGradeBasePoint,
+                remainSecondsFromServer = remainSecFromServer
+            )
 
             UserGradeInfo(
                 level = level,
                 score = score,
                 totalListenMinutes = totalMin,
                 todayListenMinutes = 0L,
-                nextLevelScore = nextScore,
-                progressPercent = progress,
-                totalListenSeconds = totalSec
+                nextLevelScore = if (nextScore > 0L) nextScore else 100L,
+                progressPercent = progressPct,
+                totalListenSeconds = totalSec,
+                nextLevelRemainMinutes = remainMins
             )
         }.getOrElse {
             UserGradeInfo(level = 0, score = 0L, totalListenMinutes = 0L, todayListenMinutes = 0L, nextLevelScore = 100L, progressPercent = 0f, totalListenSeconds = 0L)

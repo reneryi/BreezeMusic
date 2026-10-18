@@ -109,7 +109,7 @@ fun VipBannerCard(
                             )
                         )
                         Text(
-                            text = "无损音质与每日免费 VIP 领取",
+                            text = "每日免费领 VIP · 畅享无损音质",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = subColor,
                                 fontSize = 11.5.sp

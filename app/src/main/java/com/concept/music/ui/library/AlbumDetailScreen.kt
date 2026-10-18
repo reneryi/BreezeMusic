@@ -37,6 +37,7 @@ import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.conceptFloatingCardColor
+import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.softClickable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -146,11 +147,16 @@ fun AlbumDetailScreen(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(onClick = { loadData() }) {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "刷新",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    var albumRefreshSpin by remember { mutableIntStateOf(0) }
+                    IconButton(onClick = {
+                        albumRefreshSpin += 1
+                        loadData()
+                    }) {
+                        ConceptFluidRefreshIcon(
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            isRefreshing = loading,
+                            spinTrigger = albumRefreshSpin,
+                            modifier = Modifier.size(19.dp)
                         )
                     }
                 }

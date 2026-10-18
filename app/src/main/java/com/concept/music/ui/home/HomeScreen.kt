@@ -15,6 +15,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -68,6 +70,7 @@ import com.concept.music.ui.theme.conceptSheetContainerColor
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.ConceptCategoryTabItem
 import com.concept.music.ui.theme.ConceptFluidRefreshIcon
+import com.concept.music.ui.theme.horizontalCategorySwipe
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.HomeViewModel
@@ -530,108 +533,153 @@ fun HomeScreen(
 
     if (showPersonalFmSheet) {
         val pfmSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val mintAccent = if (isDark) Color(0xFF26DEBF) else ConceptMintAccent
+        val sheetBgColor = if (isDark) Color(0xFF0E1D22) else Color(0xFFF2FCF9)
+        val headerBannerBrush = if (isDark) {
+            Brush.linearGradient(listOf(Color(0xFF123133), Color(0xFF112534), Color(0xFF0E1D22)))
+        } else {
+            Brush.linearGradient(listOf(Color(0xFFDDFBF3), Color(0xFFEAF6FF), Color(0xFFF2FCF9)))
+        }
+        var pfmSheetSpin by remember { mutableIntStateOf(0) }
+
         ModalBottomSheet(
             onDismissRequest = { showPersonalFmSheet = false },
             sheetState = pfmSheetState,
-            containerColor = conceptSheetContainerColor(),
+            containerColor = sheetBgColor,
             windowInsets = WindowInsets(0, 0, 0, 0),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .padding(horizontal = 16.dp, vertical = 6.dp)
                     .navigationBarsPadding()
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = Color.Transparent,
+                    shadowElevation = 0.dp,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    val coverUrl = fmPool.getOrNull(personalFmIndex)?.coverUrl ?: fmPool.firstOrNull()?.coverUrl.orEmpty()
-                    Box(
+                    Row(
                         modifier = Modifier
-                            .size(60.dp)
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(Brush.linearGradient(listOf(ConceptPrimaryDark, Color(0xFF162844)))),
-                        contentAlignment = Alignment.Center
+                            .fillMaxWidth()
+                            .background(headerBannerBrush)
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (coverUrl.isNotBlank()) {
-                            AsyncImage(
-                                model = coverUrl,
-                                contentDescription = "私人随心听",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Rounded.GraphicEq,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(28.dp)
+                        val coverUrl = fmPool.getOrNull(personalFmIndex)?.coverUrl ?: fmPool.firstOrNull()?.coverUrl.orEmpty()
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Brush.linearGradient(listOf(ConceptMintAccent, ConceptPrimaryDark))),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (coverUrl.isNotBlank()) {
+                                AsyncImage(
+                                    model = coverUrl,
+                                    contentDescription = "猜你喜欢·随心听",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.GraphicEq,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(
+                                    text = "猜你喜欢",
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 16.5.sp
+                                    ),
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = " · 随心听",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = mintAccent,
+                                        fontSize = 11.5.sp
+                                    ),
+                                    modifier = Modifier.padding(bottom = 1.5.dp),
+                                    maxLines = 1
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "融合红心与听歌偏好 · 共 ${fmPool.size} 首",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.5.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
-                    }
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "私人随心听 · 猜你喜欢 (${fmPool.size}首)",
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.onSurface
+                        Spacer(modifier = Modifier.width(6.dp))
+                        FilledTonalIconButton(
+                            onClick = {
+                                pfmSheetSpin += 1
+                                viewModel.refreshPersonalFm { loaded ->
+                                    Toast.makeText(context, "已焕新 ${loaded.size} 首随心听曲目", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            enabled = !personalFmRefreshing,
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = mintAccent.copy(alpha = 0.16f),
+                                contentColor = mintAccent
                             ),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                            text = "基于你的我喜欢、最近播放与酷狗 AI 协同推荐实时生成",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    FilledTonalIconButton(
-                        onClick = {
-                            viewModel.refreshPersonalFm { loaded ->
-                                Toast.makeText(context, "已焕新 ${loaded.size} 首猜你喜欢新歌", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        enabled = !personalFmRefreshing
-                    ) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = "换一批新歌", tint = ConceptPrimary)
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Button(
-                        onClick = {
-                            if (fmPool.isNotEmpty()) {
-                                onSongClick(fmPool.first(), fmPool)
-                                showPersonalFmSheet = false
-                            }
-                        },
-                        enabled = fmPool.isNotEmpty(),
-                        shape = RoundedCornerShape(18.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = ConceptPrimary,
-                            contentColor = Color.White
-                        )
-                    ) {
-                        Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("全部播放", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            ConceptFluidRefreshIcon(
+                                tint = mintAccent,
+                                isRefreshing = personalFmRefreshing,
+                                spinTrigger = pfmSheetSpin,
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Button(
+                            onClick = {
+                                if (fmPool.isNotEmpty()) {
+                                    onSongClick(fmPool.first(), fmPool)
+                                    showPersonalFmSheet = false
+                                }
+                            },
+                            enabled = fmPool.isNotEmpty(),
+                            shape = RoundedCornerShape(18.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = mintAccent,
+                                contentColor = if (isDark) Color(0xFF06201B) else Color.White
+                            )
+                        ) {
+                            Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("全部播放", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
                 if (personalFmRefreshing) {
                     LinearProgressIndicator(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 10.dp),
-                        color = ConceptPrimary
+                            .padding(vertical = 8.dp),
+                        color = mintAccent,
+                        trackColor = mintAccent.copy(alpha = 0.16f)
                     )
                 }
 
@@ -788,8 +836,10 @@ fun HomeScreen(
                         Text("播放电台 (${quickFmSongs.size}首)", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                     }
 
+                    var qfmRefreshSpin by remember { mutableIntStateOf(0) }
                     FilledTonalButton(
                         onClick = {
+                            qfmRefreshSpin += 1
                             quickFmLoading = true
                             coroutineScope.launch {
                                 val nextBatch = viewModel.getFmChannelSongs(station.id, forceNextBatch = true)
@@ -803,9 +853,14 @@ fun HomeScreen(
                         enabled = !quickFmLoading,
                         shape = RoundedCornerShape(18.dp)
                     ) {
-                        Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("换一批(20首)", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        ConceptFluidRefreshIcon(
+                            tint = ConceptPrimary,
+                            isRefreshing = quickFmLoading,
+                            spinTrigger = qfmRefreshSpin,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("换一批", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
                     FilledTonalButton(
@@ -972,11 +1027,7 @@ private fun PersonalFmPlayerCard(
     onRefreshNewBatch: () -> Unit
 ) {
     val isDark = LocalIsDarkTheme.current
-    val rotationAngle by animateFloatAsState(
-        targetValue = if (isRefreshing) 360f else 0f,
-        animationSpec = tween(durationMillis = 750),
-        label = "fmRefreshRotation"
-    )
+    var fmCardSpin by remember { mutableIntStateOf(0) }
 
     val playerCardBrush = if (isDark) {
         Brush.linearGradient(
@@ -1004,21 +1055,33 @@ private fun PersonalFmPlayerCard(
                 .background(playerCardBrush)
                 .padding(horizontal = 16.dp, vertical = 13.dp)
         ) {
-            // 上层：左上角简洁「随心听」标题 + 右上角重新设计的双弧流光刷新图标按钮
+            // 上层：左上角「猜你喜欢·随心听」（随心听为精致小字）+ 右上角圆润双弧流光刷新图标
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "随心听",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 16.5.sp,
-                        letterSpacing = 0.3.sp
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        text = "猜你喜欢",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 16.5.sp,
+                            letterSpacing = 0.3.sp
+                        )
                     )
-                )
+                    Text(
+                        text = "·随心听",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = mintAccent.copy(alpha = 0.92f),
+                            fontSize = 12.sp,
+                            letterSpacing = 0.2.sp
+                        ),
+                        modifier = Modifier.padding(start = 3.dp, bottom = 1.5.dp)
+                    )
+                }
 
                 Box(
                     contentAlignment = Alignment.Center,
@@ -1027,12 +1090,16 @@ private fun PersonalFmPlayerCard(
                         .softClickable(
                             enabled = !isRefreshing,
                             pressScale = 0.88f,
-                            onClick = onRefreshNewBatch
+                            onClick = {
+                                fmCardSpin += 1
+                                onRefreshNewBatch()
+                            }
                         )
                 ) {
                     ConceptFluidRefreshIcon(
                         tint = mintAccent,
-                        rotationDegrees = rotationAngle,
+                        isRefreshing = isRefreshing,
+                        spinTrigger = fmCardSpin,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -1230,15 +1297,26 @@ private fun NewSongExpressSectionCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.Refresh,
-                    contentDescription = "刷新当前分类新歌",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                var nsSectionSpin by remember { mutableIntStateOf(0) }
+                Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(16.dp)
-                        .rotate(refreshRotation)
-                        .softClickable(enabled = !loading, onClick = onRefreshPeriod)
-                )
+                        .size(24.dp)
+                        .softClickable(
+                            enabled = !loading,
+                            onClick = {
+                                nsSectionSpin += 1
+                                onRefreshPeriod()
+                            }
+                        )
+                ) {
+                    ConceptFluidRefreshIcon(
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        isRefreshing = loading,
+                        spinTrigger = nsSectionSpin,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1550,21 +1628,41 @@ fun NewSongExpressScreen(
                         }
                     },
                     actions = {
+                        var nsScreenSpin by remember { mutableIntStateOf(0) }
                         IconButton(
-                            onClick = { viewModel.selectNewSongPeriod(selectedPeriod, forceRefresh = true) },
+                            onClick = {
+                                nsScreenSpin += 1
+                                viewModel.selectNewSongPeriod(selectedPeriod, forceRefresh = true)
+                            },
                             enabled = !loading
                         ) {
-                            Icon(Icons.Rounded.Refresh, contentDescription = "刷新当前分类", tint = violetAccent)
+                            ConceptFluidRefreshIcon(
+                                tint = violetAccent,
+                                isRefreshing = loading,
+                                spinTrigger = nsScreenSpin,
+                                modifier = Modifier.size(19.dp)
+                            )
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
                 )
             }
         ) { innerPadding ->
+            val periodKeys = remember { NEW_SONG_PERIOD_TABS.map { it.key } }
+            val curPeriodIdx = periodKeys.indexOf(selectedPeriod).coerceAtLeast(0)
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+                    .horizontalCategorySwipe(
+                        currentIndex = curPeriodIdx,
+                        itemCount = periodKeys.size,
+                        onSelectIndex = { nextIdx ->
+                            periodKeys.getOrNull(nextIdx)?.let { key ->
+                                viewModel.selectNewSongPeriod(key, forceRefresh = false)
+                            }
+                        }
+                    ),
                 contentPadding = PaddingValues(bottom = 112.dp)
             ) {
                 // 1. 开放式极简五维语种导航栏
@@ -2019,8 +2117,10 @@ fun RankDetailScreen(
                         }
                     },
                     actions = {
+                        var rankRefreshSpin by remember { mutableIntStateOf(0) }
                         IconButton(
                             onClick = {
+                                rankRefreshSpin += 1
                                 coroutineScope.launch {
                                     loading = true
                                     rankSongs = viewModel.getRankSongsAll(selectedRankId, maxSongs = 500)
@@ -2029,7 +2129,12 @@ fun RankDetailScreen(
                             },
                             enabled = !loading
                         ) {
-                            Icon(Icons.Rounded.Refresh, contentDescription = "刷新当前榜单", tint = accentColor)
+                            ConceptFluidRefreshIcon(
+                                tint = accentColor,
+                                isRefreshing = loading,
+                                spinTrigger = rankRefreshSpin,
+                                modifier = Modifier.size(19.dp)
+                            )
                         }
                         TextButton(
                             onClick = { showRankGridSheet = true },
@@ -2054,47 +2159,55 @@ fun RankDetailScreen(
                 )
             }
         ) { innerPadding ->
+            val currentQuickIndex = remember(quickSwitchRanks, currentRank) {
+                quickSwitchRanks.indexOfFirst { it.rankId == currentRank.rankId }.coerceAtLeast(0)
+            }
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+                    .horizontalCategorySwipe(
+                        currentIndex = currentQuickIndex,
+                        itemCount = quickSwitchRanks.size,
+                        onSelectIndex = { nextIdx ->
+                            quickSwitchRanks.getOrNull(nextIdx)?.let { nextRank ->
+                                selectedRankId = nextRank.rankId
+                            }
+                        }
+                    ),
                 contentPadding = PaddingValues(bottom = 112.dp)
             ) {
-                // 1. 开放式横向榜单快选条（无胶囊外壳，底部彩色指示线）
+                // 1. 开放式横向榜单快选条（无胶囊外壳，底部彩色滑动指示横条 + 触屏左右滑动联动）
                 if (quickSwitchRanks.size > 1) {
                     item {
+                        val quickRankTabs = remember(quickSwitchRanks) {
+                            quickSwitchRanks.map { item ->
+                                ConceptCategoryTabItem(
+                                    key = item.rankId.toString(),
+                                    label = item.rankName,
+                                    accentColor = rankAccentColor(item)
+                                )
+                            }
+                        }
+                        val quickScrollState = rememberScrollState()
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(20.dp),
-                                contentPadding = PaddingValues(horizontal = 16.dp),
-                                modifier = Modifier.fillMaxWidth()
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(quickScrollState)
+                                    .padding(horizontal = 16.dp)
                             ) {
-                                items(quickSwitchRanks, key = { it.rankId }) { item ->
-                                    val selected = item.rankId == currentRank.rankId
-                                    val itemAccent = rankAccentColor(item)
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier
-                                            .softClickable { selectedRankId = item.rankId }
-                                            .padding(top = 4.dp)
-                                    ) {
-                                        Text(
-                                            text = item.rankName,
-                                            color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
-                                            fontSize = 13.5.sp,
-                                            maxLines = 1
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .width(20.dp)
-                                                .height(3.dp)
-                                                .clip(CircleShape)
-                                                .background(if (selected) itemAccent else Color.Transparent)
-                                        )
-                                    }
-                                }
+                                ConceptSlidingCategoryTabs(
+                                    tabs = quickRankTabs,
+                                    selectedKey = currentRank.rankId.toString(),
+                                    onSelectTab = { key ->
+                                        key.toIntOrNull()?.let { selectedRankId = it }
+                                    },
+                                    itemSpacing = 20.dp,
+                                    fontSize = 13.5.sp,
+                                    indicatorWidth = 20.dp,
+                                    fillWidth = false
+                                )
                             }
                             HorizontalDivider(
                                 thickness = 0.5.dp,
@@ -2362,12 +2475,20 @@ private fun RankGridPickerSheet(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
-            // 固定 460.dp 高度 + skipPartiallyExpanded = true，彻底解决「全球权威」切换至「官方热榜/特色曲风」时抽屉回缩一节的问题
+            // 固定 460.dp 高度 + skipPartiallyExpanded = true + 左右滑动切换分类
             val rows = filteredRanks.chunked(2)
+            val catIndex = categories.indexOf(selectedCategory).coerceAtLeast(0)
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(460.dp),
+                    .height(460.dp)
+                    .horizontalCategorySwipe(
+                        currentIndex = catIndex,
+                        itemCount = categories.size,
+                        onSelectIndex = { nextIdx ->
+                            categories.getOrNull(nextIdx)?.let { selectedCategory = it }
+                        }
+                    ),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
@@ -2491,11 +2612,20 @@ fun DailyRecommendScreen(
                         }
                     },
                     actions = {
+                        var dailyRefreshSpin by remember { mutableIntStateOf(0) }
                         IconButton(
-                            onClick = { viewModel.refreshDailyRecommend() },
+                            onClick = {
+                                dailyRefreshSpin += 1
+                                viewModel.refreshDailyRecommend()
+                            },
                             enabled = !isBusy
                         ) {
-                            Icon(Icons.Rounded.Refresh, contentDescription = "刷新每日推荐", tint = ConceptCoralAccent)
+                            ConceptFluidRefreshIcon(
+                                tint = ConceptCoralAccent,
+                                isRefreshing = isBusy,
+                                spinTrigger = dailyRefreshSpin,
+                                modifier = Modifier.size(19.dp)
+                            )
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
@@ -2636,7 +2766,7 @@ private fun DailyRecommendBanner(
 ) {
     val isDark = LocalIsDarkTheme.current
     val today = remember { runCatching { LocalDate.now(DISCOVER_CHINA_ZONE) }.getOrElse { LocalDate.now() } }
-    val dateText = remember(today) { String.format("%02d.%02d", today.monthValue, today.dayOfMonth) }
+    val dateText = remember(today) { String.format("%02d/%02d", today.monthValue, today.dayOfMonth) }
 
     val bgBrush = if (isDark) {
         Brush.linearGradient(
@@ -2682,47 +2812,49 @@ private fun DailyRecommendBanner(
         ) {
             StaggeredThreeCovers(songs = songs.take(3))
 
-            Spacer(modifier = Modifier.width(18.dp))
+            Spacer(modifier = Modifier.width(12.dp))
 
             Column(
                 modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "每日推荐",
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            color = titleColor,
-                            fontSize = 21.sp,
-                            letterSpacing = 0.5.sp
-                        ),
-                        maxLines = 1
-                    )
-                    Text(
-                        text = dateText,
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            color = titleColor,
-                            fontSize = 21.sp,
-                            letterSpacing = 0.3.sp
-                        ),
-                        maxLines = 1
-                    )
-                }
+                Text(
+                    text = dateText,
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        color = ConceptCoralAccent,
+                        fontSize = 13.sp,
+                        letterSpacing = 1.2.sp
+                    ),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
+                )
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(2.dp))
 
                 Text(
-                    text = "循着你的听歌轨迹 · 邂逅今日心动旋律",
+                    text = "每日推荐",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        color = titleColor,
+                        fontSize = 20.5.sp,
+                        letterSpacing = 0.8.sp
+                    ),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
+                )
+
+                Spacer(modifier = Modifier.height(5.dp))
+
+                Text(
+                    text = "懂你的今日专属旋律",
                     style = MaterialTheme.typography.bodySmall.copy(
                         color = subColor,
-                        fontSize = 12.5.sp
+                        fontSize = 11.5.sp
                     ),
-                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }

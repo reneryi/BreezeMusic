@@ -102,10 +102,7 @@ object ListeningGradeManager {
             val currentTotalSec = syncedDsec + pendingDiffSec
             val old = _gradeInfo.value
             if (currentTotalSec != old.totalListenSeconds) {
-                _gradeInfo.value = old.copy(
-                    totalListenSeconds = currentTotalSec,
-                    totalListenMinutes = currentTotalSec / 60
-                )
+                _gradeInfo.value = old.withUpdatedSeconds(currentTotalSec)
             }
         }
 
@@ -146,10 +143,7 @@ object ListeningGradeManager {
                 syncedDsec = serverQuery.totalListenSeconds
                 saveUserData(immediate = true)
                 val optimisticSec = syncedDsec + pendingDiffSec
-                _gradeInfo.value = serverQuery.copy(
-                    totalListenSeconds = optimisticSec,
-                    totalListenMinutes = optimisticSec / 60
-                )
+                _gradeInfo.value = serverQuery.withUpdatedSeconds(optimisticSec)
             }
 
             // 2. 若存在待上报增量且已拿到云端有效基准，按单次不超过 300 秒向云端增量上报
@@ -171,10 +165,7 @@ object ListeningGradeManager {
                     saveUserData(immediate = true)
 
                     val displaySec = syncedDsec + pendingDiffSec
-                    _gradeInfo.value = reportResult.copy(
-                        totalListenSeconds = displaySec,
-                        totalListenMinutes = displaySec / 60
-                    )
+                    _gradeInfo.value = reportResult.withUpdatedSeconds(displaySec)
                     android.util.Log.i(
                         "ListeningGrade",
                         "云端听歌时长同步成功: d_sec=$acceptedDsec, diff_sec=$toReportDiff, 剩余待报=$pendingDiffSec, 等级=Lv.${reportResult.level}"

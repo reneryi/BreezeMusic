@@ -52,6 +52,7 @@ import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.ConceptCategoryTabItem
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
+import com.concept.music.ui.theme.horizontalCategorySwipe
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.SearchViewModel
 
@@ -318,7 +319,18 @@ fun SearchScreen(
                                         fadeOut(animationSpec = tween(150)))
                             },
                             label = "searchTabContentTransition",
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .horizontalCategorySwipe(
+                                    currentIndex = selectedTab.ordinal,
+                                    itemCount = SearchTab.entries.size,
+                                    onSelectIndex = { nextIdx ->
+                                        SearchTab.entries.getOrNull(nextIdx)?.let { viewModel.selectTab(it) }
+                                    },
+                                    onSwipeRightAtStart = {
+                                        viewModel.clearQuery()
+                                    }
+                                )
                         ) { activeTab ->
                         when (activeTab) {
                             SearchTab.COMPLEX -> {

@@ -1,14 +1,11 @@
 package com.concept.music.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -52,13 +49,10 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /**
- * 立体层次感悬浮播放控制条（Layered Floating Island MiniPlayer）：
- * 1. 极简功能聚焦：移除上一首/下一首按钮，仅保留「播放/暂停」与「播放队列」双按钮；
- * 2. 丝滑横滑切歌：整条控制栏支持左右滑动切歌（左滑下一首 / 右滑上一首），滑动时实时浮现方向提示胶囊；
- * 3. 立体悬浮层次感：
- *    - 底层内缩叠影层（Stacked Ambient Base）营造双层卡片悬浮纵深；
- *    - 主胶囊采用多层漫反射彩色阴影 + 顶部高光描边 + 立体黑胶微缩唱片盘；
- *    - 播放按钮外环集成实时环形进度轨，底部内嵌呼吸流光进度条。
+ * 独立圆角长条形上层悬浮播放控制条（Floating Capsule MiniPlayer）：
+ * 1. 无背景矩形底栏遮挡：作为独立圆角胶囊直接悬浮于页面内容上层，页面滚动时内容从胶囊下方自然穿过；
+ * 2. 极简功能聚焦：支持整条左右滑动切歌（左滑下一首 / 右滑上一首），右侧仅保留「播放/暂停」与「播放队列」；
+ * 3. 单一环形进度视觉：仅在播放按钮外环绕圆形进度条，彻底移除底部重复的直线进度条。
  */
 @Composable
 fun MiniPlayerBar(
@@ -76,42 +70,21 @@ fun MiniPlayerBar(
     if (currentSong == null) return
 
     val isDark = LocalIsDarkTheme.current
+    val capsuleShape = RoundedCornerShape(29.dp)
     val mainCapsuleBrush = if (isDark) {
         Brush.horizontalGradient(
             listOf(
-                Color(0xFA162238),
-                Color(0xFA131C2E),
-                Color(0xFA17243A)
+                Color(0xF2162236),
+                Color(0xF2131C2D),
+                Color(0xF2172338)
             )
         )
     } else {
         Brush.horizontalGradient(
             listOf(
-                Color(0xFEFFFFFF),
-                Color(0xFCF6FAFF),
-                Color(0xFEFFFFFF)
-            )
-        )
-    }
-    val underStackColor = if (isDark) {
-        ConceptPrimary.copy(alpha = 0.16f)
-    } else {
-        ConceptPrimary.copy(alpha = 0.12f)
-    }
-    val borderBrush = if (isDark) {
-        Brush.verticalGradient(
-            listOf(
-                Color.White.copy(alpha = 0.16f),
-                ConceptPrimary.copy(alpha = 0.18f),
-                Color.White.copy(alpha = 0.05f)
-            )
-        )
-    } else {
-        Brush.verticalGradient(
-            listOf(
-                Color.White,
-                ConceptPrimary.copy(alpha = 0.16f),
-                ConceptPrimary.copy(alpha = 0.08f)
+                Color(0xFAFFFFFF),
+                Color(0xF8F4F9FF),
+                Color(0xFAFFFFFF)
             )
         )
     }
@@ -154,41 +127,20 @@ fun MiniPlayerBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 7.dp)
+            .padding(horizontal = 14.dp)
             .graphicsLayer {
                 scaleX = barScale
                 scaleY = barScale
             },
-        contentAlignment = Alignment.TopCenter
+        contentAlignment = Alignment.Center
     ) {
-        // 第一层：底部内缩悬浮叠影衬底（营造类似头像卡片的立体多层悬浮感）
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.92f)
-                .height(60.dp)
-                .offset(y = 6.dp)
-                .shadow(
-                    elevation = if (isDark) 18.dp else 12.dp,
-                    shape = RoundedCornerShape(30.dp),
-                    ambientColor = if (isDark) Color.Black.copy(alpha = 0.65f) else ConceptPrimary.copy(alpha = 0.28f),
-                    spotColor = ConceptPrimary.copy(alpha = 0.36f)
-                )
-                .clip(RoundedCornerShape(30.dp))
-                .background(underStackColor)
-        )
-
-        // 第二层：主悬浮胶囊岛
         Surface(
+            shape = capsuleShape,
+            color = Color.Transparent,
+            shadowElevation = if (isDark) 14.dp else 7.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .shadow(
-                    elevation = if (isDark) 22.dp else 14.dp,
-                    shape = RoundedCornerShape(30.dp),
-                    ambientColor = if (isDark) Color.Black.copy(alpha = 0.72f) else ConceptPrimary.copy(alpha = 0.24f),
-                    spotColor = if (isDark) ConceptPrimary.copy(alpha = 0.38f) else ConceptPrimary.copy(alpha = 0.32f)
-                )
-                .clip(RoundedCornerShape(30.dp))
-                .border(1.dp, borderBrush, RoundedCornerShape(30.dp))
+                .height(58.dp)
                 .pointerInput(currentSong.id) {
                     detectHorizontalDragGestures(
                         onDragEnd = {
@@ -221,253 +173,215 @@ fun MiniPlayerBar(
                     )
                 }
                 .softCardClickable(
-                    shape = RoundedCornerShape(30.dp),
+                    shape = capsuleShape,
+                    clip = false,
                     pressScale = 0.985f,
                     pressAlpha = 0.95f,
                     onClick = onBarClick
-                ),
-            color = Color.Transparent,
-            shape = RoundedCornerShape(30.dp)
+                )
         ) {
-            Box(
+            Row(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxSize()
                     .background(mainCapsuleBrush)
+                    .padding(start = 9.dp, end = 11.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 10.dp, end = 12.dp, top = 8.dp, bottom = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 左侧 + 中间：可随手势横滑位移的立体黑胶唱片与曲目信息区
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .graphicsLayer {
-                                    translationX = currentDrag * 0.42f
-                                    alpha = (1f - (abs(currentDrag) / 340f)).coerceIn(0.35f, 1f)
-                                },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // 立体双环黑胶微缩唱片盘
-                            Box(
-                                modifier = Modifier
-                                    .size(46.dp)
-                                    .shadow(6.dp, CircleShape, spotColor = ConceptPrimary.copy(alpha = 0.35f))
-                                    .clip(CircleShape)
-                                    .background(
-                                        Brush.radialGradient(
-                                            listOf(Color(0xFF2B3242), Color(0xFF121620))
-                                        )
-                                    )
-                                    .border(1.5.dp, ConceptPrimary.copy(alpha = 0.28f), CircleShape)
-                                    .padding(3.5.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .graphicsLayer {
-                                            rotationZ = rotationAnim.value % 360f
-                                            shape = CircleShape
-                                            clip = true
-                                        }
-                                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (currentSong.coverUrl.isNotEmpty()) {
-                                        AsyncImage(
-                                            model = currentSong.coverUrl,
-                                            contentDescription = currentSong.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Rounded.MusicNote,
-                                            contentDescription = null,
-                                            tint = ConceptPrimary,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                }
-                                // 唱片中心微轴孔
-                                Box(
-                                    modifier = Modifier
-                                        .size(7.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isDark) Color(0xFF141C2E) else Color.White)
-                                        .border(1.dp, ConceptPrimary.copy(alpha = 0.4f), CircleShape)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.width(12.dp))
-
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = currentSong.title,
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = primaryTextColor,
-                                            fontSize = 14.5.sp
-                                        ),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f, fill = false)
-                                    )
-                                    when {
-                                        currentSong.isHiRes -> {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            BadgeTag(text = "Hi-Res", color = goldColor)
-                                        }
-                                        currentSong.isLossless -> {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            BadgeTag(text = "SQ", color = ConceptPrimary)
-                                        }
-                                        currentSong.quality == "320" -> {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            BadgeTag(text = "HQ", color = ConceptPrimary)
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(2.5.dp))
-
-                                val subtitleHint = when {
-                                    isSwipingNext -> if (willTriggerSwitch) "松手切换下一首 ▶" else "继续左滑切下一首"
-                                    isSwipingPrev -> if (willTriggerSwitch) "◀ 松手切换上一首" else "继续右滑切上一首"
-                                    else -> currentSong.artist.ifBlank { "未知歌手" }
-                                }
-                                val subtitleColor = if (willTriggerSwitch) ConceptPrimary else subTextColor
-
-                                Text(
-                                    text = subtitleHint,
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        color = subtitleColor,
-                                        fontWeight = if (willTriggerSwitch) FontWeight.Bold else FontWeight.Medium,
-                                        fontSize = 11.5.sp
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.width(10.dp))
-
-                        // 右侧极简双按钮区：1. 环形进度立体播放/暂停按钮  2. 播放队列抽屉呼出按钮
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(42.dp)
-                                    .softClickable(
-                                        pressScale = 0.88f,
-                                        pressAlpha = 0.85f,
-                                        onClick = onTogglePlay
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                // 外圈环形播放进度光轨
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    val strokeW = 2.2.dp.toPx()
-                                    drawCircle(
-                                        color = ConceptPrimary.copy(alpha = if (isDark) 0.20f else 0.15f),
-                                        style = Stroke(width = strokeW)
-                                    )
-                                    if (progressFraction > 0.005f) {
-                                        drawArc(
-                                            brush = Brush.sweepGradient(
-                                                listOf(ConceptPrimary, ConceptCyanAccent, ConceptPrimary)
-                                            ),
-                                            startAngle = -90f,
-                                            sweepAngle = 360f * progressFraction,
-                                            useCenter = false,
-                                            style = Stroke(width = strokeW, cap = StrokeCap.Round)
-                                        )
-                                    }
-                                }
-
-                                // 中心饱满悬浮圆按钮
-                                Box(
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .shadow(
-                                            elevation = 5.dp,
-                                            shape = CircleShape,
-                                            spotColor = ConceptPrimary.copy(alpha = 0.45f)
-                                        )
-                                        .clip(CircleShape)
-                                        .background(
-                                            Brush.linearGradient(
-                                                listOf(ConceptPrimary, ConceptCyanAccent.copy(alpha = 0.9f))
-                                            )
-                                        ),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                        contentDescription = if (isPlaying) "暂停" else "播放",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(19.dp)
-                                    )
-                                }
-                            }
-
-                            // 播放队列按钮（点击直接以抽屉形式弹出播放队列）
-                            Surface(
-                                shape = CircleShape,
-                                color = if (isDark) Color.White.copy(alpha = 0.07f) else ConceptPrimary.copy(alpha = 0.09f),
-                                border = BorderStroke(
-                                    0.6.dp,
-                                    if (isDark) Color.White.copy(alpha = 0.10f) else ConceptPrimary.copy(alpha = 0.16f)
-                                ),
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .softClickable(
-                                        pressScale = 0.88f,
-                                        pressAlpha = 0.80f,
-                                        onClick = onQueueClick
-                                    )
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
-                                        contentDescription = "弹出播放队列",
-                                        tint = if (isDark) Color.White.copy(alpha = 0.88f) else ConceptPrimary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // 底部内缩柔和流光进度条
+                // 左侧 + 中间：可随手势横滑位移的黑胶微缩唱盘与曲目信息区
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .graphicsLayer {
+                            translationX = currentDrag * 0.42f
+                            alpha = (1f - (abs(currentDrag) / 340f)).coerceIn(0.35f, 1f)
+                        },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 22.dp)
-                            .padding(bottom = 3.dp)
-                            .height(2.2.dp)
+                            .size(42.dp)
+                            .shadow(4.dp, CircleShape, spotColor = ConceptPrimary.copy(alpha = 0.30f))
                             .clip(CircleShape)
-                            .background(ConceptPrimary.copy(alpha = if (isDark) 0.14f else 0.10f))
+                            .background(
+                                Brush.radialGradient(
+                                    listOf(Color(0xFF2B3242), Color(0xFF121620))
+                                )
+                            )
+                            .padding(3.dp),
+                        contentAlignment = Alignment.Center
                     ) {
                         Box(
                             modifier = Modifier
-                                .fillMaxHeight()
-                                .fillMaxWidth(progressFraction)
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    rotationZ = rotationAnim.value % 360f
+                                    shape = CircleShape
+                                    clip = true
+                                }
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (currentSong.coverUrl.isNotEmpty()) {
+                                AsyncImage(
+                                    model = currentSong.coverUrl,
+                                    contentDescription = currentSong.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.MusicNote,
+                                    contentDescription = null,
+                                    tint = ConceptPrimary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(if (isDark) Color(0xFF141C2E) else Color.White)
+                                .border(0.8.dp, ConceptPrimary.copy(alpha = 0.4f), CircleShape)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(11.dp))
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = currentSong.title,
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = primaryTextColor,
+                                    fontSize = 14.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            when {
+                                currentSong.isHiRes -> {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    BadgeTag(text = "Hi-Res", color = goldColor)
+                                }
+                                currentSong.isLossless -> {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    BadgeTag(text = "SQ", color = ConceptPrimary)
+                                }
+                                currentSong.quality == "320" -> {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    BadgeTag(text = "HQ", color = ConceptPrimary)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(2.dp))
+
+                        val subtitleHint = when {
+                            isSwipingNext -> if (willTriggerSwitch) "松手切下一首 ▶" else "左滑切下一首"
+                            isSwipingPrev -> if (willTriggerSwitch) "◀ 松手切上一首" else "右滑切上一首"
+                            else -> currentSong.artist.ifBlank { "未知歌手" }
+                        }
+                        val subtitleColor = if (willTriggerSwitch) ConceptPrimary else subTextColor
+
+                        Text(
+                            text = subtitleHint,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = subtitleColor,
+                                fontWeight = if (willTriggerSwitch) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 11.5.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                // 右侧双按钮区：1. 外环绕圆形进度条的播放/暂停按钮  2. 播放队列按钮
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .softClickable(
+                                pressScale = 0.88f,
+                                pressAlpha = 0.85f,
+                                onClick = onTogglePlay
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        // 外圈唯一环形播放进度光轨（无底部重复直线进度条）
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val strokeW = 2.2.dp.toPx()
+                            drawCircle(
+                                color = ConceptPrimary.copy(alpha = if (isDark) 0.22f else 0.16f),
+                                style = Stroke(width = strokeW)
+                            )
+                            if (progressFraction > 0.005f) {
+                                drawArc(
+                                    brush = Brush.sweepGradient(
+                                        listOf(ConceptPrimary, ConceptCyanAccent, ConceptPrimary)
+                                    ),
+                                    startAngle = -90f,
+                                    sweepAngle = 360f * progressFraction,
+                                    useCenter = false,
+                                    style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
                                 .clip(CircleShape)
                                 .background(
-                                    Brush.horizontalGradient(
-                                        listOf(ConceptPrimary, ConceptCyanAccent)
+                                    Brush.linearGradient(
+                                        listOf(ConceptPrimary, ConceptCyanAccent.copy(alpha = 0.9f))
                                     )
-                                )
-                        )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                contentDescription = if (isPlaying) "暂停" else "播放",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isDark) Color.White.copy(alpha = 0.08f) else ConceptPrimary.copy(alpha = 0.09f),
+                        border = BorderStroke(
+                            0.6.dp,
+                            if (isDark) Color.White.copy(alpha = 0.10f) else ConceptPrimary.copy(alpha = 0.14f)
+                        ),
+                        modifier = Modifier
+                            .size(36.dp)
+                            .softClickable(
+                                pressScale = 0.88f,
+                                pressAlpha = 0.80f,
+                                onClick = onQueueClick
+                            )
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
+                                contentDescription = "播放队列",
+                                tint = if (isDark) Color.White.copy(alpha = 0.88f) else ConceptPrimary,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
                     }
                 }
             }

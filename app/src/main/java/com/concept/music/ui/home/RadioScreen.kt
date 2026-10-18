@@ -57,7 +57,9 @@ import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.ConceptCategoryTabItem
+import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
+import com.concept.music.ui.theme.horizontalCategorySwipe
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
@@ -242,10 +244,21 @@ fun RadioScreen(
                 )
             }
         ) { innerPadding ->
+            val currentCatIdx = categories.indexOf(selectedCategory).coerceAtLeast(0)
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+                    .horizontalCategorySwipe(
+                        currentIndex = currentCatIdx,
+                        itemCount = categories.size,
+                        onSelectIndex = { nextIdx ->
+                            categories.getOrNull(nextIdx)?.let { cat ->
+                                selectedCategory = cat
+                                showAllStationsGrid = true
+                            }
+                        }
+                    ),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 112.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
@@ -429,8 +442,10 @@ fun RadioScreen(
                                     )
                                 }
 
+                                var radioRefreshSpin by remember { mutableIntStateOf(0) }
                                 FilledTonalButton(
                                     onClick = {
+                                        radioRefreshSpin += 1
                                         loadStationBatch(currentChannel.id, append = false)
                                         Toast.makeText(context, "已焕新「${currentChannel.name}」曲目", Toast.LENGTH_SHORT).show()
                                     },
@@ -442,8 +457,13 @@ fun RadioScreen(
                                     ),
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                                 ) {
-                                    Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
+                                    ConceptFluidRefreshIcon(
+                                        tint = if (isDark) Color.White else currentCategoryAccent,
+                                        isRefreshing = loading,
+                                        spinTrigger = radioRefreshSpin,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
                                     Text(
                                         text = "换一批",
                                         fontWeight = FontWeight.Bold,

@@ -84,7 +84,7 @@ fun SettingsScreen(
                 TopAppBar(
                     title = {
                         Text(
-                            text = "设置与播放偏好",
+                            text = "设置",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                         )
                     },
@@ -114,7 +114,7 @@ fun SettingsScreen(
                 // 1. 视觉主题与色彩风格
                 item {
                     SettingsSectionCard(
-                        title = "外观主题与视觉风格",
+                        title = "外观与播放样式",
                         icon = Icons.Rounded.Palette
                     ) {
                         Text(
@@ -122,7 +122,7 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                         )
                         Text(
-                            text = "深色模式采用静谧克制的深海微泛蓝基调；浅色模式以酷狗经典蓝为主色，融合水彩晕染质感",
+                            text = "提供幽邃微蓝深色与水彩漫染浅色两套主题",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -203,7 +203,7 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                         )
                         Text(
-                            text = "自定义全屏播放页的主视觉形态，支持流光黑胶、透明机械磁带、杂志海报与极简圆盘",
+                            text = "切换播放页主视觉样式",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -230,7 +230,7 @@ fun SettingsScreen(
                 // 2. 音质策略与无缝播放体验（现代音乐 App 专业设置）
                 item {
                     SettingsSectionCard(
-                        title = "音质标准与无缝听感",
+                        title = "音质与听感",
                         icon = Icons.Rounded.HighQuality
                     ) {
                         Text(
@@ -238,7 +238,7 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                         )
                         Text(
-                            text = "若歌曲未收录所选最高档位，将自动平滑匹配该曲目可用的最高音质",
+                            text = "优先按所选音质播放，无对应档位时自动择优",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -270,8 +270,8 @@ fun SettingsScreen(
                         )
 
                         SettingToggleRow(
-                            title = "移动网络智能省流保护",
-                            subtitle = "使用蜂窝移动数据时自动切换为高品 320K，连接 Wi-Fi 时恢复无损 / Hi-Res",
+                            title = "移动网络省流",
+                            subtitle = "移动网络下播 320K，Wi-Fi 下恢复无损 / Hi-Res",
                             checked = wifiOnlyLossless,
                             onCheckedChange = { viewModel.setWifiOnlyLossless(it) }
                         )
@@ -279,8 +279,8 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingToggleRow(
-                            title = "跨曲目智能响度均衡 (ReplayGain)",
-                            subtitle = "自动平衡不同年代、不同专辑录音的音量落差，避免切歌时音量忽大忽小",
+                            title = "智能音量均衡",
+                            subtitle = "平衡不同曲目音量差异，避免切歌忽大忽小",
                             checked = volumeNormalization,
                             onCheckedChange = { viewModel.setVolumeNormalization(it) }
                         )
@@ -294,11 +294,11 @@ fun SettingsScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "跨曲目淡入淡出过渡 (Crossfade)",
+                                    text = "切歌淡入淡出",
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                                 )
                                 Text(
-                                    text = if (crossfadeSeconds == 0) "已关闭（曲目间保持自然原版间隙）" else "切歌前后 ${crossfadeSeconds} 秒平滑交叉混音过渡",
+                                    text = if (crossfadeSeconds == 0) "已关闭，保持曲目原始衔接" else "切歌前后 ${crossfadeSeconds} 秒平滑过渡",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -324,8 +324,8 @@ fun SettingsScreen(
                         )
 
                         SettingToggleRow(
-                            title = "副歌刷刷 · 黄金高潮速听",
-                            subtitle = "直接切入每首歌 30~45 秒高潮段落并渐入渐出连播，遇到心仪歌曲可一键解锁整首",
+                            title = "副歌高潮速听",
+                            subtitle = "直达 30~45 秒副歌精华段，支持随时听整首",
                             checked = climaxModeEnabled,
                             onCheckedChange = { viewModel.setClimaxMode(it) },
                             thumbColor = VipGold
@@ -336,12 +336,12 @@ fun SettingsScreen(
                 // 3. 硬件外设与智能播放行为
                 item {
                     SettingsSectionCard(
-                        title = "耳机外设与智能播放交互",
+                        title = "外设与播放控制",
                         icon = Icons.Rounded.Headphones
                     ) {
                         SettingToggleRow(
-                            title = "拔出耳机或断开蓝牙时自动暂停",
-                            subtitle = "当有线耳机拔出或蓝牙音频设备断开时立即暂停音乐，防止公共场合外放尴尬",
+                            title = "断开耳机自动暂停",
+                            subtitle = "拔出有线耳机或蓝牙断开时立即暂停播放",
                             checked = pauseOnHeadsetDisconnect,
                             onCheckedChange = { viewModel.setPauseOnHeadsetDisconnect(it) }
                         )
@@ -349,8 +349,8 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingToggleRow(
-                            title = "启动应用时自动恢复播放",
-                            subtitle = "打开微风音乐时自动从上次退出的播放队列与毫秒级进度处继续播放",
+                            title = "启动时自动续播",
+                            subtitle = "启动后从上次播放位置继续播放",
                             checked = autoPlayOnStartup,
                             onCheckedChange = { viewModel.setAutoPlayOnStartup(it) }
                         )
@@ -360,7 +360,7 @@ fun SettingsScreen(
                 // 4. 歌词排版、音译注音与系统级歌词投射
                 item {
                     SettingsSectionCard(
-                        title = "歌词排版、音译注音与系统投射",
+                        title = "歌词与桌面歌词",
                         icon = Icons.Rounded.Lyrics
                     ) {
                         Row(
@@ -401,8 +401,8 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingToggleRow(
-                            title = "KRC 逐字流光染色与长音辉光",
-                            subtitle = "开启后歌词随人声逐字平滑染色，超过 800ms 的长音拖拍字自动叠加呼吸光晕",
+                            title = "KRC 逐字流光歌词",
+                            subtitle = "歌词随人声逐字染色，长音自动叠加微光",
                             checked = lyricWordByWord,
                             onCheckedChange = { viewModel.setLyricWordByWord(it) }
                         )
@@ -410,8 +410,8 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingToggleRow(
-                            title = "外语歌曲音译注音（罗马音 / 粤拼 / 韩音）",
-                            subtitle = "解析 KRC 内置音译轨道，在日韩粤语歌词上方对齐展示辅助跟唱注音",
+                            title = "外语音译注音",
+                            subtitle = "在日韩粤语歌词上方显示罗马音或粤拼",
                             checked = showPhonetic,
                             onCheckedChange = {
                                 if (showPhonetic != it) viewModel.togglePhonetic()
@@ -421,8 +421,8 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingToggleRow(
-                            title = "外语歌曲双行中文翻译",
-                            subtitle = "在原文歌词下方同步展示时间轴对齐的中文译文",
+                            title = "外语中文翻译",
+                            subtitle = "在原文歌词下方同步显示中文译文",
                             checked = showTranslation,
                             onCheckedChange = {
                                 if (showTranslation != it) viewModel.toggleTranslation()
@@ -435,8 +435,8 @@ fun SettingsScreen(
                         )
 
                         SettingToggleRow(
-                            title = "应用内全局悬浮逐字歌词胶囊",
-                            subtitle = "在浏览歌单、搜索或设置页时，于顶部悬浮展示可自由拖拽的毛玻璃逐字歌词",
+                            title = "应用内悬浮歌词",
+                            subtitle = "浏览非播放页时在顶部悬浮显示逐字歌词",
                             checked = floatingLyricEnabled,
                             onCheckedChange = { SystemLyricBridge.setFloatingCapsuleEnabled(it) }
                         )
@@ -444,8 +444,8 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingToggleRow(
-                            title = "系统状态栏歌词广播",
-                            subtitle = "兼容 Flyme / HyperOS / OriginOS / LyricGetter 状态栏歌词协议",
+                            title = "状态栏歌词",
+                            subtitle = "向 Flyme / HyperOS / OriginOS 发送状态栏歌词",
                             checked = statusBarLyricEnabled,
                             onCheckedChange = { SystemLyricBridge.setStatusBarBroadcastEnabled(context, it) }
                         )
@@ -455,12 +455,12 @@ fun SettingsScreen(
                 // 5. 全自动概念版 VIP 权益守护与桌面组件
                 item {
                     SettingsSectionCard(
-                        title = "概念版 VIP 自动续期与桌面组件",
+                        title = "VIP 自动守护",
                         icon = Icons.Rounded.VerifiedUser
                     ) {
                         SettingToggleRow(
-                            title = "每日后台自动续期概念版 VIP",
-                            subtitle = "定时执行概念版每日签到、畅听 VIP 领取、SVIP 升级与 8 首听歌打卡上报",
+                            title = "每日自动领取 VIP",
+                            subtitle = "自动完成每日签到、VIP 领取与听歌打卡",
                             checked = autoGuardianEnabled,
                             onCheckedChange = { VipGuardianManager.setEnabled(context, it) }
                         )
@@ -506,7 +506,7 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "提示：可在手机桌面长按空白处添加「微风音乐 · 流光黑胶与 VIP 守护小组件」，随时查看权益状态与控制播放。",
+                            text = "可在手机桌面添加「微风音乐」小组件，快捷控播并查看 VIP 状态。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -516,7 +516,7 @@ fun SettingsScreen(
                 // 6. 倍速变调、睡眠定时与白噪音混音
                 item {
                     SettingsSectionCard(
-                        title = "倍速变调、睡眠定时与白噪音",
+                        title = "倍速与睡眠定时",
                         icon = Icons.Rounded.Speed
                     ) {
                         Row(
@@ -551,8 +551,8 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         SettingToggleRow(
-                            title = "黑胶变速联动变调模式",
-                            subtitle = "开启后音调随播放倍速同步升降，模拟物理黑胶唱机慢放/快放的复古听感",
+                            title = "变速联动变调",
+                            subtitle = "音调随倍速同步升降，还原黑胶慢放与快放听感",
                             checked = linkPitchToSpeed,
                             onCheckedChange = { viewModel.setLinkPitchToSpeed(it) }
                         )
@@ -595,7 +595,7 @@ fun SettingsScreen(
                                 val status = when {
                                     sleepTimerRemainingSec > 0L -> "剩余 ${sleepTimerRemainingSec / 60}分${sleepTimerRemainingSec % 60}秒 后自动停止"
                                     sleepStopAfterCurrentSong -> "将在当前曲目播放完毕后停止"
-                                    else -> "未开启（倒计时结束前 5 秒音量平滑渐弱）"
+                                    else -> "未开启，结束前音量平滑渐弱"
                                 }
                                 Text(
                                     text = status,
@@ -641,7 +641,7 @@ fun SettingsScreen(
                 // 7. 边听边存缓存与固定离线空间
                 item {
                     SettingsSectionCard(
-                        title = "边听边存与离线缓存空间",
+                        title = "存储与音频缓存",
                         icon = Icons.Rounded.Storage
                     ) {
                         Row(
@@ -651,11 +651,11 @@ fun SettingsScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "本地音频缓存占用（已固定保护 ${pinnedSongs.size} 首）",
+                                    text = "本地音频缓存（已固定 ${pinnedSongs.size} 首）",
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                                 )
                                 Text(
-                                    text = "播放过的歌曲自动落盘缓存，支持断网秒播；标记为「固定离线收藏」的歌曲在清理缓存时自动保留",
+                                    text = "已播歌曲自动缓存，清理时保留已固定的离线曲目",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -676,15 +676,21 @@ fun SettingsScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.End
                         ) {
+                            var cacheRefreshSpin by remember { mutableIntStateOf(0) }
                             OutlinedButton(
                                 onClick = {
+                                    cacheRefreshSpin += 1
                                     AudioCacheManager.refreshCacheSize(context)
                                     Toast.makeText(context, "缓存统计已更新", Toast.LENGTH_SHORT).show()
                                 },
                                 shape = RoundedCornerShape(12.dp)
                             ) {
-                                Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
+                                ConceptFluidRefreshIcon(
+                                    tint = ConceptPrimary,
+                                    spinTrigger = cacheRefreshSpin,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
                                 Text("刷新统计", fontSize = 12.sp)
                             }
                             Spacer(modifier = Modifier.width(10.dp))
@@ -715,18 +721,18 @@ fun SettingsScreen(
                 // 8. 关于应用
                 item {
                     SettingsSectionCard(
-                        title = "关于微风音乐 (BreezeMusic)",
+                        title = "关于微风音乐",
                         icon = Icons.Rounded.Info
                     ) {
                         Text(
-                            text = "BreezeMusic · 酷狗概念版高定客户端 (v5.0)",
+                            text = "BreezeMusic · 酷狗概念版第三方客户端",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "• 音频架构：Media3 ExoPlayer + 32MB 大分片边听边存 + 硬件级 5 段均衡器 / 空间混响\n" +
-                                "• 视觉设计：幽邃微蓝（深色）与水彩浸润（浅色）双境主题系统，支持 120Hz 硬件着色器缓存\n" +
-                                "• 特色工坊：心流番茄工作台 · AI 情绪漫游重排 · KRC 音译/伴奏跟唱 · VIP 守护日历与风控自愈沙盒 · 黑胶金句海报",
+                            text = "• 音频引擎：Media3 ExoPlayer · 边听边存 · 5 段均衡与空间混响\n" +
+                                "• 视觉体验：幽邃微蓝与水彩漫染双主题 · 120Hz 流畅动效\n" +
+                                "• 核心特性：心流专注 · KRC 逐字音译 · 每日 VIP 自动守护",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 19.sp

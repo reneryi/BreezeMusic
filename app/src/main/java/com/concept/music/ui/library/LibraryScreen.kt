@@ -60,7 +60,9 @@ import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.ConceptCategoryTabItem
+import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
+import com.concept.music.ui.theme.horizontalCategorySwipe
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.LibraryViewModel
 import kotlinx.coroutines.launch
@@ -274,7 +276,7 @@ fun LibraryScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "概念胶囊工作台 · Focus Pod",
+                                    text = "概念胶囊 · Focus Pod",
                                     style = MaterialTheme.typography.titleSmall.copy(
                                         fontWeight = FontWeight.ExtraBold,
                                         color = MaterialTheme.colorScheme.onSurface
@@ -295,9 +297,9 @@ fun LibraryScreen(
                             Spacer(modifier = Modifier.height(3.dp))
                             Text(
                                 text = if (focusPodState.activeTracks.isNotEmpty()) {
-                                    "已开启 ${focusPodState.activeTracks.size} 路环境白噪音 · 自动累计听歌时长"
+                                    "已混音 ${focusPodState.activeTracks.size} 路白噪音 · 时长实时累计"
                                 } else {
-                                    "心流番茄钟 × 4路白噪音混音 × 场景轻音"
+                                    "番茄专注 · 白噪音混音 · 场景轻音"
                                 },
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -399,18 +401,20 @@ fun LibraryScreen(
                                         )
                                     }
                                 } else {
+                                    var assetRefreshSpin by remember { mutableIntStateOf(0) }
                                     IconButton(
                                         onClick = {
+                                            assetRefreshSpin += 1
                                             if (selectedTab == 2) viewModel.refreshFollowedArtists()
                                             else if (selectedTab == 3) viewModel.refreshPurchasedAssets()
                                         },
                                         modifier = Modifier.size(30.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Refresh,
-                                            contentDescription = "刷新当前分组",
+                                        ConceptFluidRefreshIcon(
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(17.dp)
+                                            isRefreshing = libraryLoading,
+                                            spinTrigger = assetRefreshSpin,
+                                            modifier = Modifier.size(16.dp)
                                         )
                                     }
                                 }
@@ -507,10 +511,19 @@ fun LibraryScreen(
                                 )
                                 if (isLoggedIn) {
                                     Spacer(modifier = Modifier.height(10.dp))
-                                    TextButton(onClick = { viewModel.refreshFollowedArtists() }) {
-                                        Icon(Icons.Rounded.Refresh, contentDescription = null, tint = ConceptMintAccent, modifier = Modifier.size(16.dp))
+                                    var followSyncSpin by remember { mutableIntStateOf(0) }
+                                    TextButton(onClick = {
+                                        followSyncSpin += 1
+                                        viewModel.refreshFollowedArtists()
+                                    }) {
+                                        ConceptFluidRefreshIcon(
+                                            tint = ConceptMintAccent,
+                                            isRefreshing = libraryLoading,
+                                            spinTrigger = followSyncSpin,
+                                            modifier = Modifier.size(15.dp)
+                                        )
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text("重新同步关注列表", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ConceptMintAccent)
+                                        Text("重新同步", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ConceptMintAccent)
                                     }
                                 }
                             }
@@ -1060,19 +1073,9 @@ private fun UnifiedProfileAndGradeCard(
     val elevatedColor = conceptElevatedSurfaceColor()
     val mintAccent = if (isDark) Color(0xFF26DEBF) else ConceptMintAccent
 
-    val rotationAngle by animateFloatAsState(
-        targetValue = if (isGradeSyncing) 360f else 0f,
-        animationSpec = tween(durationMillis = 800),
-        label = "gradeSyncRotation"
-    )
-
+    var syncClickSpin by remember { mutableIntStateOf(0) }
     val progressValue = remember(userGrade) {
-        if (userGrade.progressPercent.toInt() in 1..100) {
-            (userGrade.progressPercent / 100f).coerceIn(0.08f, 1f)
-        } else {
-            val mins = (userGrade.totalListenSeconds / 60L).coerceAtLeast(0L)
-            ((mins % 600L) / 600f).coerceIn(0.18f, 0.92f)
-        }
+        userGrade.effectiveProgressFraction
     }
 
     val cardBrush = if (isDark) {
@@ -1168,7 +1171,7 @@ private fun UnifiedProfileAndGradeCard(
                     }
 
                     Text(
-                        text = if (isLoggedIn) "概念版黑胶无损与云端曲库已就绪" else "点击登录同步我喜欢的音乐与听歌等级",
+                        text = if (isLoggedIn) "无损音质与云端曲库已就绪" else "登录同步红心曲库与听歌等级",
                         style = MaterialTheme.typography.bodySmall.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 12.sp
@@ -1247,18 +1250,19 @@ private fun UnifiedProfileAndGradeCard(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .softClickable(enabled = !isGradeSyncing) { onSyncGrade() }
+                            .softClickable(enabled = !isGradeSyncing) {
+                                syncClickSpin += 1
+                                onSyncGrade()
+                            }
                             .padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "同步云端",
+                        ConceptFluidRefreshIcon(
                             tint = ConceptPrimary,
-                            modifier = Modifier
-                                .size(13.5.dp)
-                                .rotate(rotationAngle)
+                            isRefreshing = isGradeSyncing,
+                            spinTrigger = syncClickSpin,
+                            modifier = Modifier.size(13.5.dp)
                         )
-                        Spacer(modifier = Modifier.width(3.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = if (isGradeSyncing) "同步中" else "同步云端",
                             style = MaterialTheme.typography.labelSmall.copy(
@@ -1283,11 +1287,12 @@ private fun UnifiedProfileAndGradeCard(
                         color = ConceptPrimary,
                         trackColor = ConceptPrimary.copy(alpha = 0.14f)
                     )
+                    val pctInt = (progressValue * 100f).toInt().coerceIn(1, 99)
                     Text(
-                        text = if (userGrade.nextLevelRemainMinutes > 0) {
-                            "距 Lv.${userGrade.level + 1} 差 ${userGrade.nextLevelRemainMinutes} 分钟"
-                        } else {
-                            "听歌时长实时上报"
+                        text = when {
+                            userGrade.nextLevelRemainMinutes in 1L..59L -> "差 ${userGrade.nextLevelRemainMinutes} 分升 Lv.${userGrade.level + 1}"
+                            userGrade.nextLevelRemainMinutes >= 60L -> "Lv.${userGrade.level + 1} 进度 $pctInt% · 差 ${userGrade.nextLevelRemainMinutes / 60L}h"
+                            else -> "Lv.${userGrade.level + 1} 进度 $pctInt%"
                         },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 10.5.sp

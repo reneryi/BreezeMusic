@@ -43,7 +43,9 @@ import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.ConceptCategoryTabItem
+import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
+import com.concept.music.ui.theme.horizontalCategorySwipe
 import com.concept.music.ui.theme.softClickable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -310,11 +312,16 @@ fun ArtistDetailScreen(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(onClick = { loadAllData() }) {
-                        Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "刷新",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    var artistRefreshSpin by remember { mutableIntStateOf(0) }
+                    IconButton(onClick = {
+                        artistRefreshSpin += 1
+                        loadAllData()
+                    }) {
+                        ConceptFluidRefreshIcon(
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            isRefreshing = loading || songsLoading,
+                            spinTrigger = artistRefreshSpin,
+                            modifier = Modifier.size(19.dp)
                         )
                     }
                 }
@@ -324,7 +331,12 @@ fun ArtistDetailScreen(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+                    .horizontalCategorySwipe(
+                        currentIndex = selectedTab,
+                        itemCount = 3,
+                        onSelectIndex = { selectedTab = it }
+                    ),
                 contentPadding = PaddingValues(bottom = 112.dp)
             ) {
                 // 1. 开放式无框歌手头部（消除厚重灰盒与胶囊分段栏，视觉开阔通透）
@@ -564,31 +576,22 @@ fun ArtistDetailScreen(
                                         )
                                     }
 
-                                    // 开放式最热 / 最新文字切换（无胶囊背景框）
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(14.dp)
-                                    ) {
-                                        Text(
-                                            text = "最热",
-                                            color = if (sortMethod == "hot") ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontWeight = if (sortMethod == "hot") FontWeight.ExtraBold else FontWeight.Medium,
-                                            fontSize = 13.5.sp,
-                                            modifier = Modifier.softClickable { reloadSongsBySort("hot") }
-                                        )
-                                        Text(
-                                            text = "|",
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                                            fontSize = 12.sp
-                                        )
-                                        Text(
-                                            text = "最新",
-                                            color = if (sortMethod == "new") ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            fontWeight = if (sortMethod == "new") FontWeight.ExtraBold else FontWeight.Medium,
-                                            fontSize = 13.5.sp,
-                                            modifier = Modifier.softClickable { reloadSongsBySort("new") }
+                                    // 开放式最热 / 最新文字切换（带滑动横条）
+                                    val artistSortTabs = remember {
+                                        listOf(
+                                            ConceptCategoryTabItem("hot", "最热", accentColor = ConceptPrimary),
+                                            ConceptCategoryTabItem("new", "最新", accentColor = ConceptPrimary)
                                         )
                                     }
+                                    ConceptSlidingCategoryTabs(
+                                        tabs = artistSortTabs,
+                                        selectedKey = sortMethod,
+                                        onSelectTab = { reloadSongsBySort(it) },
+                                        itemSpacing = 16.dp,
+                                        fontSize = 13.sp,
+                                        indicatorWidth = 16.dp,
+                                        fillWidth = false
+                                    )
                                 }
                             }
                         }

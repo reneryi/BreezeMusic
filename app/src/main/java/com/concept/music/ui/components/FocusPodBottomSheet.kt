@@ -109,14 +109,14 @@ fun FocusPodBottomSheet(
                     }
                     Column {
                         Text(
-                            text = "概念胶囊工作台 · Focus Pod",
+                            text = "概念胶囊 · Focus Pod",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         )
                         Text(
-                            text = "今日已达成 ${state.completedPodsToday} 个番茄钟 · 累计专注 ${state.totalFocusMinutesToday} 分钟",
+                            text = "今日专注 ${state.completedPodsToday} 次 · 累计 ${state.totalFocusMinutesToday} 分钟",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = ConceptPrimary
                             )
@@ -155,7 +155,7 @@ fun FocusPodBottomSheet(
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Text(
-                                text = if (state.isRunning) "心流专注进行中 · 自动计入听歌等级" else state.selectedPreset.title,
+                                text = if (state.isRunning) "心流专注中 · 自动计入听歌时长" else state.selectedPreset.title,
                                 color = if (state.isRunning) ConceptCyanAccent else ConceptPrimary,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,

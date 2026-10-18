@@ -35,6 +35,7 @@ import coil.compose.AsyncImage
 import com.concept.music.data.model.Song
 import com.concept.music.data.model.SongComment
 import com.concept.music.data.vip.VipManager
+import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.LocalIsDarkTheme
@@ -149,11 +150,16 @@ fun CommentsScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = onRefresh) {
-                            Icon(
-                                imageVector = Icons.Rounded.Refresh,
-                                contentDescription = "刷新",
-                                tint = ConceptPrimary
+                        var commentRefreshSpin by remember { mutableIntStateOf(0) }
+                        IconButton(onClick = {
+                            commentRefreshSpin += 1
+                            onRefresh()
+                        }) {
+                            ConceptFluidRefreshIcon(
+                                tint = ConceptPrimary,
+                                isRefreshing = loading,
+                                spinTrigger = commentRefreshSpin,
+                                modifier = Modifier.size(19.dp)
                             )
                         }
                     },

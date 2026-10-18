@@ -6,12 +6,14 @@ import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.os.Build
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -39,11 +41,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -65,6 +69,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
@@ -84,9 +89,9 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 enum class AppThemeMode(val label: String, val desc: String) {
-    DARK_ABYSS_BLUE("幽邃微蓝", "深邃暗夜基底，透出克制内敛的微泛蓝光感"),
-    LIGHT_WATERCOLOR("水彩浸润", "酷狗蓝主调水彩晕染，融合纯白圆润悬浮卡片质感"),
-    SYSTEM("跟随系统", "随系统日夜设置自动切换幽邃微蓝与水彩浸润");
+    DARK_ABYSS_BLUE("幽邃微蓝", "深海暗夜基底，透出静谧微蓝光感"),
+    LIGHT_WATERCOLOR("水彩浸润", "清透水彩晕染，纯白圆润悬浮卡片"),
+    SYSTEM("跟随系统", "随系统日夜模式自动切换深浅主题");
 
     val subtitle: String get() = desc
 }
@@ -180,7 +185,7 @@ private val LightColorScheme = lightColorScheme(
 /**
  * 沉浸式无边框悬浮卡片背景色：
  * - 深色模式：深海微蓝悬浮块 (#141C2B)
- * - 浅色模式：高透纯白圆润悬浮块 (#F7FFFFFF)，依靠柔和阴影与浅蓝水彩底色自然分层，无需生硬边框线
+ * - 浅色模式：高透纯白圆润悬浮块 (#F7FFFFFF)
  */
 @Composable
 fun conceptFloatingCardColor(): Color {
@@ -206,9 +211,7 @@ fun conceptSheetContainerColor(): Color {
 }
 
 /**
- * 柔和唯美无框点击反馈修饰符：
- * - 彻底消除生硬突兀的默认方形水波纹闪烁框（indication = null）
- * - 代之以轻盈的弹性按压微缩放与柔和透明度呼吸过渡，贴合全局柔和唯美风格
+ * 柔和唯美无框点击反馈修饰符
  */
 fun Modifier.softClickable(
     enabled: Boolean = true,
@@ -250,8 +253,8 @@ fun Modifier.softClickable(
 
 /**
  * 柔和圆润卡片/列表项点击反馈修饰符：
- * - 支持 clipControl：当用于本身已自带 shape 的 Surface（特别是需要展示外侧 3D 边缘光晕阴影的日推卡片）时，
- *   可传入 clip = false 以保留外围柔和立体光晕；普通无阴影水彩卡片默认 clip = true。
+ * - 当用于需要展示外侧 3D 边缘光晕阴影的日推卡片时，传入 clip = false 以保留外围柔和立体光晕；
+ * - 普通无阴影水彩卡片默认 clip = true。
  */
 fun Modifier.softCardClickable(
     enabled: Boolean = true,
@@ -294,6 +297,66 @@ fun Modifier.softCardClickable(
 }
 
 /**
+ * 触屏左右滑动切换分类标题修饰符：
+ * - 左滑切换至下一分类，右滑切换至上一分类；
+ * - 若当前处于首个分类且传入了 onSwipeRightAtStart / onSwipeBackAtFirst，则右滑触发返回/重置。
+ */
+fun Modifier.horizontalCategorySwipe(
+    currentIndex: Int,
+    itemCount: Int = 0,
+    totalCount: Int = itemCount,
+    swipeThresholdPx: Float = 125f,
+    onSelectIndex: (Int) -> Unit,
+    onSwipeRightAtStart: (() -> Unit)? = null,
+    onSwipeBackAtFirst: (() -> Unit)? = onSwipeRightAtStart
+): Modifier = composed {
+    val curIdx by rememberUpdatedState(currentIndex)
+    val count by rememberUpdatedState(if (itemCount > 0) itemCount else totalCount)
+    val onSelect by rememberUpdatedState(onSelectIndex)
+    val onBack by rememberUpdatedState(onSwipeRightAtStart ?: onSwipeBackAtFirst)
+
+    this.pointerInput(Unit) {
+        var totalDx = 0f
+        var triggered = false
+        detectHorizontalDragGestures(
+            onDragStart = {
+                totalDx = 0f
+                triggered = false
+            },
+            onDragEnd = {
+                totalDx = 0f
+                triggered = false
+            },
+            onDragCancel = {
+                totalDx = 0f
+                triggered = false
+            },
+            onHorizontalDrag = { change, dragAmount ->
+                if (triggered || count <= 1) return@detectHorizontalDragGestures
+                totalDx += dragAmount
+                if (totalDx <= -swipeThresholdPx) {
+                    if (curIdx < count - 1) {
+                        triggered = true
+                        change.consume()
+                        onSelect(curIdx + 1)
+                    }
+                } else if (totalDx >= swipeThresholdPx) {
+                    if (curIdx > 0) {
+                        triggered = true
+                        change.consume()
+                        onSelect(curIdx - 1)
+                    } else if (onBack != null) {
+                        triggered = true
+                        change.consume()
+                        onBack?.invoke()
+                    }
+                }
+            }
+        )
+    }
+}
+
+/**
  * 开放式分类标题导航项数据模型
  */
 @Immutable
@@ -306,7 +369,7 @@ data class ConceptCategoryTabItem(
 
 /**
  * 丝滑流体分类标题栏（支持左右滑动动画 + 多彩横条渐变过渡 + 120fps 零重排 GPU 缩放）：
- * - 单色模式（如「新歌速递」所有分类同色）：底部彩色横条在左右滑动时保持纯净单色并带水滴弹性拉伸；
+ * - 单色模式（如「新歌速递」「歌单内排序」所有分类同色）：底部彩色横条在左右滑动时保持纯净单色并带水滴弹性拉伸；
  * - 多色模式（如「巅峰排行榜」「我的页」「搜索页」「歌手页」「电台页」各分类不同颜色）：
  *   底部横条在左右移动时自动呈现平滑双色水平渐变过渡（起始分类色 -> 目标分类色流光渐变）。
  */
@@ -320,6 +383,7 @@ fun ConceptSlidingCategoryTabs(
     fontSize: TextUnit = 14.sp,
     indicatorWidth: Dp = 20.dp,
     indicatorHeight: Dp = 3.dp,
+    fillWidth: Boolean = true,
     trailingContent: (@Composable RowScope.() -> Unit)? = null
 ) {
     if (tabs.isEmpty()) return
@@ -328,8 +392,9 @@ fun ConceptSlidingCategoryTabs(
         tabs.indexOfFirst { it.key == selectedKey }.coerceAtLeast(0)
     }
 
-    // 记录每个标题在父 Row 中的水平中心坐标 (px)
+    // 记录每个标题在父 Row 中的水平中心坐标 (px) 与行总宽度
     val tabCentersPx = remember(tabs.size) { FloatArray(tabs.size) }
+    var rowWidthPx by remember(tabs.size) { mutableIntStateOf(0) }
     var layoutVersion by remember(tabs.size) { mutableIntStateOf(0) }
 
     // 判断是否为多色分类栏（如新歌速递为单色，排行榜/我的页/搜索页为多色）
@@ -364,14 +429,20 @@ fun ConceptSlidingCategoryTabs(
     )
 
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = if (fillWidth || trailingContent != null) modifier.fillMaxWidth() else modifier,
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Bottom
     ) {
-        Column(modifier = Modifier.weight(1f, fill = false)) {
+        Column(modifier = if (trailingContent != null) Modifier.weight(1f, fill = false) else Modifier) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(itemSpacing),
-                verticalAlignment = Alignment.Bottom
+                verticalAlignment = Alignment.Bottom,
+                modifier = Modifier.onGloballyPositioned { coords ->
+                    if (coords.size.width != rowWidthPx) {
+                        rowWidthPx = coords.size.width
+                        layoutVersion++
+                    }
+                }
             ) {
                 tabs.forEachIndexed { index, item ->
                     val isSelected = index == selectedIndex
@@ -394,7 +465,7 @@ fun ConceptSlidingCategoryTabs(
                         label = "tabCountColor_$index"
                     )
                     val textScale by animateFloatAsState(
-                        targetValue = if (isSelected) 1.07f else 1.0f,
+                        targetValue = if (isSelected) 1.06f else 1.0f,
                         animationSpec = spring(
                             dampingRatio = Spring.DampingRatioNoBouncy,
                             stiffness = Spring.StiffnessMediumLow
@@ -417,7 +488,7 @@ fun ConceptSlidingCategoryTabs(
                                 pressAlpha = 0.76f,
                                 onClick = { onSelectTab(item.key) }
                             )
-                            .padding(top = 4.dp, bottom = 6.dp)
+                            .padding(top = 4.dp, bottom = 5.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.Bottom,
@@ -454,10 +525,11 @@ fun ConceptSlidingCategoryTabs(
 
             // 底部左右丝滑移动指示横条（Canvas 硬件加速绘制，0 布局抖动）
             val baseIndicatorWidthPx = with(density) { indicatorWidth.toPx() }
-            val extraStretchPx = with(density) { 16.dp.toPx() }
+            val extraStretchPx = with(density) { 14.dp.toPx() }
+            val canvasWidthDp = with(density) { rowWidthPx.coerceAtLeast(1).toDp() }
             Canvas(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .width(canvasWidthDp)
                     .height(indicatorHeight)
             ) {
                 val _ver = layoutVersion // 订阅坐标测量更新
@@ -525,14 +597,36 @@ fun ConceptSlidingCategoryTabs(
 }
 
 /**
- * 重新设计的圆润双弧流光刷新图标（替代生硬的系统默认单箭头 Refresh 图标）
+ * 重新设计的圆润对称双弧流光刷新图标（替代生硬的系统默认单箭头 Refresh 图标，支持丝滑旋转动画）
  */
 @Composable
 fun ConceptFluidRefreshIcon(
     tint: Color,
     rotationDegrees: Float = 0f,
+    isRefreshing: Boolean = false,
+    spinTrigger: Int = 0,
     modifier: Modifier = Modifier
 ) {
+    var spinTurns by remember { mutableIntStateOf(0) }
+    LaunchedEffect(spinTrigger) {
+        if (spinTrigger > 0) {
+            spinTurns += 1
+        }
+    }
+    LaunchedEffect(isRefreshing) {
+        if (isRefreshing) {
+            while (true) {
+                spinTurns += 1
+                kotlinx.coroutines.delay(650L)
+            }
+        }
+    }
+    val animatedSpin by animateFloatAsState(
+        targetValue = spinTurns * 360f + rotationDegrees,
+        animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing),
+        label = "conceptFluidRefreshSpin"
+    )
+
     Canvas(modifier = modifier) {
         val w = size.width
         val h = size.height
@@ -543,7 +637,7 @@ fun ConceptFluidRefreshIcon(
         val radius = arcSize.width / 2f
         val center = Offset(w / 2f, h / 2f)
 
-        rotate(degrees = rotationDegrees, pivot = center) {
+        rotate(degrees = animatedSpin, pivot = center) {
             // 上半圆润流线弧 (22° -> 158°)
             drawArc(
                 color = tint,
@@ -571,7 +665,6 @@ fun ConceptFluidRefreshIcon(
                 val rad = endAngleDeg * (PI.toFloat() / 180f)
                 val tipX = center.x + radius * cos(rad)
                 val tipY = center.y + radius * sin(rad)
-                // 顺时针切线方向为 endAngleDeg + 90°
                 val wing1Rad = (endAngleDeg - 142f) * (PI.toFloat() / 180f)
                 val wing2Rad = (endAngleDeg - 42f) * (PI.toFloat() / 180f)
                 val path = Path().apply {
@@ -668,9 +761,7 @@ fun ConceptMusicTheme(
 }
 
 /**
- * 全局氛围画布容器（采用 drawWithCache 硬件着色器缓存）：
- * - 深色模式（幽邃微蓝）：在深海暗夜基底 (#0A0E17) 上叠加极克制、隐约泛蓝的深邃幽微光晕；
- * - 浅色模式（水彩浸润）：在云端蓝白基底 (#F2F6FC) 上以酷狗蓝为主调晕染水粉青、微醺淡紫粉点缀，衬托纯白无边框悬浮卡片。
+ * 全局氛围画布容器（采用 drawWithCache 硬件着色器缓存）
  */
 @Composable
 fun ConceptStageBackground(

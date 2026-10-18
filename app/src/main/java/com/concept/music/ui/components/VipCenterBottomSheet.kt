@@ -30,6 +30,7 @@ import com.concept.music.data.kugou.VipUiState
 import com.concept.music.data.kugou.today
 import com.concept.music.data.vip.VipManager
 import com.concept.music.ui.theme.ConceptCyanAccent
+import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.LocalIsDarkTheme
@@ -82,7 +83,7 @@ fun VipCenterScreen(
                                     )
                                 )
                                 Text(
-                                    text = "畅享 SQ / Hi-Res 无损听歌 · 月度热力日历与链路自愈",
+                                    text = "每日免费领 VIP · 无损音质畅听",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         fontSize = 11.sp
@@ -102,14 +103,19 @@ fun VipCenterScreen(
                     },
                     actions = {
                         if (loggedIn) {
+                            var topRefreshSpin by remember { mutableIntStateOf(0) }
                             IconButton(
-                                onClick = onRefresh,
+                                onClick = {
+                                    topRefreshSpin += 1
+                                    onRefresh()
+                                },
                                 enabled = !state.busy
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Refresh,
-                                    contentDescription = "刷新会员状态",
-                                    tint = ConceptPrimary
+                                ConceptFluidRefreshIcon(
+                                    tint = ConceptPrimary,
+                                    isRefreshing = state.busy,
+                                    spinTrigger = topRefreshSpin,
+                                    modifier = Modifier.size(19.dp)
                                 )
                             }
                         }
@@ -688,20 +694,24 @@ private fun VipCenterContentBody(
                     )
                 )
 
+                var bottomRefreshSpin by remember { mutableIntStateOf(0) }
                 TextButton(
-                    onClick = onRefresh,
+                    onClick = {
+                        bottomRefreshSpin += 1
+                        onRefresh()
+                    },
                     enabled = !state.busy,
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Refresh,
-                        contentDescription = "刷新",
+                    ConceptFluidRefreshIcon(
                         tint = ConceptPrimary,
-                        modifier = Modifier.size(16.dp)
+                        isRefreshing = state.busy,
+                        spinTrigger = bottomRefreshSpin,
+                        modifier = Modifier.size(15.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(5.dp))
                     Text(
-                        text = "刷新会员状态",
+                        text = "刷新状态",
                         color = ConceptPrimary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold

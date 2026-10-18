@@ -28,10 +28,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
@@ -182,70 +184,42 @@ fun MainContent(
         navController.navigate("login") { launchSingleTop = true }
     }
 
+    val isSubDetail = currentRoute.startsWith("playlist_detail") ||
+        currentRoute.startsWith("album_detail") ||
+        currentRoute.startsWith("artist_detail") ||
+        currentRoute == "daily_recommend" ||
+        currentRoute == "new_song_express" ||
+        currentRoute.startsWith("rank_detail") ||
+        currentRoute.startsWith("radio_station") ||
+        currentRoute == "search" ||
+        currentRoute == "settings" ||
+        currentRoute == "vip_center"
+
+    val showFloatingMiniBar = currentRoute != "login" &&
+        currentRoute != "accounts" &&
+        currentRoute != "settings" &&
+        currentRoute != "vip_center"
+
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             bottomBar = {
-                val isSubDetail = currentRoute.startsWith("playlist_detail") ||
-                    currentRoute.startsWith("album_detail") ||
-                    currentRoute.startsWith("artist_detail") ||
-                    currentRoute == "daily_recommend" ||
-                    currentRoute == "new_song_express" ||
-                    currentRoute.startsWith("rank_detail") ||
-                    currentRoute.startsWith("radio_station") ||
-                    currentRoute == "search" ||
-                    currentRoute == "settings" ||
-                    currentRoute == "vip_center"
-
-                if (currentRoute != "login" && currentRoute != "accounts" && currentRoute != "settings" && currentRoute != "vip_center") {
-                    Column {
-                        playerUiState.error?.let { error ->
-                            Text(
-                                text = error,
-                                color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                            )
-                        }
-
-                        AnimatedVisibility(
-                            visible = playerUiState.currentSong != null && !showNowPlaying,
-                            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(tween(220)) + scaleIn(initialScale = 0.94f),
-                            exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(tween(180)) + scaleOut(targetScale = 1.04f)
-                        ) {
-                            MiniPlayerBar(
-                                currentSong = playerUiState.currentSong,
-                                isPlaying = playerUiState.isPlaying,
-                                currentPositionMs = playerUiState.currentPositionMs,
-                                durationMs = playerUiState.durationMs,
-                                onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
-                                onNextClick = { musicPlayerViewModel.skipToNext() },
-                                onPreviousClick = { musicPlayerViewModel.skipToPrevious() },
-                                onBarClick = { showNowPlaying = true },
-                                onQueueClick = { showGlobalQueueSheet = true },
-                                modifier = if (isSubDetail) Modifier.navigationBarsPadding() else Modifier
-                            )
-                        }
-
-                        if (!isSubDetail) {
-                            BottomNavBar(
-                                currentRoute = currentRoute,
-                                onNavigate = { route ->
-                                    if (route != currentRoute) {
-                                        navController.navigate(route) {
-                                            popUpTo(navController.graph.startDestinationId) {
-                                                saveState = true
-                                            }
-                                            launchSingleTop = true
-                                            restoreState = true
-                                        }
+                if (showFloatingMiniBar && !isSubDetail) {
+                    BottomNavBar(
+                        currentRoute = currentRoute,
+                        onNavigate = { route ->
+                            if (route != currentRoute) {
+                                navController.navigate(route) {
+                                    popUpTo(navController.graph.startDestinationId) {
+                                        saveState = true
                                     }
+                                    launchSingleTop = true
+                                    restoreState = true
                                 }
-                            )
+                            }
                         }
-                    }
+                    )
                 }
             }
         ) { innerPadding ->
@@ -568,6 +542,46 @@ fun MainContent(
                             musicPlayerViewModel.postComment(content, replyId, replyUser)
                         },
                         onLikeComment = { musicPlayerViewModel.likeComment(it) }
+                    )
+                }
+            }
+        }
+
+        // 独立圆角长条形悬浮控制条（置于界面上层，不占用 Scaffold 矩形底栏布局空间，浏览页面时内容从下方自然滑过）
+        if (showFloatingMiniBar) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(bottom = if (isSubDetail) 10.dp else 66.dp)
+            ) {
+                playerUiState.error?.let { error ->
+                    Text(
+                        text = error,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 4.dp)
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = playerUiState.currentSong != null && !showNowPlaying,
+                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(tween(220)) + scaleIn(initialScale = 0.94f),
+                    exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(tween(180)) + scaleOut(targetScale = 1.04f)
+                ) {
+                    MiniPlayerBar(
+                        currentSong = playerUiState.currentSong,
+                        isPlaying = playerUiState.isPlaying,
+                        currentPositionMs = playerUiState.currentPositionMs,
+                        durationMs = playerUiState.durationMs,
+                        onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
+                        onNextClick = { musicPlayerViewModel.skipToNext() },
+                        onPreviousClick = { musicPlayerViewModel.skipToPrevious() },
+                        onBarClick = { showNowPlaying = true },
+                        onQueueClick = { showGlobalQueueSheet = true }
                     )
                 }
             }
