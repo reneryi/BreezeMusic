@@ -86,7 +86,7 @@ data class ApiResponse(val body: JsonObject, val ssaCode: String? = null, val ht
     val success: Boolean get() {
         if (httpCode !in 200..299) return false
         if (code != null && code != 0) return false
-        return status == 1
+        return status == 1 || (status == null && code == 0)
     }
     fun requireSuccess(): ApiResponse {
         if (!success) throw ApiFailure(code, body.text("error_msg") ?: body.text("msg") ?: body.text("message") ?: "酷狗接口未确认成功", ssaCode)
