@@ -8,6 +8,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,6 +20,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -201,72 +205,97 @@ fun MainContent(
         currentRoute != "vip_center"
 
     Box(modifier = Modifier.fillMaxSize()) {
+        // 移除 Scaffold.bottomBar 的条件显隐，彻底根除进入独立子页面瞬间 innerPadding 突变引发的全屏布局抖动
         Scaffold(
             modifier = Modifier.fillMaxSize(),
-            contentWindowInsets = WindowInsets(0, 0, 0, 0),
-            bottomBar = {
-                if (showFloatingMiniBar && !isSubDetail) {
-                    BottomNavBar(
-                        currentRoute = currentRoute,
-                        onNavigate = { route ->
-                            if (route != currentRoute) {
-                                navController.navigate(route) {
-                                    popUpTo(navController.graph.startDestinationId) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            }
-                        }
-                    )
-                }
-            }
+            contentWindowInsets = WindowInsets(0, 0, 0, 0)
         ) { innerPadding ->
             NavHost(
                 navController = navController,
                 startDestination = Screen.Discover.route,
-                modifier = Modifier.padding(innerPadding),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
                 enterTransition = {
+                    val initial = initialState.destination.route.orEmpty()
                     val target = targetState.destination.route.orEmpty()
-                    val isMainTab = target == Screen.Discover.route || target == Screen.Library.route
-                    if (isMainTab) {
-                        fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)) +
-                            scaleIn(initialScale = 0.96f, animationSpec = tween(240, easing = FastOutSlowInEasing))
-                    } else {
+                    val bothMainTabs = (initial == Screen.Discover.route || initial == Screen.Library.route) &&
+                        (target == Screen.Discover.route || target == Screen.Library.route)
+                    if (bothMainTabs) {
+                        val dir = if (target == Screen.Library.route) 1 else -1
                         slideInHorizontally(
-                            initialOffsetX = { fullWidth -> (fullWidth * 0.28f).toInt() },
-                            animationSpec = tween(300, easing = FastOutSlowInEasing)
-                        ) + fadeIn(animationSpec = tween(260, easing = FastOutSlowInEasing)) +
-                            scaleIn(initialScale = 0.96f, animationSpec = tween(300, easing = FastOutSlowInEasing))
+                            initialOffsetX = { fullWidth -> dir * (fullWidth / 7) },
+                            animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+                        ) + scaleIn(
+                            initialScale = 0.94f,
+                            transformOrigin = TransformOrigin(0.5f, 0.5f),
+                            animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
+                        ) + fadeIn(animationSpec = tween(210, easing = FastOutSlowInEasing))
+                    } else {
+                        // 进入独立页面：3D 空间弹簧上浮 + 侧滑推进 + 景深绽放，丝滑无抖动
+                        slideInHorizontally(
+                            initialOffsetX = { fullWidth -> (fullWidth * 0.22f).toInt() },
+                            animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+                        ) + slideInVertically(
+                            initialOffsetY = { fullHeight -> (fullHeight * 0.032f).toInt() },
+                            animationSpec = spring(dampingRatio = 0.84f, stiffness = Spring.StiffnessMediumLow)
+                        ) + scaleIn(
+                            initialScale = 0.93f,
+                            transformOrigin = TransformOrigin(0.5f, 0.55f),
+                            animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
+                        ) + fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing))
                     }
                 },
                 exitTransition = {
+                    val initial = initialState.destination.route.orEmpty()
                     val target = targetState.destination.route.orEmpty()
-                    val isMainTab = target == Screen.Discover.route || target == Screen.Library.route
-                    if (isMainTab) {
-                        fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing))
-                    } else {
+                    val bothMainTabs = (initial == Screen.Discover.route || initial == Screen.Library.route) &&
+                        (target == Screen.Discover.route || target == Screen.Library.route)
+                    if (bothMainTabs) {
+                        val dir = if (target == Screen.Library.route) 1 else -1
                         slideOutHorizontally(
-                            targetOffsetX = { fullWidth -> -(fullWidth * 0.12f).toInt() },
-                            animationSpec = tween(260, easing = FastOutSlowInEasing)
-                        ) + fadeOut(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
-                            scaleOut(targetScale = 0.96f, animationSpec = tween(260, easing = FastOutSlowInEasing))
+                            targetOffsetX = { fullWidth -> -dir * (fullWidth / 10) },
+                            animationSpec = tween(190, easing = FastOutSlowInEasing)
+                        ) + scaleOut(
+                            targetScale = 0.95f,
+                            animationSpec = tween(190, easing = FastOutSlowInEasing)
+                        ) + fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing))
+                    } else {
+                        // 背景页平滑后退下沉，营造空间层次感
+                        slideOutHorizontally(
+                            targetOffsetX = { fullWidth -> -(fullWidth * 0.08f).toInt() },
+                            animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)
+                        ) + scaleOut(
+                            targetScale = 0.93f,
+                            transformOrigin = TransformOrigin(0.5f, 0.5f),
+                            animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)
+                        ) + fadeOut(animationSpec = tween(210, easing = FastOutSlowInEasing))
                     }
                 },
                 popEnterTransition = {
+                    // 从独立页返回：底层页面由景深处柔和回弹浮现
                     slideInHorizontally(
-                        initialOffsetX = { fullWidth -> -(fullWidth * 0.15f).toInt() },
-                        animationSpec = tween(280, easing = FastOutSlowInEasing)
-                    ) + fadeIn(animationSpec = tween(240, easing = FastOutSlowInEasing)) +
-                        scaleIn(initialScale = 0.96f, animationSpec = tween(280, easing = FastOutSlowInEasing))
+                        initialOffsetX = { fullWidth -> -(fullWidth * 0.08f).toInt() },
+                        animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+                    ) + scaleIn(
+                        initialScale = 0.93f,
+                        transformOrigin = TransformOrigin(0.5f, 0.5f),
+                        animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+                    ) + fadeIn(animationSpec = tween(210, easing = FastOutSlowInEasing))
                 },
                 popExitTransition = {
+                    // 独立页面退出：向右侧与微下方轻盈收拢滑出
                     slideOutHorizontally(
-                        targetOffsetX = { fullWidth -> (fullWidth * 0.30f).toInt() },
-                        animationSpec = tween(260, easing = FastOutSlowInEasing)
-                    ) + fadeOut(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
-                        scaleOut(targetScale = 0.95f, animationSpec = tween(260, easing = FastOutSlowInEasing))
+                        targetOffsetX = { fullWidth -> (fullWidth * 0.24f).toInt() },
+                        animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
+                    ) + slideOutVertically(
+                        targetOffsetY = { fullHeight -> (fullHeight * 0.032f).toInt() },
+                        animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
+                    ) + scaleOut(
+                        targetScale = 0.92f,
+                        transformOrigin = TransformOrigin(0.5f, 0.55f),
+                        animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
+                    ) + fadeOut(animationSpec = tween(190, easing = FastOutSlowInEasing))
                 }
             ) {
                 // 发现页
@@ -547,14 +576,60 @@ fun MainContent(
             }
         }
 
-        // 独立圆角长条形悬浮控制条（置于界面上层，不占用 Scaffold 矩形底栏布局空间，浏览页面时内容从下方自然滑过）
+        // 底部「发现 / 我的」主导航栏：采用独立悬浮层 + 弹簧滑入/收起动画，进入独立页面时平滑下沉消失
+        AnimatedVisibility(
+            visible = showFloatingMiniBar && !isSubDetail && !showNowPlaying,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
+            ) + scaleIn(
+                initialScale = 0.96f,
+                transformOrigin = TransformOrigin(0.5f, 1f),
+                animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
+            ) + fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)),
+            exit = slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
+            ) + scaleOut(
+                targetScale = 0.96f,
+                transformOrigin = TransformOrigin(0.5f, 1f),
+                animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
+            ) + fadeOut(animationSpec = tween(170, easing = FastOutSlowInEasing))
+        ) {
+            BottomNavBar(
+                currentRoute = currentRoute,
+                onNavigate = { route ->
+                    if (route != currentRoute) {
+                        navController.navigate(route) {
+                            popUpTo(navController.graph.startDestinationId) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                }
+            )
+        }
+
+        // 独立圆角长条形悬浮控制条：随底栏显隐通过弹簧物理动画自然上下顺滑过渡，告别突兀瞬移
+        val miniBarBottomPadding by animateDpAsState(
+            targetValue = if (isSubDetail) 10.dp else 66.dp,
+            animationSpec = spring(
+                dampingRatio = 0.78f,
+                stiffness = Spring.StiffnessMediumLow
+            ),
+            label = "miniBarBottomPadding"
+        )
+
         if (showFloatingMiniBar) {
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(bottom = if (isSubDetail) 10.dp else 66.dp)
+                    .padding(bottom = miniBarBottomPadding)
             ) {
                 playerUiState.error?.let { error ->
                     Text(
@@ -569,8 +644,17 @@ fun MainContent(
 
                 AnimatedVisibility(
                     visible = playerUiState.currentSong != null && !showNowPlaying,
-                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(tween(220)) + scaleIn(initialScale = 0.94f),
-                    exit = slideOutVertically(targetOffsetY = { it / 2 }) + fadeOut(tween(180)) + scaleOut(targetScale = 1.04f)
+                    enter = slideInVertically(
+                        initialOffsetY = { it },
+                        animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow)
+                    ) + fadeIn(tween(220)) + scaleIn(
+                        initialScale = 0.92f,
+                        animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow)
+                    ),
+                    exit = slideOutVertically(
+                        targetOffsetY = { it / 2 },
+                        animationSpec = tween(180)
+                    ) + fadeOut(tween(160)) + scaleOut(targetScale = 0.94f, animationSpec = tween(180))
                 ) {
                     MiniPlayerBar(
                         currentSong = playerUiState.currentSong,
@@ -606,17 +690,25 @@ fun MainContent(
             )
         }
 
-        // 沉浸式全屏 Edge-to-Edge 播放器（平滑上下滑入/滑出转场，100% 覆盖顶部系统状态栏）
+        // 沉浸式全屏 Edge-to-Edge 播放器（带 3D 弹簧绽放与收拢转场，100% 覆盖顶部系统状态栏）
         AnimatedVisibility(
             visible = showNowPlaying && playerUiState.currentSong != null,
             enter = slideInVertically(
                 initialOffsetY = { it },
-                animationSpec = tween(320, easing = FastOutSlowInEasing)
-            ) + fadeIn(tween(220)),
+                animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+            ) + scaleIn(
+                initialScale = 0.92f,
+                transformOrigin = TransformOrigin(0.5f, 0.92f),
+                animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
+            ) + fadeIn(tween(220, easing = FastOutSlowInEasing)),
             exit = slideOutVertically(
                 targetOffsetY = { it },
-                animationSpec = tween(260, easing = FastOutSlowInEasing)
-            ) + fadeOut(tween(200))
+                animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
+            ) + scaleOut(
+                targetScale = 0.92f,
+                transformOrigin = TransformOrigin(0.5f, 0.92f),
+                animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
+            ) + fadeOut(tween(190, easing = FastOutSlowInEasing))
         ) {
             val currentSong = playerUiState.currentSong
             if (currentSong != null) {

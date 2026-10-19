@@ -1,9 +1,15 @@
 package com.concept.music.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
@@ -60,9 +66,9 @@ fun FloatingLyricOverlay(
     var offsetY by remember { mutableFloatStateOf(160f) }
 
     val capsuleBg = if (isDark) {
-        Color(0xFF0E1524).copy(alpha = if (state.floatingCapsuleLocked) 0.78f else 0.92f)
+        Color(0xFF0E1524).copy(alpha = if (state.floatingCapsuleLocked) 0.80f else 0.94f)
     } else {
-        Color(0xFFFFFFFF).copy(alpha = if (state.floatingCapsuleLocked) 0.88f else 0.96f)
+        Color(0xFFFFFFFF).copy(alpha = if (state.floatingCapsuleLocked) 0.90f else 0.97f)
     }
     val unplayedWordColor = if (isDark) Color.White.copy(alpha = 0.55f) else Color(0xFF475569)
     val subTextColor = if (isDark) Color.White.copy(alpha = 0.68f) else Color(0xFF64748B)
@@ -70,8 +76,20 @@ fun FloatingLyricOverlay(
 
     AnimatedVisibility(
         visible = state.floatingCapsuleEnabled && song != null,
-        enter = fadeIn(),
-        exit = fadeOut(),
+        enter = scaleIn(
+            initialScale = 0.88f,
+            animationSpec = spring(dampingRatio = 0.76f, stiffness = Spring.StiffnessMediumLow)
+        ) + slideInVertically(
+            initialOffsetY = { -it / 2 },
+            animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow)
+        ) + fadeIn(tween(200)),
+        exit = scaleOut(
+            targetScale = 0.88f,
+            animationSpec = tween(180)
+        ) + slideOutVertically(
+            targetOffsetY = { -it / 3 },
+            animationSpec = tween(180)
+        ) + fadeOut(tween(160)),
         modifier = modifier
     ) {
         val currentLine = lyricData.lines.getOrNull(currentLyricIndex)
@@ -99,19 +117,13 @@ fun FloatingLyricOverlay(
                 },
                 shape = RoundedCornerShape(22.dp),
                 color = capsuleBg,
-                border = BorderStroke(
-                    width = 1.dp,
-                    brush = Brush.horizontalGradient(
-                        listOf(
-                            ConceptPrimary.copy(alpha = 0.55f),
-                            VipGold.copy(alpha = 0.35f),
-                            ConceptPrimary.copy(alpha = 0.20f)
-                        )
-                    )
-                ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .shadow(if (isDark) 16.dp else 10.dp, RoundedCornerShape(22.dp))
+                    .shadow(
+                        elevation = if (isDark) 16.dp else 10.dp,
+                        shape = RoundedCornerShape(22.dp),
+                        spotColor = ConceptPrimary.copy(alpha = if (isDark) 0.45f else 0.22f)
+                    )
             ) {
                 Row(
                     modifier = Modifier

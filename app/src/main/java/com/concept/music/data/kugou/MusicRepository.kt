@@ -1083,12 +1083,25 @@ class MusicApiRepository(
                 else -> s.bitrateKbps
             }
 
-            val topPriv = privObj.number("privilege") ?: -1
-            val topPayType = privObj.number("pay_type") ?: -1
+            val topPriv = privObj.number("privilege") ?: privObj.number("Privilege") ?: -1
+            val topPayType = privObj.number("pay_type") ?: privObj.number("PayType") ?: -1
+            val topFailProcess = privObj.number("fail_process") ?: privObj.number("FailProcess") ?: -1
             val stdGoodsPriv = relateGoods.firstOrNull { (it.number("level") ?: 0) in 1..2 }?.number("privilege") ?: -1
+            val anyTierVip = relateGoods.any { rg ->
+                val rgInfo = rg.obj("info")
+                val lvl = rg.number("level") ?: rgInfo?.number("level") ?: -1
+                val q = (rg.text("quality") ?: rg.text("type") ?: rgInfo?.text("quality") ?: "").lowercase()
+                val isCoreTier = lvl in 1..6 || q in listOf("128", "320", "flac", "high", "sq", "hires", "hi-res", "res")
+                val p = rg.number("privilege") ?: rgInfo?.number("privilege") ?: -1
+                val pt = rg.number("pay_type") ?: rgInfo?.number("pay_type") ?: -1
+                val fp = rg.number("fail_process") ?: rgInfo?.number("fail_process") ?: -1
+                isCoreTier && (p == 10 || pt == 3 || fp == 4)
+            }
             val isVipPriv = when {
-                topPriv == 10 || topPayType == 3 || stdGoodsPriv == 10 -> true
-                topPriv in listOf(0, 8) && topPayType == 0 && stdGoodsPriv in listOf(-1, 0, 8) -> false
+                s.isVip -> true
+                topPriv == 10 || topPayType == 3 || topFailProcess == 4 || stdGoodsPriv == 10 || anyTierVip -> true
+                transParam?.number("pay_block_tpl") == 1 -> true
+                topPriv in listOf(0, 8) && topPayType == 0 && !anyTierVip -> false
                 else -> s.isVip
             }
             // 对齐 privilege_lite.js: const freeListen = isLite && quality === '128' && neesuvip
@@ -2475,90 +2488,166 @@ class MusicApiRepository(
         page: Int = 1,
         pageSize: Int = 30,
         allowSongFallback: Boolean = true
-    ): List<ArtistItem> {
-        if (keyword.isBlank()) return emptyList()
+    ): List<ArtistItem> = coroutineScope {
+        if (keyword.isBlank()) return@coroutineScope emptyList()
         val session = accounts.context()?.session
 
-        val fromGateway = runCatching {
-            val response = transport.callAdvanced(
-                path = "/v1/search/author",
-                session = session,
-                query = mapOf(
-                    "keyword" to keyword,
-                    "page" to page.toString(),
-                    "pagesize" to pageSize.toString(),
-                    "platform" to "AndroidFilter",
-                    "iscorrection" to "1"
-                ),
-                headers = mapOf(
-                    "x-router" to "complexsearch.kugou.com",
-                    "kg-tid" to "1"
-                ),
-                sign = true,
-                includeDefaultParams = true
-            )
-            parseArtistItems(response.data)
-        }.getOrNull()
-        if (!fromGateway.isNullOrEmpty()) return fromGateway
+        val gatewayDef = async {
+            runCatching {
+                val response = transport.callAdvanced(
+                    path = "/v1/search/author",
+                    session = session,
+                    query = mapOf(
+                        "keyword" to keyword,
+                        "page" to page.toString(),
+                        "pagesize" to pageSize.toString(),
+                        "platform" to "AndroidFilter",
+                        "iscorrection" to "1"
+                    ),
+                    headers = mapOf(
+                        "x-router" to "complexsearch.kugou.com",
+                        "kg-tid" to "1"
+                    ),
+                    sign = true,
+                    includeDefaultParams = true
+                )
+                parseArtistItems(response.data).ifEmpty { parseArtistItems(response.body) }
+            }.getOrNull()
+        }
 
-        val fromCdn = runCatching {
-            val response = transport.callAdvanced(
-                path = "/api/v3/search/singer",
-                host = "http://mobilecdnbj.kugou.com",
-                query = mapOf(
-                    "version" to "9108",
-                    "keyword" to keyword,
-                    "page" to page.toString(),
-                    "pagesize" to pageSize.toString(),
-                    "plat" to "0"
-                ),
-                sign = false,
-                includeDefaultParams = false
-            )
-            parseArtistItems(response.data)
-        }.getOrNull()
-        if (!fromCdn.isNullOrEmpty()) return fromCdn
+        val cdnDef = async {
+            runCatching {
+                val response = transport.callAdvanced(
+                    path = "/api/v3/search/singer",
+                    host = "http://mobilecdnbj.kugou.com",
+                    query = mapOf(
+                        "version" to "9108",
+                        "keyword" to keyword,
+                        "page" to page.toString(),
+                        "pagesize" to pageSize.toString(),
+                        "plat" to "0"
+                    ),
+                    sign = false,
+                    includeDefaultParams = false
+                )
+                parseArtistItems(response.data).ifEmpty { parseArtistItems(response.body) }
+            }.getOrNull()
+        }
 
-        if (!allowSongFallback) return emptyList()
+        val fromGateway = gatewayDef.await().orEmpty()
+        val fromCdn = cdnDef.await().orEmpty()
 
-        return runCatching {
-            val songs = searchSongs(keyword, page = 1, pageSize = 20).songs
-            val artists = mutableListOf<ArtistItem>()
-            val seen = mutableSetOf<String>()
-            for (song in songs) {
-                val artistId = song.artistId.trim()
-                val artistName = song.artist.split("、", "/", "&", ",").firstOrNull()?.trim().orEmpty()
-                if (artistId.isNotBlank() && artistId != "0" && artistName.isNotBlank() && artistName != "未知歌手" && seen.add(artistId)) {
-                    artists.add(
-                        ArtistItem(
-                            id = artistId,
-                            name = artistName,
-                            avatarUrl = song.coverUrl,
-                            songCount = 0,
-                            albumCount = 0
+        val mergedRaw = when {
+            fromGateway.isNotEmpty() && fromCdn.isNotEmpty() -> {
+                val cdnById = fromCdn.associateBy { it.id }
+                val cdnByName = fromCdn.associateBy { it.name.lowercase() }
+                val combined = fromGateway.map { gw ->
+                    val cdn = cdnById[gw.id] ?: cdnByName[gw.name.lowercase()]
+                    if (cdn != null) {
+                        gw.copy(
+                            avatarUrl = gw.avatarUrl.ifBlank { cdn.avatarUrl },
+                            songCount = maxOf(gw.songCount, cdn.songCount),
+                            albumCount = maxOf(gw.albumCount, cdn.albumCount),
+                            intro = gw.intro.ifBlank { cdn.intro }
                         )
-                    )
-                    if (artists.size >= pageSize) break
+                    } else gw
+                }.toMutableList()
+                val seenIds = combined.map { it.id }.toHashSet()
+                fromCdn.forEach { cdn ->
+                    if (seenIds.add(cdn.id)) combined.add(cdn)
                 }
+                combined
             }
-            artists
-        }.getOrDefault(emptyList())
+            fromGateway.isNotEmpty() -> fromGateway
+            fromCdn.isNotEmpty() -> fromCdn
+            else -> emptyList()
+        }
+
+        val baseList = if (mergedRaw.isNotEmpty()) {
+            mergedRaw
+        } else if (!allowSongFallback) {
+            return@coroutineScope emptyList()
+        } else {
+            runCatching {
+                val songs = searchSongs(keyword, page = 1, pageSize = 20).songs
+                val artists = mutableListOf<ArtistItem>()
+                val seen = mutableSetOf<String>()
+                for (song in songs) {
+                    val artistId = song.artistId.trim()
+                    val artistName = song.artist.split("、", "/", "&", ",").firstOrNull()?.trim().orEmpty()
+                    if (artistId.isNotBlank() && artistId != "0" && artistName.isNotBlank() && artistName != "未知歌手" && seen.add(artistId)) {
+                        artists.add(
+                            ArtistItem(
+                                id = artistId,
+                                name = artistName,
+                                avatarUrl = song.coverUrl,
+                                songCount = 0,
+                                albumCount = 0
+                            )
+                        )
+                        if (artists.size >= pageSize) break
+                    }
+                }
+                artists
+            }.getOrDefault(emptyList())
+        }
+
+        // 并发通过 artistDetail 补全前排歌手的头像与单曲/专辑数量（解决歌手分类页部分歌手无头像或作品数为空的问题）
+        baseList.mapIndexed { idx, item ->
+            async {
+                if (idx < 12 && item.id.isNotBlank() && item.id != "0" &&
+                    (item.avatarUrl.isBlank() || (item.songCount == 0 && item.albumCount == 0))
+                ) {
+                    val detailed = runCatching { artistDetail(item.id) }.getOrNull()
+                    val mergedItem = if (detailed != null) {
+                        item.copy(
+                            name = item.name.ifBlank { detailed.name },
+                            avatarUrl = item.avatarUrl.ifBlank { detailed.avatarUrl },
+                            songCount = maxOf(item.songCount, detailed.songCount),
+                            albumCount = maxOf(item.albumCount, detailed.albumCount),
+                            intro = item.intro.ifBlank { detailed.intro }
+                        )
+                    } else item
+                    if (mergedItem.avatarUrl.isBlank()) {
+                        val fallbackCover = runCatching {
+                            artistSongs(item.id, page = 1, pageSize = 3).firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl
+                                ?: artistAlbums(item.id, page = 1, pageSize = 3).firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl
+                        }.getOrNull().orEmpty()
+                        if (fallbackCover.isNotBlank()) mergedItem.copy(avatarUrl = fallbackCover) else mergedItem
+                    } else mergedItem
+                } else item
+            }
+        }.map { it.await() }
     }
 
     private fun parseArtistItems(root: JsonObject): List<ArtistItem> {
         val dataObj = root.obj("data") ?: root
-        val array = listOf("lists", "info", "data", "author").asSequence()
+        val array = listOf("lists", "info", "data", "author", "authors", "singer").asSequence()
             .mapNotNull { dataObj.arr(it) ?: root.arr(it) }.firstOrNull() ?: return emptyList()
         return array.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull { o ->
-            val id = (o.text("AuthorID") ?: o.text("author_id") ?: o.text("singerid") ?: o.text("SingerId") ?: o.text("id") ?: "").trim()
+            val baseObj = o.obj("base")
+            val extraObj = o.obj("extra")
+            val id = (o.text("AuthorID") ?: o.text("AuthorId") ?: o.text("author_id")
+                ?: o.text("singerid") ?: o.text("SingerId") ?: o.text("SingerID")
+                ?: baseObj?.text("author_id") ?: o.text("id") ?: "").trim()
             if (id.isBlank() || id == "0") return@mapNotNull null
-            val rawName = o.text("AuthorName") ?: o.text("author_name") ?: o.text("singername") ?: o.text("SingerName") ?: o.text("name") ?: return@mapNotNull null
+            val rawName = o.text("AuthorName") ?: o.text("author_name")
+                ?: o.text("singername") ?: o.text("SingerName")
+                ?: baseObj?.text("author_name") ?: o.text("name") ?: return@mapNotNull null
             val name = rawName.replace("<em>", "").replace("</em>", "").trim()
             if (name.isBlank()) return@mapNotNull null
-            val avatarRaw = o.text("Avatar") ?: o.text("avatar") ?: o.text("sizable_avatar") ?: o.text("imgurl") ?: o.text("img") ?: o.text("pic")
-            val songCount = o.number("AudioCount") ?: o.number("audio_count") ?: o.number("songcount") ?: o.number("song_count") ?: 0
-            val albumCount = o.number("AlbumCount") ?: o.number("album_count") ?: o.number("albumcount") ?: 0
-            val intro = (o.text("intro") ?: "").replace("<em>", "").replace("</em>", "").trim()
+            val avatarRaw = o.text("Avatar") ?: o.text("avatar")
+                ?: o.text("SizableAvatar") ?: o.text("sizable_avatar")
+                ?: o.text("AuthorPic") ?: o.text("author_pic")
+                ?: o.text("ImgUrl") ?: o.text("imgurl") ?: o.text("img") ?: o.text("pic")
+                ?: baseObj?.text("sizable_avatar") ?: baseObj?.text("avatar")
+            val songCount = o.number("AudioCount") ?: o.number("audio_count")
+                ?: o.number("SongCount") ?: o.number("songcount") ?: o.number("song_count")
+                ?: o.number("ComplexCount") ?: extraObj?.number("audio_count") ?: baseObj?.number("audio_count") ?: 0
+            val albumCount = o.number("AlbumCount") ?: o.number("album_count")
+                ?: o.number("albumcount") ?: extraObj?.number("album_count") ?: baseObj?.number("album_count") ?: 0
+            val intro = (o.text("intro") ?: extraObj?.text("intro") ?: baseObj?.text("intro") ?: "")
+                .replace("<em>", "").replace("</em>", "").trim()
             ArtistItem(
                 id = id,
                 name = name,
@@ -2855,7 +2944,7 @@ class MusicApiRepository(
             }
         }.getOrNull()
 
-        if (gatewayArtist != null && gatewayArtist.songCount > 0 && gatewayArtist.intro.length >= 200) {
+        if (gatewayArtist != null && gatewayArtist.avatarUrl.isNotBlank() && gatewayArtist.songCount > 0 && gatewayArtist.intro.length >= 200) {
             return gatewayArtist
         }
 
@@ -3010,6 +3099,7 @@ class MusicApiRepository(
                             hash320 = merged320,
                             hashFlac = mergedFlac,
                             hashHiRes = mergedRes,
+                            isVip = s2.isVip || s1.isVip,
                             isHiRes = hasRes,
                             isLossless = hasSq,
                             quality = if (hasRes) "high" else if (hasSq) "flac" else if (hasHq) "320" else s2.quality,
@@ -5678,8 +5768,42 @@ class MusicApiRepository(
             ?: base?.text("duration")
         val durationMs = durationRaw?.toLongOrNull()?.let { if (it in 1 until 10000) it * 1000 else it } ?: 0L
 
-        val isVip = o.number("is_vip") == 1 || o.number("Privilege") == 10 || o.number("privilege") == 10 || o.number("pay_type") == 3 || o.number("PayType") == 3
-            || audioInfo?.number("is_vip") == 1 || audioInfo?.number("privilege") == 10 || audioInfo?.number("pay_type") == 3 || base?.number("is_vip") == 1
+        val privSubObj = o.obj("privilege") ?: audioInfo?.obj("privilege") ?: base?.obj("privilege")
+        val hasRelateVip = (o.objects("relate_goods") + audioInfo?.objects("relate_goods").orEmpty() +
+            base?.objects("relate_goods").orEmpty() + replaceObj?.objects("relate_goods").orEmpty()).any { rg ->
+            val rgInfo = rg.obj("info")
+            val lvl = rg.number("level") ?: rgInfo?.number("level") ?: -1
+            val p = rg.number("privilege") ?: rgInfo?.number("privilege") ?: -1
+            val pt = rg.number("pay_type") ?: rgInfo?.number("pay_type") ?: -1
+            val fp = rg.number("fail_process") ?: rgInfo?.number("fail_process") ?: -1
+            lvl in 1..6 && (p == 10 || pt == 3 || fp == 4)
+        }
+        val isVip = o.number("is_vip") == 1 ||
+            o.number("Privilege") == 10 || o.number("privilege") == 10 ||
+            o.number("pay_type") == 3 || o.number("PayType") == 3 ||
+            o.number("fail_process") == 4 || o.number("FailProcess") == 4 ||
+            audioInfo?.number("is_vip") == 1 ||
+            audioInfo?.number("privilege") == 10 ||
+            audioInfo?.number("privilege_128") == 10 ||
+            audioInfo?.number("privilege_320") == 10 ||
+            audioInfo?.number("privilege_flac") == 10 ||
+            audioInfo?.number("privilege_high") == 10 ||
+            audioInfo?.number("pay_type") == 3 ||
+            audioInfo?.number("fail_process") == 4 ||
+            replaceAudioInfo?.number("privilege") == 10 ||
+            replaceAudioInfo?.number("privilege_128") == 10 ||
+            replaceAudioInfo?.number("privilege_320") == 10 ||
+            replaceAudioInfo?.number("privilege_flac") == 10 ||
+            replaceAudioInfo?.number("privilege_high") == 10 ||
+            replaceAudioInfo?.number("pay_type") == 3 ||
+            replaceAudioInfo?.number("fail_process") == 4 ||
+            base?.number("is_vip") == 1 ||
+            base?.number("privilege") == 10 ||
+            base?.number("pay_type") == 3 ||
+            privSubObj?.number("privilege") == 10 ||
+            privSubObj?.number("pay_type") == 3 ||
+            transParam?.number("pay_block_tpl") == 1 ||
+            hasRelateVip
 
         val audioId = (o.text("audio_id") ?: o.text("Audioid") ?: o.text("songid")
             ?: base?.text("audio_id") ?: audioInfo?.text("audio_id") ?: o.text("mixsongid"))?.toLongOrNull() ?: 0L

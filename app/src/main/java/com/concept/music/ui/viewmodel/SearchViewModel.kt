@@ -161,6 +161,30 @@ class SearchViewModel(
         performSearchForCurrentTab(trimmed, silent = false)
     }
 
+    private fun mergeEnrichedArtists(existing: List<ArtistItem>, incoming: List<ArtistItem>): List<ArtistItem> {
+        if (existing.isEmpty()) return incoming
+        if (incoming.isEmpty()) return existing
+        val existingById = existing.associateBy { it.id }
+        val merged = incoming.map { item ->
+            val prev = existingById[item.id]
+            if (prev != null) {
+                item.copy(
+                    avatarUrl = item.avatarUrl.ifBlank { prev.avatarUrl },
+                    songCount = if (item.songCount > 0) item.songCount else prev.songCount,
+                    albumCount = if (item.albumCount > 0) item.albumCount else prev.albumCount,
+                    intro = item.intro.ifBlank { prev.intro }
+                )
+            } else item
+        }.toMutableList()
+        val incomingIds = incoming.map { it.id }.toHashSet()
+        existing.forEach { prev ->
+            if (prev.id.isNotBlank() && prev.id !in incomingIds) {
+                merged.add(0, prev)
+            }
+        }
+        return merged
+    }
+
     private fun performSearchForCurrentTab(keyword: String, silent: Boolean = false) {
         searchJob?.cancel()
         loadMoreJob?.cancel()
@@ -187,7 +211,12 @@ class SearchViewModel(
                     }
                     SearchTab.ARTIST -> {
                         val res = VipManager.music.searchArtists(keyword, page = 1, pageSize = pageSize, allowSongFallback = true)
-                        _artistResults.value = res
+                        val seedArtists = buildList {
+                            addAll(_complexResult.value.artists)
+                            _complexResult.value.primaryArtist?.let { add(it) }
+                            addAll(_artistResults.value)
+                        }.distinctBy { it.id }
+                        _artistResults.value = mergeEnrichedArtists(seedArtists, res)
                         _hasMore.value = res.size >= pageSize
                     }
                     SearchTab.ALBUM -> {
@@ -231,13 +260,15 @@ class SearchViewModel(
                         }
                     }
                     SearchTab.ARTIST -> {
-                        val res = VipManager.music.searchArtists(currentQuery, page = nextPage, pageSize = pageSize, allowSongFallback = false)
+                        val res = VipManager.music.searchArtists(currentQuery, page = nextPage, pageSize = pageSize)
                         if (res.isNotEmpty()) {
                             currentPage = nextPage
                             val existingIds = _artistResults.value.map { it.id }.toSet()
                             _artistResults.value = _artistResults.value + res.filter { it.id !in existingIds }
                             _hasMore.value = res.size >= pageSize
-                        } else _hasMore.value = false
+                        } else {
+                            _hasMore.value = false
+                        }
                     }
                     SearchTab.ALBUM -> {
                         val res = VipManager.music.searchAlbums(currentQuery, page = nextPage, pageSize = pageSize)
@@ -246,7 +277,9 @@ class SearchViewModel(
                             val existingIds = _albumResults.value.map { it.id }.toSet()
                             _albumResults.value = _albumResults.value + res.filter { it.id !in existingIds }
                             _hasMore.value = res.size >= pageSize
-                        } else _hasMore.value = false
+                        } else {
+                            _hasMore.value = false
+                        }
                     }
                     SearchTab.PLAYLIST -> {
                         val res = VipManager.music.searchPlaylists(currentQuery, page = nextPage, pageSize = pageSize)
@@ -255,9 +288,13 @@ class SearchViewModel(
                             val existingIds = _playlistResults.value.map { it.id }.toSet()
                             _playlistResults.value = _playlistResults.value + res.filter { it.id !in existingIds }
                             _hasMore.value = res.size >= pageSize
-                        } else _hasMore.value = false
+                        } else {
+                            _hasMore.value = false
+                        }
                     }
-                    else -> {}
+                    SearchTab.COMPLEX -> {
+                        _hasMore.value = false
+                    }
                 }
             } catch (_: Exception) {
             } finally {
@@ -271,30 +308,34 @@ class SearchViewModel(
         _suggestions.value = emptyList()
     }
 
-    fun clearHistory() {
-        _searchHistory.value = emptyList()
-        historyRepo.clear()
-    }
-
-    fun removeHistoryItem(item: String) {
-        val updated = _searchHistory.value.filter { it != item }
-        _searchHistory.value = updated
-        historyRepo.save(updated)
-    }
-
     fun clearQuery() {
         suggestJob?.cancel()
+        searchJob?.cancel()
+        loadMoreJob?.cancel()
         _query.value = ""
-        lastComplexKeyword = ""
         _lastSearchedKeyword.value = ""
-        _selectedTab.value = SearchTab.COMPLEX
-        _hasSearched.value = false
+        lastComplexKeyword = ""
         _suggestions.value = emptyList()
+        _hasSearched.value = false
+        _hasMore.value = false
+        currentPage = 1
+        _selectedTab.value = SearchTab.COMPLEX
         _complexResult.value = ComplexSearchResult()
         _songResults.value = emptyList()
         _albumResults.value = emptyList()
         _playlistResults.value = emptyList()
         _artistResults.value = emptyList()
-        _hasMore.value = false
+    }
+
+    fun removeHistoryItem(keyword: String) {
+        val current = _searchHistory.value.toMutableList()
+        current.remove(keyword)
+        _searchHistory.value = current
+        historyRepo.save(current)
+    }
+
+    fun clearHistory() {
+        _searchHistory.value = emptyList()
+        historyRepo.clear()
     }
 }

@@ -14,9 +14,7 @@ import android.graphics.Typeface
 import android.os.Build
 import android.provider.MediaStore
 import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -134,11 +132,6 @@ fun LyricPosterDialog(
                                     listOf(Color(0xFFEAF3FF), Color(0xFFDFF2F9), Color(0xFFF2ECFF))
                                 )
                             }
-                        )
-                        .border(
-                            1.dp,
-                            if (isDarkCard) Color.White.copy(alpha = 0.14f) else ConceptPrimary.copy(alpha = 0.28f),
-                            RoundedCornerShape(20.dp)
                         )
                         .padding(18.dp)
                 ) {

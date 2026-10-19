@@ -1,5 +1,7 @@
 package com.concept.music.ui.components
 
+import com.concept.music.ui.theme.conceptSheetSpringEntrance
+
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -80,6 +82,7 @@ fun FocusPodBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .conceptSheetSpringEntrance()
                 .padding(horizontal = 20.dp)
                 .navigationBarsPadding()
                 .padding(bottom = 32.dp)

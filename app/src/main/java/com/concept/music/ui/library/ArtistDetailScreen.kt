@@ -46,6 +46,7 @@ import com.concept.music.ui.theme.ConceptCategoryTabItem
 import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.horizontalCategorySwipe
+import com.concept.music.ui.theme.rememberCategorySwitchGraphicModifier
 import com.concept.music.ui.theme.softClickable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -499,9 +500,11 @@ fun ArtistDetailScreen(
                     0 -> {
                         // 单曲页：极简搜索栏（不显示“在已加载的xx首单曲中搜索”）+ 开放式全播与最热/最新文字切换
                         item {
+                            val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .then(tabAnimMod)
                                     .padding(horizontal = 16.dp, vertical = 6.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
@@ -623,13 +626,16 @@ fun ArtistDetailScreen(
                             }
                         } else {
                             itemsIndexed(filteredSongs, key = { idx, s -> "${s.id}_${s.hash}_$idx" }) { index, song ->
-                                SongItemRow(
-                                    song = song,
-                                    orderIndex = index + 1,
-                                    isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                                    onClick = { onSongClick(song, filteredSongs) },
-                                    onMoreClick = { onSongMoreClick(song) }
-                                )
+                                val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
+                                Box(modifier = tabAnimMod) {
+                                    SongItemRow(
+                                        song = song,
+                                        orderIndex = index + 1,
+                                        isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                                        onClick = { onSongClick(song, filteredSongs) },
+                                        onMoreClick = { onSongMoreClick(song) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -652,10 +658,13 @@ fun ArtistDetailScreen(
                             }
                         } else {
                             items(albums, key = { it.id }) { albumItem ->
-                                ArtistAlbumRow(
-                                    album = albumItem,
-                                    onClick = { onAlbumClick(albumItem.id) }
-                                )
+                                val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
+                                Box(modifier = tabAnimMod) {
+                                    ArtistAlbumRow(
+                                        album = albumItem,
+                                        onClick = { onAlbumClick(albumItem.id) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -663,9 +672,11 @@ fun ArtistDetailScreen(
                     2 -> {
                         // 歌手百科：开放式杂志排版，去除卡片套卡片
                         item {
+                            val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .then(tabAnimMod)
                                     .padding(horizontal = 20.dp, vertical = 14.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {

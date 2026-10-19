@@ -1,5 +1,7 @@
 package com.concept.music.ui.components
 
+import com.concept.music.ui.theme.conceptSheetSpringEntrance
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -65,6 +67,7 @@ fun CommentsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .conceptSheetSpringEntrance()
                 .fillMaxHeight(0.8f)
                 .padding(horizontal = 20.dp, vertical = 4.dp)
                 .navigationBarsPadding()

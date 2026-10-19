@@ -3,7 +3,6 @@ package com.concept.music.ui.components
 import com.concept.music.ui.theme.softCardClickable
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -44,13 +43,13 @@ fun PlaylistCard(
     Column(
         modifier = modifier
             .width(136.dp)
-            .softCardClickable(onClick = onClick)
+            .softCardClickable(clip = false, onClick = onClick)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center
         ) {
@@ -108,7 +107,8 @@ fun PlaylistCard(
                 lineHeight = 18.sp
             ),
             maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 2.dp)
         )
     }
 }

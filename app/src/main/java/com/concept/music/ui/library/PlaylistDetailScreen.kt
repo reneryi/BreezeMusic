@@ -6,7 +6,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -378,8 +377,7 @@ fun PlaylistDetailScreen(
                             AnimatedVisibility(visible = isMultiSelectMode) {
                                 Surface(
                                     shape = RoundedCornerShape(14.dp),
-                                    color = ConceptPrimary.copy(alpha = 0.14f),
-                                    border = BorderStroke(0.8.dp, ConceptPrimary.copy(alpha = 0.45f)),
+                                    color = ConceptPrimary.copy(alpha = 0.15f),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Row(

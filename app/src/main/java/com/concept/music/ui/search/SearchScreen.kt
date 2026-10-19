@@ -8,7 +8,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
@@ -52,6 +51,7 @@ import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.ConceptCategoryTabItem
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
+import com.concept.music.ui.theme.conceptCategoryContentTransition
 import com.concept.music.ui.theme.horizontalCategorySwipe
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.SearchViewModel
@@ -316,10 +316,7 @@ fun SearchScreen(
                             targetState = selectedTab,
                             transitionSpec = {
                                 val direction = if (targetState.ordinal >= initialState.ordinal) 1 else -1
-                                (slideInHorizontally(animationSpec = tween(250)) { fullWidth -> direction * (fullWidth / 7) } +
-                                    fadeIn(animationSpec = tween(230))) togetherWith
-                                    (slideOutHorizontally(animationSpec = tween(190)) { fullWidth -> -direction * (fullWidth / 9) } +
-                                        fadeOut(animationSpec = tween(150)))
+                                conceptCategoryContentTransition(direction)
                             },
                             label = "searchTabContentTransition",
                             modifier = Modifier
@@ -878,14 +875,11 @@ private fun ArtistHeroCard(
     Surface(
         shape = RoundedCornerShape(22.dp),
         color = Color.Transparent,
-        border = BorderStroke(
-            0.7.dp,
-            if (isDark) Color.White.copy(alpha = 0.08f) else ConceptPrimary.copy(alpha = 0.12f)
-        ),
+        shadowElevation = 0.dp,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .softCardClickable(onClick = onClick)
+            .softCardClickable(shape = RoundedCornerShape(22.dp), onClick = onClick)
     ) {
         Row(
             modifier = Modifier
@@ -1190,7 +1184,7 @@ private fun PlaylistGalleryBlock(
                 Column(
                     modifier = Modifier
                         .width(134.dp)
-                        .softCardClickable { onPlaylistClick(pl.id) }
+                        .softCardClickable(clip = false) { onPlaylistClick(pl.id) }
                 ) {
                     Box(
                         modifier = Modifier
@@ -1222,19 +1216,20 @@ private fun PlaylistGalleryBlock(
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(7.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = pl.name,
                         maxLines = 2,
-                        minLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
                             fontSize = 12.5.sp,
-                            lineHeight = 16.sp
+                            lineHeight = 17.sp
                         ),
-                        modifier = Modifier.padding(horizontal = 2.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 2.dp)
                     )
                 }
             }

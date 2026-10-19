@@ -5,12 +5,22 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.os.Build
+import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -301,6 +311,119 @@ fun Modifier.softCardClickable(
  * - 左滑切换至下一分类，右滑切换至上一分类；
  * - 若当前处于首个分类且传入了 onSwipeRightAtStart / onSwipeBackAtFirst，则右滑触发返回/重置。
  */
+
+/**
+ * 灵动多维分类内容切换过渡动画（3D 弹性缩放 + 水平弹簧位移 + 微幅垂直悬浮上扬 + 渐隐渐显）：
+ * 告别呆板的纯左右线性平移，让分类标题切换时下方内容具有呼吸感与空间层次感。
+ */
+fun conceptCategoryContentTransition(direction: Int): ContentTransform {
+    val dir = if (direction >= 0) 1 else -1
+    val enterOrigin = TransformOrigin(if (dir >= 0) 0.68f else 0.32f, 0.35f)
+    val exitOrigin = TransformOrigin(if (dir >= 0) 0.32f else 0.68f, 0.35f)
+    return (
+        slideInHorizontally(
+            animationSpec = spring(
+                dampingRatio = 0.80f,
+                stiffness = Spring.StiffnessMediumLow
+            )
+        ) { fullWidth -> dir * (fullWidth / 6) } +
+            slideInVertically(
+                animationSpec = spring(
+                    dampingRatio = 0.82f,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            ) { fullHeight -> (fullHeight / 32).coerceAtLeast(12) } +
+            scaleIn(
+                initialScale = 0.94f,
+                transformOrigin = enterOrigin,
+                animationSpec = spring(
+                    dampingRatio = 0.78f,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            ) +
+            fadeIn(animationSpec = tween(durationMillis = 210, easing = FastOutSlowInEasing))
+        ) togetherWith (
+        slideOutHorizontally(
+            animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
+        ) { fullWidth -> -dir * (fullWidth / 10) } +
+            scaleOut(
+                targetScale = 0.95f,
+                transformOrigin = exitOrigin,
+                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
+            ) +
+            fadeOut(animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing))
+        )
+}
+
+/**
+ * 抽屉 / BottomSheet 内容灵动弹出入场修饰符：
+ * 在底部抽屉弹出时赋予内容柔和的弹簧上浮与微缩放绽放感。
+ */
+
+/**
+ * 针对 LazyColumn 内部分类内容流的 120fps GPU 灵动切换修饰符：
+ * 在保持 LazyColumn 原生滚动与虚拟化的同时，在分类 Tab 切换瞬间赋予下方列表项
+ * 方向感弹簧平移 + 3D 缩放 + 微幅上浮 + 渐显过渡。
+ */
+@Composable
+fun rememberCategorySwitchGraphicModifier(selectedIndex: Int): Modifier {
+    var prevIndex by remember { mutableIntStateOf(selectedIndex) }
+    var direction by remember { mutableIntStateOf(1) }
+    val anim = remember { Animatable(1f) }
+
+    LaunchedEffect(selectedIndex) {
+        if (selectedIndex != prevIndex) {
+            direction = if (selectedIndex >= prevIndex) 1 else -1
+            prevIndex = selectedIndex
+            anim.snapTo(0f)
+            anim.animateTo(
+                targetValue = 1f,
+                animationSpec = spring(
+                    dampingRatio = 0.78f,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            )
+        }
+    }
+
+    val p = anim.value
+    val dir = direction
+    return Modifier.graphicsLayer {
+        if (p < 0.999f) {
+            val inv = 1f - p
+            translationX = dir * inv * 64f
+            translationY = inv * 22f
+            val s = 0.95f + 0.05f * p
+            scaleX = s
+            scaleY = s
+            alpha = (0.25f + 0.75f * p).coerceIn(0f, 1f)
+            transformOrigin = TransformOrigin(if (dir >= 0) 0.65f else 0.35f, 0.25f)
+        }
+    }
+}
+
+fun Modifier.conceptSheetSpringEntrance(): Modifier = composed {
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = spring(
+                dampingRatio = 0.76f,
+                stiffness = Spring.StiffnessMediumLow
+            )
+        )
+    }
+    val p = progress.value
+    this.graphicsLayer {
+        val s = 0.95f + 0.05f * p
+        scaleX = s
+        scaleY = s
+        translationY = (1f - p) * 38f
+        alpha = p.coerceIn(0f, 1f)
+        transformOrigin = TransformOrigin(0.5f, 0.92f)
+    }
+}
+
 fun Modifier.horizontalCategorySwipe(
     currentIndex: Int,
     itemCount: Int = 0,

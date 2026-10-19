@@ -593,5 +593,125 @@ class DiscoverRecommendationTest {
         assertTrue(albumSearch.albums.isNotEmpty())
         assertEquals("摩天动物园", albumSearch.albums.first().name)
     }
-}
 
+    @Test
+    fun artistSongsPreservesVipBadgesAndSearchArtistsEnrichesAvatars() = runTest {
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String,
+                session: KugouSession?,
+                query: Map<String, String>,
+                body: JsonObject?,
+                host: String,
+                method: String,
+                web: Boolean,
+                headers: Map<String, String>,
+                device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+
+            override suspend fun callAdvanced(
+                path: String,
+                session: KugouSession?,
+                query: Map<String, String>,
+                body: JsonObject?,
+                host: String,
+                method: String,
+                web: Boolean,
+                headers: Map<String, String>,
+                device: DeviceIdentity?,
+                sign: Boolean,
+                includeDefaultParams: Boolean
+            ): ApiResponse {
+                when (path) {
+                    "/v1/search/author" -> {
+                        val mock = """
+                            {
+                                "status": 1,
+                                "data": {
+                                    "lists": [
+                                        {"AuthorId": 1001, "AuthorName": "鹿晗", "Avatar": "", "AudioCount": 0, "AlbumCount": 0}
+                                    ]
+                                }
+                            }
+                        """.trimIndent()
+                        return ApiResponse(JsonParser.parseString(mock).asJsonObject)
+                    }
+                    "/kmr/v3/author" -> {
+                        val mock = """
+                            {
+                                "status": 1,
+                                "data": {
+                                    "base": {"author_id": "1001", "author_name": "鹿晗", "sizable_avatar": "http://imge.kugou.com/stdmusic/{size}/luhan.jpg"},
+                                    "extra": {"audio_count": 545, "album_count": 63, "long_intro": "${"简介".repeat(120)}"}
+                                }
+                            }
+                        """.trimIndent()
+                        return ApiResponse(JsonParser.parseString(mock).asJsonObject)
+                    }
+                    "/openapi/kmr/v2/audio_group/author" -> {
+                        val mock = """
+                            {
+                                "status": 1,
+                                "data": {
+                                    "song_list": [
+                                        {
+                                            "base": {"audio_id": 5001, "audio_name": "勋章", "author_name": "鹿晗"},
+                                            "audio_info": {
+                                                "hash_128": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+                                                "hash_flac": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2",
+                                                "hash_high": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3",
+                                                "filesize_flac": 26000000,
+                                                "filesize_high": 48000000,
+                                                "privilege_128": 0,
+                                                "privilege_flac": 10,
+                                                "privilege_high": 10
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        """.trimIndent()
+                        return ApiResponse(JsonParser.parseString(mock).asJsonObject)
+                    }
+                    "/v2/get_res_privilege/lite" -> {
+                        val mock = """
+                            {
+                                "status": 1,
+                                "data": [
+                                    {
+                                        "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3",
+                                        "privilege": 0,
+                                        "pay_type": 0,
+                                        "relate_goods": [
+                                            {"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1", "level": 1, "quality": "128", "privilege": 0, "size": 3200000},
+                                            {"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2", "level": 5, "quality": "flac", "privilege": 10, "size": 26000000},
+                                            {"hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3", "level": 6, "quality": "high", "privilege": 10, "size": 48000000}
+                                        ]
+                                    }
+                                ]
+                            }
+                        """.trimIndent()
+                        return ApiResponse(JsonParser.parseString(mock).asJsonObject)
+                    }
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+
+        val store = MemoryStore()
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+
+        val artists = repo.searchArtists("鹿晗")
+        assertEquals(1, artists.size)
+        assertEquals("http://imge.kugou.com/stdmusic/400/luhan.jpg", artists.first().avatarUrl)
+        assertEquals(545, artists.first().songCount)
+        assertEquals(63, artists.first().albumCount)
+
+        val songs = repo.artistSongs("1001")
+        assertEquals(1, songs.size)
+        assertTrue("Artist detail songs with VIP lossless/Hi-Res tiers must carry isVip = true", songs.first().isVip)
+        assertTrue(songs.first().isHiRes)
+    }
+}

@@ -1,9 +1,7 @@
 package com.concept.music.ui.components
 
 import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -244,10 +242,6 @@ private fun VipCenterContentBody(
             shape = RoundedCornerShape(24.dp),
             color = Color.Transparent,
             shadowElevation = 0.dp,
-            border = BorderStroke(
-                0.8.dp,
-                if (isDark) goldAccent.copy(alpha = 0.26f) else goldAccent.copy(alpha = 0.22f)
-            ),
             modifier = Modifier.fillMaxWidth()
         ) {
             Box(
@@ -468,32 +462,18 @@ private fun VipCenterContentBody(
                                 if (dayNum != null) {
                                     val claimType = claimedDaysMap[dayNum]
                                     val isToday = dayNum == currentDate.dayOfMonth
-                                    val cellBg = when (claimType) {
-                                        "svip" -> VipGold.copy(alpha = if (isDark) 0.28f else 0.22f)
-                                        "tvip" -> ConceptPrimary.copy(alpha = if (isDark) 0.24f else 0.18f)
-                                        else -> if (claimType != null) {
-                                            ConceptPrimary.copy(alpha = if (isDark) 0.24f else 0.18f)
-                                        } else {
-                                            elevatedColor
-                                        }
-                                    }
-                                    val borderColor = when {
-                                        isToday -> ConceptCyanAccent
-                                        claimType == "svip" -> goldAccent.copy(alpha = 0.7f)
-                                        claimType != null -> ConceptPrimary.copy(alpha = 0.6f)
-                                        else -> Color.Transparent
+                                    val cellBg = when {
+                                        claimType == "svip" -> VipGold.copy(alpha = if (isDark) 0.32f else 0.24f)
+                                        claimType != null -> ConceptPrimary.copy(alpha = if (isDark) 0.28f else 0.20f)
+                                        isToday -> ConceptCyanAccent.copy(alpha = if (isDark) 0.24f else 0.16f)
+                                        else -> elevatedColor
                                     }
                                     Box(
                                         modifier = Modifier
                                             .weight(1f)
                                             .height(34.dp)
                                             .clip(RoundedCornerShape(9.dp))
-                                            .background(cellBg)
-                                            .border(
-                                                width = if (borderColor != Color.Transparent) 1.2.dp else 0.dp,
-                                                color = borderColor,
-                                                shape = RoundedCornerShape(9.dp)
-                                            ),
+                                            .background(cellBg),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
@@ -577,7 +557,7 @@ private fun VipCenterContentBody(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedButton(
+                    FilledTonalButton(
                         onClick = {
                             refreshingDfid = true
                             scope.launch {
@@ -595,7 +575,10 @@ private fun VipCenterContentBody(
                         },
                         enabled = !refreshingDfid,
                         shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.dp, ConceptPrimary.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = ConceptPrimary.copy(alpha = 0.15f),
+                            contentColor = ConceptPrimary
+                        ),
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(Icons.Rounded.SecurityUpdateGood, contentDescription = null, tint = ConceptPrimary, modifier = Modifier.size(16.dp))

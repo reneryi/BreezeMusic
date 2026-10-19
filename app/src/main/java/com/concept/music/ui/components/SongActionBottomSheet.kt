@@ -1,5 +1,7 @@
 package com.concept.music.ui.components
 
+import com.concept.music.ui.theme.conceptSheetSpringEntrance
+
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -72,6 +74,7 @@ fun SongActionBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .conceptSheetSpringEntrance()
                 .padding(horizontal = 20.dp, vertical = 4.dp)
                 .navigationBarsPadding()
         ) {

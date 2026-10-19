@@ -1,19 +1,25 @@
 package com.concept.music.ui.home
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.TransformOrigin
+import com.concept.music.ui.theme.conceptCategoryContentTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -527,45 +533,73 @@ fun RadioScreen(
 
                         AnimatedVisibility(
                             visible = showAllStationsGrid,
-                            enter = expandVertically(animationSpec = tween(260)) + fadeIn(animationSpec = tween(220)),
-                            exit = shrinkVertically(animationSpec = tween(240)) + fadeOut(animationSpec = tween(180))
+                            enter = expandVertically(
+                                expandFrom = Alignment.Top,
+                                animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow)
+                            ) + scaleIn(
+                                initialScale = 0.94f,
+                                transformOrigin = TransformOrigin(0.5f, 0f),
+                                animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow)
+                            ) + fadeIn(animationSpec = tween(220)),
+                            exit = shrinkVertically(
+                                shrinkTowards = Alignment.Top,
+                                animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMedium)
+                            ) + scaleOut(
+                                targetScale = 0.94f,
+                                transformOrigin = TransformOrigin(0.5f, 0f),
+                                animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMedium)
+                            ) + fadeOut(animationSpec = tween(180))
                         ) {
-                            val stationRows = filteredStations.chunked(2)
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                stationRows.forEachIndexed { rowIdx, pair ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        pair.forEachIndexed { colIdx, ch ->
-                                            val globalIdx = rowIdx * 2 + colIdx
-                                            val isCurrent = ch.id == currentChannel.id
-                                            val fb = fallbackCovers.getOrNull(globalIdx % fallbackCovers.size.coerceAtLeast(1)).orEmpty()
-                                            RadioPlazaGridCard(
-                                                channel = ch,
-                                                frequencyText = fmFrequencyLabel(ch.id),
-                                                fallbackCover = fb,
-                                                isSelected = isCurrent,
-                                                onClick = {
-                                                    selectedChannelId = ch.id
-                                                    showAllStationsGrid = false
-                                                },
-                                                onPlayImmediate = {
-                                                    selectedChannelId = ch.id
-                                                    showAllStationsGrid = false
-                                                    scope.launch {
-                                                        val songs = viewModel.getFmChannelSongs(ch.id, size = 20, forceNextBatch = true)
-                                                        stationSongs = songs
-                                                        if (songs.isNotEmpty()) {
-                                                            onSongClick(songs.first(), songs)
+                            AnimatedContent(
+                                targetState = selectedCategory,
+                                transitionSpec = {
+                                    val initIdx = categories.indexOf(initialState).coerceAtLeast(0)
+                                    val tgtIdx = categories.indexOf(targetState).coerceAtLeast(0)
+                                    conceptCategoryContentTransition(if (tgtIdx >= initIdx) 1 else -1)
+                                },
+                                label = "radioCategoryGridTransition"
+                            ) { activeCat ->
+                                val catStations = remember(fmChannels, activeCat) {
+                                    if (activeCat == "全部") fmChannels
+                                    else fmChannels.filter { (it.category.ifBlank { "推荐电台" }) == activeCat }
+                                }
+                                val stationRows = remember(catStations) { catStations.chunked(2) }
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    stationRows.forEachIndexed { rowIdx, pair ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            pair.forEachIndexed { colIdx, ch ->
+                                                val globalIdx = rowIdx * 2 + colIdx
+                                                val isCurrent = ch.id == currentChannel.id
+                                                val fb = fallbackCovers.getOrNull(globalIdx % fallbackCovers.size.coerceAtLeast(1)).orEmpty()
+                                                RadioPlazaGridCard(
+                                                    channel = ch,
+                                                    frequencyText = fmFrequencyLabel(ch.id),
+                                                    fallbackCover = fb,
+                                                    isSelected = isCurrent,
+                                                    onClick = {
+                                                        selectedChannelId = ch.id
+                                                        showAllStationsGrid = false
+                                                    },
+                                                    onPlayImmediate = {
+                                                        selectedChannelId = ch.id
+                                                        showAllStationsGrid = false
+                                                        scope.launch {
+                                                            val songs = viewModel.getFmChannelSongs(ch.id, size = 20, forceNextBatch = true)
+                                                            stationSongs = songs
+                                                            if (songs.isNotEmpty()) {
+                                                                onSongClick(songs.first(), songs)
+                                                            }
                                                         }
-                                                    }
-                                                },
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                        }
-                                        if (pair.size == 1) {
-                                            Spacer(modifier = Modifier.weight(1f))
+                                                    },
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                            }
+                                            if (pair.size == 1) {
+                                                Spacer(modifier = Modifier.weight(1f))
+                                            }
                                         }
                                     }
                                 }
@@ -678,22 +712,43 @@ private fun RadioPlazaGridCard(
     val cover = channel.coverUrl.takeIf { it.isNotBlank() && !it.contains("20210519") } ?: fallbackCover
     val accent = remember(channel.category) { radioCategoryAccentColor(channel.category) }
 
-    // 100% 不透明表面色，彻底杜绝半透明 Surface 透出底部矩形硬件阴影
-    val opaqueCardColor = when {
-        isSelected && isDark -> Color(0xFF1A2D46)
-        isSelected && !isDark -> Color(0xFFE6F3FF)
-        else -> conceptFloatingCardColor()
-    }
+    val selectedScale by animateFloatAsState(
+        targetValue = if (isSelected) 1.02f else 1f,
+        animationSpec = spring(
+            dampingRatio = 0.72f,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "radioCardSelectScale_${channel.id}"
+    )
+
+    val baseCardColor = conceptFloatingCardColor()
+    val selectedGradient = Brush.linearGradient(
+        colors = listOf(
+            accent.copy(alpha = if (isDark) 0.28f else 0.18f),
+            accent.copy(alpha = if (isDark) 0.12f else 0.06f)
+        )
+    )
 
     Surface(
         shape = RoundedCornerShape(22.dp),
-        color = opaqueCardColor,
-        border = if (isSelected) BorderStroke(1.8.dp, accent) else null,
+        color = baseCardColor,
         shadowElevation = 0.dp,
         modifier = modifier
-            .softCardClickable(onClick = onClick)
+            .graphicsLayer {
+                scaleX = selectedScale
+                scaleY = selectedScale
+            }
+            .softCardClickable(shape = RoundedCornerShape(22.dp), onClick = onClick)
     ) {
-        Column(modifier = Modifier.padding(10.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (isSelected) Modifier.background(selectedGradient)
+                    else Modifier
+                )
+                .padding(10.dp)
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -719,19 +774,32 @@ private fun RadioPlazaGridCard(
                         )
                 )
                 Surface(
-                    shape = RoundedCornerShape(7.dp),
+                    shape = RoundedCornerShape(8.dp),
                     color = if (isSelected) accent else Color.Black.copy(alpha = 0.46f),
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(7.dp)
                 ) {
-                    Text(
-                        text = if (isSelected) "正在调频" else frequencyText,
-                        color = Color.White,
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
+                    ) {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Rounded.GraphicEq,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
+                        }
+                        Text(
+                            text = if (isSelected) "正在调频" else frequencyText,
+                            color = Color.White,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
 
                 Text(
@@ -753,7 +821,7 @@ private fun RadioPlazaGridCard(
                         .size(30.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
+                        imageVector = if (isSelected) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
                         contentDescription = "播放电台",
                         tint = Color.White,
                         modifier = Modifier.size(17.dp)
@@ -763,19 +831,33 @@ private fun RadioPlazaGridCard(
 
             Spacer(modifier = Modifier.height(7.dp))
 
-            Text(
-                text = channel.name,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    color = if (isSelected) accent else MaterialTheme.colorScheme.onSurface
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (isSelected) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(accent)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                }
+                Text(
+                    text = channel.name,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        color = if (isSelected) accent else MaterialTheme.colorScheme.onSurface
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Text(
                 text = channel.description,
                 style = MaterialTheme.typography.labelSmall.copy(
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (isSelected) accent.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 10.5.sp
                 ),
                 maxLines = 1,

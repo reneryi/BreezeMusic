@@ -1,7 +1,6 @@
 package com.concept.music.ui.settings
 
 import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -144,11 +143,7 @@ fun SettingsScreen(
                                 }
                                 Surface(
                                     shape = RoundedCornerShape(14.dp),
-                                    color = if (selected) ConceptPrimary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
-                                    border = BorderStroke(
-                                        if (selected) 1.2.dp else 0.6.dp,
-                                        if (selected) ConceptPrimary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-                                    ),
+                                    color = if (selected) ConceptPrimary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(14.dp))

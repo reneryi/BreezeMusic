@@ -29,7 +29,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -92,6 +91,7 @@ import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
 import com.concept.music.ui.theme.isConceptDarkTheme
+import com.concept.music.ui.theme.conceptSheetSpringEntrance
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.CoverStyle
@@ -365,10 +365,6 @@ fun NowPlayingSheet(
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = if (climaxModeEnabled) VipGold.copy(alpha = 0.20f) else Color.White.copy(alpha = 0.08f),
-                    border = BorderStroke(
-                        0.6.dp,
-                        if (climaxModeEnabled) VipGold.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.16f)
-                    ),
                     modifier = Modifier.softCardClickable(onClick = onToggleClimaxMode)
                 ) {
                     Row(
@@ -401,7 +397,6 @@ fun NowPlayingSheet(
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = ConceptPrimary.copy(alpha = 0.22f),
-                        border = BorderStroke(0.6.dp, ConceptPrimary.copy(alpha = 0.65f)),
                         modifier = Modifier.softCardClickable {
                             onUnlockFullTrack()
                             Toast.makeText(context, "已解锁本曲完整播放", Toast.LENGTH_SHORT).show()
@@ -432,10 +427,6 @@ fun NowPlayingSheet(
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = if (accompanyModeEnabled) ConceptPrimary.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.08f),
-                    border = BorderStroke(
-                        0.6.dp,
-                        if (accompanyModeEnabled) ConceptPrimary.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.16f)
-                    ),
                     modifier = Modifier.softCardClickable {
                         onToggleAccompanyMode()
                         Toast.makeText(
@@ -469,7 +460,6 @@ fun NowPlayingSheet(
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = Color.White.copy(alpha = 0.08f),
-                    border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.16f)),
                     modifier = Modifier.softCardClickable { showFocusPodSheet = true }
                 ) {
                     Row(
@@ -496,7 +486,6 @@ fun NowPlayingSheet(
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = ConceptPrimary.copy(alpha = 0.16f),
-                        border = BorderStroke(0.5.dp, ConceptPrimary.copy(alpha = 0.4f)),
                         modifier = Modifier.softCardClickable { showSleepTimerDialog = true }
                     ) {
                         Row(
@@ -528,7 +517,6 @@ fun NowPlayingSheet(
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = VipGold.copy(alpha = 0.16f),
-                        border = BorderStroke(0.5.dp, VipGold.copy(alpha = 0.4f)),
                         modifier = Modifier.softCardClickable { showSpeedPitchDialog = true }
                     ) {
                         Row(
@@ -1020,10 +1008,6 @@ private fun TopHeaderBar(
         val isGoldQuality = qualityLabel.startsWith("Hi-Res", ignoreCase = true)
         Surface(
             color = if (isGoldQuality) VipGold.copy(alpha = 0.22f) else ConceptPrimary.copy(alpha = 0.18f),
-            border = BorderStroke(
-                0.6.dp,
-                if (isGoldQuality) VipGold.copy(alpha = 0.5f) else ConceptPrimary.copy(alpha = 0.45f)
-            ),
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.softCardClickable(onClick = onQualityClick)
         ) {
@@ -1469,7 +1453,6 @@ private fun MagazinePosterCoverView(
             .shadow(26.dp, RoundedCornerShape(26.dp))
             .clip(RoundedCornerShape(26.dp))
             .background(Color(0xFF171A22))
-            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(26.dp))
     ) {
         if (song.coverUrl.isNotBlank()) {
             AsyncImage(
@@ -1523,7 +1506,6 @@ private fun MagazinePosterCoverView(
             Surface(
                 color = Color.Black.copy(alpha = 0.45f),
                 shape = RoundedCornerShape(6.dp),
-                border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.25f))
             ) {
                 Text(
                     text = if (song.isHiRes) "HI-RES MASTER" else "STUDIO EDITION",
@@ -1644,7 +1626,6 @@ private fun LyricPreviewBar(
     Surface(
         color = Color.White.copy(alpha = 0.08f),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
         modifier = Modifier
             .fillMaxWidth(0.9f)
             .softCardClickable(onClick = onClick)
@@ -1971,7 +1952,6 @@ private fun ImmersiveLyricView(
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = Color(0xCC161922),
-                        border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.14f))
                     ) {
                         Text(
                             text = formatDuration(targetTimeMs),
@@ -2051,7 +2031,6 @@ private fun ImmersiveLyricView(
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = if (showPhonetic) ConceptPrimary.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.1f),
-                border = BorderStroke(1.dp, if (showPhonetic) ConceptPrimary else Color.White.copy(alpha = 0.2f)),
                 modifier = Modifier.softCardClickable { onTogglePhonetic() }
             ) {
                 Box(
@@ -2070,7 +2049,6 @@ private fun ImmersiveLyricView(
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = if (showTranslation) ConceptPrimary.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.1f),
-                border = BorderStroke(1.dp, if (showTranslation) ConceptPrimary else Color.White.copy(alpha = 0.2f)),
                 modifier = Modifier.softCardClickable { onToggleTranslation() }
             ) {
                 Box(
@@ -2446,7 +2424,6 @@ private fun PlayerControlsSection(
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = Color.White.copy(alpha = 0.08f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
                 modifier = Modifier.softCardClickable(onClick = onOpenComments)
             ) {
                 Row(
@@ -2572,7 +2549,6 @@ fun QueueBottomSheet(
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = cardBg,
-                        border = BorderStroke(0.6.dp, textPrimary.copy(alpha = 0.08f)),
                         modifier = Modifier.softCardClickable(onClick = onCyclePlayMode)
                     ) {
                         Row(
@@ -2606,7 +2582,6 @@ fun QueueBottomSheet(
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = cardBg,
-                    border = BorderStroke(0.6.dp, textPrimary.copy(alpha = 0.07f)),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp)
@@ -2639,10 +2614,6 @@ fun QueueBottomSheet(
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (isSelected) ConceptPrimary else ConceptPrimary.copy(alpha = 0.12f),
-                                border = BorderStroke(
-                                    0.6.dp,
-                                    if (isSelected) ConceptPrimary else ConceptPrimary.copy(alpha = 0.32f)
-                                ),
                                 modifier = Modifier
                                     .weight(1f)
                                     .softCardClickable {
@@ -2707,11 +2678,6 @@ fun QueueBottomSheet(
                                 ConceptPrimary.copy(alpha = if (isDark) 0.16f else 0.10f)
                             } else {
                                 cardBg.copy(alpha = if (isDark) 0.55f else 0.72f)
-                            },
-                            border = if (isPlayingThis) {
-                                BorderStroke(0.8.dp, ConceptPrimary.copy(alpha = 0.45f))
-                            } else {
-                                BorderStroke(0.5.dp, textPrimary.copy(alpha = 0.04f))
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -2890,6 +2856,7 @@ private fun PlayerMoreControlSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .conceptSheetSpringEntrance()
                 .padding(horizontal = 18.dp, vertical = 6.dp)
                 .navigationBarsPadding(),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -2973,10 +2940,6 @@ private fun PlayerMoreControlSheet(
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = if (selected) ConceptPrimary.copy(alpha = 0.16f) else tileBg,
-                            border = BorderStroke(
-                                if (selected) 1.2.dp else 0.6.dp,
-                                if (selected) ConceptPrimary else textPrimary.copy(alpha = 0.08f)
-                            ),
                             modifier = Modifier
                                 .weight(1f)
                                 .softCardClickable { onSelectCoverStyle(style) }
@@ -3100,7 +3063,6 @@ private fun PlayerMoreControlSheet(
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = tileBg,
-                border = BorderStroke(0.6.dp, textPrimary.copy(alpha = 0.08f)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .softCardClickable(onClick = onOpenSongDetail)
@@ -3143,10 +3105,6 @@ private fun BentoControlTile(
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = if (active) activeColor.copy(alpha = 0.16f) else tileBg,
-        border = BorderStroke(
-            if (active) 1.dp else 0.6.dp,
-            if (active) activeColor.copy(alpha = 0.55f) else textPrimary.copy(alpha = 0.07f)
-        ),
         modifier = modifier.softCardClickable(onClick = onClick)
     ) {
         Column(

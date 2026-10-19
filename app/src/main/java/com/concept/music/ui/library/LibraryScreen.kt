@@ -63,6 +63,7 @@ import com.concept.music.ui.theme.ConceptCategoryTabItem
 import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.horizontalCategorySwipe
+import com.concept.music.ui.theme.rememberCategorySwitchGraphicModifier
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.LibraryViewModel
 import kotlinx.coroutines.launch
@@ -469,17 +470,22 @@ fun LibraryScreen(
                         }
                     } else if (!isGridView) {
                         items(currentDisplayPlaylists, key = { it.id }) { pl ->
-                            PlaylistListItem(
-                                playlist = pl,
-                                onClick = { onOpenPlaylist(pl.id) }
-                            )
+                            val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
+                            Box(modifier = tabAnimMod) {
+                                PlaylistListItem(
+                                    playlist = pl,
+                                    onClick = { onOpenPlaylist(pl.id) }
+                                )
+                            }
                         }
                     } else {
                         val chunked = currentDisplayPlaylists.chunked(2)
                         items(chunked, key = { it.first().id }) { rowItems ->
+                            val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .then(tabAnimMod)
                                     .padding(vertical = 6.dp),
                                 horizontalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
@@ -534,9 +540,11 @@ fun LibraryScreen(
                         }
                     } else {
                         items(followedArtists, key = { "artist_${it.id}_${it.name}" }) { artist ->
+                            val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .then(tabAnimMod)
                                     .softClickable {
                                         if (artist.id.isNotBlank()) onOpenArtist(artist.id)
                                     }

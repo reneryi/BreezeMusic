@@ -3,6 +3,8 @@ package com.concept.music.ui.home
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -12,7 +14,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -70,6 +71,8 @@ import com.concept.music.ui.theme.conceptSheetContainerColor
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.ConceptCategoryTabItem
 import com.concept.music.ui.theme.ConceptFluidRefreshIcon
+import com.concept.music.ui.theme.conceptCategoryContentTransition
+import com.concept.music.ui.theme.conceptSheetSpringEntrance
 import com.concept.music.ui.theme.horizontalCategorySwipe
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.softClickable
@@ -1402,10 +1405,7 @@ private fun NewSongExpressSectionCard(
                 val initialIdx = NEW_SONG_PERIOD_TABS.indexOfFirst { it.key == initialState }.coerceAtLeast(0)
                 val targetIdx = NEW_SONG_PERIOD_TABS.indexOfFirst { it.key == targetState }.coerceAtLeast(0)
                 val direction = if (targetIdx >= initialIdx) 1 else -1
-                (slideInHorizontally(animationSpec = tween(260)) { fullWidth -> direction * (fullWidth / 7) } +
-                    fadeIn(animationSpec = tween(240))) togetherWith
-                    (slideOutHorizontally(animationSpec = tween(200)) { fullWidth -> -direction * (fullWidth / 9) } +
-                        fadeOut(animationSpec = tween(160)))
+                conceptCategoryContentTransition(direction)
             },
             label = "newSongPeriodTransition"
         ) { _ ->
@@ -1850,10 +1850,14 @@ fun NewSongExpressScreen(
                     item(key = "songs_body_$pubDate") {
                         AnimatedVisibility(
                             visible = !isCollapsed,
-                            enter = expandVertically(animationSpec = tween(durationMillis = 260)) +
-                                fadeIn(animationSpec = tween(durationMillis = 220)),
-                            exit = shrinkVertically(animationSpec = tween(durationMillis = 240)) +
-                                fadeOut(animationSpec = tween(durationMillis = 180))
+                            enter = expandVertically(
+                                expandFrom = Alignment.Top,
+                                animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
+                            ) + fadeIn(animationSpec = tween(durationMillis = 210)),
+                            exit = shrinkVertically(
+                                shrinkTowards = Alignment.Top,
+                                animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMedium)
+                            ) + fadeOut(animationSpec = tween(durationMillis = 170))
                         ) {
                             Column(modifier = Modifier.fillMaxWidth()) {
                                 group.indexedSongs.forEach { (displayOrder, song) ->
@@ -1916,7 +1920,7 @@ private fun FmChannelCardView(
     Column(
         modifier = Modifier
             .width(148.dp)
-            .softCardClickable(onClick = onCardClick)
+            .softCardClickable(clip = false, onClick = onCardClick)
     ) {
         Box(
             modifier = Modifier
@@ -2221,98 +2225,109 @@ fun RankDetailScreen(
                     }
                 }
 
-                // 2. 开放式无框榜单头部（去除卡片包裹，采用大视野氛围排版）
+                // 2. 开放式无框榜单头部（去除卡片包裹，采用大视野氛围排版 + 灵动切换动画）
                 item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 18.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
+                    AnimatedContent(
+                        targetState = currentRank,
+                        transitionSpec = {
+                            val initIdx = quickSwitchRanks.indexOfFirst { it.rankId == initialState.rankId }.coerceAtLeast(0)
+                            val tgtIdx = quickSwitchRanks.indexOfFirst { it.rankId == targetState.rankId }.coerceAtLeast(0)
+                            conceptCategoryContentTransition(if (tgtIdx >= initIdx) 1 else -1)
+                        },
+                        label = "rankHeaderTransition"
+                    ) { activeRank ->
+                        val activeAccent = rankAccentColor(activeRank)
+                        Row(
                             modifier = Modifier
-                                .size(96.dp)
-                                .shadow(8.dp, RoundedCornerShape(22.dp))
-                                .clip(RoundedCornerShape(22.dp))
-                                .background(Brush.linearGradient(listOf(accentColor, ConceptPrimaryDark))),
-                            contentAlignment = Alignment.Center
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 18.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            val cover = currentRank.coverUrl.ifBlank { rankSongs.firstOrNull()?.coverUrl.orEmpty() }
-                            if (cover.isNotBlank()) {
-                                AsyncImage(
-                                    model = cover,
-                                    contentDescription = currentRank.rankName,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Rounded.Leaderboard,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(40.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(18.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(accentColor)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "${currentRank.category.ifBlank { "官方热榜" }} · ${currentRank.updateFrequency.ifBlank { "每日更新" }}",
-                                    color = accentColor,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = currentRank.rankName,
-                                style = MaterialTheme.typography.headlineSmall.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 22.sp
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
+                            Box(
                                 modifier = Modifier
-                                    .softClickable(enabled = filteredSongs.isNotEmpty()) {
-                                        if (filteredSongs.isNotEmpty()) {
-                                            onSongClick(filteredSongs.first(), filteredSongs)
-                                        }
-                                    }
+                                    .size(96.dp)
+                                    .shadow(8.dp, RoundedCornerShape(22.dp))
+                                    .clip(RoundedCornerShape(22.dp))
+                                    .background(Brush.linearGradient(listOf(activeAccent, ConceptPrimaryDark))),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .clip(CircleShape)
-                                        .background(accentColor),
-                                    contentAlignment = Alignment.Center
-                                ) {
+                                val cover = activeRank.coverUrl.ifBlank { rankSongs.firstOrNull()?.coverUrl.orEmpty() }
+                                if (cover.isNotBlank()) {
+                                    AsyncImage(
+                                        model = cover,
+                                        contentDescription = activeRank.rankName,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
                                     Icon(
-                                        imageVector = Icons.Rounded.PlayArrow,
+                                        imageVector = Icons.Rounded.Leaderboard,
                                         contentDescription = null,
                                         tint = Color.White,
-                                        modifier = Modifier.size(19.dp)
+                                        modifier = Modifier.size(40.dp)
                                     )
                                 }
-                                Spacer(modifier = Modifier.width(10.dp))
+                            }
+                            Spacer(modifier = Modifier.width(18.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(activeAccent)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "${activeRank.category.ifBlank { "官方热榜" }} · ${activeRank.updateFrequency.ifBlank { "每日更新" }}",
+                                        color = activeAccent,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "播放全部 (${filteredSongs.size})",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    text = activeRank.rankName,
+                                    style = MaterialTheme.typography.headlineSmall.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 22.sp
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .softClickable(enabled = filteredSongs.isNotEmpty()) {
+                                            if (filteredSongs.isNotEmpty()) {
+                                                onSongClick(filteredSongs.first(), filteredSongs)
+                                            }
+                                        }
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .clip(CircleShape)
+                                            .background(activeAccent),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.PlayArrow,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(19.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = "播放全部 (${filteredSongs.size})",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                             }
                         }
                     }
@@ -2410,16 +2425,20 @@ private fun RankGridPickerSheet(
     onDismiss: () -> Unit
 ) {
     val isDark = LocalIsDarkTheme.current
+    val scope = rememberCoroutineScope()
     var selectedCategory by remember { mutableStateOf("全部") }
     val categories = remember(ranks) {
         listOf("全部") + ranks.map { it.category.ifBlank { "热门" } }.distinct()
     }
-    val filteredRanks = remember(ranks, selectedCategory) {
-        if (selectedCategory == "全部") ranks
-        else ranks.filter { (it.category.ifBlank { "热门" }) == selectedCategory }
-    }
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val smoothDismiss: (() -> Unit) -> Unit = { actionAfterHide ->
+        scope.launch {
+            runCatching { sheetState.hide() }
+        }.invokeOnCompletion {
+            actionAfterHide()
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -2431,6 +2450,7 @@ private fun RankGridPickerSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .conceptSheetSpringEntrance()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .navigationBarsPadding()
         ) {
@@ -2446,7 +2466,7 @@ private fun RankGridPickerSheet(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 )
-                IconButton(onClick = onDismiss) {
+                IconButton(onClick = { smoothDismiss(onDismiss) }) {
                     Icon(Icons.Rounded.Close, contentDescription = "关闭")
                 }
             }
@@ -2479,97 +2499,150 @@ private fun RankGridPickerSheet(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
-            // 固定 460.dp 高度 + skipPartiallyExpanded = true + 左右滑动切换分类
-            val rows = filteredRanks.chunked(2)
+            // 固定 460.dp 高度 + skipPartiallyExpanded = true + 左右滑动切换分类 + 灵动 3D 分类过渡
             val catIndex = categories.indexOf(selectedCategory).coerceAtLeast(0)
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(460.dp)
-                    .horizontalCategorySwipe(
-                        currentIndex = catIndex,
-                        itemCount = categories.size,
-                        onSelectIndex = { nextIdx ->
-                            categories.getOrNull(nextIdx)?.let { selectedCategory = it }
-                        }
-                    ),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                items(rows) { pair ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        pair.forEach { item ->
-                            val isSelected = item.rankId == selectedRankId
-                            val itemAccent = rankAccentColor(item)
-                            val cardBg = when {
-                                isSelected && isDark -> Color(0xFF1A2D46)
-                                isSelected && !isDark -> Color(0xFFE6F3FF)
-                                else -> conceptElevatedSurfaceColor()
+            AnimatedContent(
+                targetState = selectedCategory,
+                transitionSpec = {
+                    val initIdx = categories.indexOf(initialState).coerceAtLeast(0)
+                    val tgtIdx = categories.indexOf(targetState).coerceAtLeast(0)
+                    conceptCategoryContentTransition(if (tgtIdx >= initIdx) 1 else -1)
+                },
+                label = "rankSheetCategoryTransition"
+            ) { activeCat ->
+                val catRanks = remember(ranks, activeCat) {
+                    if (activeCat == "全部") ranks
+                    else ranks.filter { (it.category.ifBlank { "热门" }) == activeCat }
+                }
+                val rows = remember(catRanks) { catRanks.chunked(2) }
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(460.dp)
+                        .horizontalCategorySwipe(
+                            currentIndex = catIndex,
+                            itemCount = categories.size,
+                            onSelectIndex = { nextIdx ->
+                                categories.getOrNull(nextIdx)?.let { selectedCategory = it }
                             }
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = cardBg,
-                                border = if (isSelected) BorderStroke(1.5.dp, itemAccent) else null,
-                                shadowElevation = 0.dp,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .softCardClickable { onSelectRank(item.rankId) }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp)
+                ) {
+                    items(rows) { pair ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            pair.forEach { item ->
+                                val isSelected = item.rankId == selectedRankId
+                                val itemAccent = rankAccentColor(item)
+                                val selectedScale by animateFloatAsState(
+                                    targetValue = if (isSelected) 1.02f else 1f,
+                                    animationSpec = spring(
+                                        dampingRatio = 0.72f,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    ),
+                                    label = "rankItemSelectScale_${item.rankId}"
+                                )
+                                val baseCardBg = conceptElevatedSurfaceColor()
+                                val selectedBrush = Brush.linearGradient(
+                                    colors = listOf(
+                                        itemAccent.copy(alpha = if (isDark) 0.28f else 0.18f),
+                                        itemAccent.copy(alpha = if (isDark) 0.12f else 0.06f)
+                                    )
+                                )
+                                Surface(
+                                    shape = RoundedCornerShape(18.dp),
+                                    color = baseCardBg,
+                                    shadowElevation = 0.dp,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .graphicsLayer {
+                                            scaleX = selectedScale
+                                            scaleY = selectedScale
+                                        }
+                                        .softCardClickable(shape = RoundedCornerShape(18.dp)) {
+                                            smoothDismiss { onSelectRank(item.rankId) }
+                                        }
                                 ) {
-                                    Box(
+                                    Row(
                                         modifier = Modifier
-                                            .size(44.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(Brush.linearGradient(listOf(itemAccent, ConceptPrimaryDark))),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        if (item.coverUrl.isNotBlank()) {
-                                            AsyncImage(
-                                                model = item.coverUrl,
-                                                contentDescription = item.rankName,
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier.fillMaxSize()
+                                            .fillMaxWidth()
+                                            .then(
+                                                if (isSelected) Modifier.background(selectedBrush)
+                                                else Modifier
                                             )
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Rounded.Leaderboard,
-                                                contentDescription = null,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(20.dp)
+                                            .padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(44.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(Brush.linearGradient(listOf(itemAccent, ConceptPrimaryDark))),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (item.coverUrl.isNotBlank()) {
+                                                AsyncImage(
+                                                    model = item.coverUrl,
+                                                    contentDescription = item.rankName,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier.fillMaxSize()
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Leaderboard,
+                                                    contentDescription = null,
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = item.rankName,
+                                                style = MaterialTheme.typography.bodyMedium.copy(
+                                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Bold,
+                                                    color = if (isSelected) itemAccent else MaterialTheme.colorScheme.onSurface
+                                                ),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = if (isSelected) "当前播放榜单" else item.updateFrequency.ifBlank { item.category },
+                                                style = MaterialTheme.typography.labelSmall.copy(
+                                                    color = if (isSelected) itemAccent.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                                ),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
                                             )
                                         }
-                                    }
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = item.rankName,
-                                            style = MaterialTheme.typography.bodyMedium.copy(
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (isSelected) itemAccent else MaterialTheme.colorScheme.onSurface
-                                            ),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = item.updateFrequency.ifBlank { item.category },
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            ),
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                        if (isSelected) {
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = itemAccent.copy(alpha = if (isDark) 0.24f else 0.16f),
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.GraphicEq,
+                                                        contentDescription = "当前选中",
+                                                        tint = itemAccent,
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
-                        if (pair.size == 1) {
-                            Spacer(modifier = Modifier.weight(1f))
+                            if (pair.size == 1) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
                         }
                     }
                 }

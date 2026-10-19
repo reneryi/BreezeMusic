@@ -6,10 +6,8 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -242,7 +240,6 @@ fun MiniPlayerBar(
                                 .size(6.dp)
                                 .clip(CircleShape)
                                 .background(if (isDark) Color(0xFF141C2E) else Color.White)
-                                .border(0.8.dp, ConceptPrimary.copy(alpha = 0.4f), CircleShape)
                         )
                     }
 
@@ -361,11 +358,7 @@ fun MiniPlayerBar(
 
                     Surface(
                         shape = CircleShape,
-                        color = if (isDark) Color.White.copy(alpha = 0.08f) else ConceptPrimary.copy(alpha = 0.09f),
-                        border = BorderStroke(
-                            0.6.dp,
-                            if (isDark) Color.White.copy(alpha = 0.10f) else ConceptPrimary.copy(alpha = 0.14f)
-                        ),
+                        color = if (isDark) Color.White.copy(alpha = 0.10f) else ConceptPrimary.copy(alpha = 0.11f),
                         modifier = Modifier
                             .size(36.dp)
                             .softClickable(

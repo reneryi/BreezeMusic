@@ -1,5 +1,7 @@
 package com.concept.music.ui.components
 
+import com.concept.music.ui.theme.conceptSheetSpringEntrance
+
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -68,6 +70,7 @@ fun SongDetailSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .conceptSheetSpringEntrance()
                 .padding(horizontal = 24.dp, vertical = 8.dp)
                 .navigationBarsPadding()
         ) {

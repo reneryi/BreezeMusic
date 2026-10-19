@@ -3,7 +3,6 @@ package com.concept.music.ui.components
 import com.concept.music.ui.theme.softCardClickable
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -31,7 +30,7 @@ import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import kotlin.math.abs
 
 /**
- * 歌单网格项 (画廊式无外框设计：去除外层圆角卡片盒，封面直接悬浮于通透画布，文字自然排布于封面下方)
+ * 歌单网格项 (画廊式无外框设计：仅歌单封面为圆角，下方歌单名最多两行超出省略号，外层 Column 不裁切圆角)
  */
 @Composable
 fun PlaylistGridItem(
@@ -48,7 +47,7 @@ fun PlaylistGridItem(
 
     Column(
         modifier = modifier
-            .softCardClickable(onClick = onClick)
+            .softCardClickable(clip = false, onClick = onClick)
             .padding(vertical = 4.dp)
     ) {
         Box(
@@ -120,9 +119,10 @@ fun PlaylistGridItem(
             style = MaterialTheme.typography.bodyMedium.copy(
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 14.sp
+                fontSize = 13.5.sp,
+                lineHeight = 18.sp
             ),
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 2.dp)
         )

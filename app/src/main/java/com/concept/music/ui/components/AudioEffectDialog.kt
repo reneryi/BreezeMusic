@@ -1,6 +1,5 @@
 package com.concept.music.ui.components
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -28,6 +27,7 @@ import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
+import com.concept.music.ui.theme.conceptSheetSpringEntrance
 import com.concept.music.ui.theme.softCardClickable
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -278,9 +278,8 @@ fun AudioEffectDialog(
                         items(com.concept.music.service.ReverbMode.values()) { mode ->
                             val isModeSelected = state.reverbMode == mode
                             Surface(
-                                color = if (isModeSelected) ConceptPrimary.copy(alpha = 0.18f) else elevatedBg,
+                                color = if (isModeSelected) ConceptPrimary else elevatedBg,
                                 shape = RoundedCornerShape(12.dp),
-                                border = if (isModeSelected) BorderStroke(1.dp, ConceptPrimary) else null,
                                 modifier = Modifier
                                     .softCardClickable(
                                         enabled = state.isEnabled,
@@ -291,7 +290,7 @@ fun AudioEffectDialog(
                                 Text(
                                     text = mode.label,
                                     style = MaterialTheme.typography.bodySmall.copy(
-                                        color = if (isModeSelected) ConceptPrimary else subText,
+                                        color = if (isModeSelected) Color.White else subText,
                                         fontWeight = if (isModeSelected) FontWeight.Bold else FontWeight.Medium
                                     ),
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
