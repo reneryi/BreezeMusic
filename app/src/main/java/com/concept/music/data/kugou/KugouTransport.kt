@@ -2,7 +2,9 @@ package com.concept.music.data.kugou
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -44,7 +46,7 @@ class DirectKugouTransport(
 
     override suspend fun callAdvanced(path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
         host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?,
-        sign: Boolean, includeDefaultParams: Boolean): ApiResponse {
+        sign: Boolean, includeDefaultParams: Boolean): ApiResponse = withContext(Dispatchers.IO) {
         val d = device ?: identity()
         val params = linkedMapOf<String, String>()
         if (includeDefaultParams) {
@@ -66,7 +68,7 @@ class DirectKugouTransport(
             .apply { headers.forEach { (key, value) -> header(key, value) } }
             .method(method, if (method == "GET") null else payload.toRequestBody(
                 (headers.entries.firstOrNull { it.key.equals("content-type", ignoreCase = true) }?.value ?: "application/json; charset=utf-8").toMediaType())).build()
-        return suspendCancellableCoroutine { continuation ->
+        suspendCancellableCoroutine { continuation ->
             val call = client.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
@@ -77,13 +79,11 @@ class DirectKugouTransport(
                     response.use {
                         try {
                             val bodyString = it.body?.string().orEmpty()
-                            runCatching { android.util.Log.d("KugouTransport", "[$method] $path (HTTP ${it.code}): $bodyString") }
                             val root = JsonParser.parseString(bodyString)
                             if (!root.isJsonObject) throw IOException("酷狗返回了无法识别的响应")
                             val result = ApiResponse(root.asJsonObject, it.header("ssa-code") ?: root.asJsonObject.text("ssaCode"), it.code)
                             if (continuation.isActive) continuation.resume(result)
                         } catch (e: Exception) {
-                            runCatching { android.util.Log.e("KugouTransport", "Failed to parse $path: ${e.message}") }
                             if (continuation.isActive) continuation.resumeWithException(IOException("酷狗响应解析失败，请稍后重试"))
                         }
                     }
@@ -94,7 +94,7 @@ class DirectKugouTransport(
 
     override suspend fun callRaw(path: String, session: KugouSession?, query: Map<String, String>,
         rawBody: String?, host: String, method: String, headers: Map<String, String>,
-        sign: Boolean, includeDefaultParams: Boolean, device: DeviceIdentity?): ByteArray {
+        sign: Boolean, includeDefaultParams: Boolean, device: DeviceIdentity?): ByteArray = withContext(Dispatchers.IO) {
         val d = device ?: identity()
         val params = linkedMapOf<String, String>()
         if (includeDefaultParams) {
@@ -117,7 +117,7 @@ class DirectKugouTransport(
             .apply { headers.forEach { (key, value) -> header(key, value) } }
             .method(method, if (method == "GET") null else payload.toRequestBody(contentType.toMediaType()))
             .build()
-        return suspendCancellableCoroutine { continuation ->
+        suspendCancellableCoroutine { continuation ->
             val call = client.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
@@ -128,7 +128,6 @@ class DirectKugouTransport(
                     response.use {
                         try {
                             val bytes = it.body?.bytes() ?: ByteArray(0)
-                            runCatching { android.util.Log.d("KugouTransport", "[$method] $path (HTTP ${it.code}): ${bytes.size} bytes") }
                             if (continuation.isActive) continuation.resume(bytes)
                         } catch (e: Exception) {
                             if (continuation.isActive) continuation.resumeWithException(IOException("酷狗响应读取失败"))

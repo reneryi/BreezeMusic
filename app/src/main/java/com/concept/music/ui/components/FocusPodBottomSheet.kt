@@ -23,16 +23,14 @@ import androidx.compose.ui.unit.sp
 import com.concept.music.service.FocusPodManager
 import com.concept.music.service.FocusPreset
 import com.concept.music.ui.theme.ConceptCyanAccent
-import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
-import com.concept.music.ui.theme.conceptElevatedSurfaceColor
-import com.concept.music.ui.theme.conceptSheetContainerColor
 import com.concept.music.ui.theme.softCardClickable
 
 /**
- * 「概念胶囊工作台 (Concept Focus Pod)」抽屉面板
- * 番茄钟 × 场景电台伴听 × 程序化环境白噪音 × 听歌等级时长四位一体
+ * 「概念胶囊 · Focus Pod」抽屉面板
+ * 色调与「我的」页面概念胶囊入口卡片完全统一（薰衣草紫 / 极光紫渐变体系）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,31 +46,35 @@ fun FocusPodBottomSheet(
     val state by FocusPodManager.state.collectAsState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    val podAccent = if (isDark) Color(0xFF9688FF) else ConceptVioletAccent
+    val sheetBgColor = if (isDark) Color(0xFF121526) else Color(0xFFF6F4FF)
+    val itemSurfaceColor = if (isDark) Color(0xFF1A1E34) else Color(0xFFEDE9FF).copy(alpha = 0.65f)
+
     val timerCardBrush = if (isDark) {
         Brush.linearGradient(
             colors = listOf(
-                Color(0xFF10243E),
-                Color(0xFF152C4A),
-                Color(0xFF0E1A2D)
+                Color(0xFF201F3D),
+                Color(0xFF181C34),
+                Color(0xFF131729)
             )
         )
     } else {
         Brush.linearGradient(
             colors = listOf(
-                Color(0xFFE3F2FF),
-                Color(0xFFEDE8FF),
-                Color(0xFFEAF7FF)
+                Color(0xFFEBE6FF),
+                Color(0xFFE8F1FF),
+                Color(0xFFF3F0FF)
             )
         )
     }
-    val timerTitleColor = if (isDark) Color.White else Color(0xFF0F2038)
-    val timerSubColor = if (isDark) Color.White.copy(alpha = 0.68f) else Color(0xFF4B6282)
+    val timerTitleColor = if (isDark) Color.White else Color(0xFF181532)
+    val timerSubColor = if (isDark) Color.White.copy(alpha = 0.70f) else Color(0xFF564F7A)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         windowInsets = WindowInsets(0, 0, 0, 0),
-        containerColor = conceptSheetContainerColor(),
+        containerColor = sheetBgColor,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     ) {
         Column(
@@ -95,14 +97,14 @@ fun FocusPodBottomSheet(
                 ) {
                     Surface(
                         modifier = Modifier.size(38.dp),
-                        shape = CircleShape,
-                        color = ConceptPrimary.copy(alpha = 0.16f)
+                        shape = RoundedCornerShape(13.dp),
+                        color = podAccent.copy(alpha = 0.16f)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Rounded.SelfImprovement,
                                 contentDescription = null,
-                                tint = ConceptPrimary,
+                                tint = podAccent,
                                 modifier = Modifier.size(22.dp)
                             )
                         }
@@ -111,14 +113,15 @@ fun FocusPodBottomSheet(
                         Text(
                             text = "概念胶囊 · Focus Pod",
                             style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Bold,
+                                fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                         )
                         Text(
                             text = "今日专注 ${state.completedPodsToday} 次 · 累计 ${state.totalFocusMinutesToday} 分钟",
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = ConceptPrimary
+                                color = podAccent,
+                                fontWeight = FontWeight.SemiBold
                             )
                         )
                     }
@@ -150,13 +153,13 @@ fun FocusPodBottomSheet(
                             color = if (state.isRunning) {
                                 ConceptCyanAccent.copy(alpha = 0.2f)
                             } else {
-                                ConceptPrimary.copy(alpha = 0.12f)
+                                podAccent.copy(alpha = 0.14f)
                             },
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Text(
                                 text = if (state.isRunning) "心流专注中 · 自动计入听歌时长" else state.selectedPreset.title,
-                                color = if (state.isRunning) ConceptCyanAccent else ConceptPrimary,
+                                color = if (state.isRunning) ConceptCyanAccent else podAccent,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -185,8 +188,8 @@ fun FocusPodBottomSheet(
                                 .fillMaxWidth()
                                 .height(6.dp)
                                 .clip(CircleShape),
-                            color = ConceptPrimary,
-                            trackColor = ConceptPrimary.copy(alpha = 0.14f)
+                            color = podAccent,
+                            trackColor = podAccent.copy(alpha = 0.16f)
                         )
                     }
                 }
@@ -204,7 +207,7 @@ fun FocusPodBottomSheet(
                     val selected = state.selectedPreset == preset
                     Surface(
                         shape = RoundedCornerShape(18.dp),
-                        color = if (selected) ConceptPrimary.copy(alpha = 0.16f) else conceptElevatedSurfaceColor(),
+                        color = if (selected) podAccent.copy(alpha = 0.18f) else itemSurfaceColor,
                         modifier = Modifier
                             .fillMaxWidth()
                             .softCardClickable(
@@ -225,7 +228,7 @@ fun FocusPodBottomSheet(
                                     text = preset.title,
                                     style = MaterialTheme.typography.bodyMedium.copy(
                                         fontWeight = FontWeight.Bold,
-                                        color = if (selected) ConceptPrimary else MaterialTheme.colorScheme.onSurface
+                                        color = if (selected) podAccent else MaterialTheme.colorScheme.onSurface
                                     )
                                 )
                                 Text(
@@ -239,7 +242,7 @@ fun FocusPodBottomSheet(
                                 Icon(
                                     imageVector = Icons.Rounded.CheckCircle,
                                     contentDescription = null,
-                                    tint = ConceptPrimary,
+                                    tint = podAccent,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -250,7 +253,7 @@ fun FocusPodBottomSheet(
 
             Surface(
                 shape = RoundedCornerShape(20.dp),
-                color = conceptElevatedSurfaceColor(),
+                color = itemSurfaceColor,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -272,7 +275,11 @@ fun FocusPodBottomSheet(
                         }
                         Switch(
                             checked = state.autoPlaySceneMusic,
-                            onCheckedChange = { FocusPodManager.setAutoPlaySceneMusic(it) }
+                            onCheckedChange = { FocusPodManager.setAutoPlaySceneMusic(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = podAccent
+                            )
                         )
                     }
                     Row(
@@ -293,7 +300,11 @@ fun FocusPodBottomSheet(
                         }
                         Switch(
                             checked = state.autoMixAmbient,
-                            onCheckedChange = { FocusPodManager.setAutoMixAmbient(it) }
+                            onCheckedChange = { FocusPodManager.setAutoMixAmbient(it) },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = podAccent
+                            )
                         )
                     }
                 }
@@ -316,7 +327,7 @@ fun FocusPodBottomSheet(
                     .height(48.dp),
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (state.isRunning) VipGold else ConceptPrimary,
+                    containerColor = if (state.isRunning) VipGold else podAccent,
                     contentColor = Color.White
                 )
             ) {

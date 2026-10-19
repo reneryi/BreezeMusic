@@ -10,6 +10,8 @@ import com.concept.music.data.model.PurchasedAlbumItem
 import com.concept.music.data.model.PurchasedSongItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.model.UserGradeInfo
+import com.concept.music.data.repository.deduplicateAndMergeSongs
+import com.concept.music.data.repository.isSameMusicTrack
 import com.concept.music.data.vip.ListeningGradeManager
 import com.concept.music.data.vip.VipManager
 import kotlinx.coroutines.*
@@ -90,14 +92,19 @@ class LibraryViewModel(
     private var loadedLibraryAuth: AuthState? = null
 
     init {
-        hydrateLibraryFromLocalCache(accountState.value.currentId)
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
+            hydrateLibraryFromLocalCache(accountState.value.currentId)
             accountState.collect { state ->
                 if (state.auth != AuthState.RESTORING) {
                     if (state.currentId != loadedLibraryUserId || state.auth != loadedLibraryAuth) {
                         loadedLibraryUserId = state.currentId
                         loadedLibraryAuth = state.auth
                         hydrateLibraryFromLocalCache(state.currentId)
+                        val hasCached = _playlists.value.isNotEmpty() || _likedSongs.value.isNotEmpty()
+                        if (hasCached) {
+                            // 错峰延后静默同步，避开冷启动首屏渲染与发现页加载高峰，彻底消除打开 App 时的掉帧卡顿
+                            delay(550L)
+                        }
                         loadMusicLibrary()
                     }
                 }
@@ -122,12 +129,7 @@ class LibraryViewModel(
         }
     }
 
-    fun isSameSong(a: Song, b: Song): Boolean {
-        if (a.id.isNotBlank() && b.id.isNotBlank() && a.id == b.id) return true
-        if (a.hash.isNotBlank() && b.hash.isNotBlank() && a.hash.equals(b.hash, ignoreCase = true)) return true
-        if (a.albumAudioId > 0L && b.albumAudioId > 0L && a.albumAudioId == b.albumAudioId) return true
-        return false
-    }
+    fun isSameSong(a: Song, b: Song): Boolean = isSameMusicTrack(a, b)
 
     fun isSongLiked(song: Song?, likedList: List<Song> = _likedSongs.value): Boolean {
         if (song == null) return false
@@ -192,15 +194,18 @@ class LibraryViewModel(
             _libraryLoading.value = true
             _libraryError.value = null
             musicLibraryJob?.cancel()
-            musicLibraryJob = viewModelScope.launch {
+            musicLibraryJob = viewModelScope.launch(Dispatchers.IO) {
                 val localHistory = VipManager.history.get(userId)
+                if (localHistory.isNotEmpty()) {
+                    _librarySongs.value = localHistory
+                }
                 val cloudLatest = if (userId != null && accountState.value.auth == AuthState.READY) {
                     runCatching { VipManager.music.latestListenSongs(pageSize = 50) }.getOrDefault(emptyList())
                 } else emptyList()
                 _librarySongs.value = if (cloudLatest.isNotEmpty()) {
-                    (cloudLatest + localHistory).distinctBy { it.hash.ifBlank { it.id } }
+                    deduplicateAndMergeSongs(localHistory + cloudLatest)
                 } else {
-                    localHistory
+                    deduplicateAndMergeSongs(localHistory)
                 }
                 _libraryLoading.value = false
             }
@@ -437,16 +442,16 @@ class LibraryViewModel(
             _libraryLoading.value = true
             _libraryError.value = null
             musicLibraryJob?.cancel()
-            musicLibraryJob = viewModelScope.launch {
+            musicLibraryJob = viewModelScope.launch(Dispatchers.IO) {
                 val localHistory = VipManager.history.get(userId)
                 val cloudLatest = if (userId != null && accountState.value.auth == AuthState.READY) {
                     runCatching { VipManager.music.latestListenSongs(pageSize = 50) }.getOrDefault(emptyList())
                 } else emptyList()
 
                 _librarySongs.value = if (cloudLatest.isNotEmpty()) {
-                    (cloudLatest + localHistory).distinctBy { it.hash.ifBlank { it.id } }
+                    deduplicateAndMergeSongs(localHistory + cloudLatest)
                 } else {
-                    localHistory
+                    deduplicateAndMergeSongs(localHistory)
                 }
                 if (userId != null && accountState.value.auth == AuthState.READY) {
                     launch { ListeningGradeManager.syncGrade(forceRefresh = false) }
@@ -517,7 +522,7 @@ class LibraryViewModel(
             return
         }
         musicLibraryJob?.cancel()
-        musicLibraryJob = viewModelScope.launch {
+        musicLibraryJob = viewModelScope.launch(Dispatchers.IO) {
             _libraryLoading.value = true; _libraryError.value = null
             try {
                 // 并行启动听歌等级、已购资产与关注歌手查询

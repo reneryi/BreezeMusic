@@ -326,8 +326,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         fun sanitizePersistedSong(s: Song): Song {
             val realHiRes = s.isHiRes && s.hashHiRes.isNotBlank() &&
-                s.fileSizeByte >= 38_000_000L &&
-                (s.bitrateKbps <= 0 || s.bitrateKbps >= 1800) &&
+                (s.fileSizeByte <= 0L || s.fileSizeByte >= 14_000_000L) &&
+                (s.bitrateKbps <= 0 || s.bitrateKbps >= 1000) &&
                 !s.hashHiRes.equals(s.hashFlac, ignoreCase = true) &&
                 !s.hashHiRes.equals(s.hash320, ignoreCase = true) &&
                 !s.hashHiRes.equals(s.hash128, ignoreCase = true)

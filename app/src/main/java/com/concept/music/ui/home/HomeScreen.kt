@@ -129,13 +129,16 @@ fun HomeScreen(
     val isDark = LocalIsDarkTheme.current
 
     val pullRefreshState = rememberPullToRefreshState()
-    if (pullRefreshState.isRefreshing) {
-        LaunchedEffect(true) {
-            viewModel.refresh()
+    LaunchedEffect(pullRefreshState.isRefreshing) {
+        if (pullRefreshState.isRefreshing) {
+            viewModel.refresh(
+                isBackgroundRevalidate = false,
+                onFinished = { pullRefreshState.endRefresh() }
+            )
         }
     }
     LaunchedEffect(loading) {
-        if (!loading) {
+        if (!loading && pullRefreshState.isRefreshing) {
             pullRefreshState.endRefresh()
         }
     }
@@ -209,8 +212,8 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 112.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 148.dp),
+            verticalArrangement = Arrangement.spacedBy(26.dp)
         ) {
             if (loading && dailySongs.isEmpty()) {
                 item {
@@ -327,7 +330,7 @@ fun HomeScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 6.dp),
+                                .padding(bottom = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -388,7 +391,7 @@ fun HomeScreen(
                             HorizontalDivider(
                                 thickness = 0.5.dp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-                                modifier = Modifier.padding(bottom = 12.dp)
+                                modifier = Modifier.padding(bottom = 15.dp)
                             )
                         }
 
@@ -409,7 +412,7 @@ fun HomeScreen(
                                 if (catKey == "全部") ranks else ranks.filter { it.category == catKey }
                             }
                             LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 items(currentRanksForCat, key = { it.rankId }) { rank ->
@@ -446,7 +449,7 @@ fun HomeScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(bottom = 12.dp),
+                                .padding(bottom = 14.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -480,7 +483,7 @@ fun HomeScreen(
                         }
 
                         LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(18.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             itemsIndexed(fmChannels, key = { _, it -> it.id }) { idx, channel ->
@@ -1053,7 +1056,7 @@ private fun PersonalFmPlayerCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(playerCardBrush)
-                .padding(horizontal = 16.dp, vertical = 13.dp)
+                .padding(horizontal = 18.dp, vertical = 16.dp)
         ) {
             // 上层：左上角「猜你喜欢·随心听」（随心听为精致小字）+ 右上角圆润双弧流光刷新图标
             Row(
@@ -1105,7 +1108,7 @@ private fun PersonalFmPlayerCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(9.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // 下层：当前随心听曲目封面、歌手信息、下一首预告与播放控制
             Row(
@@ -1389,7 +1392,7 @@ private fun NewSongExpressSectionCard(
         HorizontalDivider(
             thickness = 0.5.dp,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-            modifier = Modifier.padding(bottom = 10.dp)
+            modifier = Modifier.padding(bottom = 14.dp)
         )
 
         // 3. 无外框通透横向三行新歌流（加入平滑分类切换过渡动画）
@@ -1427,12 +1430,13 @@ private fun NewSongExpressSectionCard(
             } else {
                 val columns = remember(songs) { songs.take(18).chunked(3) }
                 LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(22.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                 itemsIndexed(columns, key = { colIdx, group -> "ns_col_${colIdx}_${group.firstOrNull()?.id}" }) { _, group ->
                     Column(
-                        modifier = Modifier.width(288.dp)
+                        modifier = Modifier.width(292.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         group.forEachIndexed { rowIdx, song ->
                             val isThisPlaying = currentSong != null && (
@@ -2796,7 +2800,7 @@ private fun DailyRecommendBanner(
         shadowElevation = if (isDark) 0.dp else 5.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .height(140.dp)
+            .height(146.dp)
             .softCardClickable(
                 shape = RoundedCornerShape(28.dp),
                 clip = false,

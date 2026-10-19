@@ -120,14 +120,18 @@ fun LibraryScreen(
     val listState = rememberLazyListState()
     val pullRefreshState = rememberPullToRefreshState()
 
-    if (pullRefreshState.isRefreshing) {
-        LaunchedEffect(true) {
+    LaunchedEffect(pullRefreshState.isRefreshing) {
+        if (pullRefreshState.isRefreshing) {
             viewModel.refreshMusicLibrary()
             viewModel.refreshAccount()
+            kotlinx.coroutines.delay(600L)
+            if (!libraryLoading) {
+                pullRefreshState.endRefresh()
+            }
         }
     }
     LaunchedEffect(libraryLoading) {
-        if (!libraryLoading) {
+        if (!libraryLoading && pullRefreshState.isRefreshing) {
             pullRefreshState.endRefresh()
         }
     }

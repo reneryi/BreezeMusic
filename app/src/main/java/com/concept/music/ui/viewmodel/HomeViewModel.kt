@@ -7,12 +7,16 @@ import com.concept.music.data.model.FmChannel
 import com.concept.music.data.model.RankItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 class HomeViewModel : ViewModel() {
     // 每日推荐（独立刷新边界）
@@ -42,7 +46,7 @@ class HomeViewModel : ViewModel() {
     private val _newSongsLoading = MutableStateFlow(false)
     val newSongsLoading: StateFlow<Boolean> = _newSongsLoading.asStateFlow()
 
-    private val newSongCache = mutableMapOf<String, List<Song>>()
+    private val newSongCache = ConcurrentHashMap<String, List<Song>>()
 
     // 实时场景电台列表 (FM Channels)
     private val _fmChannels = MutableStateFlow<List<FmChannel>>(emptyList())
@@ -66,10 +70,9 @@ class HomeViewModel : ViewModel() {
     private var hasInitialLoaded: Boolean = false
 
     init {
-        // 0ms 冷启动秒开：在账号恢复前先同步水合本地持久化快照，彻底消除打开 App 时的空白等待
-        hydrateFromLocalCache(accountState.value.currentId)
-
-        viewModelScope.launch {
+        // 在后台 IO 线程水合本地缓存快照，彻底消除冷启动时主线程 Gson 反序列化引起的首帧卡顿
+        viewModelScope.launch(Dispatchers.IO) {
+            hydrateFromLocalCache(accountState.value.currentId)
             accountState.collect { state ->
                 if (state.auth != AuthState.RESTORING) {
                     if (state.currentId != loadedUser || !hasInitialLoaded) {
@@ -102,13 +105,11 @@ class HomeViewModel : ViewModel() {
             _personalFmSongs.value = cachedFm
         }
 
-        listOf("CHINESE", "WESTERN", "JPKR", "CANTON", "ALL").forEach { key ->
-            val cachedPeriod = cache.getNewSongs(key)
-            if (cachedPeriod.isNotEmpty() && newSongCache[key].isNullOrEmpty()) {
-                newSongCache[key] = cachedPeriod
-            }
-        }
         val activePeriod = _selectedNewSongPeriod.value
+        val cachedActivePeriod = cache.getNewSongs(activePeriod)
+        if (cachedActivePeriod.isNotEmpty() && newSongCache[activePeriod].isNullOrEmpty()) {
+            newSongCache[activePeriod] = cachedActivePeriod
+        }
         if (_currentNewSongs.value.isEmpty() && !newSongCache[activePeriod].isNullOrEmpty()) {
             _currentNewSongs.value = newSongCache[activePeriod].orEmpty()
         }
@@ -122,20 +123,38 @@ class HomeViewModel : ViewModel() {
         if (_fmChannels.value.isEmpty() && cachedChannels.isNotEmpty()) {
             _fmChannels.value = cachedChannels
         }
+
+        // 其余未显示的语种分类延后在后台预热
+        listOf("CHINESE", "WESTERN", "JPKR", "CANTON", "ALL").forEach { key ->
+            if (key != activePeriod && newSongCache[key].isNullOrEmpty()) {
+                val cachedPeriod = cache.getNewSongs(key)
+                if (cachedPeriod.isNotEmpty()) {
+                    newSongCache[key] = cachedPeriod
+                }
+            }
+        }
     }
 
     /**
-     * 发现页整页刷新：支持 Stale-While-Revalidate 后台静默更新与主动下拉刷新
+     * 发现页整页刷新：
+     * - 主动下拉刷新 (isBackgroundRevalidate = false)：始终置 _loading = true 并在完成后回调 onFinished，修复下拉刷新一直旋转的问题
+     * - 静默后台更新 (isBackgroundRevalidate = true)：全程在 Dispatchers.IO 分批错峰执行，避开冷启动首屏渲染窗口，消除掉帧卡顿
      */
-    fun refresh(isBackgroundRevalidate: Boolean = false) {
+    fun refresh(isBackgroundRevalidate: Boolean = false, onFinished: (() -> Unit)? = null) {
         request?.cancel()
         val authState = accountState.value.auth
-        if (authState == AuthState.RESTORING) return
+        if (authState == AuthState.RESTORING) {
+            onFinished?.invoke()
+            return
+        }
 
         val currentUserId = accountState.value.currentId
-        request = viewModelScope.launch {
-            if (!isBackgroundRevalidate && !hasAnyContentLoaded()) {
+        request = viewModelScope.launch(Dispatchers.IO) {
+            if (!isBackgroundRevalidate) {
                 _loading.value = true
+            } else {
+                // 若已有本地秒开缓存，避开 App 启动前 380ms 的首屏 UI 渲染与动画帧高峰期
+                delay(380L)
             }
             _error.value = null
             try {
@@ -147,6 +166,7 @@ class HomeViewModel : ViewModel() {
                     }
                 }
                 val fmJob = launch {
+                    if (isBackgroundRevalidate) delay(80L)
                     val fm = runCatching { VipManager.music.personalFm(size = 20) }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && fm.isNotEmpty()) {
                         val wasEmpty = _personalFmSongs.value.isEmpty()
@@ -158,6 +178,7 @@ class HomeViewModel : ViewModel() {
                     }
                 }
                 val newSongJob = launch {
+                    if (isBackgroundRevalidate) delay(160L)
                     val period = _selectedNewSongPeriod.value
                     if (_currentNewSongs.value.isEmpty()) {
                         _newSongsLoading.value = true
@@ -171,6 +192,7 @@ class HomeViewModel : ViewModel() {
                     _newSongsLoading.value = false
                 }
                 val radioJob = launch {
+                    if (isBackgroundRevalidate) delay(240L)
                     val radios = runCatching { VipManager.music.fmChannels() }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && radios.isNotEmpty()) {
                         _fmChannels.value = radios
@@ -178,6 +200,7 @@ class HomeViewModel : ViewModel() {
                     }
                 }
                 val rankJob = launch {
+                    if (isBackgroundRevalidate) delay(300L)
                     val rankList = runCatching { VipManager.music.rankList() }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && rankList.isNotEmpty()) {
                         _ranks.value = rankList
@@ -194,8 +217,11 @@ class HomeViewModel : ViewModel() {
                     _error.value = e.message ?: "发现页内容加载失败"
                 }
             } finally {
-                if (accountState.value.currentId == currentUserId) {
-                    _loading.value = false
+                _loading.value = false
+                if (onFinished != null) {
+                    withContext(Dispatchers.Main) {
+                        onFinished.invoke()
+                    }
                 }
             }
         }
@@ -207,7 +233,7 @@ class HomeViewModel : ViewModel() {
     fun refreshDailyRecommend(onLoaded: (List<Song>) -> Unit = {}) {
         if (_dailyRefreshing.value) return
         val currentUserId = accountState.value.currentId
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             _dailyRefreshing.value = true
             val daily = runCatching { VipManager.music.dailyRecommend() }.getOrDefault(emptyList())
             if (daily.isNotEmpty()) {
@@ -215,7 +241,9 @@ class HomeViewModel : ViewModel() {
                 VipManager.discoverCache.saveDailyRecommend(currentUserId, daily)
             }
             _dailyRefreshing.value = false
-            onLoaded(_songs.value)
+            withContext(Dispatchers.Main) {
+                onLoaded(_songs.value)
+            }
         }
     }
 
@@ -225,7 +253,7 @@ class HomeViewModel : ViewModel() {
     fun refreshPersonalFm(onLoaded: (List<Song>) -> Unit = {}) {
         if (_personalFmRefreshing.value) return
         val currentUserId = accountState.value.currentId
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             _personalFmRefreshing.value = true
             val list = runCatching { VipManager.music.personalFm(size = 20) }.getOrDefault(emptyList())
             if (list.isNotEmpty()) {
@@ -234,7 +262,9 @@ class HomeViewModel : ViewModel() {
                 VipManager.discoverCache.savePersonalFm(currentUserId, list)
             }
             _personalFmRefreshing.value = false
-            onLoaded(_personalFmSongs.value)
+            withContext(Dispatchers.Main) {
+                onLoaded(_personalFmSongs.value)
+            }
         }
     }
 
@@ -282,7 +312,7 @@ class HomeViewModel : ViewModel() {
             _currentNewSongs.value = cached
             if (!forceRefresh) return
         }
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             if (_currentNewSongs.value.isEmpty() || forceRefresh) {
                 _newSongsLoading.value = true
             }
@@ -302,39 +332,39 @@ class HomeViewModel : ViewModel() {
         return VipManager.discoverCache.getFmChannelSongs(channelId)
     }
 
-    suspend fun getFmChannelSongs(channelId: String, size: Int = 20, forceNextBatch: Boolean = true): List<Song> {
+    suspend fun getFmChannelSongs(channelId: String, size: Int = 20, forceNextBatch: Boolean = true): List<Song> = withContext(Dispatchers.IO) {
         if (!forceNextBatch) {
             val cached = VipManager.discoverCache.getFmChannelSongs(channelId)
-            if (cached.isNotEmpty()) return cached
+            if (cached.isNotEmpty()) return@withContext cached
         }
         val fresh = VipManager.music.fmSongs(channelId, size = size, forceNextBatch = forceNextBatch)
         if (fresh.isNotEmpty()) {
             VipManager.discoverCache.saveFmChannelSongs(channelId, fresh)
         }
-        return fresh
+        fresh
     }
 
-    suspend fun getSceneRecommendSongs(sceneId: String, size: Int = 20): List<Song> {
-        return VipManager.music.sceneRecommendSongs(sceneId, size = size)
+    suspend fun getSceneRecommendSongs(sceneId: String, size: Int = 20): List<Song> = withContext(Dispatchers.IO) {
+        VipManager.music.sceneRecommendSongs(sceneId, size = size)
     }
 
     fun getCachedRankSongs(rankId: Int): List<Song> {
         return VipManager.discoverCache.getRankSongs(rankId)
     }
 
-    suspend fun getRankSongs(rankId: Int): List<Song> {
+    suspend fun getRankSongs(rankId: Int): List<Song> = withContext(Dispatchers.IO) {
         val list = VipManager.music.rankSongs(rankId, page = 1, pageSize = 100)
         if (list.isNotEmpty()) {
             VipManager.discoverCache.saveRankSongs(rankId, list)
         }
-        return list
+        list
     }
 
-    suspend fun getRankSongsAll(rankId: Int, maxSongs: Int = 500): List<Song> {
+    suspend fun getRankSongsAll(rankId: Int, maxSongs: Int = 500): List<Song> = withContext(Dispatchers.IO) {
         val list = VipManager.music.rankSongsAll(rankId, maxSongs = maxSongs)
         if (list.isNotEmpty()) {
             VipManager.discoverCache.saveRankSongs(rankId, list)
         }
-        return list
+        list
     }
 }
