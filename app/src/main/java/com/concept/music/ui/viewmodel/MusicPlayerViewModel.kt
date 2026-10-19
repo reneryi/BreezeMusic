@@ -325,14 +325,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         } else emptyList()
 
         fun sanitizePersistedSong(s: Song): Song {
-            val realHiRes = s.isHiRes && s.hashHiRes.isNotBlank() &&
-                (s.fileSizeByte <= 0L || s.fileSizeByte >= 14_000_000L) &&
-                (s.bitrateKbps <= 0 || s.bitrateKbps >= 1000) &&
-                !s.hashHiRes.equals(s.hashFlac, ignoreCase = true) &&
+            if (!s.isHiRes) return s
+            val realHiRes = s.hashHiRes.isNotBlank() &&
                 !s.hashHiRes.equals(s.hash320, ignoreCase = true) &&
                 !s.hashHiRes.equals(s.hash128, ignoreCase = true)
             if (realHiRes) return s
-            val flacFallback = s.hashFlac.ifBlank { if (s.fileSizeByte >= 12_000_000L) s.hashHiRes else "" }
+            val flacFallback = s.hashFlac.ifBlank { s.hashHiRes }
             val cleanedQualities = s.effectiveQualities.filter { it != AudioQuality.HI_RES }.let { q ->
                 if (flacFallback.isNotBlank() && AudioQuality.LOSSLESS !in q) q + AudioQuality.LOSSLESS else q
             }.ifEmpty { listOf(AudioQuality.STANDARD) }

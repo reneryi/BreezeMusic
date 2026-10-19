@@ -3205,10 +3205,10 @@ private fun QualitySelectDialog(
                 )
                 validQualities.forEach { quality ->
                     val desc = when (quality) {
-                        AudioQuality.HI_RES -> "Hi-Res 母带 (24bit/96kHz 超高解析)"
-                        AudioQuality.LOSSLESS -> "无损 SQ (FLAC / 真实母带压制)"
-                        AudioQuality.HIGH -> "高品 320K (320kbps MP3)"
-                        AudioQuality.STANDARD -> "标准 128K (标准音质)"
+                        AudioQuality.HI_RES -> "Hi-Res 音质 (24bit FLAC 高解析度无损)"
+                        AudioQuality.LOSSLESS -> "SQ 无损音质 (16bit FLAC 无损)"
+                        AudioQuality.HIGH -> "HQ 高品音质 (320kbps MP3)"
+                        AudioQuality.STANDARD -> "标准 128K (128kbps OGG/MP3)"
                     }
                     val isSelected = currentQualityLabel.contains(quality.label.take(2))
                     val onSelect = {

@@ -783,32 +783,43 @@ class MusicApiRepository(
                 async {
                     val resourceArr = JsonArray()
                     val requestedHashes = mutableListOf<String>()
+                    val seenReqHashes = HashSet<String>()
                     for (s in chunk) {
-                        val baseHash = s.hash128.ifBlank { s.hash320.ifBlank { s.hashFlac.ifBlank { s.hash } } }.trim().lowercase()
-                        if (isValidHash(baseHash)) {
-                            requestedHashes.add(baseHash)
-                            // 对齐 privilege_lite.js: 每个 resource 条目仅传 hash, album_id, type="audio"，不传 album_audio_id
-                            resourceArr.add(JsonObject().apply {
-                                addProperty("hash", baseHash)
-                                addProperty("album_id", s.albumId.toLongOrNull() ?: 0L)
-                                addProperty("type", "audio")
-                                add("qualities", upstreamQualitiesArr)
-                            })
+                        // 对齐 MakcRe/KuGouMusicApi module/privilege_lite.js:
+                        // resource 数组中的 album_audio_id 与 album_id 统一传 0（若误传不同版本的 album_id，上游可能无法查出完整 relate_goods）
+                        // 同时将歌曲各候选 hash (128/flac/hires/主hash) 一并加入查询，确保 audio_group 聚合的多版本单曲（如《我们的明天》）能查全所有音质
+                        val candidateHashes = listOf(s.hash128, s.hash320, s.hashFlac, s.hashHiRes, s.hash)
+                            .map { it.trim().lowercase() }
+                            .filter { isValidHash(it) }
+                            .distinct()
+                        for (h in candidateHashes) {
+                            if (seenReqHashes.add(h)) {
+                                requestedHashes.add(h)
+                                resourceArr.add(JsonObject().apply {
+                                    addProperty("album_audio_id", 0)
+                                    addProperty("album_id", 0)
+                                    addProperty("hash", h)
+                                })
+                            }
                         }
                     }
                     if (resourceArr.size() == 0) return@async
 
+                    val d = device()
                     val body = JsonObject().apply {
                         addProperty("appid", KugouSigner.APP_ID)
+                        addProperty("clientver", KugouSigner.CLIENT_VERSION)
+                        addProperty("mid", d.mid)
+                        addProperty("clienttime", System.currentTimeMillis() / 1000)
+                        addProperty("key", "")
                         addProperty("area_code", 1)
                         addProperty("behavior", "play")
-                        addProperty("clientver", KugouSigner.CLIENT_VERSION)
                         addProperty("need_hash_offset", 1)
                         addProperty("relate", 1)
+                        addProperty("vip_type", 0)
                         add("qualities", upstreamQualitiesArr)
                         add("resource", resourceArr)
                         add("resources", resourceArr)
-                        addProperty("vip_type", 0)
                     }
 
                     runCatching {
@@ -844,19 +855,24 @@ class MusicApiRepository(
         if (enrichedByHash.isEmpty()) return@withContext songs
 
         songs.map { s ->
-            val lookupKey = s.hash128.ifBlank { s.hash320.ifBlank { s.hashFlac.ifBlank { s.hash } } }.trim().lowercase()
-            val privObj = enrichedByHash[lookupKey]
-                ?: enrichedByHash[s.hash.trim().lowercase()]
-                ?: enrichedByHash[s.hashFlac.trim().lowercase()]
-                ?: enrichedByHash[s.hashHiRes.trim().lowercase()]
-                ?: return@map s
-            val relateGoods = privObj.objects("relate_goods")
+            val matchedPrivObjs = listOf(s.hash128, s.hash320, s.hashFlac, s.hashHiRes, s.hash)
+                .map { it.trim().lowercase() }
+                .filter { it.isNotBlank() }
+                .mapNotNull { enrichedByHash[it] }
+                .distinct()
+            val privObj = matchedPrivObjs.firstOrNull() ?: return@map s
+            val relateGoods = matchedPrivObjs
+                .flatMap { it.objects("relate_goods") }
+                .distinctBy { (it.text("hash") ?: "").lowercase() to (it.number("level") ?: -1) }
             val transParam = privObj.obj("trans_param")
 
             var stdHash = s.hash128.ifBlank { transParam?.text("ogg_128_hash")?.takeIf { isValidHash(it) }.orEmpty() }
             var hqHash = s.hash320.ifBlank { transParam?.text("ogg_320_hash")?.takeIf { isValidHash(it) }.orEmpty() }
-            // 当 relate_goods 存在时，严格以酷狗 mediastore 的 relate_goods (status=1) 作为 SQ 与 Hi-Res 的唯一权威来源
-            // 解决《时差 (On call)》等无可用无损音源的歌曲误标 SQ，以及《勋章》《我们的明天》《鲜花》24bit/48kHz Hi-Res 被误降级为 SQ 的问题
+            // 严格对齐 MakcRe/KuGouMusicApi module/privilege_lite.js:
+            // 酷狗概念版 VIP 原生音质档位由 relate_goods 的 quality 与 level 唯一决定：
+            // 128 (level=1 ogg 优先 / level=2 mp3)、320 (level=4)、flac (level=5, SQ)、high (level=6, Hi-Res)
+            // 严禁把正式版酷狗 suvip 专属的 viper_tape/viper_atmos/viper_clear/super (level=0/7) 混入概念版音质，
+            // 同时严禁用 >=1050kbps 码率阈值误杀《我们的明天》等抒情原声 24bit Hi-Res 曲目
             var sqHash = if (relateGoods.isNotEmpty()) "" else s.hashFlac
             var resHash = if (relateGoods.isNotEmpty()) "" else s.hashHiRes
             var resSize = 0L
@@ -1027,11 +1043,18 @@ class MusicApiRepository(
                 hasFlac && sqKbps > 0 -> sqKbps
                 has320 -> 320
                 stdKbps > 0 -> stdKbps
-                effectiveDurMs >= 30_000L && bestSize > 0L -> ((bestSize * 8L) / effectiveDurMs).toInt()
+                effectiveDurMs >= 15_000L && bestSize > 0L -> ((bestSize * 8L) / effectiveDurMs).toInt()
                 else -> s.bitrateKbps
             }
 
-            val isVipPriv = s.isVip || privObj.number("privilege") == 10 || privObj.number("pay_type") == 3
+            val topPriv = privObj.number("privilege") ?: -1
+            val topPayType = privObj.number("pay_type") ?: -1
+            val stdGoodsPriv = relateGoods.firstOrNull { (it.number("level") ?: 0) in 1..2 }?.number("privilege") ?: -1
+            val isVipPriv = when {
+                topPriv == 10 || topPayType == 3 || stdGoodsPriv == 10 -> true
+                topPriv in listOf(0, 8) && topPayType == 0 && stdGoodsPriv in listOf(-1, 0, 8) -> false
+                else -> s.isVip
+            }
             val privCover = imageUrl(
                 privObj.text("sizable_cover") ?: privObj.text("album_img") ?: privObj.text("union_cover")
                     ?: transParam?.text("union_cover")
@@ -1141,7 +1164,8 @@ class MusicApiRepository(
         bitrateRaw: Long?,
         fileSizeBytes: Long,
         durationMs: Long,
-        extName: String?
+        extName: String?,
+        requestedQuality: AudioQuality? = null
     ): Pair<AudioQuality, Int> {
         val durationSec = (durationMs / 1000.0).coerceAtLeast(1.0)
         val computedKbps = if (fileSizeBytes > 0 && durationMs >= 15_000L) {
@@ -1164,7 +1188,7 @@ class MusicApiRepository(
 
         // 对于 FLAC 无损流，酷狗 tracker 常返回静态枚举 bitRate (如 320 / 999 / 2000)，优先采用真实文件大小与时长反推的实际码率
         val finalKbps = when {
-            (isExplicitFlac || fileSizeBytes >= 12_000_000L) && computedKbps in 400..6500 -> computedKbps
+            (isExplicitFlac || fileSizeBytes >= 8_000_000L) && computedKbps in 350..6500 -> computedKbps
             reportedKbps in 64..450 && isExplicitLossy -> reportedKbps
             computedKbps in 64..6500 -> computedKbps
             reportedKbps > 0 -> reportedKbps
@@ -1173,17 +1197,24 @@ class MusicApiRepository(
 
         val quality = when {
             isExplicitLossy -> {
-                if (finalKbps >= 220) AudioQuality.HIGH else AudioQuality.STANDARD
-            }
-            isExplicitFlac -> {
-                if ((finalKbps >= 1150 || reportedKbps >= 1150) && (fileSizeBytes <= 0L || fileSizeBytes >= 14_000_000L)) {
-                    AudioQuality.HI_RES
-                } else {
-                    AudioQuality.LOSSLESS
+                when {
+                    requestedQuality == AudioQuality.STANDARD -> AudioQuality.STANDARD
+                    requestedQuality == AudioQuality.HIGH -> AudioQuality.HIGH
+                    finalKbps >= 220 -> AudioQuality.HIGH
+                    else -> AudioQuality.STANDARD
                 }
             }
-            (finalKbps >= 1150 || reportedKbps >= 1150) && fileSizeBytes >= 14_000_000L -> AudioQuality.HI_RES
-            finalKbps >= 500 || fileSizeBytes >= 12_000_000L -> AudioQuality.LOSSLESS
+            isExplicitFlac -> {
+                when (requestedQuality) {
+                    AudioQuality.HI_RES -> AudioQuality.HI_RES
+                    AudioQuality.LOSSLESS -> AudioQuality.LOSSLESS
+                    else -> if (finalKbps >= 1150 || reportedKbps >= 1150) AudioQuality.HI_RES else AudioQuality.LOSSLESS
+                }
+            }
+            requestedQuality == AudioQuality.HI_RES && (finalKbps >= 400 || fileSizeBytes >= 8_000_000L) -> AudioQuality.HI_RES
+            requestedQuality == AudioQuality.LOSSLESS && (finalKbps >= 350 || fileSizeBytes >= 5_000_000L) -> AudioQuality.LOSSLESS
+            (finalKbps >= 1150 || reportedKbps >= 1150) && fileSizeBytes >= 12_000_000L -> AudioQuality.HI_RES
+            finalKbps >= 500 || fileSizeBytes >= 8_000_000L -> AudioQuality.LOSSLESS
             finalKbps >= 220 -> AudioQuality.HIGH
             else -> AudioQuality.STANDARD
         }
@@ -1301,7 +1332,13 @@ class MusicApiRepository(
         val extName = data.text("extname") ?: data.text("extName")
         val respDurSec = (data.number("timeLength") ?: data.number("timelength") ?: 0).toLong()
         val effectiveDurMs = song.durationMs.takeIf { it > 0L } ?: if (respDurSec in 1..10000) respDurSec * 1000L else respDurSec
-        val (actualQuality, kbps) = deduceQuality(playUrl, bitrate, fileSize, effectiveDurMs, extName)
+        val expectedVipQuality = when {
+            preferredQuality == AudioQuality.HI_RES && song.hashHiRes.isNotBlank() && targetHash.equals(song.hashHiRes, ignoreCase = true) -> AudioQuality.HI_RES
+            preferredQuality >= AudioQuality.LOSSLESS && song.hashFlac.isNotBlank() && targetHash.equals(song.hashFlac, ignoreCase = true) -> AudioQuality.LOSSLESS
+            preferredQuality >= AudioQuality.HIGH && song.hash320.isNotBlank() && targetHash.equals(song.hash320, ignoreCase = true) -> AudioQuality.HIGH
+            else -> preferredQuality
+        }
+        val (actualQuality, kbps) = deduceQuality(playUrl, bitrate, fileSize, effectiveDurMs, extName, expectedVipQuality)
         val (climaxStart, climaxEnd) = extractClimaxRange(data)
 
         return PlaybackResult(
@@ -1449,7 +1486,13 @@ class MusicApiRepository(
                     val ext = it.data.text("extName") ?: it.data.text("extname")
                     val respDurSec = (it.data.number("timeLength") ?: it.data.number("timelength") ?: 0).toLong()
                     val effectiveDurMs = song.durationMs.takeIf { it > 0L } ?: if (respDurSec in 1..10000) respDurSec * 1000L else respDurSec
-                    val (q, kbps) = deduceQuality(url, bRate, fSize, effectiveDurMs, ext)
+                    val reqTier = when (qualityParam.lowercase()) {
+                        "high", "hires", "res" -> AudioQuality.HI_RES
+                        "flac", "sq", "lossless" -> AudioQuality.LOSSLESS
+                        "320", "hq" -> AudioQuality.HIGH
+                        else -> AudioQuality.STANDARD
+                    }
+                    val (q, kbps) = deduceQuality(url, bRate, fSize, effectiveDurMs, ext, reqTier)
                     val (cStart, cEnd) = extractClimaxRange(it.data)
                     return PlaybackResult(url, q, kbps, fSize, cStart, cEnd)
                 }
@@ -1510,7 +1553,7 @@ class MusicApiRepository(
                 val fSize = (it.data.number("fileSize") ?: it.data.number("file_size") ?: 0).toLong()
                 val bRate = (it.data.number("bitRate") ?: it.data.number("bitrate") ?: 0).toLong()
                 val ext = it.data.text("extName") ?: it.data.text("extname")
-                val (q, kbps) = deduceQuality(freeUrl, bRate, fSize, song.durationMs, ext)
+                val (q, kbps) = deduceQuality(freeUrl, bRate, fSize, song.durationMs, ext, AudioQuality.STANDARD)
                 val (cStart, cEnd) = extractClimaxRange(it.data)
                 return PlaybackResult(freeUrl, q, kbps, fSize, cStart, cEnd)
             }
@@ -4890,9 +4933,9 @@ class MusicApiRepository(
      * 歌曲技术参数与音频详情（严格对齐当前实际播放档位或音源最高已验证档位，消除音质标签与码率/大小不匹配的矛盾）
      */
     fun songDetail(song: Song): SongDetailInfo {
-        val cachedMeta = songTechMetaCache[song.id.lowercase()]
-            ?: songTechMetaCache[song.hash.lowercase()]
-            ?: songTechMetaCache[song.hash128.lowercase()]
+        val cachedMeta = listOf(song.id, song.hash, song.hash128, song.hash320, song.hashFlac, song.hashHiRes)
+            .map { it.trim().lowercase() }
+            .firstNotNullOfOrNull { if (it.isNotBlank()) songTechMetaCache[it] else null }
 
         val activeQuality = song.actualPlayQuality ?: when {
             song.isHiRes && song.hashHiRes.isNotBlank() -> AudioQuality.HI_RES
@@ -4904,12 +4947,13 @@ class MusicApiRepository(
         val tierSpec = cachedMeta?.specs?.get(activeQuality)
         val effectiveDurMs = song.durationMs.takeIf { it > 0L } ?: cachedMeta?.durationMs ?: 0L
 
-        // 若当前曲目正在以 activeQuality 播放且带有实测流大小，则优先使用实测流大小，否则使用对应音质档位的精确大小
+        // 严格对齐 MakcRe/KuGouMusicApi module/privilege_lite.js:
+        // 优先使用 /v2/get_res_privilege/lite relate_goods 中对应档位 (level 1/2/4/5/6) 的精确字节大小或实测播放流大小
         val resolvedSizeBytes = when {
-            song.actualPlayQuality == activeQuality && song.fileSizeByte > 0L -> song.fileSizeByte
             tierSpec != null && tierSpec.sizeBytes > 0L -> tierSpec.sizeBytes
+            song.actualPlayQuality == activeQuality && song.fileSizeByte > 0L -> song.fileSizeByte
             song.fileSizeByte > 0L && activeQuality == song.highestQuality -> song.fileSizeByte
-            effectiveDurMs >= 30_000L -> {
+            effectiveDurMs >= 15_000L -> {
                 val estKbps = when (activeQuality) {
                     AudioQuality.HI_RES -> 2304L
                     AudioQuality.LOSSLESS -> 920L
@@ -4921,23 +4965,24 @@ class MusicApiRepository(
             else -> 0L
         }
 
-        val sizeDerivedKbps = if (resolvedSizeBytes > 0L && effectiveDurMs >= 30_000L) {
+        val sizeDerivedKbps = if (resolvedSizeBytes > 0L && effectiveDurMs >= 15_000L) {
             ((resolvedSizeBytes * 8L) / effectiveDurMs).toInt()
         } else 0
 
         val resolvedKbps = when (activeQuality) {
             AudioQuality.HI_RES -> {
-                val raw = if (song.actualPlayQuality == AudioQuality.HI_RES && song.bitrateKbps >= 1000) song.bitrateKbps
-                else tierSpec?.bitrateKbps?.takeIf { it >= 1000 }
-                    ?: sizeDerivedKbps.takeIf { it >= 1000 }
-                    ?: song.bitrateKbps.takeIf { it >= 1000 }
+                // 支持 24bit/48kHz 原声抒情 Hi-Res (如《我们的明天》~920-1040kbps) 展示真实码率，不被硬编码 2304 覆盖
+                val raw = sizeDerivedKbps.takeIf { it in 400..6500 }
+                    ?: if (song.actualPlayQuality == AudioQuality.HI_RES && song.bitrateKbps in 400..6500) song.bitrateKbps else null
+                    ?: tierSpec?.bitrateKbps?.takeIf { it in 400..6500 }
+                    ?: song.bitrateKbps.takeIf { it in 400..6500 }
                     ?: 2304
                 raw
             }
             AudioQuality.LOSSLESS -> {
-                val raw = if (song.actualPlayQuality == AudioQuality.LOSSLESS && song.bitrateKbps in 350..1850) song.bitrateKbps
-                else tierSpec?.bitrateKbps?.takeIf { it in 350..1850 }
-                    ?: sizeDerivedKbps.takeIf { it in 350..1850 }
+                val raw = sizeDerivedKbps.takeIf { it in 350..1850 }
+                    ?: if (song.actualPlayQuality == AudioQuality.LOSSLESS && song.bitrateKbps in 350..1850) song.bitrateKbps else null
+                    ?: tierSpec?.bitrateKbps?.takeIf { it in 350..1850 }
                     ?: song.bitrateKbps.takeIf { it in 350..1850 }
                     ?: 920
                 raw
@@ -4970,9 +5015,9 @@ class MusicApiRepository(
         }
 
         val qualityDesc = when (activeQuality) {
-            AudioQuality.HI_RES -> "Hi-Res 母带无损 ($extUpper ${sampleRate.substringBefore(" /")} / 24bit)"
+            AudioQuality.HI_RES -> "Hi-Res 高解析度无损 ($extUpper ${sampleRate.substringBefore(" /")} / 24bit)"
             AudioQuality.LOSSLESS -> "SQ 无损音质 ($extUpper ${sampleRate.substringBefore(" /")} / 16bit)"
-            AudioQuality.HIGH -> "HQ 超高品 (${resolvedKbps}kbps $extUpper)"
+            AudioQuality.HIGH -> "HQ 高品音质 (${resolvedKbps}kbps $extUpper)"
             AudioQuality.STANDARD -> "标准音质 (${resolvedKbps}kbps $extUpper)"
         }
 
@@ -5271,8 +5316,9 @@ class MusicApiRepository(
             ?: base?.text("duration")
         val durationMs = durationRaw?.toLongOrNull()?.let { if (it in 1 until 10000) it * 1000 else it } ?: 0L
 
-        val isVip = o.number("is_vip") == 1 || o.number("Privilege") == 8 || o.number("Privilege") == 10 || o.number("privilege") == 10 || o.number("pay_type") == 3
-            || audioInfo?.number("is_vip") == 1 || audioInfo?.number("pay_type") == 3 || base?.number("is_vip") == 1
+        // 注意：酷狗接口中 privilege=8 (pay_type=0) 为免费可播曲目（如《一天》《让我留在你身边》），仅 privilege=10 / pay_type=3 / is_vip=1 为 VIP
+        val isVip = o.number("is_vip") == 1 || o.number("Privilege") == 10 || o.number("privilege") == 10 || o.number("pay_type") == 3 || o.number("PayType") == 3
+            || audioInfo?.number("is_vip") == 1 || audioInfo?.number("privilege") == 10 || audioInfo?.number("pay_type") == 3 || base?.number("is_vip") == 1
 
         val audioId = (o.text("audio_id") ?: o.text("Audioid") ?: o.text("songid")
             ?: base?.text("audio_id") ?: audioInfo?.text("audio_id") ?: o.text("mixsongid"))?.toLongOrNull() ?: 0L
@@ -5280,7 +5326,7 @@ class MusicApiRepository(
             ?: base?.text("album_audio_id") ?: audioInfo?.text("album_audio_id") ?: o.text("id"))?.toLongOrNull() ?: audioId
 
         // 严格对齐 MakcRe/KuGouMusicApi module/privilege_lite.js 的 relate_goods 等级规范：
-        // level: 1/2 = 128k, 4 = 320k(HQ), 5 = flac(SQ 无损), 6 = Hi-Res, 0/7 = 蝰蛇/多轨合成音效（非原生 Hi-Res）
+        // level: 1/2 = 128k, 4 = 320k(HQ), 5 = flac(SQ 无损), 6 = Hi-Res, 0/7 = 正式版酷狗 suvip 蝰蛇/多轨合成音效（非概念版音质）
         var relateResHash = ""
         var relateSqHash = ""
         var relateHqHash = ""
