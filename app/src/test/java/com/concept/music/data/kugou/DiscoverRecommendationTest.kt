@@ -479,6 +479,86 @@ class DiscoverRecommendationTest {
                         }
                     }
                 }
+                if (kw == "邓紫棋") {
+                    when (path) {
+                        "/v2/search/song" -> {
+                            val mockSongs = """
+                                {
+                                    "status": 1,
+                                    "data": {
+                                        "total": 4,
+                                        "lists": [
+                                            {"SongName": "多远都要在一起", "SingerName": "G.E.M.邓紫棋", "AuthorId": 3520, "AlbumName": "新的心跳", "FileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"},
+                                            {"SongName": "光年之外", "SingerName": "G.E.M.邓紫棋", "AuthorId": 3520, "AlbumName": "光年之外", "FileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2"},
+                                            {"SongName": "泡沫", "SingerName": "G.E.M.邓紫棋", "AuthorId": 3520, "AlbumName": "Xposed", "FileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3"},
+                                            {"SongName": "唯一", "SingerName": "G.E.M.邓紫棋", "AuthorId": 3520, "AlbumName": "T.I.M.E.", "FileHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa4"}
+                                        ]
+                                    }
+                                }
+                            """.trimIndent()
+                            return ApiResponse(JsonParser.parseString(mockSongs).asJsonObject)
+                        }
+                        "/v1/search/author" -> {
+                            val mockAuthors = """
+                                {
+                                    "status": 1,
+                                    "data": {
+                                        "lists": [
+                                            {"AuthorID": 3520, "AuthorName": "G.E.M.邓紫棋", "AudioCount": 680, "AlbumCount": 45}
+                                        ]
+                                    }
+                                }
+                            """.trimIndent()
+                            return ApiResponse(JsonParser.parseString(mockAuthors).asJsonObject)
+                        }
+                        "/v1/search/special" -> {
+                            val mockPlaylists = """
+                                {
+                                    "status": 1,
+                                    "data": {
+                                        "lists": [
+                                            {"specialid": 88801, "specialname": "邓紫棋必听热歌", "song_count": 101}
+                                        ]
+                                    }
+                                }
+                            """.trimIndent()
+                            return ApiResponse(JsonParser.parseString(mockPlaylists).asJsonObject)
+                        }
+                    }
+                }
+                if (kw == "摩天动物园") {
+                    when (path) {
+                        "/v2/search/song" -> {
+                            val mockSongs = """
+                                {
+                                    "status": 1,
+                                    "data": {
+                                        "total": 3,
+                                        "lists": [
+                                            {"SongName": "摩天动物园", "SingerName": "G.E.M.邓紫棋", "AuthorId": 3520, "AlbumName": "摩天动物园", "FileHash": "ccccccccccccccccccccccccccccccc1"},
+                                            {"SongName": "句号", "SingerName": "G.E.M.邓紫棋", "AuthorId": 3520, "AlbumName": "摩天动物园", "FileHash": "ccccccccccccccccccccccccccccccc2"},
+                                            {"SongName": "透明", "SingerName": "G.E.M.邓紫棋", "AuthorId": 3520, "AlbumName": "摩天动物园", "FileHash": "ccccccccccccccccccccccccccccccc3"}
+                                        ]
+                                    }
+                                }
+                            """.trimIndent()
+                            return ApiResponse(JsonParser.parseString(mockSongs).asJsonObject)
+                        }
+                        "/v1/search/album" -> {
+                            val mockAlbums = """
+                                {
+                                    "status": 1,
+                                    "data": {
+                                        "lists": [
+                                            {"albumid": 9901, "albumname": "摩天动物园", "singername": "G.E.M.邓紫棋", "songcount": 13}
+                                        ]
+                                    }
+                                }
+                            """.trimIndent()
+                            return ApiResponse(JsonParser.parseString(mockAlbums).asJsonObject)
+                        }
+                    }
+                }
                 return ApiResponse(JsonObject())
             }
         }
@@ -501,5 +581,17 @@ class DiscoverRecommendationTest {
         assertEquals(com.concept.music.data.model.SearchIntent.ARTIST, artistSearch.intent)
         assertEquals(1, artistSearch.artists.size)
         assertEquals("鹿晗", artistSearch.artists.first().name)
+        // 3. 搜索非完整复合歌手名「邓紫棋」（曲库登记为「G.E.M.邓紫棋」）：必须识别为 ARTIST 意图而非 PLAYLIST
+        val gemSearch = repo.searchComplex("邓紫棋")
+        assertEquals(com.concept.music.data.model.SearchIntent.ARTIST, gemSearch.intent)
+        assertTrue(gemSearch.artists.isNotEmpty())
+        assertEquals("G.E.M.邓紫棋", gemSearch.artists.first().name)
+
+        // 4. 搜索完整专辑名「摩天动物园」：必须识别为 ALBUM 意图并置顶专辑
+        val albumSearch = repo.searchComplex("摩天动物园")
+        assertEquals(com.concept.music.data.model.SearchIntent.ALBUM, albumSearch.intent)
+        assertTrue(albumSearch.albums.isNotEmpty())
+        assertEquals("摩天动物园", albumSearch.albums.first().name)
     }
 }
+

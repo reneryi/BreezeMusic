@@ -74,7 +74,7 @@ class SearchViewModel(
     private var loadMoreJob: Job? = null
 
     init {
-        // 不在初始化时无谓触发已被页面移除的热搜请求
+        loadHotKeywords()
     }
 
     fun loadHotKeywords() {
@@ -108,22 +108,26 @@ class SearchViewModel(
         _selectedTab.value = tab
         val currentKw = _query.value.trim()
         if (currentKw.isNotBlank()) {
-            // 若刚刚在综合页搜索过同一关键词，直接复用已缓存结果实现 0ms 秒切，并在后台静默补齐更多分页数据
+            // 若刚刚在综合页搜索过同一关键词，先展示已缓存结果实现 0ms 秒切，同时对被综合页截断的分类在后台静默拉取完整首屏分页数据
             val hasWarmCache = lastComplexKeyword == currentKw && when (tab) {
-                SearchTab.COMPLEX -> _complexResult.value.songs.isNotEmpty() || _complexResult.value.artists.isNotEmpty()
+                SearchTab.COMPLEX -> _complexResult.value.songs.isNotEmpty() ||
+                    _complexResult.value.artists.isNotEmpty() ||
+                    _complexResult.value.albums.isNotEmpty() ||
+                    _complexResult.value.playlists.isNotEmpty()
                 SearchTab.SONG -> _songResults.value.isNotEmpty()
+                SearchTab.ARTIST -> _artistResults.value.isNotEmpty()
                 SearchTab.ALBUM -> _albumResults.value.isNotEmpty()
                 SearchTab.PLAYLIST -> _playlistResults.value.isNotEmpty()
             }
             if (hasWarmCache) {
                 currentPage = 1
                 _hasMore.value = tab != SearchTab.COMPLEX
-                if (tab == SearchTab.SONG && _songResults.value.size < pageSize) {
-                    performSearchForCurrentTab(currentKw, silent = true)
-                } else if (tab == SearchTab.ALBUM && _albumResults.value.size < pageSize) {
-                    performSearchForCurrentTab(currentKw, silent = true)
-                } else if (tab == SearchTab.PLAYLIST && _playlistResults.value.size < pageSize) {
-                    performSearchForCurrentTab(currentKw, silent = true)
+                when (tab) {
+                    SearchTab.SONG -> if (_songResults.value.size < pageSize) performSearchForCurrentTab(currentKw, silent = true)
+                    SearchTab.ARTIST -> if (_artistResults.value.size < 10) performSearchForCurrentTab(currentKw, silent = true)
+                    SearchTab.ALBUM -> if (_albumResults.value.size < 12) performSearchForCurrentTab(currentKw, silent = true)
+                    SearchTab.PLAYLIST -> if (_playlistResults.value.size < 12) performSearchForCurrentTab(currentKw, silent = true)
+                    SearchTab.COMPLEX -> {}
                 }
             } else {
                 performSearchForCurrentTab(currentKw, silent = false)
@@ -142,7 +146,7 @@ class SearchViewModel(
         _suggestions.value = emptyList()
         _query.value = trimmed
         _lastSearchedKeyword.value = trimmed
-        // 每次发起新搜索时始终默认回归「综合」结果页，避免残留上一次的专辑/歌单分类记忆
+        // 每次发起新搜索时始终默认回归「综合」结果页，避免残留上一次的分类记忆
         _selectedTab.value = SearchTab.COMPLEX
         _hasSearched.value = true
 
@@ -180,6 +184,11 @@ class SearchViewModel(
                         val res = VipManager.music.searchSongs(keyword, page = 1, pageSize = pageSize)
                         _songResults.value = res.songs
                         _hasMore.value = res.hasMore || res.songs.size >= pageSize
+                    }
+                    SearchTab.ARTIST -> {
+                        val res = VipManager.music.searchArtists(keyword, page = 1, pageSize = pageSize, allowSongFallback = true)
+                        _artistResults.value = res
+                        _hasMore.value = res.size >= pageSize
                     }
                     SearchTab.ALBUM -> {
                         val res = VipManager.music.searchAlbums(keyword, page = 1, pageSize = pageSize)
@@ -220,6 +229,15 @@ class SearchViewModel(
                         } else {
                             _hasMore.value = false
                         }
+                    }
+                    SearchTab.ARTIST -> {
+                        val res = VipManager.music.searchArtists(currentQuery, page = nextPage, pageSize = pageSize, allowSongFallback = false)
+                        if (res.isNotEmpty()) {
+                            currentPage = nextPage
+                            val existingIds = _artistResults.value.map { it.id }.toSet()
+                            _artistResults.value = _artistResults.value + res.filter { it.id !in existingIds }
+                            _hasMore.value = res.size >= pageSize
+                        } else _hasMore.value = false
                     }
                     SearchTab.ALBUM -> {
                         val res = VipManager.music.searchAlbums(currentQuery, page = nextPage, pageSize = pageSize)

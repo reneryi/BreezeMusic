@@ -75,12 +75,14 @@ fun SearchScreen(
     val query by viewModel.query.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
     val searchHistory by viewModel.searchHistory.collectAsState()
+    val hotKeywords by viewModel.hotKeywords.collectAsState()
     val suggestions by viewModel.suggestions.collectAsState()
     val hasSearched by viewModel.hasSearched.collectAsState()
     val lastSearchedKeyword by viewModel.lastSearchedKeyword.collectAsState()
 
     val complexResult by viewModel.complexResult.collectAsState()
     val songResults by viewModel.songResults.collectAsState()
+    val artistResults by viewModel.artistResults.collectAsState()
     val albumResults by viewModel.albumResults.collectAsState()
     val playlistResults by viewModel.playlistResults.collectAsState()
 
@@ -208,13 +210,14 @@ fun SearchScreen(
                 )
             }
 
-            // 开放式极简分类导航栏（支持左右滑动渐变彩色指示横条与丝滑动画）
+            // 开放式极简分类导航栏（综合 / 单曲 / 歌手 / 专辑 / 歌单）
             if (hasSearched && query.isNotEmpty()) {
                 val searchTabItems = remember {
                     SearchTab.entries.map { tab ->
                         val tabAccent = when (tab) {
                             SearchTab.COMPLEX -> ConceptPrimary
                             SearchTab.SONG -> ConceptMintAccent
+                            SearchTab.ARTIST -> ConceptPrimary
                             SearchTab.ALBUM -> ConceptAmberAccent
                             SearchTab.PLAYLIST -> ConceptVioletAccent
                         }
@@ -232,7 +235,7 @@ fun SearchScreen(
                         onSelectTab = { name ->
                             runCatching { SearchTab.valueOf(name) }.getOrNull()?.let { viewModel.selectTab(it) }
                         },
-                        itemSpacing = 28.dp,
+                        itemSpacing = 24.dp,
                         fontSize = 14.5.sp,
                         indicatorWidth = 20.dp,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
@@ -332,116 +335,142 @@ fun SearchScreen(
                                     }
                                 )
                         ) { activeTab ->
-                        when (activeTab) {
-                            SearchTab.COMPLEX -> {
-                                val isComplexEmpty = complexResult.songs.isEmpty() &&
-                                    complexResult.artists.isEmpty() &&
-                                    complexResult.albums.isEmpty() &&
-                                    complexResult.playlists.isEmpty()
-                                if (isComplexEmpty) {
-                                    EmptySearchState(message = "未找到“$displayKw”的相关结果")
-                                } else {
-                                    ComplexSearchResultView(
-                                        result = complexResult,
-                                        keyword = displayKw,
-                                        currentSong = currentSong,
-                                        onSongClick = onSongClick,
-                                        onSongMoreClick = onSongMoreClick,
-                                        onAlbumClick = onAlbumClick,
-                                        onPlaylistClick = onPlaylistClick,
-                                        onArtistClick = onArtistClick,
-                                        onSelectTab = { viewModel.selectTab(it) }
-                                    )
+                            when (activeTab) {
+                                SearchTab.COMPLEX -> {
+                                    val isComplexEmpty = complexResult.songs.isEmpty() &&
+                                        complexResult.artists.isEmpty() &&
+                                        complexResult.albums.isEmpty() &&
+                                        complexResult.playlists.isEmpty()
+                                    if (isComplexEmpty) {
+                                        EmptySearchState(message = "未找到“$displayKw”的相关结果")
+                                    } else {
+                                        ComplexSearchResultView(
+                                            result = complexResult,
+                                            keyword = displayKw,
+                                            currentSong = currentSong,
+                                            onSongClick = onSongClick,
+                                            onSongMoreClick = onSongMoreClick,
+                                            onAlbumClick = onAlbumClick,
+                                            onPlaylistClick = onPlaylistClick,
+                                            onArtistClick = onArtistClick,
+                                            onSelectTab = { viewModel.selectTab(it) }
+                                        )
+                                    }
                                 }
-                            }
-                            SearchTab.SONG -> {
-                                if (songResults.isEmpty()) {
-                                    EmptySearchState(message = "未找到“$displayKw”的相关单曲")
-                                } else {
-                                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                                        itemsIndexed(songResults) { index, song ->
-                                            SongItemRow(
-                                                song = song,
-                                                orderIndex = index + 1,
-                                                isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                                                onClick = { onSongClick(song, songResults) },
-                                                onMoreClick = { onSongMoreClick(song) }
-                                            )
+                                SearchTab.SONG -> {
+                                    if (songResults.isEmpty()) {
+                                        EmptySearchState(message = "未找到“$displayKw”的相关单曲")
+                                    } else {
+                                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                                            itemsIndexed(songResults) { index, song ->
+                                                SongItemRow(
+                                                    song = song,
+                                                    orderIndex = index + 1,
+                                                    isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                                                    onClick = { onSongClick(song, songResults) },
+                                                    onMoreClick = { onSongMoreClick(song) }
+                                                )
+                                            }
+                                            if (loadingMore) {
+                                                item {
+                                                    Box(
+                                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        CircularProgressIndicator(color = ConceptPrimary, modifier = Modifier.size(24.dp))
+                                                    }
+                                                }
+                                            }
                                         }
-                                        if (loadingMore) {
-                                            item {
-                                                Box(
-                                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    CircularProgressIndicator(color = ConceptPrimary, modifier = Modifier.size(24.dp))
+                                    }
+                                }
+                                SearchTab.ARTIST -> {
+                                    if (artistResults.isEmpty()) {
+                                        EmptySearchState(message = "未找到“$displayKw”的相关歌手")
+                                    } else {
+                                        LazyColumn(
+                                            state = listState,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                                        ) {
+                                            items(artistResults) { artist ->
+                                                ArtistSearchCard(artist = artist, onClick = { onArtistClick(artist.id) })
+                                            }
+                                            if (loadingMore) {
+                                                item {
+                                                    Box(
+                                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        CircularProgressIndicator(color = ConceptPrimary, modifier = Modifier.size(24.dp))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                SearchTab.ALBUM -> {
+                                    if (albumResults.isEmpty()) {
+                                        EmptySearchState(message = "未找到“$displayKw”的相关专辑")
+                                    } else {
+                                        LazyColumn(
+                                            state = listState,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                                        ) {
+                                            items(albumResults) { album ->
+                                                AlbumCardItem(album = album, onClick = { onAlbumClick(album.id) })
+                                            }
+                                            if (loadingMore) {
+                                                item {
+                                                    Box(
+                                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        CircularProgressIndicator(color = ConceptAmberAccent, modifier = Modifier.size(24.dp))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                SearchTab.PLAYLIST -> {
+                                    if (playlistResults.isEmpty()) {
+                                        EmptySearchState(message = "未找到“$displayKw”的相关歌单")
+                                    } else {
+                                        LazyColumn(
+                                            state = listState,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                                        ) {
+                                            items(playlistResults) { playlist ->
+                                                PlaylistSearchCard(playlist = playlist, onClick = { onPlaylistClick(playlist.id) })
+                                            }
+                                            if (loadingMore) {
+                                                item {
+                                                    Box(
+                                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        CircularProgressIndicator(color = ConceptVioletAccent, modifier = Modifier.size(24.dp))
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
                             }
-                            SearchTab.ALBUM -> {
-                                if (albumResults.isEmpty()) {
-                                    EmptySearchState(message = "未找到“$displayKw”的相关专辑")
-                                } else {
-                                    LazyColumn(
-                                        state = listState,
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                                    ) {
-                                        items(albumResults) { album ->
-                                            AlbumCardItem(album = album, onClick = { onAlbumClick(album.id) })
-                                        }
-                                        if (loadingMore) {
-                                            item {
-                                                Box(
-                                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    CircularProgressIndicator(color = ConceptAmberAccent, modifier = Modifier.size(24.dp))
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            SearchTab.PLAYLIST -> {
-                                if (playlistResults.isEmpty()) {
-                                    EmptySearchState(message = "未找到“$displayKw”的相关歌单")
-                                } else {
-                                    LazyColumn(
-                                        state = listState,
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                                    ) {
-                                        items(playlistResults) { playlist ->
-                                            PlaylistSearchCard(playlist = playlist, onClick = { onPlaylistClick(playlist.id) })
-                                        }
-                                        if (loadingMore) {
-                                            item {
-                                                Box(
-                                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    CircularProgressIndicator(color = ConceptVioletAccent, modifier = Modifier.size(24.dp))
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
                         }
                     }
 
-                    // 4. 搜索历史与引导页
+                    // 4. 搜索历史与热搜引导页
                     else -> {
-                        if (searchHistory.isNotEmpty()) {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                            ) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(20.dp)
+                        ) {
+                            if (searchHistory.isNotEmpty()) {
                                 item {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -515,38 +544,59 @@ fun SearchScreen(
                                     }
                                 }
                             }
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(bottom = 60.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.MusicNote,
-                                        contentDescription = null,
-                                        tint = ConceptPrimary.copy(alpha = 0.65f),
-                                        modifier = Modifier.size(44.dp)
-                                    )
-                                    Spacer(modifier = Modifier.height(14.dp))
+
+                            if (hotKeywords.isNotEmpty()) {
+                                item {
                                     Text(
-                                        text = "搜索你喜爱的音乐",
+                                        text = "热门搜索",
                                         style = MaterialTheme.typography.titleMedium.copy(
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                     )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = "支持单曲、歌手、专辑与歌单智能识别",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    )
+                                    FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 10.dp)
+                                    ) {
+                                        hotKeywords.take(15).forEachIndexed { idx, kw ->
+                                            Surface(
+                                                color = cardColor,
+                                                shape = RoundedCornerShape(16.dp),
+                                                shadowElevation = 0.dp,
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(16.dp))
+                                                    .softClickable {
+                                                        keyboardController?.hide()
+                                                        viewModel.search(kw)
+                                                    }
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                                                ) {
+                                                    if (idx < 3) {
+                                                        Text(
+                                                            text = "${idx + 1}",
+                                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                                color = ConceptPrimary,
+                                                                fontWeight = FontWeight.ExtraBold
+                                                            ),
+                                                            modifier = Modifier.padding(end = 5.dp)
+                                                        )
+                                                    }
+                                                    Text(
+                                                        text = kw,
+                                                        style = MaterialTheme.typography.bodySmall.copy(
+                                                            color = MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -559,9 +609,10 @@ fun SearchScreen(
 
 /**
  * 智能意图驱动的综合搜索结果页：
- * - 搜索单曲（如“勋章”）：置顶展示原版单曲及 Live/翻唱版本，底部可选展示原唱歌手（如鹿晗），绝不出现同名冷门用户歌手，并隐藏无关歌单/专辑
- * - 搜索歌手（如“鹿晗”）：置顶展示歌手名片，依次展示精选单曲、热门专辑与精选歌单
- * - 搜索专辑 / 歌单：优先置顶对应专辑或歌单列表，弱化无关模块
+ * - 搜索歌手（如“邓紫棋”、“G.E.M.邓紫棋”、“鹿晗”）：置顶展示歌手名片，依次展示精选单曲、热门专辑与精选歌单
+ * - 搜索专辑（如“范特西”、“摩天动物园”）：置顶展示匹配专辑，依次展示专辑收录单曲、专辑歌手与相关歌单
+ * - 搜索单曲（如“勋章”、“光年之外”）：置顶展示原版单曲及 Live/翻唱版本，紧随其后展示原唱歌手、同名/关联专辑与歌单（不盲目裁剪）
+ * - 搜索歌单：置顶展示匹配的精选歌单，依次展示相关精选单曲与专辑
  */
 @Composable
 private fun ComplexSearchResultView(
@@ -585,13 +636,13 @@ private fun ComplexSearchResultView(
     ) {
         when (result.intent) {
             SearchIntent.SONG -> {
-                // 1. 单曲意图：首屏直接置顶该歌曲的原版及翻唱/现场版本（最多展示 12 首）
+                // 1. 单曲意图：首屏置顶该歌曲的原版及翻唱/现场版本
                 if (result.songs.isNotEmpty()) {
                     item {
                         SongSectionBlock(
                             title = "单曲与演绎版本",
                             subtitle = "优先展示原唱母带及热门 Live / 翻唱",
-                            songs = result.songs.take(12),
+                            songs = result.songs.take(10),
                             allSongs = result.songs,
                             currentSong = currentSong,
                             onSongClick = onSongClick,
@@ -601,7 +652,7 @@ private fun ComplexSearchResultView(
                     }
                 }
 
-                // 2. 原唱歌手关联小卡（仅在识别出真实原唱歌手时展示在歌曲列表下方，方便进入原唱主页）
+                // 2. 原唱歌手关联卡片
                 val origArtist = result.primaryArtist
                 if (origArtist != null && origArtist.id.isNotBlank() && origArtist.id != "0") {
                     item {
@@ -625,10 +676,36 @@ private fun ComplexSearchResultView(
                         }
                     }
                 }
+
+                // 3. 同名与相关专辑（解决搜主打歌/同名专辑时看不到专辑的问题）
+                if (result.albums.isNotEmpty()) {
+                    item {
+                        AlbumSectionBlock(
+                            title = "同名与相关专辑",
+                            albums = result.albums.take(4),
+                            primaryArtistName = result.primaryArtist?.name.orEmpty(),
+                            onAlbumClick = onAlbumClick,
+                            onViewAll = { onSelectTab(SearchTab.ALBUM) }
+                        )
+                    }
+                }
+
+                // 4. 相关精选歌单
+                if (result.playlists.isNotEmpty()) {
+                    item {
+                        PlaylistGalleryBlock(
+                            title = "相关精选歌单",
+                            playlists = result.playlists.take(6),
+                            elevatedColor = elevatedColor,
+                            onPlaylistClick = onPlaylistClick,
+                            onViewAll = { onSelectTab(SearchTab.PLAYLIST) }
+                        )
+                    }
+                }
             }
 
             SearchIntent.ALBUM -> {
-                // 1. 专辑意图：优先置顶展示匹配的专辑
+                // 1. 专辑意图：首屏置顶展示匹配的专辑
                 if (result.albums.isNotEmpty()) {
                     item {
                         AlbumSectionBlock(
@@ -640,7 +717,20 @@ private fun ComplexSearchResultView(
                         )
                     }
                 }
-                // 2. 专辑关联单曲
+                // 2. 专辑歌手名片
+                val albArtist = result.primaryArtist
+                if (albArtist != null && albArtist.id.isNotBlank() && albArtist.id != "0") {
+                    item {
+                        ArtistHeroCard(
+                            artist = albArtist,
+                            roleBadge = "专辑歌手",
+                            isDark = isDark,
+                            elevatedColor = elevatedColor,
+                            onClick = { onArtistClick(albArtist.id) }
+                        )
+                    }
+                }
+                // 3. 专辑关联单曲
                 if (result.songs.isNotEmpty()) {
                     item {
                         SongSectionBlock(
@@ -655,10 +745,22 @@ private fun ComplexSearchResultView(
                         )
                     }
                 }
+                // 4. 相关歌单
+                if (result.playlists.isNotEmpty()) {
+                    item {
+                        PlaylistGalleryBlock(
+                            title = "相关精选歌单",
+                            playlists = result.playlists.take(6),
+                            elevatedColor = elevatedColor,
+                            onPlaylistClick = onPlaylistClick,
+                            onViewAll = { onSelectTab(SearchTab.PLAYLIST) }
+                        )
+                    }
+                }
             }
 
             SearchIntent.PLAYLIST -> {
-                // 1. 歌单意图：优先置顶展示匹配的精选歌单
+                // 1. 歌单意图：首屏置顶展示匹配的精选歌单
                 if (result.playlists.isNotEmpty()) {
                     item {
                         PlaylistGalleryBlock(
@@ -685,10 +787,22 @@ private fun ComplexSearchResultView(
                         )
                     }
                 }
+                // 3. 相关专辑
+                if (result.albums.isNotEmpty()) {
+                    item {
+                        AlbumSectionBlock(
+                            title = "相关专辑",
+                            albums = result.albums.take(4),
+                            primaryArtistName = result.primaryArtist?.name.orEmpty(),
+                            onAlbumClick = onAlbumClick,
+                            onViewAll = { onSelectTab(SearchTab.ALBUM) }
+                        )
+                    }
+                }
             }
 
             SearchIntent.ARTIST -> {
-                // 1. 歌手意图（如“鹿晗”）：置顶歌手数字名片
+                // 1. 歌手意图（如“邓紫棋”、“鹿晗”）：置顶歌手数字名片
                 if (result.artists.isNotEmpty()) {
                     val artist = result.artists.first()
                     item {
@@ -718,20 +832,7 @@ private fun ComplexSearchResultView(
                     }
                 }
 
-                // 3. 精选歌单
-                if (result.playlists.isNotEmpty()) {
-                    item {
-                        PlaylistGalleryBlock(
-                            title = "精选歌单",
-                            playlists = result.playlists.take(6),
-                            elevatedColor = elevatedColor,
-                            onPlaylistClick = onPlaylistClick,
-                            onViewAll = { onSelectTab(SearchTab.PLAYLIST) }
-                        )
-                    }
-                }
-
-                // 4. 热门专辑
+                // 3. 热门专辑
                 if (result.albums.isNotEmpty()) {
                     item {
                         AlbumSectionBlock(
@@ -740,6 +841,19 @@ private fun ComplexSearchResultView(
                             primaryArtistName = result.artists.firstOrNull()?.name.orEmpty(),
                             onAlbumClick = onAlbumClick,
                             onViewAll = { onSelectTab(SearchTab.ALBUM) }
+                        )
+                    }
+                }
+
+                // 4. 精选歌单
+                if (result.playlists.isNotEmpty()) {
+                    item {
+                        PlaylistGalleryBlock(
+                            title = "精选歌单",
+                            playlists = result.playlists.take(6),
+                            elevatedColor = elevatedColor,
+                            onPlaylistClick = onPlaylistClick,
+                            onViewAll = { onSelectTab(SearchTab.PLAYLIST) }
                         )
                     }
                 }
@@ -857,6 +971,95 @@ private fun ArtistHeroCard(
                 modifier = Modifier.size(22.dp)
             )
         }
+    }
+}
+
+/**
+ * 歌手分类 Tab 列表项
+ */
+@Composable
+private fun ArtistSearchCard(artist: ArtistItem, onClick: () -> Unit = {}) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .softClickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(conceptElevatedSurfaceColor()),
+                contentAlignment = Alignment.Center
+            ) {
+                if (artist.avatarUrl.isNotBlank()) {
+                    AsyncImage(
+                        model = artist.avatarUrl,
+                        contentDescription = artist.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.Person,
+                        contentDescription = artist.name,
+                        tint = ConceptPrimary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = artist.name,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 15.sp
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(3.dp))
+                val meta = buildList {
+                    if (artist.songCount > 0) add("单曲 ${artist.songCount}")
+                    if (artist.albumCount > 0) add("专辑 ${artist.albumCount}")
+                    if (isEmpty()) add("歌手主页")
+                }.joinToString(" · ")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(ConceptPrimary)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = meta,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.Rounded.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+            )
+        }
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 72.dp),
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+        )
     }
 }
 
