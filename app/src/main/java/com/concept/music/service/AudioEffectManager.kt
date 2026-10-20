@@ -393,6 +393,7 @@ data class AudioEffectState(
     val preampGainDb: Float = 0f,            // -6f ~ +6f dB (专业均衡器前置增益)
     val channelBalance: Float = 0f,          // -1f (左) ~ +1f (右) 声像平衡
     val antiClippingEnabled: Boolean = true, // 硬件级防破音数字限幅保护
+    val equalLoudnessCompensation: Boolean = false, // 夜间小音量等响度听感曲线补偿 (Fletcher-Munson)
     val reverbMode: ReverbMode = ReverbMode.NONE,
     val bandLevels: List<Int> = listOf(0, 0, 0, 0, 0),
     val tenBandLevels: List<Int> = List(10) { 0 },
@@ -785,6 +786,12 @@ object AudioEffectManager {
         saveToPrefs()
     }
 
+    fun setEqualLoudnessCompensation(enabled: Boolean) {
+        _state.value = _state.value.copy(equalLoudnessCompensation = enabled)
+        applyCurrentState()
+        saveToPrefs()
+    }
+
     fun setReverbMode(mode: ReverbMode) {
         _state.value = _state.value.copy(
             isEnabled = true,
@@ -807,13 +814,15 @@ object AudioEffectManager {
         val clarityBoostMidHigh = (s.vocalClarityStrength / 10) // 0..100 mB
         val warmthBoostLowMid = (s.analogWarmthStrength / 12)   // 0..83 mB
         val preampOffsetMb = (s.preampGainDb * 100f).toInt()
+        val loudnessCurveLow = if (s.equalLoudnessCompensation) 55 else 0
+        val loudnessCurveHigh = if (s.equalLoudnessCompensation) 40 else 0
         val effectiveBands = s.bandLevels.mapIndexed { idx, baseLevel ->
             val mod = when (idx) {
-                0 -> (if (s.bassCutoffHz <= 50) 40 else 0) + warmthBoostLowMid / 2
-                1 -> warmthBoostLowMid
+                0 -> (if (s.bassCutoffHz <= 50) 40 else 0) + warmthBoostLowMid / 2 + loudnessCurveLow
+                1 -> warmthBoostLowMid + loudnessCurveLow / 3
                 2 -> clarityBoostMidHigh / 2
-                3 -> clarityBoostMidHigh
-                4 -> (clarityBoostMidHigh * 2 / 3) - (warmthBoostLowMid / 2)
+                3 -> clarityBoostMidHigh + loudnessCurveHigh / 2
+                4 -> (clarityBoostMidHigh * 2 / 3) - (warmthBoostLowMid / 2) + loudnessCurveHigh
                 else -> 0
             }
             val rawTarget = baseLevel + mod + preampOffsetMb
@@ -921,10 +930,18 @@ object AudioEffectManager {
         val preamp = p.getFloat("preamp_db_v2", 0f)
         val balance = p.getFloat("channel_balance_v2", 0f)
         val antiClip = p.getBoolean("anti_clip_v2", true)
+        val eqLoudness = p.getBoolean("eq_loudness_comp_v2", false)
         val reverbName = p.getString("reverb_v2", defaultProf.reverb.name) ?: defaultProf.reverb.name
         val reverb = runCatching { ReverbMode.valueOf(reverbName) }.getOrDefault(ReverbMode.NONE)
         val bandsRaw = p.getString("bands_v2", null)
         val bands = parseBandsString(bandsRaw, if (enabled) preset else EffectPreset.OFF)
+        val tenBandsRaw = p.getString("ten_bands_v2", null)
+        val restoredTenBands = if (!tenBandsRaw.isNullOrBlank()) {
+            val parsedTen = tenBandsRaw.split(",").mapNotNull { it.trim().toIntOrNull()?.coerceIn(-1000, 1000) }
+            if (parsedTen.size == 10) parsedTen else expandFiveToTenBands(bands)
+        } else {
+            expandFiveToTenBands(bands)
+        }
 
         _state.value = AudioEffectState(
             isEnabled = enabled && preset != EffectPreset.OFF,
@@ -939,15 +956,19 @@ object AudioEffectManager {
             preampGainDb = preamp,
             channelBalance = balance,
             antiClippingEnabled = antiClip,
+            equalLoudnessCompensation = eqLoudness,
             reverbMode = reverb,
             bandLevels = bands,
-            tenBandLevels = expandFiveToTenBands(bands)
+            tenBandLevels = restoredTenBands
         )
     }
 
     private fun saveToPrefs() {
         val p = prefs ?: return
         val s = _state.value
+        val tenBandsSerialized = (0 until 10).joinToString(",") { idx ->
+            (s.tenBandLevels.getOrNull(idx) ?: 0).coerceIn(-1000, 1000).toString()
+        }
         p.edit()
             .putBoolean("effect_enabled_v2", s.isEnabled)
             .putString("preset_v2", s.currentPreset.name)
@@ -961,8 +982,10 @@ object AudioEffectManager {
             .putFloat("preamp_db_v2", s.preampGainDb)
             .putFloat("channel_balance_v2", s.channelBalance)
             .putBoolean("anti_clip_v2", s.antiClippingEnabled)
+            .putBoolean("eq_loudness_comp_v2", s.equalLoudnessCompensation)
             .putString("reverb_v2", s.reverbMode.name)
             .putString("bands_v2", serializeBands(s.bandLevels))
+            .putString("ten_bands_v2", tenBandsSerialized)
             .apply()
     }
 }

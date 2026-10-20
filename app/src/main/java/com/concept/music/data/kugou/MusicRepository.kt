@@ -33,6 +33,8 @@ class MusicApiRepository(
     private val device: () -> DeviceIdentity = { DeviceIdentity("00000000-0000-0000-0000-000000000000", "0", "Android") }
 ) {
     private val playbackResultCache = ConcurrentHashMap<String, PlaybackResult>()
+    private val playbackResultCacheTimestamp = ConcurrentHashMap<String, Long>()
+    private val playbackCacheTtlMs = 12 * 60 * 1000L
 
     // 记录每个电台与随心听的漫游偏移游标与已推去重池，确保每次刷新/换一批/继续漫游都获取 20 首全新曲目
     private val fmChannelCursorMap = ConcurrentHashMap<String, AtomicInteger>()
@@ -213,12 +215,30 @@ class MusicApiRepository(
     fun clearPlaybackCache(hash: String? = null) {
         if (hash == null) {
             playbackResultCache.clear()
+            playbackResultCacheTimestamp.clear()
         } else {
             val prefix = hash.lowercase()
             playbackResultCache.keys.filter { it.startsWith(prefix) }.forEach {
                 playbackResultCache.remove(it)
+                playbackResultCacheTimestamp.remove(it)
             }
         }
+    }
+
+    private fun getValidCachedPlayback(cacheKey: String): PlaybackResult? {
+        val cached = playbackResultCache[cacheKey] ?: return null
+        val ts = playbackResultCacheTimestamp[cacheKey] ?: return cached
+        if (System.currentTimeMillis() - ts <= playbackCacheTtlMs) {
+            return cached
+        }
+        playbackResultCache.remove(cacheKey)
+        playbackResultCacheTimestamp.remove(cacheKey)
+        return null
+    }
+
+    private fun putCachedPlayback(cacheKey: String, result: PlaybackResult) {
+        playbackResultCache[cacheKey] = result
+        playbackResultCacheTimestamp[cacheKey] = System.currentTimeMillis()
     }
 
     private suspend fun <T> auth(block: suspend (AccountContext) -> T): T {
@@ -1174,20 +1194,73 @@ class MusicApiRepository(
         val targetHash = effectiveSong.hashForQuality(preferredQuality).ifBlank { effectiveSong.hash }
         val modeSuffix = if (useAccompaniment) "_acc" else ""
         val cacheKey = "${targetHash.lowercase()}_${preferredQuality.apiValue}$modeSuffix"
-        playbackResultCache[cacheKey]?.let { return it }
+        getValidCachedPlayback(cacheKey)?.let { return it }
 
         val session = accounts.context()?.session
-        if (session != null && session.token.isNotBlank()) {
-            val vipResult = runCatching { resolveVipPrivResult(effectiveSong, session, preferredQuality) }.getOrNull()
-            if (vipResult != null && vipResult.url.isNotBlank()) {
-                playbackResultCache[cacheKey] = vipResult
-                return vipResult
+
+        // 第一阶段：使用当前已知曲目 Hash 走概念版 VIP 专属通道 (/v6/priv_url) 与多级回退 (/v5/url)
+        val directAttempt = runCatching {
+            resolvePlaybackInternal(effectiveSong, session, preferredQuality)
+        }.getOrNull()
+        if (directAttempt != null && directAttempt.url.isNotBlank()) {
+            putCachedPlayback(cacheKey, directAttempt)
+            return directAttempt
+        }
+
+        // 第二阶段：若歌曲缺少概念版 ogg_128_hash / relate_goods 多档位 Hash，主动向 /v2/get_res_privilege/lite 补全音源规格后再试
+        if (!useAccompaniment) {
+            val enrichedSong = runCatching {
+                enrichSongsPrivilegeLite(listOf(effectiveSong)).firstOrNull()
+            }.getOrNull()
+            if (enrichedSong != null) {
+                val enrichedAttempt = runCatching {
+                    resolvePlaybackInternal(enrichedSong, session, preferredQuality)
+                }.getOrNull()
+                if (enrichedAttempt != null && enrichedAttempt.url.isNotBlank()) {
+                    putCachedPlayback(cacheKey, enrichedAttempt)
+                    return enrichedAttempt
+                }
+            }
+
+            // 第三阶段：若原曲 Hash 因版权迁移或下架失效，自动通过「歌手 + 歌名」检索同曲目可用音源替身
+            if (effectiveSong.title.isNotBlank() && effectiveSong.title != "未知歌曲") {
+                val rematchedAttempt = runCatching {
+                    val cleanTitle = extractBaseSongTitle(effectiveSong.title).ifBlank { effectiveSong.title }
+                    val cleanArtist = effectiveSong.artist.takeIf { it.isNotBlank() && it != "未知歌手" }.orEmpty()
+                    val queryKw = "$cleanArtist $cleanTitle".trim()
+                    val searchRes = searchSongs(queryKw, page = 1, pageSize = 6)
+                    val altCandidate = searchRes.songs.firstOrNull { cand ->
+                        cand.hash.isNotBlank() &&
+                            !cand.hash.equals(effectiveSong.hash, ignoreCase = true) &&
+                            (extractBaseSongTitle(cand.title).equals(cleanTitle, ignoreCase = true) ||
+                                cand.title.contains(cleanTitle, ignoreCase = true))
+                    } ?: searchRes.songs.firstOrNull { it.hash.isNotBlank() }
+                    if (altCandidate != null) {
+                        resolvePlaybackInternal(altCandidate, session, preferredQuality)
+                    } else null
+                }.getOrNull()
+                if (rematchedAttempt != null && rematchedAttempt.url.isNotBlank()) {
+                    putCachedPlayback(cacheKey, rematchedAttempt)
+                    return rematchedAttempt
+                }
             }
         }
 
-        val fallbackResult = resolveFallbackResult(effectiveSong, session, preferredQuality)
-        playbackResultCache[cacheKey] = fallbackResult
-        return fallbackResult
+        throw ApiFailure(null, "该歌曲暂未获取到播放链接")
+    }
+
+    private suspend fun resolvePlaybackInternal(
+        song: Song,
+        session: KugouSession?,
+        preferredQuality: AudioQuality
+    ): PlaybackResult {
+        if (session != null && session.token.isNotBlank()) {
+            val vipResult = runCatching { resolveVipPrivResult(song, session, preferredQuality) }.getOrNull()
+            if (vipResult != null && vipResult.url.isNotBlank()) {
+                return vipResult
+            }
+        }
+        return resolveFallbackResult(song, session, preferredQuality)
     }
 
     suspend fun resolveUrl(
@@ -1315,161 +1388,183 @@ class MusicApiRepository(
         preferredQuality: AudioQuality
     ): PlaybackResult? {
         val d = device()
-        val clientTimeMs = System.currentTimeMillis()
-        val targetHash = song.hashForQuality(preferredQuality).ifBlank { song.hash }
-        val keyRaw = "${targetHash.lowercase()}185672dd44712f60bb1736df5a377e823116${d.mid}${session.userId}"
-        val trackerKey = KugouSigner.md5(keyRaw)
+        val effectiveDfid = d.dfid.takeIf { it.isNotBlank() && it != "-" }
+            ?: KugouSigner.md5("kg_lite_${d.guid}_${d.mid}").take(24)
 
-        // 对齐 MakcRe/KuGouMusicApi module/song_url_new.js 与 Issue #179：
-        // 仅请求概念版原生支持的目标音质档位（不混入 suvip 专属的 super/viper），优先匹配当前请求的档位
-        val targetQualities = when (preferredQuality) {
-            AudioQuality.STANDARD -> listOf("128", "320")
-            AudioQuality.HIGH -> listOf("320", "128")
-            AudioQuality.LOSSLESS -> listOf("flac", "320", "128")
-            AudioQuality.HI_RES -> listOf("high", "flac", "320", "128")
-        }
-
-        val qualitiesArr = JsonArray().apply {
-            targetQualities.forEach { add(it) }
-        }
-
-        val resource = JsonObject().apply {
-            addProperty("album_audio_id", song.albumAudioId)
-            addProperty("collect_list_id", "3")
-            addProperty("collect_time", clientTimeMs)
-            addProperty("hash", targetHash.lowercase())
-            addProperty("id", 0)
-            addProperty("page_id", 1)
-            addProperty("type", "audio")
-        }
-
-        val effectiveVipToken = session.vipToken?.takeIf { it.isNotBlank() } ?: session.token
-        val trackerParam = JsonObject().apply {
-            addProperty("all_m", 1)
-            addProperty("auth", "")
-            addProperty("is_free_part", 0)
-            addProperty("key", trackerKey)
-            addProperty("module_id", 0)
-            addProperty("need_climax", 1)
-            addProperty("need_xcdn", 1)
-            addProperty("open_time", "")
-            addProperty("pid", "411")
-            addProperty("pidversion", "3001")
-            addProperty("priv_vip_type", "6")
-            addProperty("viptoken", effectiveVipToken)
-        }
-
-        // 严格对齐 module/song_url_new.js dataMap 顶层字段 (补充顶层 key, vip_token, vip_type)
-        val body = JsonObject().apply {
-            addProperty("area_code", "1")
-            addProperty("behavior", "play")
-            add("qualities", qualitiesArr)
-            add("resource", resource)
-            addProperty("token", session.token)
-            add("tracker_param", trackerParam)
-            addProperty("userid", session.userId)
-            addProperty("vip", 6)
-            addProperty("vip_type", 6)
-            addProperty("vip_token", effectiveVipToken)
-            addProperty("key", trackerKey)
-        }
-
-        val query = linkedMapOf(
-            "appid" to "3116",
-            "clientver" to "11440",
-            "mid" to d.mid,
-            "dfid" to d.dfid,
-            "clienttime" to (clientTimeMs / 1000).toString(),
-            "token" to session.token,
-            "userid" to session.userId
-        )
-        val bodyStr = KugouSigner.gson.toJson(body)
-        val salt = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
-        val sortedParams = query.toSortedMap().entries.joinToString("") { "${it.key}=${it.value}" }
-        val signature = KugouSigner.md5("$salt$sortedParams$bodyStr$salt")
-        query["signature"] = signature
-
-        val reqHeaders = mapOf(
-            "x-router" to "tracker.kugou.com",
-            "dfid" to d.dfid,
-            "mid" to d.mid,
-            "clienttime" to (clientTimeMs / 1000).toString(),
-            "content-type" to "application/json; charset=utf-8"
-        )
-
-        val response = runCatching {
-            transport.callAdvanced(
-                path = "/v6/priv_url",
-                host = "https://gateway.kugou.com",
-                method = "POST",
-                query = query,
-                body = body,
-                session = session,
-                headers = reqHeaders,
-                sign = false,
-                includeDefaultParams = false
-            )
-        }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: runCatching {
-            transport.callAdvanced(
-                path = "/v6/priv_url",
-                host = "http://tracker.kugou.com",
-                method = "POST",
-                query = query,
-                body = body,
-                session = session,
-                headers = reqHeaders,
-                sign = false,
-                includeDefaultParams = false
-            )
-        }.getOrNull() ?: return null
-
-        val data = response.data
-        val privStatus = data.number("priv_status") ?: -1
-        if (privStatus == 0) return null
-
-        val failProcess = data.arr("fail_process")
-        if (failProcess != null && failProcess.size() > 0) return null
-        if (data.obj("ext_info")?.number("is_free_part") == 1) return null
-
-        val fileSize = (data.number("file_size") ?: data.number("fileSize") ?: 0).toLong()
-        if (fileSize in 1 until 200 * 1024) return null
-
-        val playUrl = extractPlayUrl(data) ?: return null
-        val bitrate = (data.number("bitrate") ?: data.number("bitRate") ?: 0).toLong()
-        val extName = data.text("extname") ?: data.text("extName")
-        val respQualityStr = data.text("quality") ?: data.obj("ext_info")?.text("quality")
-        val respDurSec = (data.number("timeLength") ?: data.number("timelength") ?: 0).toLong()
-        val effectiveDurMs = song.durationMs.takeIf { it > 0L } ?: if (respDurSec in 1..10000) respDurSec * 1000L else respDurSec
-        val cachedSpecs = listOf(song.id, targetHash, song.hash, song.hash128, song.hash320, song.hashFlac, song.hashHiRes)
+        val cachedSpecs = listOf(song.id, song.hash, song.hash128, song.hash320, song.hashFlac, song.hashHiRes)
             .map { it.trim().lowercase() }
             .firstNotNullOfOrNull { if (it.isNotBlank()) songTechMetaCache[it]?.specs else null }
             .orEmpty()
-        val expectedVipQuality = when {
-            preferredQuality == AudioQuality.HI_RES && song.hashHiRes.isNotBlank() && targetHash.equals(song.hashHiRes, ignoreCase = true) -> AudioQuality.HI_RES
-            preferredQuality >= AudioQuality.LOSSLESS && song.hashFlac.isNotBlank() && targetHash.equals(song.hashFlac, ignoreCase = true) -> AudioQuality.LOSSLESS
-            preferredQuality >= AudioQuality.HIGH && song.hash320.isNotBlank() && targetHash.equals(song.hash320, ignoreCase = true) -> AudioQuality.HIGH
-            else -> preferredQuality
-        }
-        val (actualQuality, kbps) = deduceQuality(
-            url = playUrl,
-            bitrateRaw = bitrate,
-            fileSizeBytes = fileSize,
-            durationMs = effectiveDurMs,
-            extName = extName,
-            requestedQuality = expectedVipQuality,
-            knownSpecs = cachedSpecs,
-            responseQuality = respQualityStr
-        )
-        val (climaxStart, climaxEnd) = extractClimaxRange(data)
 
-        return PlaybackResult(
-            url = playUrl,
-            actualQuality = actualQuality,
-            bitrateKbps = kbps,
-            fileSizeByte = fileSize,
-            climaxStartMs = climaxStart,
-            climaxEndMs = climaxEnd
-        )
+        // 构建按请求音质从高到低排列的候选 Hash 队列，避免因单一高音质 Hash 受限导致整个 /v6/priv_url 通道放弃
+        val tierOrder = when (preferredQuality) {
+            AudioQuality.HI_RES -> listOf(AudioQuality.HI_RES, AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.STANDARD)
+            AudioQuality.LOSSLESS -> listOf(AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.STANDARD)
+            AudioQuality.HIGH -> listOf(AudioQuality.HIGH, AudioQuality.STANDARD)
+            AudioQuality.STANDARD -> listOf(AudioQuality.STANDARD, AudioQuality.HIGH)
+        }
+        val candidateTiers = LinkedHashMap<String, AudioQuality>()
+        for (tier in tierOrder) {
+            val h = song.hashForQuality(tier).ifBlank { cachedSpecs[tier]?.hash.orEmpty() }.trim().lowercase()
+            if (h.isNotBlank()) {
+                candidateTiers.putIfAbsent(h, tier)
+            }
+        }
+        if (song.hash.isNotBlank()) {
+            candidateTiers.putIfAbsent(song.hash.trim().lowercase(), preferredQuality)
+        }
+
+        val effectiveVipToken = session.vipToken?.takeIf { it.isNotBlank() } ?: session.token
+        val salt = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
+
+        for ((targetHash, tierQuality) in candidateTiers) {
+            val clientTimeMs = System.currentTimeMillis()
+            val keyRaw = "${targetHash.lowercase()}185672dd44712f60bb1736df5a377e823116${d.mid}${session.userId}"
+            val trackerKey = KugouSigner.md5(keyRaw)
+
+            val targetQualities = when (tierQuality) {
+                AudioQuality.STANDARD -> listOf("128", "320")
+                AudioQuality.HIGH -> listOf("320", "128")
+                AudioQuality.LOSSLESS -> listOf("flac", "320", "128")
+                AudioQuality.HI_RES -> listOf("high", "flac", "320", "128")
+            }
+
+            val qualitiesArr = JsonArray().apply {
+                targetQualities.forEach { add(it) }
+            }
+
+            val resource = JsonObject().apply {
+                addProperty("album_audio_id", song.albumAudioId)
+                addProperty("collect_list_id", "3")
+                addProperty("collect_time", clientTimeMs)
+                addProperty("hash", targetHash.lowercase())
+                addProperty("id", 0)
+                addProperty("page_id", 1)
+                addProperty("type", "audio")
+            }
+
+            val trackerParam = JsonObject().apply {
+                addProperty("all_m", 1)
+                addProperty("auth", "")
+                addProperty("is_free_part", 0)
+                addProperty("key", trackerKey)
+                addProperty("module_id", 0)
+                addProperty("need_climax", 1)
+                addProperty("need_xcdn", 1)
+                addProperty("open_time", "")
+                addProperty("pid", "411")
+                addProperty("pidversion", "3001")
+                addProperty("priv_vip_type", "6")
+                addProperty("viptoken", effectiveVipToken)
+            }
+
+            val body = JsonObject().apply {
+                addProperty("area_code", "1")
+                addProperty("behavior", "play")
+                add("qualities", qualitiesArr)
+                add("resource", resource)
+                addProperty("token", session.token)
+                add("tracker_param", trackerParam)
+                addProperty("userid", session.userId)
+                addProperty("vip", 6)
+                addProperty("vip_type", 6)
+                addProperty("vip_token", effectiveVipToken)
+                addProperty("key", trackerKey)
+            }
+
+            val query = linkedMapOf(
+                "appid" to "3116",
+                "clientver" to "11440",
+                "mid" to d.mid,
+                "dfid" to effectiveDfid,
+                "clienttime" to (clientTimeMs / 1000).toString(),
+                "token" to session.token,
+                "userid" to session.userId
+            )
+            val bodyStr = KugouSigner.gson.toJson(body)
+            val sortedParams = query.toSortedMap().entries.joinToString("") { "${it.key}=${it.value}" }
+            query["signature"] = KugouSigner.md5("$salt$sortedParams$bodyStr$salt")
+
+            val reqHeaders = mapOf(
+                "x-router" to "tracker.kugou.com",
+                "dfid" to effectiveDfid,
+                "mid" to d.mid,
+                "clienttime" to (clientTimeMs / 1000).toString(),
+                "content-type" to "application/json; charset=utf-8"
+            )
+
+            val response = runCatching {
+                transport.callAdvanced(
+                    path = "/v6/priv_url",
+                    host = "https://gateway.kugou.com",
+                    method = "POST",
+                    query = query,
+                    body = body,
+                    session = session,
+                    headers = reqHeaders,
+                    sign = false,
+                    includeDefaultParams = false
+                )
+            }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: runCatching {
+                transport.callAdvanced(
+                    path = "/v6/priv_url",
+                    host = "http://tracker.kugou.com",
+                    method = "POST",
+                    query = query,
+                    body = body,
+                    session = session,
+                    headers = reqHeaders,
+                    sign = false,
+                    includeDefaultParams = false
+                )
+            }.getOrNull() ?: continue
+
+            val data = response.data
+            val privStatus = data.number("priv_status") ?: -1
+            if (privStatus == 0) continue
+
+            val failProcess = data.arr("fail_process")
+            if (failProcess != null && failProcess.size() > 0) continue
+            if (data.obj("ext_info")?.number("is_free_part") == 1) continue
+
+            val fileSize = (data.number("file_size") ?: data.number("fileSize") ?: 0).toLong()
+            if (fileSize in 1 until 200 * 1024) continue
+
+            val playUrl = extractPlayUrl(data) ?: continue
+            val bitrate = (data.number("bitrate") ?: data.number("bitRate") ?: 0).toLong()
+            val extName = data.text("extname") ?: data.text("extName")
+            val respQualityStr = data.text("quality") ?: data.obj("ext_info")?.text("quality")
+            val respDurSec = (data.number("timeLength") ?: data.number("timelength") ?: 0).toLong()
+            val effectiveDurMs = song.durationMs.takeIf { it > 0L } ?: if (respDurSec in 1..10000) respDurSec * 1000L else respDurSec
+
+            val expectedVipQuality = when {
+                tierQuality == AudioQuality.HI_RES && song.hashHiRes.isNotBlank() && targetHash.equals(song.hashHiRes, ignoreCase = true) -> AudioQuality.HI_RES
+                tierQuality >= AudioQuality.LOSSLESS && song.hashFlac.isNotBlank() && targetHash.equals(song.hashFlac, ignoreCase = true) -> AudioQuality.LOSSLESS
+                tierQuality >= AudioQuality.HIGH && song.hash320.isNotBlank() && targetHash.equals(song.hash320, ignoreCase = true) -> AudioQuality.HIGH
+                else -> tierQuality
+            }
+            val (actualQuality, kbps) = deduceQuality(
+                url = playUrl,
+                bitrateRaw = bitrate,
+                fileSizeBytes = fileSize,
+                durationMs = effectiveDurMs,
+                extName = extName,
+                requestedQuality = expectedVipQuality,
+                knownSpecs = cachedSpecs,
+                responseQuality = respQualityStr
+            )
+            val (climaxStart, climaxEnd) = extractClimaxRange(data)
+
+            return PlaybackResult(
+                url = playUrl,
+                actualQuality = actualQuality,
+                bitrateKbps = kbps,
+                fileSizeByte = fileSize,
+                climaxStartMs = climaxStart,
+                climaxEndMs = climaxEnd
+            )
+        }
+        return null
     }
 
     private fun extractClimaxRange(data: JsonObject): Pair<Long, Long> {
@@ -1495,20 +1590,50 @@ class MusicApiRepository(
         return 0L to 0L
     }
 
-    private fun extractPlayUrl(obj: JsonObject): String? {
-        val u = obj.text("url") ?: obj.text("play_url")
-        if (!u.isNullOrBlank()) return u
-        val arr = obj.get("url")?.takeIf { it.isJsonArray }?.asJsonArray
-        if (arr != null && arr.size() > 0) {
-            val first = arr.firstOrNull()?.asString
-            if (!first.isNullOrBlank()) return first
+    private fun normalizeStreamUrl(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        val trimmed = raw.trim()
+        return when {
+            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+            trimmed.startsWith("//") -> "https:$trimmed"
+            else -> null
         }
-        val trans = obj.objects("trans_param").firstOrNull()?.text("url")
-        if (!trans.isNullOrBlank()) return trans
-        val backup = obj.text("backup_url")
-        if (!backup.isNullOrBlank()) return backup
-        val backupArr = obj.get("backup_url")?.takeIf { it.isJsonArray }?.asJsonArray
-        return backupArr?.firstOrNull()?.asString
+    }
+
+    private fun extractPlayUrl(obj: JsonObject): String? {
+        normalizeStreamUrl(obj.text("url"))?.let { return it }
+        normalizeStreamUrl(obj.text("play_url"))?.let { return it }
+        normalizeStreamUrl(obj.text("playUrl"))?.let { return it }
+
+        val urlArr = obj.get("url")?.takeIf { it.isJsonArray }?.asJsonArray
+        if (urlArr != null) {
+            for (el in urlArr) {
+                if (el.isJsonPrimitive) {
+                    normalizeStreamUrl(el.asString)?.let { return it }
+                }
+            }
+        }
+
+        obj.objects("trans_param").forEach { tp ->
+            normalizeStreamUrl(tp.text("url"))?.let { return it }
+        }
+        obj.obj("trans_param")?.let { tp ->
+            normalizeStreamUrl(tp.text("url"))?.let { return it }
+        }
+
+        normalizeStreamUrl(obj.text("backup_url"))?.let { return it }
+        normalizeStreamUrl(obj.text("backupUrl"))?.let { return it }
+        for (backupKey in listOf("backup_url", "backupUrl")) {
+            val backupArr = obj.get(backupKey)?.takeIf { it.isJsonArray }?.asJsonArray
+            if (backupArr != null) {
+                for (el in backupArr) {
+                    if (el.isJsonPrimitive) {
+                        normalizeStreamUrl(el.asString)?.let { return it }
+                    }
+                }
+            }
+        }
+        return null
     }
 
     private suspend fun resolveFallbackResult(
@@ -1517,24 +1642,42 @@ class MusicApiRepository(
         preferredQuality: AudioQuality
     ): PlaybackResult {
         val d = device()
+        val effectiveDfid = d.dfid.takeIf { it.isNotBlank() && it != "-" }
+            ?: KugouSigner.md5("kg_lite_${d.guid}_${d.mid}").take(24)
         val userId = session?.userId ?: "0"
         val clientTime = System.currentTimeMillis() / 1000
         val salt = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
+
+        val cachedSpecs = listOf(song.id, song.hash, song.hash128, song.hash320, song.hashFlac, song.hashHiRes)
+            .map { it.trim().lowercase() }
+            .firstNotNullOfOrNull { if (it.isNotBlank()) songTechMetaCache[it]?.specs else null }
+            .orEmpty()
 
         val qualityTiers = when (preferredQuality) {
             AudioQuality.HI_RES -> listOf(AudioQuality.HI_RES, AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.STANDARD)
             AudioQuality.LOSSLESS -> listOf(AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.STANDARD)
             AudioQuality.HIGH -> listOf(AudioQuality.HIGH, AudioQuality.STANDARD)
-            AudioQuality.STANDARD -> listOf(AudioQuality.STANDARD)
+            AudioQuality.STANDARD -> listOf(AudioQuality.STANDARD, AudioQuality.HIGH)
         }
 
         val candidates = LinkedHashSet<Pair<String, String>>()
         for (tier in qualityTiers) {
             when (tier) {
-                AudioQuality.HI_RES -> if (song.hashHiRes.isNotBlank()) candidates.add(song.hashHiRes.lowercase() to "high")
-                AudioQuality.LOSSLESS -> if (song.hashFlac.isNotBlank()) candidates.add(song.hashFlac.lowercase() to "flac")
-                AudioQuality.HIGH -> if (song.hash320.isNotBlank()) candidates.add(song.hash320.lowercase() to "320")
+                AudioQuality.HI_RES -> {
+                    val h = song.hashHiRes.ifBlank { cachedSpecs[AudioQuality.HI_RES]?.hash.orEmpty() }
+                    if (h.isNotBlank()) candidates.add(h.lowercase() to "high")
+                }
+                AudioQuality.LOSSLESS -> {
+                    val h = song.hashFlac.ifBlank { cachedSpecs[AudioQuality.LOSSLESS]?.hash.orEmpty() }
+                    if (h.isNotBlank()) candidates.add(h.lowercase() to "flac")
+                }
+                AudioQuality.HIGH -> {
+                    val h = song.hash320.ifBlank { cachedSpecs[AudioQuality.HIGH]?.hash.orEmpty() }
+                    if (h.isNotBlank()) candidates.add(h.lowercase() to "320")
+                }
                 AudioQuality.STANDARD -> {
+                    val specStd = cachedSpecs[AudioQuality.STANDARD]?.hash.orEmpty()
+                    if (specStd.isNotBlank()) candidates.add(specStd.lowercase() to "128")
                     val std = song.hash128.ifBlank { song.hash }.lowercase()
                     if (std.isNotBlank()) candidates.add(std to "128")
                 }
@@ -1556,7 +1699,7 @@ class MusicApiRepository(
                 "area_code" to "1",
                 "hash" to hashLower,
                 "ssa_flag" to "is_fromtrack",
-                "version" to "11430",
+                "version" to "11440",
                 "page_id" to "967177915",
                 "quality" to qualityParam,
                 "album_audio_id" to song.albumAudioId.toString(),
@@ -1566,10 +1709,10 @@ class MusicApiRepository(
                 "pidversion" to "3001",
                 "ppage_id" to "356753938,823673182,967485191",
                 "cdnBackup" to "1",
-                "clientver" to "11430",
+                "clientver" to "11440",
                 "appid" to "3116",
                 "mid" to d.mid,
-                "dfid" to d.dfid,
+                "dfid" to effectiveDfid,
                 "clienttime" to clientTime.toString(),
                 "key" to key
             )
@@ -1583,17 +1726,29 @@ class MusicApiRepository(
             val sortedParams = query.toSortedMap().entries.joinToString("") { "${it.key}=${it.value}" }
             query["signature"] = KugouSigner.md5("$salt$sortedParams$salt")
 
+            val reqHeaders = mapOf(
+                "x-router" to "trackercdn.kugou.com",
+                "dfid" to effectiveDfid,
+                "mid" to d.mid,
+                "clienttime" to clientTime.toString()
+            )
+
             val response = runCatching {
                 transport.callAdvanced(
                     path = "/v5/url",
                     session = session,
                     query = query,
-                    headers = mapOf(
-                        "x-router" to "trackercdn.kugou.com",
-                        "dfid" to d.dfid,
-                        "mid" to d.mid,
-                        "clienttime" to clientTime.toString()
-                    ),
+                    headers = reqHeaders,
+                    sign = false,
+                    includeDefaultParams = false
+                )
+            }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: runCatching {
+                transport.callAdvanced(
+                    path = "/i/v2/",
+                    host = "http://trackercdn.kugou.com",
+                    session = session,
+                    query = query,
+                    headers = reqHeaders,
                     sign = false,
                     includeDefaultParams = false
                 )
@@ -1613,7 +1768,7 @@ class MusicApiRepository(
                         "320", "hq" -> AudioQuality.HIGH
                         else -> AudioQuality.STANDARD
                     }
-                    val (q, kbps) = deduceQuality(url, bRate, fSize, effectiveDurMs, ext, reqTier)
+                    val (q, kbps) = deduceQuality(url, bRate, fSize, effectiveDurMs, ext, reqTier, cachedSpecs)
                     val (cStart, cEnd) = extractClimaxRange(it.data)
                     return PlaybackResult(url, q, kbps, fSize, cStart, cEnd)
                 }
@@ -1628,7 +1783,7 @@ class MusicApiRepository(
             "area_code" to "1",
             "hash" to defaultHash,
             "ssa_flag" to "is_fromtrack",
-            "version" to "11430",
+            "version" to "11440",
             "page_id" to "967177915",
             "quality" to "128",
             "album_audio_id" to song.albumAudioId.toString(),
@@ -1638,10 +1793,10 @@ class MusicApiRepository(
             "pidversion" to "3001",
             "ppage_id" to "356753938,823673182,967485191",
             "cdnBackup" to "1",
-            "clientver" to "11430",
+            "clientver" to "11440",
             "appid" to "3116",
             "mid" to d.mid,
-            "dfid" to d.dfid,
+            "dfid" to effectiveDfid,
             "clienttime" to clientTime.toString(),
             "key" to KugouSigner.md5(freeKeyRaw),
             "IsFreePart" to "1"
@@ -1652,17 +1807,28 @@ class MusicApiRepository(
         }
         val freeSorted = freePartQuery.toSortedMap().entries.joinToString("") { "${it.key}=${it.value}" }
         freePartQuery["signature"] = KugouSigner.md5("$salt$freeSorted$salt")
+        val freeHeaders = mapOf(
+            "x-router" to "trackercdn.kugou.com",
+            "dfid" to effectiveDfid,
+            "mid" to d.mid,
+            "clienttime" to clientTime.toString()
+        )
         val freeResp = runCatching {
             transport.callAdvanced(
                 path = "/v5/url",
                 session = session,
                 query = freePartQuery,
-                headers = mapOf(
-                    "x-router" to "trackercdn.kugou.com",
-                    "dfid" to d.dfid,
-                    "mid" to d.mid,
-                    "clienttime" to clientTime.toString()
-                ),
+                headers = freeHeaders,
+                sign = false,
+                includeDefaultParams = false
+            )
+        }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: runCatching {
+            transport.callAdvanced(
+                path = "/i/v2/",
+                host = "http://trackercdn.kugou.com",
+                session = session,
+                query = freePartQuery,
+                headers = freeHeaders,
                 sign = false,
                 includeDefaultParams = false
             )
@@ -1674,7 +1840,7 @@ class MusicApiRepository(
                 val fSize = (it.data.number("fileSize") ?: it.data.number("file_size") ?: 0).toLong()
                 val bRate = (it.data.number("bitRate") ?: it.data.number("bitrate") ?: 0).toLong()
                 val ext = it.data.text("extName") ?: it.data.text("extname")
-                val (q, kbps) = deduceQuality(freeUrl, bRate, fSize, song.durationMs, ext, AudioQuality.STANDARD)
+                val (q, kbps) = deduceQuality(freeUrl, bRate, fSize, song.durationMs, ext, AudioQuality.STANDARD, cachedSpecs)
                 val (cStart, cEnd) = extractClimaxRange(it.data)
                 return PlaybackResult(freeUrl, q, kbps, fSize, cStart, cEnd)
             }

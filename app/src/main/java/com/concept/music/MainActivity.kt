@@ -51,6 +51,7 @@ import androidx.navigation.compose.rememberNavController
 import com.concept.music.data.kugou.AuthState
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
+import com.concept.music.service.SystemLyricBridge
 import com.concept.music.ui.account.AccountsScreen
 import com.concept.music.ui.account.LoginScreen
 import com.concept.music.ui.account.VerificationDialog
@@ -107,6 +108,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         requestHighRefreshRateDisplayMode()
+        SystemLyricBridge.onHostResumed(this)
     }
 
     /**
@@ -874,7 +876,7 @@ fun MainContent(
         // 独立隔离状态订阅的「桌面歌词」宿主
         IsolatedDesktopLyricHost(
             viewModel = musicPlayerViewModel,
-            visible = !showNowPlaying && !showViperEffectOverlay,
+            visible = !showViperEffectOverlay,
             onOpenPlayer = { showNowPlaying = true }
         )
     }
@@ -927,12 +929,17 @@ private fun IsolatedNowPlayingHost(
         queue = playerUiState.playlistQueue,
         currentIndex = playerUiState.currentIndex,
         coverStyle = playerUiState.coverStyle,
+        playerBackgroundStyle = playerUiState.playerBackgroundStyle,
+        dynamicCoverAccentEnabled = playerUiState.dynamicCoverAccentEnabled,
         onSelectCoverStyle = { musicPlayerViewModel.setCoverStyle(it) },
+        onSelectPlayerBackgroundStyle = { musicPlayerViewModel.setPlayerBackgroundStyle(it) },
+        onSetDynamicCoverAccentEnabled = { musicPlayerViewModel.setDynamicCoverAccentEnabled(it) },
         showTranslation = playerUiState.showTranslation,
         showPhonetic = playerUiState.showPhonetic,
         onToggleTranslation = { musicPlayerViewModel.toggleTranslation() },
         onTogglePhonetic = { musicPlayerViewModel.togglePhonetic() },
         lyricFontSize = playerUiState.lyricFontSize,
+        lyricTranslationScale = playerUiState.lyricTranslationScale,
         lyricAlignment = playerUiState.lyricAlignment,
         lyricWordByWord = playerUiState.lyricWordByWord,
         lyricBlurEnabled = playerUiState.lyricBlurEnabled,
@@ -962,6 +969,7 @@ private fun IsolatedNowPlayingHost(
             onAddToPlaylist(currentSong)
         },
         onSetLyricFontSize = { musicPlayerViewModel.setLyricFontSize(it) },
+        onSetLyricTranslationScale = { musicPlayerViewModel.setLyricTranslationScale(it) },
         onSetLyricAlignment = { musicPlayerViewModel.setLyricAlignment(it) },
         onSetLyricWordByWord = { musicPlayerViewModel.setLyricWordByWord(it) },
         onSetLyricBlurEnabled = { musicPlayerViewModel.setLyricBlurEnabled(it) },

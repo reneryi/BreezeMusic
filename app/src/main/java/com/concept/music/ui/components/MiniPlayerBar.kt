@@ -13,16 +13,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -45,12 +45,11 @@ import com.concept.music.ui.theme.softClickable
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.min
 
 /**
  * 独立圆角长条形上层悬浮播放控制条（Floating Capsule MiniPlayer）：
- * 1. 无背景矩形底栏遮挡：作为独立圆角胶囊直接悬浮于页面内容上层，页面滚动时内容从胶囊下方自然穿过；
- * 2. 极简功能聚焦：支持整条左右滑动切歌（左滑下一首 / 右滑上一首），右侧仅保留「播放/暂停」与「播放队列」；
- * 3. 单一环形进度视觉：仅在播放按钮外环绕圆形进度条，彻底移除底部重复的直线进度条。
+ * 采用圆润饱满重绘播放/暂停与播放队列矢量图标，保持全应用视觉风格高度统一。
  */
 @Composable
 fun MiniPlayerBar(
@@ -185,7 +184,6 @@ fun MiniPlayerBar(
                     .padding(start = 9.dp, end = 11.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 左侧 + 中间：可随手势横滑位移的黑胶微缩唱盘与曲目信息区
                 Row(
                     modifier = Modifier
                         .weight(1f)
@@ -301,7 +299,7 @@ fun MiniPlayerBar(
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                // 右侧双按钮区：1. 外环绕圆形进度条的播放/暂停按钮  2. 播放队列按钮
+                // 右侧双按钮区：圆润饱满播放/暂停与圆润播放队列按钮
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -316,7 +314,6 @@ fun MiniPlayerBar(
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        // 外圈唯一环形播放进度光轨（无底部重复直线进度条）
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val strokeW = 2.2.dp.toPx()
                             drawCircle(
@@ -347,12 +344,35 @@ fun MiniPlayerBar(
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                contentDescription = if (isPlaying) "暂停" else "播放",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Canvas(modifier = Modifier.size(15.dp)) {
+                                val w = size.width
+                                val h = size.height
+                                if (isPlaying) {
+                                    val barW = w * 0.25f
+                                    val barH = h * 0.70f
+                                    val topY = (h - barH) / 2f
+                                    val r = CornerRadius(barW / 2f, barW / 2f)
+                                    drawRoundRect(
+                                        color = Color.White,
+                                        topLeft = Offset(w * 0.18f, topY),
+                                        size = Size(barW, barH),
+                                        cornerRadius = r
+                                    )
+                                    drawRoundRect(
+                                        color = Color.White,
+                                        topLeft = Offset(w * 0.57f, topY),
+                                        size = Size(barW, barH),
+                                        cornerRadius = r
+                                    )
+                                } else {
+                                    val tri = createPlumpPlayTrianglePath(
+                                        centerX = w * 0.55f,
+                                        centerY = h * 0.50f,
+                                        size = min(w, h) * 0.86f
+                                    )
+                                    drawPath(path = tri, color = Color.White)
+                                }
+                            }
                         }
                     }
 
@@ -368,12 +388,17 @@ fun MiniPlayerBar(
                             )
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
-                                contentDescription = "播放队列",
-                                tint = if (isDark) Color.White.copy(alpha = 0.88f) else ConceptPrimary,
-                                modifier = Modifier.size(19.dp)
-                            )
+                            val iconTint = if (isDark) Color.White.copy(alpha = 0.90f) else ConceptPrimary
+                            Canvas(modifier = Modifier.size(18.dp)) {
+                                val w = size.width
+                                val h = size.height
+                                val stroke = 2.1.dp.toPx()
+                                drawLine(iconTint, Offset(w * 0.16f, h * 0.26f), Offset(w * 0.80f, h * 0.26f), stroke, StrokeCap.Round)
+                                drawLine(iconTint, Offset(w * 0.16f, h * 0.50f), Offset(w * 0.62f, h * 0.50f), stroke, StrokeCap.Round)
+                                drawLine(iconTint, Offset(w * 0.16f, h * 0.74f), Offset(w * 0.48f, h * 0.74f), stroke, StrokeCap.Round)
+                                drawCircle(ConceptCyanAccent, radius = 2.6.dp.toPx(), center = Offset(w * 0.72f, h * 0.74f))
+                                drawLine(ConceptCyanAccent, Offset(w * 0.80f, h * 0.74f), Offset(w * 0.80f, h * 0.40f), stroke * 0.9f, StrokeCap.Round)
+                            }
                         }
                     }
                 }

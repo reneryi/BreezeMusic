@@ -3,6 +3,7 @@ package com.concept.music.data.kugou
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.*
@@ -33,9 +34,9 @@ interface KugouTransport {
 class DirectKugouTransport(
     private val identity: () -> DeviceIdentity,
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
-        .callTimeout(30, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .callTimeout(25, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build(),
     private val clock: Clock = Clock.systemUTC()
@@ -47,6 +48,50 @@ class DirectKugouTransport(
     override suspend fun callAdvanced(path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
         host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?,
         sign: Boolean, includeDefaultParams: Boolean): ApiResponse = withContext(Dispatchers.IO) {
+        val isIdempotentOrTracker = method.equals("GET", ignoreCase = true) ||
+            path.contains("priv_url") || path.contains("/url") || path.contains("privilege") ||
+            path.contains("search") || path.contains("recommend")
+        val maxAttempts = if (isIdempotentOrTracker) 2 else 1
+        var lastError: IOException? = null
+
+        for (attempt in 1..maxAttempts) {
+            try {
+                return@withContext executeSingleCall(
+                    path = path,
+                    session = session,
+                    query = query,
+                    body = body,
+                    host = host,
+                    method = method,
+                    web = web,
+                    headers = headers,
+                    device = device,
+                    sign = sign,
+                    includeDefaultParams = includeDefaultParams
+                )
+            } catch (e: IOException) {
+                lastError = e
+                if (attempt < maxAttempts) {
+                    delay(220L * attempt)
+                }
+            }
+        }
+        throw (lastError ?: IOException("网络连接失败，请检查网络后重试"))
+    }
+
+    private suspend fun executeSingleCall(
+        path: String,
+        session: KugouSession?,
+        query: Map<String, String>,
+        body: JsonObject?,
+        host: String,
+        method: String,
+        web: Boolean,
+        headers: Map<String, String>,
+        device: DeviceIdentity?,
+        sign: Boolean,
+        includeDefaultParams: Boolean
+    ): ApiResponse {
         val d = device ?: identity()
         val params = linkedMapOf<String, String>()
         if (includeDefaultParams) {
@@ -68,7 +113,7 @@ class DirectKugouTransport(
             .apply { headers.forEach { (key, value) -> header(key, value) } }
             .method(method, if (method == "GET") null else payload.toRequestBody(
                 (headers.entries.firstOrNull { it.key.equals("content-type", ignoreCase = true) }?.value ?: "application/json; charset=utf-8").toMediaType())).build()
-        suspendCancellableCoroutine { continuation ->
+        return suspendCancellableCoroutine { continuation ->
             val call = client.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {

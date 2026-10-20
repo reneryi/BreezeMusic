@@ -11,8 +11,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,20 +29,21 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.concept.music.data.model.LyricData
@@ -53,19 +52,14 @@ import com.concept.music.data.model.Song
 import com.concept.music.service.DesktopLyricColorScheme
 import com.concept.music.service.DesktopLyricLineMode
 import com.concept.music.service.SystemLyricBridge
-import com.concept.music.ui.theme.ConceptPrimary
-import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.softClickable
-import kotlin.math.roundToInt
 
 /**
- * 全新重构「桌面歌词 (Desktop Lyrics)」系统
- * 替代原简陋的“悬浮词”，提供商业级多样化桌面歌词体验：
- * 1. 支持 6 款高颜值 KRC 逐字卡拉OK流光配色方案（概念冰蓝、璀璨鎏金、霓虹樱粉、极光薄荷、赛博星紫、纯净皓白）；
- * 2. 支持 3 种显示模式：双行双语对照、KTV双行奇偶交替、单行极简流光；
- * 3. 支持点击唤出交互式桌面歌词控制台：上一首 / 播放暂停 / 下一首 / 进入播放页 / 字号无级缩放 / 对齐方式 / 背景透明度（支持 0% 全透明无框描边字） / 防误触锁定；
- * 4. 锁定后自动收起控制台并变为半透防误触悬浮态，点击右侧迷你锁头可一键解锁，且拖拽坐标持久记忆。
+ * 全新重构「桌面歌词 (Desktop Lyrics)」双引擎宿主组件：
+ * 1. 自动向 `SystemLyricBridge` 同步实时毫秒级进度、歌词与控播回调，驱动 Android 系统级全局悬浮窗 (`WindowManager`)；
+ * 2. 若已授予「显示在其他应用上层」权限，直接由系统级 `NativeDesktopLyricView` 跨应用全局渲染（切到桌面/微信/游戏依然常驻），本组件自动隐退防重叠；
+ * 3. 若暂未授予系统悬浮窗权限，则以「零重排 GPU 图层位移 (`graphicsLayer`) + 自适应紧凑窗口尺寸 + 穿透式防误触锁」渲染应用内桌面歌词，并提供一键授权升级入口。
  */
 @Composable
 fun FloatingLyricOverlay(
@@ -82,10 +76,44 @@ fun FloatingLyricOverlay(
 ) {
     val context = LocalContext.current
     val state by SystemLyricBridge.state.collectAsState()
-    val isDark = LocalIsDarkTheme.current
 
-    var offsetX by remember(state.savedOffsetX) { mutableFloatStateOf(state.savedOffsetX) }
-    var offsetY by remember(state.savedOffsetY) { mutableFloatStateOf(state.savedOffsetY) }
+    // 实时同步至系统级悬浮窗桥接器
+    SideEffect {
+        SystemLyricBridge.updatePlaybackSnapshot(
+            song = song,
+            lyricData = lyricData,
+            currentLyricIndex = currentLyricIndex,
+            currentPositionMs = currentPositionMs,
+            isPlaying = isPlaying,
+            onTogglePlay = onTogglePlay,
+            onPrevious = onPrevious,
+            onNext = onNext
+        )
+    }
+
+    // 若系统级全局悬浮窗已激活，则不重复渲染应用内图层
+    if (state.systemOverlayActive) {
+        return
+    }
+
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val screenWidthPx = remember(configuration.screenWidthDp, density) {
+        with(density) { configuration.screenWidthDp.dp.toPx().coerceAtLeast(720f) }
+    }
+    val screenHeightPx = remember(configuration.screenHeightDp, density) {
+        with(density) { configuration.screenHeightDp.dp.toPx().coerceAtLeast(1280f) }
+    }
+    val maxHorizontalOffsetPx = remember(screenWidthPx, state.desktopWidthFraction) {
+        ((screenWidthPx * (1f - state.desktopWidthFraction)) / 2f).coerceAtLeast(24f)
+    }
+    val minVerticalOffsetPx = remember(density) { with(density) { 44.dp.toPx() } }
+    val maxVerticalOffsetPx = remember(screenHeightPx, density) {
+        (screenHeightPx - with(density) { 180.dp.toPx() }).coerceAtLeast(minVerticalOffsetPx + 100f)
+    }
+
+    var dragX by remember { mutableFloatStateOf(state.savedOffsetX.coerceIn(-maxHorizontalOffsetPx, maxHorizontalOffsetPx)) }
+    var dragY by remember { mutableFloatStateOf(state.savedOffsetY.coerceIn(minVerticalOffsetPx, maxVerticalOffsetPx)) }
     var showHudControls by remember { mutableStateOf(false) }
     var showStyleSubPanel by remember { mutableStateOf(false) }
 
@@ -99,37 +127,33 @@ fun FloatingLyricOverlay(
     val scheme = state.desktopColorScheme
     val playedStartColor = Color(scheme.playedStartHex)
     val playedEndColor = Color(scheme.playedEndHex)
-    val unplayedColor = Color(scheme.unplayedHex).copy(alpha = 0.78f)
-    val textShadow = Shadow(
-        color = Color(scheme.strokeHex).copy(alpha = 0.85f),
-        offset = Offset(0f, 2f),
-        blurRadius = 6f
-    )
+    val unplayedColor = Color(scheme.unplayedHex).copy(alpha = 0.82f)
+    val textShadow = remember(scheme) {
+        Shadow(
+            color = Color(scheme.strokeHex).copy(alpha = 0.88f),
+            offset = Offset(0f, 2f),
+            blurRadius = 6f
+        )
+    }
 
-    val effectiveBgAlpha = if (state.floatingCapsuleLocked) {
-        (state.desktopBgAlpha * 0.45f).coerceIn(0f, 0.65f)
-    } else {
-        state.desktopBgAlpha
+    val effectiveBgAlpha = when {
+        state.floatingCapsuleLocked -> (state.desktopBgAlpha * 0.35f).coerceIn(0f, 0.52f)
+        showHudControls -> state.desktopBgAlpha.coerceAtLeast(0.75f)
+        else -> state.desktopBgAlpha
     }
     val containerColor = Color(0xFF0A101D).copy(alpha = effectiveBgAlpha)
-    val borderAlpha = if (effectiveBgAlpha < 0.12f) 0f else if (state.floatingCapsuleLocked) 0.08f else 0.22f
+    val borderAlpha = if (effectiveBgAlpha < 0.10f) 0f else if (state.floatingCapsuleLocked) 0.06f else 0.24f
 
     AnimatedVisibility(
         visible = state.floatingCapsuleEnabled && song != null,
         enter = scaleIn(
-            initialScale = 0.90f,
-            animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow)
-        ) + slideInVertically(
-            initialOffsetY = { -it / 2 },
-            animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
-        ) + fadeIn(tween(180)),
+            initialScale = 0.92f,
+            animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMedium)
+        ) + fadeIn(tween(150)),
         exit = scaleOut(
-            targetScale = 0.90f,
-            animationSpec = tween(160)
-        ) + slideOutVertically(
-            targetOffsetY = { -it / 3 },
-            animationSpec = tween(160)
-        ) + fadeOut(tween(150)),
+            targetScale = 0.92f,
+            animationSpec = tween(140)
+        ) + fadeOut(tween(130)),
         modifier = modifier
     ) {
         val lines = lyricData.lines
@@ -138,190 +162,226 @@ fun FloatingLyricOverlay(
         val nextLine = lines.getOrNull(safeIdx + 1)
 
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-                .padding(horizontal = 14.dp)
-                .pointerInput(state.floatingCapsuleLocked) {
-                    if (!state.floatingCapsuleLocked) {
-                        detectDragGestures(
-                            onDragEnd = {
-                                SystemLyricBridge.saveDesktopPosition(offsetX, offsetY)
-                            },
-                            onDragCancel = {
-                                SystemLyricBridge.saveDesktopPosition(offsetX, offsetY)
-                            }
-                        ) { change, dragAmount ->
-                            change.consume()
-                            offsetX = (offsetX + dragAmount.x).coerceIn(-120f, 120f)
-                            offsetY = (offsetY + dragAmount.y).coerceIn(48f, 1650f)
-                        }
-                    }
-                },
+            modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.TopCenter
         ) {
-            Column(
+            // 使用 graphicsLayer 直接在 GPU 渲染阶段做平移变换，彻底消除拖拽时的 Layout 重排与 Shadow 重算卡顿
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxWidth(state.desktopWidthFraction.coerceIn(0.68f, 0.96f))
+                    .graphicsLayer {
+                        translationX = dragX
+                        translationY = dragY
+                    }
                     .then(
-                        if (effectiveBgAlpha >= 0.15f) {
-                            Modifier.shadow(
-                                elevation = if (showHudControls) 18.dp else 8.dp,
-                                shape = RoundedCornerShape(22.dp),
-                                spotColor = playedStartColor.copy(alpha = 0.38f)
-                            )
-                        } else Modifier
-                    )
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(containerColor)
-                    .then(
-                        if (borderAlpha > 0.01f) {
-                            Modifier.border(
-                                width = 1.dp,
-                                color = playedStartColor.copy(alpha = borderAlpha),
-                                shape = RoundedCornerShape(22.dp)
-                            )
-                        } else Modifier
-                    )
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {
                         if (!state.floatingCapsuleLocked) {
-                            showHudControls = !showHudControls
-                            if (!showHudControls) showStyleSubPanel = false
-                        }
-                    }
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
-            ) {
-                // 1. 顶部交互控制栏（未锁定且点击桌面歌词后展开）
-                AnimatedVisibility(
-                    visible = showHudControls && !state.floatingCapsuleLocked,
-                    enter = expandVertically() + fadeIn(tween(150)),
-                    exit = shrinkVertically() + fadeOut(tween(120))
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            // 左：歌曲名与点击回主播放页
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .softClickable(onClick = onClickCapsule)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.OpenInFull,
-                                    contentDescription = "进入播放页",
-                                    tint = playedStartColor,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "${song?.title.orEmpty()} - ${song?.artist.orEmpty()}",
-                                    color = Color.White.copy(alpha = 0.88f),
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-
-                            // 中：上一首 / 播放暂停 / 下一首
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                IconButton(onClick = onPrevious, modifier = Modifier.size(28.dp)) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.SkipPrevious,
-                                        contentDescription = "上一首",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                                IconButton(onClick = onTogglePlay, modifier = Modifier.size(30.dp)) {
-                                    Icon(
-                                        imageVector = if (isPlaying) Icons.Rounded.PauseCircleFilled else Icons.Rounded.PlayCircleFilled,
-                                        contentDescription = "播放/暂停",
-                                        tint = playedStartColor,
-                                        modifier = Modifier.size(22.dp)
-                                    )
-                                }
-                                IconButton(onClick = onNext, modifier = Modifier.size(28.dp)) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.SkipNext,
-                                        contentDescription = "下一首",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-
-                            // 右：样式设置、锁定、关闭
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                IconButton(
-                                    onClick = { showStyleSubPanel = !showStyleSubPanel },
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Palette,
-                                        contentDescription = "桌面歌词样式",
-                                        tint = if (showStyleSubPanel) playedStartColor else Color.White.copy(alpha = 0.78f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                                IconButton(
-                                    onClick = {
-                                        SystemLyricBridge.setFloatingCapsuleLocked(true)
-                                        Toast.makeText(context, "桌面歌词已锁定，点击右侧小锁图标可解锁", Toast.LENGTH_SHORT).show()
+                            Modifier.pointerInput(maxHorizontalOffsetPx, maxVerticalOffsetPx) {
+                                detectDragGestures(
+                                    onDragEnd = {
+                                        SystemLyricBridge.saveDesktopPosition(dragX, dragY)
                                     },
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.LockOpen,
-                                        contentDescription = "锁定桌面歌词",
-                                        tint = Color.White.copy(alpha = 0.78f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                                IconButton(
-                                    onClick = { SystemLyricBridge.setFloatingCapsuleEnabled(false) },
-                                    modifier = Modifier.size(28.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Close,
-                                        contentDescription = "关闭桌面歌词",
-                                        tint = Color.White.copy(alpha = 0.78f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
+                                    onDragCancel = {
+                                        SystemLyricBridge.saveDesktopPosition(dragX, dragY)
+                                    }
+                                ) { change, dragAmount ->
+                                    change.consume()
+                                    dragX = (dragX + dragAmount.x).coerceIn(-maxHorizontalOffsetPx, maxHorizontalOffsetPx)
+                                    dragY = (dragY + dragAmount.y).coerceIn(minVerticalOffsetPx, maxVerticalOffsetPx)
                                 }
                             }
+                        } else {
+                            // 锁定状态下主歌词区不拦截触摸事件，实现真正的防误触点击穿透
+                            Modifier
                         }
-
-                        HorizontalDivider(color = Color.White.copy(alpha = 0.10f), thickness = 0.5.dp)
-                        Spacer(modifier = Modifier.height(6.dp))
-                    }
-                }
-
-                // 2. 桌面歌词实时逐字流光主显示区
-                val textAlign = if (state.desktopAlignment == 1) TextAlign.Start else TextAlign.Center
-                val colAlign = if (state.desktopAlignment == 1) Alignment.Start else Alignment.CenterHorizontally
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                    )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(containerColor)
+                        .then(
+                            if (borderAlpha > 0.01f) {
+                                Modifier.border(
+                                    width = 1.dp,
+                                    color = playedStartColor.copy(alpha = borderAlpha),
+                                    shape = RoundedCornerShape(20.dp)
+                                )
+                            } else Modifier
+                        )
+                        .then(
+                            if (!state.floatingCapsuleLocked) {
+                                Modifier.clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    showHudControls = !showHudControls
+                                    if (!showHudControls) showStyleSubPanel = false
+                                }
+                            } else Modifier
+                        )
+                        .padding(horizontal = 14.dp, vertical = 9.dp)
                 ) {
+                    // 1. 顶部交互控制栏（未锁定且点击桌面歌词后展开）
+                    AnimatedVisibility(
+                        visible = showHudControls && !state.floatingCapsuleLocked,
+                        enter = expandVertically() + fadeIn(tween(140)),
+                        exit = shrinkVertically() + fadeOut(tween(110))
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            // 若尚未开启系统全局悬浮窗权限，提供一键升级提示条
+                            if (!SystemLyricBridge.canDrawSystemOverlays(context)) {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = playedStartColor.copy(alpha = 0.18f),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 6.dp)
+                                        .softClickable {
+                                            SystemLyricBridge.requestOverlayPermissionIfNeeded(context)
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = "开启「跨应用全局悬浮窗」权限，退回手机桌面也可常驻显示",
+                                            color = Color.White.copy(alpha = 0.92f),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "去开启 >",
+                                            color = playedStartColor,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .softClickable(onClick = onClickCapsule)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.OpenInFull,
+                                        contentDescription = "进入播放页",
+                                        tint = playedStartColor,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(
+                                        text = "${song?.title.orEmpty()} - ${song?.artist.orEmpty()}",
+                                        color = Color.White.copy(alpha = 0.90f),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    IconButton(onClick = onPrevious, modifier = Modifier.size(26.dp)) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.SkipPrevious,
+                                            contentDescription = "上一首",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                    IconButton(onClick = onTogglePlay, modifier = Modifier.size(28.dp)) {
+                                        Icon(
+                                            imageVector = if (isPlaying) Icons.Rounded.PauseCircleFilled else Icons.Rounded.PlayCircleFilled,
+                                            contentDescription = "播放/暂停",
+                                            tint = playedStartColor,
+                                            modifier = Modifier.size(21.dp)
+                                        )
+                                    }
+                                    IconButton(onClick = onNext, modifier = Modifier.size(26.dp)) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.SkipNext,
+                                            contentDescription = "下一首",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    IconButton(
+                                        onClick = { showStyleSubPanel = !showStyleSubPanel },
+                                        modifier = Modifier.size(26.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Palette,
+                                            contentDescription = "桌面歌词样式",
+                                            tint = if (showStyleSubPanel) playedStartColor else Color.White.copy(alpha = 0.80f),
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            SystemLyricBridge.setFloatingCapsuleLocked(true)
+                                            Toast.makeText(context, "桌面歌词已锁定，点击右侧小锁图标可解锁", Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier.size(26.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.LockOpen,
+                                            contentDescription = "锁定桌面歌词",
+                                            tint = Color.White.copy(alpha = 0.80f),
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { SystemLyricBridge.setFloatingCapsuleEnabled(false) },
+                                        modifier = Modifier.size(26.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Close,
+                                            contentDescription = "关闭桌面歌词",
+                                            tint = Color.White.copy(alpha = 0.80f),
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.10f), thickness = 0.5.dp)
+                            Spacer(modifier = Modifier.height(5.dp))
+                        }
+                    }
+
+                    // 2. 桌面歌词实时逐字流光主显示区
+                    val textAlign = if (state.desktopAlignment == 1) TextAlign.Start else TextAlign.Center
+                    val colAlign = if (state.desktopAlignment == 1) Alignment.Start else Alignment.CenterHorizontally
+
                     Column(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = colAlign
                     ) {
                         when (state.desktopLineMode) {
@@ -340,7 +400,6 @@ fun FloatingLyricOverlay(
                             }
 
                             DesktopLyricLineMode.DUAL_ALTERNATING -> {
-                                // KTV 奇偶双行交替展示当前句与下一句预读
                                 val isEvenLine = safeIdx % 2 == 0
                                 val topLine = if (isEvenLine) currentLine else nextLine
                                 val bottomLine = if (isEvenLine) nextLine else currentLine
@@ -356,7 +415,7 @@ fun FloatingLyricOverlay(
                                     textShadow = textShadow,
                                     textAlign = TextAlign.Start
                                 )
-                                Spacer(modifier = Modifier.height(3.dp))
+                                Spacer(modifier = Modifier.height(2.dp))
                                 DesktopKrcKaraokeLineText(
                                     line = bottomLine,
                                     fallbackText = "♪ • • •",
@@ -390,12 +449,12 @@ fun FloatingLyricOverlay(
                                     else -> ""
                                 }
                                 if (subLineText.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Spacer(modifier = Modifier.height(2.dp))
                                     Text(
                                         text = subLineText,
                                         style = MaterialTheme.typography.bodySmall.copy(
                                             color = unplayedColor.copy(alpha = 0.85f),
-                                            fontSize = (state.desktopFontSize - 4f).coerceAtLeast(11.5f).sp,
+                                            fontSize = (state.desktopFontSize - 3.8f).coerceAtLeast(11.5f).sp,
                                             fontWeight = FontWeight.Medium,
                                             shadow = textShadow
                                         ),
@@ -409,195 +468,207 @@ fun FloatingLyricOverlay(
                         }
                     }
 
-                    // 锁定状态下在右侧保留一个微透明防误触解锁小按钮
-                    if (state.floatingCapsuleLocked) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Surface(
-                            shape = CircleShape,
-                            color = Color.Black.copy(alpha = 0.35f),
-                            modifier = Modifier
-                                .size(26.dp)
-                                .softClickable {
-                                    SystemLyricBridge.setFloatingCapsuleLocked(false)
-                                    showHudControls = true
-                                    Toast.makeText(context, "桌面歌词已解锁", Toast.LENGTH_SHORT).show()
-                                }
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Lock,
-                                    contentDescription = "解锁桌面歌词",
-                                    tint = VipGold.copy(alpha = 0.9f),
-                                    modifier = Modifier.size(13.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // 3. 展开式桌面歌词多样化个性定制抽屉（配色、行模式、字号、对齐、底框透明度）
-                AnimatedVisibility(
-                    visible = showHudControls && showStyleSubPanel && !state.floatingCapsuleLocked,
-                    enter = expandVertically() + fadeIn(tween(150)),
-                    exit = shrinkVertically() + fadeOut(tween(120))
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    // 3. 展开式桌面歌词个性定制面板（配色、行模式、字号、窗口宽度、底框透明度）
+                    AnimatedVisibility(
+                        visible = showHudControls && showStyleSubPanel && !state.floatingCapsuleLocked,
+                        enter = expandVertically() + fadeIn(tween(140)),
+                        exit = shrinkVertically() + fadeOut(tween(110))
                     ) {
-                        HorizontalDivider(color = Color.White.copy(alpha = 0.10f), thickness = 0.5.dp)
-
-                        // 配色方案快速切换圆点
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(top = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text("配色:", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp)
-                            DesktopLyricColorScheme.entries.forEach { item ->
-                                val selected = state.desktopColorScheme == item
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (selected) Color(item.playedStartHex).copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f),
-                                    modifier = Modifier
-                                        .border(
-                                            width = if (selected) 1.dp else 0.dp,
-                                            color = if (selected) Color(item.playedStartHex) else Color.Transparent,
-                                            shape = RoundedCornerShape(10.dp)
-                                        )
-                                        .softClickable { SystemLyricBridge.setDesktopColorScheme(item) }
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            HorizontalDivider(color = Color.White.copy(alpha = 0.10f), thickness = 0.5.dp)
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("配色:", color = Color.White.copy(alpha = 0.7f), fontSize = 10.5.sp)
+                                DesktopLyricColorScheme.entries.forEach { item ->
+                                    val selected = state.desktopColorScheme == item
+                                    Surface(
+                                        shape = RoundedCornerShape(9.dp),
+                                        color = if (selected) Color(item.playedStartHex).copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f),
+                                        modifier = Modifier.softClickable { SystemLyricBridge.setDesktopColorScheme(item) }
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(10.dp)
-                                                .clip(CircleShape)
-                                                .background(
-                                                    Brush.linearGradient(
-                                                        listOf(Color(item.playedStartHex), Color(item.playedEndHex))
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(9.dp)
+                                                    .clip(CircleShape)
+                                                    .background(
+                                                        Brush.linearGradient(
+                                                            listOf(Color(item.playedStartHex), Color(item.playedEndHex))
+                                                        )
                                                     )
-                                                )
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(
-                                            text = item.label,
-                                            color = Color.White,
-                                            fontSize = 10.5.sp,
-                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                                        )
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = item.label,
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                                            )
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        // 行数模式 + 对齐 + 字号调节
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                DesktopLyricLineMode.entries.forEach { mode ->
-                                    val selected = state.desktopLineMode == mode
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    DesktopLyricLineMode.entries.forEach { mode ->
+                                        val selected = state.desktopLineMode == mode
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = if (selected) playedStartColor else Color.White.copy(alpha = 0.10f),
+                                            modifier = Modifier.softClickable { SystemLyricBridge.setDesktopLineMode(mode) }
+                                        ) {
+                                            Text(
+                                                text = mode.label,
+                                                color = if (selected) Color(0xFF06101E) else Color.White.copy(alpha = 0.85f),
+                                                fontSize = 9.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
                                     Surface(
                                         shape = RoundedCornerShape(8.dp),
-                                        color = if (selected) playedStartColor else Color.White.copy(alpha = 0.10f),
-                                        modifier = Modifier.softClickable { SystemLyricBridge.setDesktopLineMode(mode) }
+                                        color = Color.White.copy(alpha = 0.10f),
+                                        modifier = Modifier.softClickable {
+                                            SystemLyricBridge.setDesktopAlignment(if (state.desktopAlignment == 0) 1 else 0)
+                                        }
+                                    ) {
+                                        Icon(
+                                            imageVector = if (state.desktopAlignment == 0) Icons.Rounded.FormatAlignCenter else Icons.AutoMirrored.Rounded.FormatAlignLeft,
+                                            contentDescription = "切换对齐",
+                                            tint = Color.White,
+                                            modifier = Modifier
+                                                .padding(4.5.dp)
+                                                .size(13.dp)
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color.White.copy(alpha = 0.10f),
+                                        modifier = Modifier.softClickable {
+                                            SystemLyricBridge.setDesktopFontSize(state.desktopFontSize - 1.5f)
+                                        }
                                     ) {
                                         Text(
-                                            text = mode.label,
-                                            color = if (selected) Color(0xFF06101E) else Color.White.copy(alpha = 0.85f),
+                                            text = "A-",
+                                            color = Color.White,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color.White.copy(alpha = 0.10f),
+                                        modifier = Modifier.softClickable {
+                                            SystemLyricBridge.setDesktopFontSize(state.desktopFontSize + 1.5f)
+                                        }
+                                    ) {
+                                        Text(
+                                            text = "A+",
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                                         )
                                     }
                                 }
                             }
 
                             Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color.White.copy(alpha = 0.10f),
-                                    modifier = Modifier.softClickable {
-                                        SystemLyricBridge.setDesktopAlignment(if (state.desktopAlignment == 0) 1 else 0)
-                                    }
-                                ) {
-                                    Icon(
-                                        imageVector = if (state.desktopAlignment == 0) Icons.Rounded.FormatAlignCenter else Icons.AutoMirrored.Rounded.FormatAlignLeft,
-                                        contentDescription = "切换对齐",
-                                        tint = Color.White,
-                                        modifier = Modifier
-                                            .padding(5.dp)
-                                            .size(14.dp)
-                                    )
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color.White.copy(alpha = 0.10f),
-                                    modifier = Modifier.softClickable {
-                                        SystemLyricBridge.setDesktopFontSize(state.desktopFontSize - 1.5f)
-                                    }
-                                ) {
-                                    Text(
-                                        text = "A-",
-                                        color = Color.White,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                    )
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = Color.White.copy(alpha = 0.10f),
-                                    modifier = Modifier.softClickable {
-                                        SystemLyricBridge.setDesktopFontSize(state.desktopFontSize + 1.5f)
-                                    }
-                                ) {
-                                    Text(
-                                        text = "A+",
-                                        color = Color.White,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                    )
-                                }
+                                Text(
+                                    text = if (state.desktopBgAlpha < 0.08f) "无框透明" else "透度 ${(state.desktopBgAlpha * 100).toInt()}%",
+                                    color = Color.White.copy(alpha = 0.75f),
+                                    fontSize = 10.sp,
+                                    modifier = Modifier.width(64.dp)
+                                )
+                                Slider(
+                                    value = state.desktopBgAlpha,
+                                    onValueChange = { SystemLyricBridge.setDesktopBgAlpha(it) },
+                                    valueRange = 0f..0.95f,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = playedStartColor,
+                                        activeTrackColor = playedStartColor,
+                                        inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                                    ),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "窗宽 ${(state.desktopWidthFraction * 100).toInt()}%",
+                                    color = Color.White.copy(alpha = 0.75f),
+                                    fontSize = 10.sp,
+                                    modifier = Modifier.width(56.dp)
+                                )
+                                Slider(
+                                    value = state.desktopWidthFraction,
+                                    onValueChange = { SystemLyricBridge.setDesktopWidthFraction(it) },
+                                    valueRange = 0.68f..0.96f,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = playedStartColor,
+                                        activeTrackColor = playedStartColor,
+                                        inactiveTrackColor = Color.White.copy(alpha = 0.2f)
+                                    ),
+                                    modifier = Modifier
+                                        .weight(0.85f)
+                                        .height(24.dp)
+                                )
                             }
                         }
+                    }
+                }
 
-                        // 背景透明度滑杆（支持 0% 全透明无框字）
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (state.desktopBgAlpha < 0.08f) "背景: 纯净无框" else "底框透度 ${(state.desktopBgAlpha * 100).toInt()}%",
-                                color = Color.White.copy(alpha = 0.75f),
-                                fontSize = 10.5.sp,
-                                modifier = Modifier.width(86.dp)
-                            )
-                            Slider(
-                                value = state.desktopBgAlpha,
-                                onValueChange = { SystemLyricBridge.setDesktopBgAlpha(it) },
-                                valueRange = 0f..0.95f,
-                                colors = SliderDefaults.colors(
-                                    thumbColor = playedStartColor,
-                                    activeTrackColor = playedStartColor,
-                                    inactiveTrackColor = Color.White.copy(alpha = 0.2f)
-                                ),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(26.dp)
+                // 锁定状态下在右侧保留一个微透明防误触解锁小按钮
+                if (state.floatingCapsuleLocked) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xCC0A101D),
+                        modifier = Modifier
+                            .size(30.dp)
+                            .border(1.dp, VipGold.copy(alpha = 0.65f), CircleShape)
+                            .softClickable {
+                                SystemLyricBridge.setFloatingCapsuleLocked(false)
+                                showHudControls = true
+                                Toast.makeText(context, "桌面歌词已解锁", Toast.LENGTH_SHORT).show()
+                            }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.Lock,
+                                contentDescription = "解锁桌面歌词",
+                                tint = VipGold,
+                                modifier = Modifier.size(14.dp)
                             )
                         }
                     }
@@ -636,9 +707,19 @@ private fun DesktopKrcKaraokeLineText(
                         }
                     }
                     currentPositionMs > word.startTimeMs -> {
+                        val subP = if (word.durationMs > 0L) {
+                            ((currentPositionMs - word.startTimeMs).toFloat() / word.durationMs.toFloat()).coerceIn(0f, 1f)
+                        } else 1f
+                        val lStop = (subP - 0.15f).coerceAtLeast(0f)
+                        val rStop = (subP + 0.15f).coerceAtMost(1f)
                         withStyle(
                             SpanStyle(
-                                color = playedEndColor,
+                                brush = Brush.horizontalGradient(
+                                    0.0f to playedStartColor,
+                                    lStop to playedEndColor,
+                                    rStop to unplayedColor,
+                                    1.0f to unplayedColor
+                                ),
                                 fontWeight = FontWeight.ExtraBold,
                                 shadow = textShadow
                             )

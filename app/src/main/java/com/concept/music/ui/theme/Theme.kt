@@ -167,6 +167,11 @@ private val DarkColorScheme = darkColorScheme(
     background = ConceptBackgroundDark,
     surface = ConceptSurfaceDark,
     surfaceVariant = ConceptSurfaceVariantDark,
+    surfaceContainerLowest = Color(0xFF080C14),
+    surfaceContainerLow = Color(0xFF111826),
+    surfaceContainer = ConceptCardDark,
+    surfaceContainerHigh = ConceptElevatedCardDark,
+    surfaceContainerHighest = Color(0xFF24314A),
     onBackground = TextPrimaryDark,
     onSurface = TextPrimaryDark,
     onSurfaceVariant = TextSecondaryDark,
@@ -185,6 +190,11 @@ private val LightColorScheme = lightColorScheme(
     background = ConceptBackgroundLight,
     surface = ConceptSurfaceLight,
     surfaceVariant = ConceptSurfaceVariantLight,
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF8FBFF),
+    surfaceContainer = Color(0xF7FFFFFF),
+    surfaceContainerHigh = ConceptElevatedCardLight,
+    surfaceContainerHighest = Color(0xFFDCE8F8),
     onBackground = TextPrimaryLight,
     onSurface = TextPrimaryLight,
     onSurfaceVariant = TextSecondaryLight,
@@ -873,13 +883,20 @@ fun ConceptMusicTheme(
         }
     }
 
-    CompositionLocalProvider(LocalIsDarkTheme provides isDark) {
+    CompositionLocalProvider(
+        LocalIsDarkTheme provides isDark,
+        androidx.compose.material3.LocalContentColor provides colorScheme.onSurface
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = Typography,
-            shapes = ConceptShapes,
-            content = content
-        )
+            shapes = ConceptShapes
+        ) {
+            CompositionLocalProvider(
+                androidx.compose.material3.LocalContentColor provides colorScheme.onSurface,
+                content = content
+            )
+        }
     }
 }
 

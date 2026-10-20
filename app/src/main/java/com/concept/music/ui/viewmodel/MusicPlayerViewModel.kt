@@ -52,6 +52,17 @@ enum class CoverStyle(val label: String) {
     SQUARE("圆角方形")
 }
 
+/**
+ * 封面播放页五款高定背景视觉模式
+ */
+enum class PlayerBackgroundStyle(val label: String, val subtitle: String) {
+    COVER_BLUR("封面虚化", "经典专辑封面柔和高斯虚化"),
+    FLUID_AURORA("流体极光", "封面取色多核动态流体渐变"),
+    RHYTHM_HALO("律动光晕", "随音乐节奏呼吸扩散的同心光环"),
+    STARLIGHT_NEBULA("暗夜星尘", "深邃星云微光与漂浮萤火微粒"),
+    DEEP_OLED("极简纯黑", "纯粹OLED暗黑画布与微弱背光")
+}
+
 enum class LyricAlignment(val label: String) {
     LEFT("居左"),
     CENTER("居中"),
@@ -59,6 +70,7 @@ enum class LyricAlignment(val label: String) {
 }
 
 enum class LyricHighlightTheme(val label: String, val primaryHex: Long, val secondaryHex: Long) {
+    DYNAMIC_COVER("封面随动", 0xFF3898FF, 0xFF00E5FF),
     ICE_BLUE("概念冰蓝", 0xFF3898FF, 0xFF00E5FF),
     PURE_WHITE("流光皓白", 0xFFFFFFFF, 0xFFB8DCFF),
     VIP_GOLD("鎏金岁华", 0xFFFFC857, 0xFFFF9F1C),
@@ -81,9 +93,12 @@ data class PlayerUiState(
     val currentLyric: LyricData = LyricData(),
     val currentLyricIndex: Int = -1,
     val coverStyle: CoverStyle = CoverStyle.VINYL,
+    val playerBackgroundStyle: PlayerBackgroundStyle = PlayerBackgroundStyle.COVER_BLUR,
+    val dynamicCoverAccentEnabled: Boolean = true,
     val showTranslation: Boolean = true,
     val showPhonetic: Boolean = true,
     val lyricFontSize: Float = 22f,
+    val lyricTranslationScale: Float = 0.82f,
     val lyricAlignment: LyricAlignment = LyricAlignment.LEFT,
     val lyricWordByWord: Boolean = true,
     val lyricBlurEnabled: Boolean = true,
@@ -93,6 +108,7 @@ data class PlayerUiState(
     val lyricHighlightTheme: LyricHighlightTheme = LyricHighlightTheme.ICE_BLUE,
     val lyricBackgroundDim: Float = 0.72f,
     val lyricKeepScreenOn: Boolean = true,
+    val smoothPlayPauseFade: Boolean = true,
     val playbackSpeed: Float = 1.0f,
     val playbackPitch: Float = 1.0f,
     val linkPitchToSpeed: Boolean = false,
@@ -141,6 +157,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private var persistStateJob: Job? = null
     private var climaxFadeInJob: Job? = null
     private var lastClimaxSkipSongId: String = ""
+    private var lastErrorRetrySongId: String = ""
+    private var hasTriggeredStartupAutoPlay: Boolean = false
 
     private var currentUser: String? = VipManager.accounts.state.value.currentId
     internal val songsByMediaId = mutableMapOf<String, Song>()
@@ -184,6 +202,18 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            val failedSong = mutableState.value.currentSong
+            if (failedSong != null && lastErrorRetrySongId != failedSong.id) {
+                lastErrorRetrySongId = failedSong.id
+                val retryPos = mutableState.value.currentPositionMs
+                VipManager.music.clearPlaybackCache(failedSong.hash)
+                playSong(
+                    song = failedSong.copy(playUrl = ""),
+                    queue = mutableState.value.playlistQueue,
+                    seekToPositionMs = retryPos
+                )
+                return
+            }
             mutableState.value = mutableState.value.copy(
                 loading = false,
                 isPlaying = false,
@@ -283,8 +313,13 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                         player.addListener(listener)
                         val st = mutableState.value
                         player.playbackParameters = PlaybackParameters(st.playbackSpeed, st.playbackPitch)
+                        PlaybackService.updateHandleAudioBecomingNoisy(st.pauseOnHeadsetDisconnect)
                         syncPlayer()
                         startProgressUpdates()
+                        if (!hasTriggeredStartupAutoPlay && st.autoPlayOnStartup && st.currentSong != null && !player.isPlaying) {
+                            hasTriggeredStartupAutoPlay = true
+                            playSong(st.currentSong, st.playlistQueue, seekToPositionMs = st.currentPositionMs)
+                        }
                     }.onFailure { error ->
                         mutableState.value = mutableState.value.copy(error = error.message ?: "播放器连接失败")
                     }
@@ -316,6 +351,14 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             val raw = prefs.getString("cover_style", CoverStyle.VINYL.name) ?: CoverStyle.VINYL.name
             if (raw == "SQUARE") CoverStyle.SQUARE else CoverStyle.VINYL
         }.getOrDefault(CoverStyle.VINYL)
+        val savedBgStyle = runCatching {
+            val rawBg = prefs.getString("player_bg_style", PlayerBackgroundStyle.COVER_BLUR.name)
+                ?: PlayerBackgroundStyle.COVER_BLUR.name
+            PlayerBackgroundStyle.valueOf(rawBg)
+        }.getOrDefault(PlayerBackgroundStyle.COVER_BLUR)
+        val savedDynamicAccent = prefs.getBoolean("dynamic_cover_accent_enabled", true)
+        val savedTransScale = prefs.getFloat("lyric_translation_scale", 0.82f).coerceIn(0.70f, 1.0f)
+        val savedSmoothFade = prefs.getBoolean("smooth_play_pause_fade", true)
         val savedPlayMode = runCatching {
             PlayMode.valueOf(prefs.getString("play_mode", PlayMode.REPEAT_ALL.name) ?: PlayMode.REPEAT_ALL.name)
         }.getOrDefault(PlayMode.REPEAT_ALL)
@@ -391,6 +434,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         mutableState.value = mutableState.value.copy(
             coverStyle = savedCover,
+            playerBackgroundStyle = savedBgStyle,
+            dynamicCoverAccentEnabled = savedDynamicAccent,
+            lyricTranslationScale = savedTransScale,
+            smoothPlayPauseFade = savedSmoothFade,
             playMode = savedPlayMode,
             preferredQuality = savedQuality,
             currentQualityLabel = effectiveRestoredQuality.label,
@@ -442,6 +489,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 val queueJson = gson.toJson(cleanQueue)
                 prefs.edit()
                     .putString("cover_style", snapshot.coverStyle.name)
+                    .putString("player_bg_style", snapshot.playerBackgroundStyle.name)
+                    .putBoolean("dynamic_cover_accent_enabled", snapshot.dynamicCoverAccentEnabled)
+                    .putFloat("lyric_translation_scale", snapshot.lyricTranslationScale)
+                    .putBoolean("smooth_play_pause_fade", snapshot.smoothPlayPauseFade)
                     .putString("play_mode", snapshot.playMode.name)
                     .putString("preferred_quality_v2", snapshot.preferredQuality.name)
                     .putBoolean("show_translation", snapshot.showTranslation)
@@ -522,11 +573,16 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         resolveJob = viewModelScope.launch {
             try {
-                val prefQuality = mutableState.value.preferredQuality
+                val prefQuality = resolveNetworkAwarePreferredQuality(mutableState.value.preferredQuality)
                 val useAccompany = mutableState.value.accompanyModeEnabled
                 val playQuality = if (prefQuality in song.effectiveQualities) prefQuality else song.highestQuality
                 val playbackResult = VipManager.music.resolvePlayback(song, playQuality, useAccompaniment = useAccompany)
-                val url = if (useAccompany) playbackResult.url else (song.playUrl.takeIf { it.startsWith("http") } ?: playbackResult.url)
+                val url = playbackResult.url.takeIf { it.startsWith("http") }
+                    ?: song.playUrl.takeIf { it.startsWith("http") }
+                    ?: playbackResult.url
+                if (lastErrorRetrySongId != song.id) {
+                    lastErrorRetrySongId = ""
+                }
 
                 if (VipManager.accounts.state.value.currentId != userId) return@launch
 
@@ -958,8 +1014,43 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         prefetchNextSong(queue, newCurrentIndex)
     }
 
+    private fun resolveNetworkAwarePreferredQuality(preferred: AudioQuality): AudioQuality {
+        if (!mutableState.value.wifiOnlyLossless || preferred <= AudioQuality.HIGH) {
+            return preferred
+        }
+        return runCatching {
+            val cm = getApplication<Application>().getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+                as? android.net.ConnectivityManager ?: return@runCatching preferred
+            val net = cm.activeNetwork ?: return@runCatching preferred
+            val caps = cm.getNetworkCapabilities(net) ?: return@runCatching preferred
+            val isMeteredCellular = caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) &&
+                !caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
+            if (isMeteredCellular) AudioQuality.HIGH else preferred
+        }.getOrDefault(preferred)
+    }
+
     fun setCoverStyle(style: CoverStyle) {
         mutableState.value = mutableState.value.copy(coverStyle = style)
+        persistPlaybackStateAsync()
+    }
+
+    fun setPlayerBackgroundStyle(style: PlayerBackgroundStyle) {
+        mutableState.value = mutableState.value.copy(playerBackgroundStyle = style)
+        persistPlaybackStateAsync()
+    }
+
+    fun setDynamicCoverAccentEnabled(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(dynamicCoverAccentEnabled = enabled)
+        persistPlaybackStateAsync()
+    }
+
+    fun setLyricTranslationScale(scale: Float) {
+        mutableState.value = mutableState.value.copy(lyricTranslationScale = scale.coerceIn(0.70f, 1.0f))
+        persistPlaybackStateAsync()
+    }
+
+    fun setSmoothPlayPauseFade(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(smoothPlayPauseFade = enabled)
         persistPlaybackStateAsync()
     }
 
@@ -1032,6 +1123,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     fun setPauseOnHeadsetDisconnect(enabled: Boolean) {
         mutableState.value = mutableState.value.copy(pauseOnHeadsetDisconnect = enabled)
+        PlaybackService.updateHandleAudioBecomingNoisy(enabled)
         persistPlaybackStateAsync()
     }
 
@@ -1493,6 +1585,14 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             val remainTrackMs = dur - pos
             if (remainTrackMs in 1L..5_000L) {
                 player.volume = (remainTrackMs / 5_000f).coerceIn(0.08f, 1f)
+            }
+        } else if (st.crossfadeSeconds > 0 && !st.climaxModeEnabled && dur > 12_000L && isPlayingNow && climaxFadeInJob?.isActive != true) {
+            val fadeWindowMs = st.crossfadeSeconds * 1000L
+            val remainTrackMs = dur - pos
+            if (remainTrackMs in 1L..fadeWindowMs) {
+                player.volume = (remainTrackMs.toFloat() / fadeWindowMs.toFloat()).coerceIn(0.15f, 1f)
+            } else if (pos < 1_500L && st.crossfadeSeconds >= 2) {
+                player.volume = (0.35f + 0.65f * (pos.toFloat() / 1_500f)).coerceIn(0.35f, 1f)
             }
         }
 

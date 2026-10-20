@@ -1,5 +1,9 @@
 package com.concept.music.ui.settings
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -36,8 +40,10 @@ import com.concept.music.ui.theme.*
 import com.concept.music.ui.viewmodel.CoverStyle
 import com.concept.music.ui.viewmodel.LyricAlignment
 import com.concept.music.ui.viewmodel.MusicPlayerViewModel
+import com.concept.music.ui.viewmodel.PlayerBackgroundStyle
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -50,9 +56,12 @@ fun SettingsScreen(
     val uiState by viewModel.uiState.collectAsState()
     val preferredQuality = uiState.preferredQuality
     val coverStyle = uiState.coverStyle
+    val playerBackgroundStyle = uiState.playerBackgroundStyle
+    val dynamicCoverAccentEnabled = uiState.dynamicCoverAccentEnabled
     val showTranslation = uiState.showTranslation
     val showPhonetic = uiState.showPhonetic
     val lyricFontSize = uiState.lyricFontSize
+    val lyricTranslationScale = uiState.lyricTranslationScale
     val lyricAlignment = uiState.lyricAlignment
     val lyricWordByWord = uiState.lyricWordByWord
     val lyricBlurEnabled = uiState.lyricBlurEnabled
@@ -68,6 +77,7 @@ fun SettingsScreen(
     val wifiOnlyLossless = uiState.wifiOnlyLossless
     val pauseOnHeadsetDisconnect = uiState.pauseOnHeadsetDisconnect
     val autoPlayOnStartup = uiState.autoPlayOnStartup
+    val smoothPlayPauseFade = uiState.smoothPlayPauseFade
 
     val cacheSizeBytes by AudioCacheManager.cacheSizeBytes.collectAsState()
     val pinnedSongs by AudioCacheManager.pinnedSongIds.collectAsState()
@@ -121,7 +131,7 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
                 contentPadding = PaddingValues(bottom = 140.dp, top = 8.dp)
             ) {
-                // 1. 视觉主题与双封面播放样式
+                // 1. 视觉主题、双封面样式、背景意境与智能取色
                 item {
                     SettingsSectionCard(
                         title = "外观与播放样式",
@@ -155,6 +165,7 @@ fun SettingsScreen(
                                 Surface(
                                     shape = RoundedCornerShape(14.dp),
                                     color = if (selected) ConceptPrimary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+                                    contentColor = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(14.dp))
@@ -227,6 +238,44 @@ fun SettingsScreen(
                                 )
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Text(
+                            text = "播放页背景意境效果",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                        )
+                        Text(
+                            text = "可自由切换封面高斯虚化、流体极光、律动光晕、暗夜星尘与极简纯黑",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            PlayerBackgroundStyle.entries.forEach { bgStyle ->
+                                FilterChip(
+                                    selected = playerBackgroundStyle == bgStyle,
+                                    onClick = { viewModel.setPlayerBackgroundStyle(bgStyle) },
+                                    label = { Text(bgStyle.label, fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
+                                        selectedLabelColor = ConceptPrimary
+                                    )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingToggleRow(
+                            title = "封面智能动态取色",
+                            subtitle = "自动提取歌曲封面主色渲染播放键与彗星进度条，副歌高潮保持金色不变",
+                            checked = dynamicCoverAccentEnabled,
+                            onCheckedChange = { viewModel.setDynamicCoverAccentEnabled(it) }
+                        )
                     }
                 }
 
@@ -236,10 +285,10 @@ fun SettingsScreen(
                         title = "音质与蝰蛇声效",
                         icon = Icons.Rounded.HighQuality
                     ) {
-                        // 独立蝰蛇音效与专业均衡器入口卡
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = ConceptPrimary.copy(alpha = 0.12f),
+                            contentColor = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .softCardClickable(shape = RoundedCornerShape(16.dp), onClick = onOpenViperEffect)
@@ -256,13 +305,13 @@ fun SettingsScreen(
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Column {
                                         Text(
-                                            text = "蝰蛇音效与专业均衡器",
+                                            text = "蝰蛇音效与母带调音台",
                                             fontWeight = FontWeight.ExtraBold,
                                             fontSize = 14.sp,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
-                                            text = if (audioEffectState.isEnabled) "当前已启用：${audioEffectState.currentPreset.label}" else "25款酷狗分类音效 · 详细声学参数 · 10段专业均衡器",
+                                            text = if (audioEffectState.isEnabled) "当前已启用：${audioEffectState.currentPreset.label}" else "四大分区：蝰蛇声效库 · 声场调音 · 参量均衡器 · 环境伴音舱",
                                             fontSize = 11.sp,
                                             color = if (audioEffectState.isEnabled) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -279,7 +328,7 @@ fun SettingsScreen(
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                         )
                         Text(
-                            text = "优先按所选音质播放，无对应档位时自动择优",
+                            text = "优先按所选音质播放，无对应档位时自动多通道择优降级",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -312,7 +361,7 @@ fun SettingsScreen(
 
                         SettingToggleRow(
                             title = "移动网络省流",
-                            subtitle = "移动网络下播 320K，Wi-Fi 下恢复无损 / Hi-Res",
+                            subtitle = "移动网络下自动降级为 320K 高品，Wi-Fi 下恢复无损 / Hi-Res",
                             checked = wifiOnlyLossless,
                             onCheckedChange = { viewModel.setWifiOnlyLossless(it) }
                         )
@@ -321,9 +370,18 @@ fun SettingsScreen(
 
                         SettingToggleRow(
                             title = "智能音量均衡",
-                            subtitle = "平衡不同曲目音量差异，避免切歌忽大忽小",
+                            subtitle = "平衡不同曲目响度差异，避免切歌忽大忽小",
                             checked = volumeNormalization,
                             onCheckedChange = { viewModel.setVolumeNormalization(it) }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingToggleRow(
+                            title = "夜间小音量等响度听感补偿",
+                            subtitle = "根据人耳等响度曲线自动补偿极低频与高频空气泛音",
+                            checked = audioEffectState.equalLoudnessCompensation,
+                            onCheckedChange = { AudioEffectManager.setEqualLoudnessCompensation(it) }
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -339,7 +397,7 @@ fun SettingsScreen(
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                                 )
                                 Text(
-                                    text = if (crossfadeSeconds == 0) "已关闭，保持曲目原始衔接" else "切歌前后 ${crossfadeSeconds} 秒平滑过渡",
+                                    text = if (crossfadeSeconds == 0) "已关闭，保持曲目原始衔接" else "切歌时 ${crossfadeSeconds} 秒平滑渐变过渡",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -382,7 +440,7 @@ fun SettingsScreen(
                     ) {
                         SettingToggleRow(
                             title = "断开耳机自动暂停",
-                            subtitle = "拔出有线耳机或蓝牙断开时立即暂停播放",
+                            subtitle = "拔出有线耳机或蓝牙音频断开时立即暂停播放",
                             checked = pauseOnHeadsetDisconnect,
                             onCheckedChange = { viewModel.setPauseOnHeadsetDisconnect(it) }
                         )
@@ -391,14 +449,23 @@ fun SettingsScreen(
 
                         SettingToggleRow(
                             title = "启动时自动续播",
-                            subtitle = "启动后从上次播放位置继续播放",
+                            subtitle = "启动 App 后自动恢复上次播放队列并继续播放",
                             checked = autoPlayOnStartup,
                             onCheckedChange = { viewModel.setAutoPlayOnStartup(it) }
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingToggleRow(
+                            title = "播放/暂停柔音过渡",
+                            subtitle = "点击播放或暂停时平滑渐变音量，呵护耳膜",
+                            checked = smoothPlayPauseFade,
+                            onCheckedChange = { viewModel.setSmoothPlayPauseFade(it) }
                         )
                     }
                 }
 
-                // 4. 歌词页排版、景深模糊与桌面歌词设置
+                // 4. 歌词页排版、景深模糊与全局桌面歌词设置
                 item {
                     SettingsSectionCard(
                         title = "歌词页与桌面歌词",
@@ -416,6 +483,20 @@ fun SettingsScreen(
                             onValueChange = { viewModel.setLyricFontSize(it) },
                             valueRange = 16f..30f,
                             steps = 6,
+                            colors = SliderDefaults.colors(thumbColor = ConceptPrimary, activeTrackColor = ConceptPrimary)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("副歌词(翻译/音译)字号比例", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                            Text("${(lyricTranslationScale * 100).roundToInt()}%", color = ConceptPrimary, fontWeight = FontWeight.Bold)
+                        }
+                        Slider(
+                            value = lyricTranslationScale,
+                            onValueChange = { viewModel.setLyricTranslationScale(it) },
+                            valueRange = 0.65f..0.95f,
                             colors = SliderDefaults.colors(thumbColor = ConceptPrimary, activeTrackColor = ConceptPrimary)
                         )
 
@@ -482,14 +563,58 @@ fun SettingsScreen(
                         )
 
                         SettingToggleRow(
-                            title = "桌面歌词",
-                            subtitle = "启用多风格悬浮桌面歌词（支持6套配色、单双行、无框透明度与控播栏）",
+                            title = "全局桌面悬浮歌词",
+                            subtitle = "支持返回手机桌面全局悬浮显示、60fps零延迟拖动、锁定点击穿透与窗口宽度调节",
                             checked = desktopLyricEnabled,
                             onCheckedChange = { SystemLyricBridge.setFloatingCapsuleEnabled(it) }
                         )
 
                         if (desktopLyricEnabled) {
                             Spacer(modifier = Modifier.height(8.dp))
+                            if (!SystemLyricBridge.canDrawSystemOverlays(context)) {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = ConceptPrimary.copy(alpha = 0.14f),
+                                    contentColor = ConceptPrimary,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                                runCatching {
+                                                    val intent = Intent(
+                                                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                                        Uri.parse("package:${context.packageName}")
+                                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                    context.startActivity(intent)
+                                                }
+                                            }
+                                        }
+                                ) {
+                                    Text(
+                                        text = "点击授予「显示在其他应用上层」权限以开启真系统桌面悬浮窗 ›",
+                                        color = ConceptPrimary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("桌面歌词窗口宽度比例", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold))
+                                Text("${(systemLyricState.desktopWidthFraction * 100).roundToInt()}%", color = ConceptPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                            Slider(
+                                value = systemLyricState.desktopWidthFraction,
+                                onValueChange = { SystemLyricBridge.setDesktopWidthFraction(context, it) },
+                                valueRange = 0.65f..0.98f,
+                                colors = SliderDefaults.colors(thumbColor = ConceptPrimary, activeTrackColor = ConceptPrimary)
+                            )
+
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -524,14 +649,14 @@ fun SettingsScreen(
 
                         SettingToggleRow(
                             title = "状态栏歌词",
-                            subtitle = "向 Flyme / HyperOS / OriginOS 发送状态栏歌词",
+                            subtitle = "向 Flyme / HyperOS / OriginOS 发送状态栏歌词广播",
                             checked = statusBarLyricEnabled,
                             onCheckedChange = { SystemLyricBridge.setStatusBarBroadcastEnabled(context, it) }
                         )
                     }
                 }
 
-                // 5. 全自动概念版 VIP 权益守护与桌面组件
+                // 5. 全自动概念版 VIP 权益守护
                 item {
                     SettingsSectionCard(
                         title = "VIP 自动守护",
@@ -549,6 +674,7 @@ fun SettingsScreen(
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = if (guardianTodayDone) ConceptPrimary.copy(alpha = 0.12f) else VipGold.copy(alpha = 0.12f),
+                            contentColor = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -794,9 +920,9 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "• 音频引擎：Media3 ExoPlayer · 蝰蛇音效矩阵 · 10段专业均衡器\n" +
-                                "• 视觉体验：彗星流光进度条 · 景深高斯模糊歌词 · 120Hz 高刷动效\n" +
-                                "• 核心特性：副歌速刷 · 多风格桌面歌词 · 5款高定歌词海报 · VIP自动守护",
+                            text = "• 音频引擎：Media3 ExoPlayer · 四大分区蝰蛇调音台 · 实时声像/等响度 DSP\n" +
+                                "• 视觉体验：现代光学彗星拖尾 · 封面动态取色 · 5款可切换播放页背景\n" +
+                                "• 核心特性：真全局系统级桌面悬浮歌词 · 副歌速刷 · 5款高定歌词海报 · VIP自动守护",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 19.sp
@@ -824,6 +950,7 @@ private fun SettingToggleRow(
         Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
             Text(
                 text = title,
+                color = MaterialTheme.colorScheme.onSurface,
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
             )
             Spacer(modifier = Modifier.height(2.dp))
@@ -837,7 +964,7 @@ private fun SettingToggleRow(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(checkedThumbColor = thumbColor)
+            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = thumbColor)
         )
     }
 }
@@ -860,6 +987,7 @@ private fun SettingsSectionCard(
     Surface(
         shape = RoundedCornerShape(24.dp),
         color = conceptFloatingCardColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
         shadowElevation = 0.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -882,6 +1010,7 @@ private fun SettingsSectionCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = title,
+                    color = MaterialTheme.colorScheme.onSurface,
                     style = MaterialTheme.typography.titleSmall.copy(
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 15.sp

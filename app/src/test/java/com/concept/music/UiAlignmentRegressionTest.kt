@@ -4,7 +4,11 @@ import com.concept.music.data.kugou.*
 import com.concept.music.data.model.*
 import com.concept.music.ui.viewmodel.CoverStyle
 import com.concept.music.ui.viewmodel.LyricAlignment
+import com.concept.music.ui.viewmodel.LyricHighlightTheme
+import com.concept.music.ui.viewmodel.PlayerBackgroundStyle
 import com.concept.music.ui.viewmodel.PlayerUiState
+import com.concept.music.service.AudioEffectState
+import com.concept.music.service.SystemLyricState
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -31,6 +35,14 @@ class UiAlignmentRegressionTest {
         assertTrue(state.lyricBlurEnabled)
         assertTrue(state.lyricWordByWord)
         assertEquals("hot", state.commentType)
+        assertEquals(PlayerBackgroundStyle.COVER_BLUR, state.playerBackgroundStyle)
+        assertEquals(5, PlayerBackgroundStyle.entries.size)
+        assertTrue(state.dynamicCoverAccentEnabled)
+        assertEquals(0.80f, state.lyricTranslationScale, 0.01f)
+        assertEquals(LyricHighlightTheme.ICE_BLUE, state.lyricHighlightTheme)
+        assertTrue(LyricHighlightTheme.entries.contains(LyricHighlightTheme.DYNAMIC_COVER))
+        assertEquals(0.88f, SystemLyricState().desktopWidthFraction, 0.01f)
+        assertFalse(AudioEffectState().equalLoudnessCompensation)
     }
 
     @Test
