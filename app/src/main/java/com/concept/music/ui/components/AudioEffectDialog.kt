@@ -608,7 +608,7 @@ private fun AcousticMetricMiniBar(
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(animatedFrac)
+                    .fillMaxWidth(animatedFrac.coerceIn(0f, 1f))
                     .fillMaxHeight()
                     .clip(CircleShape)
                     .background(color)

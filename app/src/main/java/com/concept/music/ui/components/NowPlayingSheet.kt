@@ -2,7 +2,6 @@ package com.concept.music.ui.components
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BlurMaskFilter
 import android.graphics.drawable.BitmapDrawable
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -76,11 +75,8 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -357,9 +353,9 @@ fun NowPlayingSheet(
             val bgImageModel = remember(song.coverUrl) {
                 ImageRequest.Builder(context)
                     .data(song.coverUrl)
-                    .size(28, 28)
-                    .allowHardware(true)
-                    .crossfade(false)
+                    .size(24, 24)
+                    .allowHardware(false)
+                    .crossfade(true)
                     .build()
             }
             AsyncImage(
@@ -1221,7 +1217,8 @@ private fun MasterVinylTurntableView(
         ) {
             // 使用 Canvas 绘制黑胶底色、双束锥形丝绸光泽反射与精密声轨纹路
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val radius = size.minDimension / 2f
+                if (size.minDimension <= 2f) return@Canvas
+                val radius = (size.minDimension / 2f).coerceAtLeast(1f)
                 val center = Offset(size.width / 2f, size.height / 2f)
 
                 // 1. 深邃碳黑黑胶基底
@@ -1339,6 +1336,7 @@ private fun MasterVinylTurntableView(
                 .size(144.dp)
                 .align(Alignment.TopEnd)
         ) {
+            if (size.minDimension <= 2f) return@Canvas
             val pivot = Offset(size.width * 0.76f, size.height * 0.17f)
 
             // 唱臂底座外环阴影与金属轴承盘
@@ -1574,15 +1572,7 @@ private fun FramelessLyricPreviewWithFavoriteRow(
                                 }
                             }
                             currentPositionMs > word.startTimeMs -> {
-                                val prog = ((currentPositionMs - word.startTimeMs).toFloat() /
-                                    word.durationMs.coerceAtLeast(1L)).coerceIn(0f, 1f)
-                                val brush = Brush.horizontalGradient(
-                                    0.0f to Color.White,
-                                    (prog - 0.08f).coerceAtLeast(0f) to ConceptCyanAccent,
-                                    (prog + 0.08f).coerceAtMost(1f) to Color.White.copy(alpha = 0.52f),
-                                    1.0f to Color.White.copy(alpha = 0.52f)
-                                )
-                                withStyle(SpanStyle(brush = brush, fontWeight = FontWeight.ExtraBold)) {
+                                withStyle(SpanStyle(color = ConceptCyanAccent, fontWeight = FontWeight.ExtraBold)) {
                                     append(word.text)
                                 }
                             }
@@ -1896,10 +1886,7 @@ private fun CometTailProgressBar(
                         val w = size.width.toFloat().coerceAtLeast(1f)
                         val startF = (offset.x / w).coerceIn(0f, 1f)
                         onDragStart(startF)
-                        val released = tryAwaitRelease()
-                        if (released) {
-                            onDragEnd()
-                        } else {
+                        if (tryAwaitRelease()) {
                             onDragEnd()
                         }
                     }
@@ -1958,8 +1945,9 @@ private fun CometTailProgressBar(
         ) {
             val w = size.width
             val h = size.height
+            if (w <= 2f || h <= 2f) return@Canvas
             val centerY = h / 2f
-            val barH = trackHeightDp.toPx()
+            val barH = trackHeightDp.toPx().coerceIn(2f, h)
             val barRadius = CornerRadius(barH / 2f, barH / 2f)
             val topY = centerY - barH / 2f
 
@@ -1973,8 +1961,8 @@ private fun CometTailProgressBar(
 
             // 2. 副歌高潮区间微光标记（仅在底轨内嵌柔和流金层，无多余文字）
             if (climaxEndFrac > climaxStartFrac) {
-                val cStart = w * climaxStartFrac
-                val cWidth = (w * (climaxEndFrac - climaxStartFrac)).coerceAtLeast(6.dp.toPx())
+                val cStart = (w * climaxStartFrac).coerceIn(0f, w)
+                val cWidth = (w * (climaxEndFrac - climaxStartFrac)).coerceIn(2f, (w - cStart).coerceAtLeast(2f))
                 drawRoundRect(
                     color = VipGold.copy(alpha = if (highlightClimaxRange) 0.45f else 0.18f),
                     topLeft = Offset(cStart, topY),
@@ -1983,11 +1971,49 @@ private fun CometTailProgressBar(
                 )
             }
 
-            val headX = (w * fraction.coerceIn(0f, 1f)).coerceAtLeast(barH)
+            val headX = (w * fraction.coerceIn(0f, 1f)).coerceIn(barH.coerceAtMost(w), w)
             val tailLength = (w * 0.28f).coerceAtLeast(48.dp.toPx())
-            val tailStartX = (headX - tailLength).coerceAtLeast(0f)
+            val tailStartX = (headX - tailLength).coerceIn(0f, (headX - 1f).coerceAtLeast(0f))
+            val safeEndX = headX.coerceAtLeast(tailStartX + 1f)
 
-            // 3. 已播放主轨道基底（柔和渐变）
+            // 3. 彗星外溢星云辉光尾迹（纯 Compose 硬件加速多层渐变光晕，杜绝 BlurMaskFilter 驱动兼容隐患）
+            val pulseFactor = (if (isPlaying) cometPulse else 1f).coerceIn(0.75f, 1.25f)
+            val outerHaloH = (barH * (if (isInteracting) 2.25f else 1.85f) * pulseFactor).coerceIn(barH, h)
+            val outerHaloR = CornerRadius(outerHaloH / 2f, outerHaloH / 2f)
+            drawRoundRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        ConceptPrimary.copy(alpha = 0.24f),
+                        Color(0xFFFFB88C).copy(alpha = 0.48f),
+                        Color.White.copy(alpha = 0.72f)
+                    ),
+                    startX = tailStartX,
+                    endX = safeEndX
+                ),
+                topLeft = Offset(tailStartX, centerY - outerHaloH / 2f),
+                size = Size((headX - tailStartX).coerceAtLeast(barH), outerHaloH),
+                cornerRadius = outerHaloR
+            )
+
+            // 彗星头部径向星芒光晕
+            val headGlowR = (barH * (if (isInteracting) 2.1f else 1.65f) * pulseFactor).coerceAtLeast(4f)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.78f),
+                        Color(0xFFFFB88C).copy(alpha = 0.42f),
+                        ConceptPrimary.copy(alpha = 0.16f),
+                        Color.Transparent
+                    ),
+                    center = Offset(headX - barH * 0.25f, centerY),
+                    radius = headGlowR
+                ),
+                radius = headGlowR,
+                center = Offset(headX - barH * 0.25f, centerY)
+            )
+
+            // 4. 已播放主轨道基底（柔和渐变）
             drawRoundRect(
                 brush = Brush.horizontalGradient(
                     colors = listOf(
@@ -1997,57 +2023,24 @@ private fun CometTailProgressBar(
                         Color.White
                     ),
                     startX = 0f,
-                    endX = headX
+                    endX = headX.coerceAtLeast(1f)
                 ),
                 topLeft = Offset(0f, topY),
                 size = Size(headX, barH),
                 cornerRadius = barRadius
             )
 
-            // 4. 彗星外溢星云辉光尾迹 (使用 NativeCanvas BlurMaskFilter 营造超越图三的真光晕过渡)
-            val pulseFactor = if (isPlaying) cometPulse else 1f
-            val glowBlurPx = (if (isInteracting) 16.dp.toPx() else 10.dp.toPx()) * pulseFactor
-            drawIntoCanvas { canvas ->
-                val glowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                    maskFilter = BlurMaskFilter(glowBlurPx, BlurMaskFilter.Blur.NORMAL)
-                    shader = android.graphics.LinearGradient(
-                        tailStartX,
-                        centerY,
-                        headX + 6.dp.toPx(),
-                        centerY,
-                        intArrayOf(
-                            android.graphics.Color.TRANSPARENT,
-                            ConceptPrimary.copy(alpha = 0.35f).toArgb(),
-                            Color(0xFFFFB88C).copy(alpha = 0.72f).toArgb(),
-                            Color.White.copy(alpha = 0.95f).toArgb()
-                        ),
-                        floatArrayOf(0f, 0.45f, 0.82f, 1f),
-                        android.graphics.Shader.TileMode.CLAMP
-                    )
-                }
-                val glowSpreadY = barH * (if (isInteracting) 1.35f else 1.15f)
-                canvas.nativeCanvas.drawRoundRect(
-                    tailStartX,
-                    centerY - glowSpreadY,
-                    headX + 4.dp.toPx(),
-                    centerY + glowSpreadY,
-                    glowSpreadY,
-                    glowSpreadY,
-                    glowPaint
-                )
-            }
-
             // 5. 彗星高光核心内轨（由透明平滑汇聚至炽白彗星尖端，无生硬圆形滑块）
             drawRoundRect(
                 brush = Brush.horizontalGradient(
                     colors = listOf(
                         Color.Transparent,
-                        Color(0xFFFFB88C).copy(alpha = 0.75f),
+                        Color(0xFFFFB88C).copy(alpha = 0.78f),
                         Color(0xFFFFF3E6),
                         Color.White
                     ),
                     startX = tailStartX,
-                    endX = headX
+                    endX = safeEndX
                 ),
                 topLeft = Offset(tailStartX, topY),
                 size = Size((headX - tailStartX).coerceAtLeast(barH), barH),
@@ -2055,24 +2048,26 @@ private fun CometTailProgressBar(
             )
 
             // 6. 触摸按住拖动时的前端能量态变化：超新星能量光梭 (Supernova Energy Flare Capsule)
-            if (flareScale > 0.01f) {
-                val capsuleW = 7.dp.toPx() * (0.6f + 0.4f * flareScale)
-                val capsuleH = (barH + 10.dp.toPx() * flareScale)
-                val capLeft = (headX - capsuleW / 2f).coerceIn(0f, w - capsuleW)
+            val safeFlare = flareScale.coerceIn(0f, 1f)
+            if (safeFlare > 0.01f) {
+                val capsuleW = 7.dp.toPx() * (0.6f + 0.4f * safeFlare)
+                val capsuleH = (barH + 10.dp.toPx() * safeFlare)
+                val capLeft = (headX - capsuleW / 2f).coerceIn(0f, (w - capsuleW).coerceAtLeast(0f))
                 val capTop = centerY - capsuleH / 2f
+                val flareRadius = (18.dp.toPx() * safeFlare).coerceAtLeast(2f)
 
                 // 外围脉冲能量光环
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.55f * flareScale),
-                            ConceptCyanAccent.copy(alpha = 0.25f * flareScale),
+                            Color.White.copy(alpha = (0.55f * safeFlare).coerceIn(0f, 1f)),
+                            ConceptCyanAccent.copy(alpha = (0.25f * safeFlare).coerceIn(0f, 1f)),
                             Color.Transparent
                         ),
                         center = Offset(headX, centerY),
-                        radius = 18.dp.toPx() * flareScale
+                        radius = flareRadius
                     ),
-                    radius = 18.dp.toPx() * flareScale,
+                    radius = flareRadius,
                     center = Offset(headX, centerY)
                 )
 
@@ -2389,44 +2384,46 @@ private fun AnimatedPlayPauseCenterButton(
                 )
         ) {
             Box(contentAlignment = Alignment.Center) {
+                val safeMorph = morphProgress.coerceIn(0f, 1f)
                 Canvas(
                     modifier = Modifier
                         .size(28.dp)
                         .graphicsLayer {
                             // 切换瞬间产生灵动微旋与弹性缩放
-                            rotationZ = (1f - morphProgress) * -90f + 90f * (1f - morphProgress)
-                            val bounce = 1f - 0.14f * sin(morphProgress * PI.toFloat())
+                            rotationZ = (1f - safeMorph) * -28f
+                            val bounce = (1f - 0.12f * sin(safeMorph * PI.toFloat())).coerceIn(0.82f, 1.15f)
                             scaleX = bounce
                             scaleY = bounce
                         }
                 ) {
                     val w = size.width
                     val h = size.height
+                    if (w <= 2f || h <= 2f) return@Canvas
 
-                    // 1. 暂停双圆角竖柱（随 morphProgress 0 -> 1 展开）
-                    if (morphProgress > 0.05f) {
+                    // 1. 暂停双圆角竖柱（随 safeMorph 0 -> 1 展开，严格钳制 alpha 防止弹簧超调闪退）
+                    if (safeMorph > 0.05f) {
                         val barW = 4.5.dp.toPx()
-                        val barH = h * (0.55f + 0.25f * morphProgress)
+                        val barH = h * (0.55f + 0.25f * safeMorph)
                         val topY = (h - barH) / 2f
-                        val gapOffset = (w * 0.19f) * morphProgress
+                        val gapOffset = (w * 0.19f) * safeMorph
                         val centerX = w / 2f
 
                         drawRoundRect(
-                            color = Color.White.copy(alpha = morphProgress),
+                            color = Color.White.copy(alpha = safeMorph),
                             topLeft = Offset(centerX - gapOffset - barW / 2f, topY),
                             size = Size(barW, barH),
                             cornerRadius = CornerRadius(barW / 2f, barW / 2f)
                         )
                         drawRoundRect(
-                            color = Color.White.copy(alpha = morphProgress),
+                            color = Color.White.copy(alpha = safeMorph),
                             topLeft = Offset(centerX + gapOffset - barW / 2f, topY),
                             size = Size(barW, barH),
                             cornerRadius = CornerRadius(barW / 2f, barW / 2f)
                         )
                     }
 
-                    // 2. 播放圆润三角（随 morphProgress 1 -> 0 显现）
-                    val playAlpha = (1f - morphProgress).coerceIn(0f, 1f)
+                    // 2. 播放圆润三角（随 safeMorph 1 -> 0 显现）
+                    val playAlpha = (1f - safeMorph).coerceIn(0f, 1f)
                     if (playAlpha > 0.05f) {
                         val playPath = Path().apply {
                             moveTo(w * 0.26f, h * 0.18f)
@@ -2640,29 +2637,23 @@ private fun RedesignedDedicatedLyricPage(
 
                         val lineScale by animateFloatAsState(
                             targetValue = when {
-                                isCurrent -> 1.03f
+                                isCurrent -> 1.02f
                                 isScrubTarget -> 1.0f
-                                else -> (1.0f - distance * 0.025f).coerceAtLeast(0.88f)
+                                else -> (1.0f - distance * 0.024f).coerceAtLeast(0.89f)
                             },
-                            animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow),
+                            animationSpec = tween(durationMillis = 260),
                             label = "lyricLineScale"
                         )
 
                         // 动态阶梯景深高斯模糊（以当前唱诵行为清晰焦点，向外逐级递进高斯模糊；手动滑动时自动解除模糊以便快速查阅）
-                        val targetBlurVal = if (lyricBlurEnabled && !isUserScrubbing && !isCurrent) {
+                        val depthBlurVal = if (lyricBlurEnabled && !isUserScrubbing && !isCurrent) {
                             when (distance) {
-                                1 -> 1.1f * lyricBlurIntensity
-                                2 -> 2.4f * lyricBlurIntensity
-                                3 -> 3.8f * lyricBlurIntensity
-                                else -> 5.4f * lyricBlurIntensity
-                            }.coerceAtMost(8f)
+                                1 -> 0.8f * lyricBlurIntensity
+                                2 -> 1.6f * lyricBlurIntensity
+                                3 -> 2.4f * lyricBlurIntensity
+                                else -> 3.2f * lyricBlurIntensity
+                            }.coerceIn(0f, 5.5f)
                         } else 0f
-
-                        val animatedBlurVal by animateFloatAsState(
-                            targetValue = targetBlurVal,
-                            animationSpec = tween(durationMillis = 280),
-                            label = "lyricDepthBlur"
-                        )
 
                         val transformOriginX = when (lyricAlignment) {
                             LyricAlignment.LEFT -> 0f
@@ -2679,8 +2670,8 @@ private fun RedesignedDedicatedLyricPage(
                                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(transformOriginX, 0.5f)
                                 }
                                 .then(
-                                    if (supportsHardwareBlur && animatedBlurVal > 0.15f) {
-                                        Modifier.blur(animatedBlurVal.dp)
+                                    if (supportsHardwareBlur && depthBlurVal >= 0.5f) {
+                                        Modifier.blur(depthBlurVal.dp)
                                     } else Modifier
                                 )
                                 .softClickable(
@@ -2765,9 +2756,9 @@ private fun RedesignedDedicatedLyricPage(
                                                     lineHeight = (lyricFontSize + 11f).sp,
                                                     shadow = if (isLongNote) {
                                                         Shadow(
-                                                            color = activePrimaryColor.copy(alpha = 0.80f * wave),
+                                                            color = activePrimaryColor.copy(alpha = (0.80f * wave).coerceIn(0f, 1f)),
                                                             offset = Offset.Zero,
-                                                            blurRadius = 20f * wave + 6f
+                                                            blurRadius = (20f * wave + 6f).coerceAtLeast(1f)
                                                         )
                                                     } else null
                                                 ),
@@ -2794,11 +2785,11 @@ private fun RedesignedDedicatedLyricPage(
                                     val lineSize = if (isCurrent) (lyricFontSize + 3f).sp else lyricFontSize.sp
 
                                     // 在 Android 11 及以下设备使用软阴影模拟高斯模糊柔化效果
-                                    val fallbackBlurShadow = if (!supportsHardwareBlur && animatedBlurVal > 0.2f) {
+                                    val fallbackBlurShadow = if (!supportsHardwareBlur && depthBlurVal >= 0.5f) {
                                         Shadow(
-                                            color = Color.White.copy(alpha = distanceAlpha * 0.85f),
+                                            color = Color.White.copy(alpha = (distanceAlpha * 0.85f).coerceIn(0f, 1f)),
                                             offset = Offset.Zero,
-                                            blurRadius = animatedBlurVal * 3.5f
+                                            blurRadius = (depthBlurVal * 3.0f).coerceAtLeast(1f)
                                         )
                                     } else null
 
@@ -3126,9 +3117,10 @@ private fun LyricPageMinimalBottomBar(
                                 val w = size.width.toFloat().coerceAtLeast(1f)
                                 isDragging = true
                                 dragFraction = (offset.x / w).coerceIn(0f, 1f)
-                                tryAwaitRelease()
-                                onSeekTo((dragFraction * durationMs).toLong())
-                                isDragging = false
+                                if (tryAwaitRelease()) {
+                                    onSeekTo((dragFraction * durationMs).toLong())
+                                    isDragging = false
+                                }
                             }
                         )
                     }
@@ -3162,8 +3154,9 @@ private fun LyricPageMinimalBottomBar(
                 ) {
                     val w = size.width
                     val h = size.height
+                    if (w <= 2f || h <= 2f) return@Canvas
                     val cy = h / 2f
-                    val railH = railHeightDp.toPx()
+                    val railH = railHeightDp.toPx().coerceIn(1f, h)
                     val r = CornerRadius(railH / 2f, railH / 2f)
 
                     // 细丝底轨
@@ -3174,7 +3167,7 @@ private fun LyricPageMinimalBottomBar(
                         cornerRadius = r
                     )
 
-                    val activeW = (w * effectiveFraction).coerceIn(0f, w)
+                    val activeW = (w * effectiveFraction.coerceIn(0f, 1f)).coerceIn(0f, w)
                     if (activeW > 1f) {
                         drawRoundRect(
                             brush = Brush.horizontalGradient(
@@ -3184,7 +3177,7 @@ private fun LyricPageMinimalBottomBar(
                                     Color.White
                                 ),
                                 startX = 0f,
-                                endX = activeW
+                                endX = activeW.coerceAtLeast(1f)
                             ),
                             topLeft = Offset(0f, cy - railH / 2f),
                             size = Size(activeW, railH),
@@ -3195,7 +3188,7 @@ private fun LyricPageMinimalBottomBar(
                     // 晶钻胶囊游标（与封面页彗星拖尾截然不同的高雅几何细丝游标）
                     val cursorW = if (isDragging) 14.dp.toPx() else 9.dp.toPx()
                     val cursorH = if (isDragging) 9.dp.toPx() else 5.dp.toPx()
-                    val cursorLeft = (activeW - cursorW / 2f).coerceIn(0f, w - cursorW)
+                    val cursorLeft = (activeW - cursorW / 2f).coerceIn(0f, (w - cursorW).coerceAtLeast(0f))
                     drawRoundRect(
                         color = Color.White,
                         topLeft = Offset(cursorLeft, cy - cursorH / 2f),
@@ -3920,7 +3913,7 @@ fun QueueBottomSheet(
                                         shape = RoundedCornerShape(8.dp),
                                         color = textPrimary.copy(alpha = 0.06f),
                                         modifier = Modifier.softCardClickable {
-                                            val targetIdx = (currentIndex + 1).coerceIn(0, queue.lastIndex)
+                                            val targetIdx = (currentIndex + 1).coerceIn(0, queue.lastIndex.coerceAtLeast(0))
                                             onMoveQueueItem(index, targetIdx)
                                             Toast.makeText(context, "已将「${item.title}」移至下一首播放", Toast.LENGTH_SHORT).show()
                                         }

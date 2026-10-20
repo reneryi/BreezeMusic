@@ -352,12 +352,48 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val savedPauseHeadset = prefs.getBoolean("pause_on_headset_disconnect", true)
         val savedAutoPlay = prefs.getBoolean("auto_play_on_startup", false)
 
-        // 1. 先以 0ms 设置轻量级标量配置，绝不阻塞主线程首屏渲染
+        val queueJson = prefs.getString("saved_queue_json", null)
+        val restoredQueue: List<Song> = if (!queueJson.isNullOrBlank()) {
+            runCatching {
+                val type = object : TypeToken<List<Song>>() {}.type
+                gson.fromJson<List<Song>>(queueJson, type) ?: emptyList()
+            }.getOrDefault(emptyList())
+        } else emptyList()
+
+        fun sanitizePersistedSong(s: Song): Song {
+            if (!s.isHiRes) return s
+            val realHiRes = s.hashHiRes.isNotBlank() &&
+                !s.hashHiRes.equals(s.hash320, ignoreCase = true) &&
+                !s.hashHiRes.equals(s.hash128, ignoreCase = true)
+            if (realHiRes) return s
+            val flacFallback = s.hashFlac.ifBlank { s.hashHiRes }
+            val cleanedQualities = s.effectiveQualities.filter { it != AudioQuality.HI_RES }.let { q ->
+                if (flacFallback.isNotBlank() && AudioQuality.LOSSLESS !in q) q + AudioQuality.LOSSLESS else q
+            }.ifEmpty { listOf(AudioQuality.STANDARD) }
+            return s.copy(
+                hashHiRes = "",
+                hashFlac = flacFallback,
+                isHiRes = false,
+                isLossless = flacFallback.isNotBlank() || (s.isLossless && !s.isHiRes),
+                availableQualities = cleanedQualities
+            )
+        }
+        val sanitizedQueue = restoredQueue.map { sanitizePersistedSong(it) }
+        val savedIndex = prefs.getInt("saved_current_index", 0)
+            .coerceIn(0, (sanitizedQueue.size - 1).coerceAtLeast(0))
+        val restoredSong = sanitizedQueue.getOrNull(savedIndex)
+        val savedPosMs = prefs.getLong("saved_position_ms", 0L).coerceAtLeast(0L)
+
+        val effectiveRestoredQuality = if (restoredSong != null) {
+            restoredSong.actualPlayQuality?.takeIf { it in restoredSong.effectiveQualities }
+                ?: if (savedQuality in restoredSong.effectiveQualities) savedQuality else restoredSong.highestQuality
+        } else savedQuality
+
         mutableState.value = mutableState.value.copy(
             coverStyle = savedCover,
             playMode = savedPlayMode,
             preferredQuality = savedQuality,
-            currentQualityLabel = savedQuality.label,
+            currentQualityLabel = effectiveRestoredQuality.label,
             showTranslation = savedShowTrans,
             showPhonetic = savedShowPhonetic,
             lyricFontSize = savedFontSize,
@@ -376,75 +412,24 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             volumeNormalization = savedVolNorm,
             wifiOnlyLossless = savedWifiOnly,
             pauseOnHeadsetDisconnect = savedPauseHeadset,
-            autoPlayOnStartup = savedAutoPlay
+            autoPlayOnStartup = savedAutoPlay,
+            playlistQueue = sanitizedQueue,
+            currentIndex = savedIndex,
+            currentSong = restoredSong,
+            currentPositionMs = if (restoredSong != null) savedPosMs else 0L,
+            durationMs = restoredSong?.durationMs ?: 0L,
+            songDetail = restoredSong?.let { VipManager.music.songDetail(it) }
         )
 
-        // 2. 在后台 IO 线程异步解析持久化的播放队列 JSON，彻底消除刚打开 App 时主线程反序列化 150 首歌造成的掉帧
-        val queueJson = prefs.getString("saved_queue_json", null)
-        if (!queueJson.isNullOrBlank() && queueJson.startsWith("[")) {
-            viewModelScope.launch(Dispatchers.IO) {
-                val restoredQueue: List<Song> = runCatching {
-                    val type = object : TypeToken<List<Song>>() {}.type
-                    gson.fromJson<List<Song>>(queueJson, type) ?: emptyList()
-                }.getOrDefault(emptyList())
-
-                if (restoredQueue.isEmpty()) return@launch
-
-                fun sanitizePersistedSong(s: Song): Song {
-                    if (!s.isHiRes) return s
-                    val realHiRes = s.hashHiRes.isNotBlank() &&
-                        !s.hashHiRes.equals(s.hash320, ignoreCase = true) &&
-                        !s.hashHiRes.equals(s.hash128, ignoreCase = true)
-                    if (realHiRes) return s
-                    val flacFallback = s.hashFlac.ifBlank { s.hashHiRes }
-                    val cleanedQualities = s.effectiveQualities.filter { it != AudioQuality.HI_RES }.let { q ->
-                        if (flacFallback.isNotBlank() && AudioQuality.LOSSLESS !in q) q + AudioQuality.LOSSLESS else q
-                    }.ifEmpty { listOf(AudioQuality.STANDARD) }
-                    return s.copy(
-                        hashHiRes = "",
-                        hashFlac = flacFallback,
-                        isHiRes = false,
-                        isLossless = flacFallback.isNotBlank() || (s.isLossless && !s.isHiRes),
-                        availableQualities = cleanedQualities
-                    )
-                }
-
-                val sanitizedQueue = restoredQueue.map { sanitizePersistedSong(it) }
-                val savedIndex = prefs.getInt("saved_current_index", 0)
-                    .coerceIn(0, (sanitizedQueue.size - 1).coerceAtLeast(0))
-                val restoredSong = sanitizedQueue.getOrNull(savedIndex) ?: return@launch
-                val savedPosMs = prefs.getLong("saved_position_ms", 0L).coerceAtLeast(0L)
-
-                val effectiveRestoredQuality = restoredSong.actualPlayQuality?.takeIf { it in restoredSong.effectiveQualities }
-                    ?: if (savedQuality in restoredSong.effectiveQualities) savedQuality else restoredSong.highestQuality
-
-                // 若在恢复完成前用户还未主动点击播放新歌，则应用恢复的播放队列
-                if (mutableState.value.currentSong == null) {
-                    mutableState.value = mutableState.value.copy(
-                        playlistQueue = sanitizedQueue,
-                        currentIndex = savedIndex,
-                        currentSong = restoredSong,
-                        currentPositionMs = savedPosMs,
-                        durationMs = restoredSong.durationMs,
-                        currentQualityLabel = effectiveRestoredQuality.label,
-                        songDetail = VipManager.music.songDetail(restoredSong)
-                    )
-                    ConceptMusicWidgetUpdater.updateState(
-                        context = getApplication(),
-                        songTitle = restoredSong.title,
-                        artist = restoredSong.artist,
-                        isPlaying = false
-                    )
-                    delay(300L)
-                    if (mutableState.value.currentSong?.id == restoredSong.id) {
-                        loadLyric(restoredSong)
-                    }
-                    delay(900L)
-                    if (mutableState.value.currentSong?.id == restoredSong.id) {
-                        loadComments(isRefresh = true)
-                    }
-                }
-            }
+        if (restoredSong != null) {
+            loadLyric(restoredSong)
+            loadComments(isRefresh = true)
+            ConceptMusicWidgetUpdater.updateState(
+                context = getApplication(),
+                songTitle = restoredSong.title,
+                artist = restoredSong.artist,
+                isPlaying = false
+            )
         }
     }
 
@@ -1255,7 +1240,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val page = if (isRefresh) 1 else mutableState.value.commentsPage + 1
         val type = mutableState.value.commentType
 
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch {
             mutableState.value = mutableState.value.copy(commentsLoading = true)
             runCatching {
                 val list = VipManager.music.songComments(song, type = type, page = page, pageSize = 30)

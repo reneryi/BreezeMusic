@@ -807,8 +807,6 @@ object AudioEffectManager {
         val clarityBoostMidHigh = (s.vocalClarityStrength / 10) // 0..100 mB
         val warmthBoostLowMid = (s.analogWarmthStrength / 12)   // 0..83 mB
         val preampOffsetMb = (s.preampGainDb * 100f).toInt()
-        val headroomTrimMb = if (s.antiClippingEnabled) -60 else 0
-
         val effectiveBands = s.bandLevels.mapIndexed { idx, baseLevel ->
             val mod = when (idx) {
                 0 -> (if (s.bassCutoffHz <= 50) 40 else 0) + warmthBoostLowMid / 2
@@ -818,7 +816,9 @@ object AudioEffectManager {
                 4 -> (clarityBoostMidHigh * 2 / 3) - (warmthBoostLowMid / 2)
                 else -> 0
             }
-            (baseLevel + mod + preampOffsetMb + headroomTrimMb).coerceIn(-1000, 1000)
+            val rawTarget = baseLevel + mod + preampOffsetMb
+            val antiClipped = if (s.antiClippingEnabled && rawTarget > 180) rawTarget - 60 else rawTarget
+            antiClipped.coerceIn(-1000, 1000)
         }
 
         val hasEqSignal = effectiveBands.any { it != 0 }

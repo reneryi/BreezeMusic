@@ -163,7 +163,7 @@ class LibraryViewModel(
     fun refreshPlaylistsOnly() {
         val userId = accountState.value.currentId ?: return
         if (accountState.value.auth != AuthState.READY) return
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch {
             _libraryLoading.value = true
             _libraryError.value = null
             try {
@@ -194,7 +194,7 @@ class LibraryViewModel(
             _libraryLoading.value = true
             _libraryError.value = null
             musicLibraryJob?.cancel()
-            musicLibraryJob = viewModelScope.launch(Dispatchers.IO) {
+            musicLibraryJob = viewModelScope.launch {
                 val localHistory = VipManager.history.get(userId)
                 if (localHistory.isNotEmpty()) {
                     _librarySongs.value = localHistory
@@ -220,7 +220,7 @@ class LibraryViewModel(
                 if (!forceRefresh) return
             }
             musicLibraryJob?.cancel()
-            musicLibraryJob = viewModelScope.launch(Dispatchers.IO) {
+            musicLibraryJob = viewModelScope.launch {
                 if (_librarySongs.value.isEmpty() || forceRefresh) {
                     _libraryLoading.value = true
                 }
@@ -257,7 +257,7 @@ class LibraryViewModel(
                 _librarySongs.value = cachedTracks
             }
             musicLibraryJob?.cancel()
-            musicLibraryJob = viewModelScope.launch(Dispatchers.IO) {
+            musicLibraryJob = viewModelScope.launch {
                 if (cachedTracks.isEmpty() || forceRefresh) {
                     _libraryLoading.value = true
                 }
@@ -442,7 +442,7 @@ class LibraryViewModel(
             _libraryLoading.value = true
             _libraryError.value = null
             musicLibraryJob?.cancel()
-            musicLibraryJob = viewModelScope.launch(Dispatchers.IO) {
+            musicLibraryJob = viewModelScope.launch {
                 val localHistory = VipManager.history.get(userId)
                 val cloudLatest = if (userId != null && accountState.value.auth == AuthState.READY) {
                     runCatching { VipManager.music.latestListenSongs(pageSize = 50) }.getOrDefault(emptyList())
@@ -522,7 +522,7 @@ class LibraryViewModel(
             return
         }
         musicLibraryJob?.cancel()
-        musicLibraryJob = viewModelScope.launch(Dispatchers.IO) {
+        musicLibraryJob = viewModelScope.launch {
             _libraryLoading.value = true; _libraryError.value = null
             try {
                 // 并行启动听歌等级、已购资产与关注歌手查询

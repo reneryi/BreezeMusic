@@ -55,7 +55,7 @@ class EncryptedSessionStore(context: Context) : SessionStore {
         if (!metadata.contains("guid")) {
             val guid = KugouSigner.md5(UUID.randomUUID().toString())
             val dev = KugouSigner.random(10).uppercase()
-            metadata.edit().putString("guid", guid).putString("dev", dev).apply()
+            check(metadata.edit().putString("guid", guid).putString("dev", dev).commit())
             cachedDevice = DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = "-")
         }
         val old = context.getSharedPreferences("kugou_session", Context.MODE_PRIVATE)
@@ -65,7 +65,7 @@ class EncryptedSessionStore(context: Context) : SessionStore {
             if (session(id) == null) saveSession(KugouSession(id, token, old.getString("t1", null)))
             if (accounts().none { it.userId == id }) saveAccounts(accounts() + SavedAccount(id))
             if (activeId() == null) setActive(id)
-            old.edit().clear().apply()
+            check(old.edit().clear().commit())
         }
     }
 
@@ -80,7 +80,7 @@ class EncryptedSessionStore(context: Context) : SessionStore {
 
     override fun saveAccounts(accounts: List<SavedAccount>) {
         cachedAccounts = accounts
-        metadata.edit().putString("accounts", gson.toJson(accounts)).apply()
+        check(metadata.edit().putString("accounts", gson.toJson(accounts)).commit())
     }
 
     override fun activeId(): String? {
@@ -94,9 +94,10 @@ class EncryptedSessionStore(context: Context) : SessionStore {
     override fun setActive(id: String?) {
         cachedActiveId = id
         activeIdLoaded = true
-        metadata.edit().putString("active", id).apply()
+        check(metadata.edit().putString("active", id).commit())
     }
 
+    @Synchronized
     override fun session(id: String): KugouSession? {
         sessionCache[id]?.let { return it }
         return runCatching {
@@ -111,6 +112,7 @@ class EncryptedSessionStore(context: Context) : SessionStore {
         }.getOrNull()
     }
 
+    @Synchronized
     override fun saveSession(session: KugouSession) {
         sessionCache[session.userId] = session
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -121,19 +123,16 @@ class EncryptedSessionStore(context: Context) : SessionStore {
         check(secrets.edit().putString(session.userId, value).commit()) { "无法保存登录凭证" }
     }
 
+    @Synchronized
     override fun removeSession(id: String) {
         sessionCache.remove(id)
-        secrets.edit().remove(id).apply()
+        check(secrets.edit().remove(id).commit())
     }
 
     override fun device(): DeviceIdentity {
         cachedDevice?.let { return it }
-        val guid = metadata.getString("guid", null) ?: KugouSigner.md5(UUID.randomUUID().toString()).also {
-            metadata.edit().putString("guid", it).apply()
-        }
-        val dev = metadata.getString("dev", null) ?: KugouSigner.random(10).uppercase().also {
-            metadata.edit().putString("dev", it).apply()
-        }
+        val guid = metadata.getString("guid", null)!!
+        val dev = metadata.getString("dev", null)!!
         val dfid = metadata.getString("dfid", "-") ?: "-"
         return DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = dfid).also {
             cachedDevice = it

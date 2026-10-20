@@ -83,8 +83,6 @@ import com.concept.music.ui.viewmodel.HomeViewModel
 import com.concept.music.ui.viewmodel.LibraryViewModel
 import com.concept.music.ui.viewmodel.MusicPlayerViewModel
 import com.concept.music.ui.viewmodel.SearchViewModel
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 
 // 高帧率 120Hz 丝滑五次方减速曲线（消除长尾弹簧导致的双页面同时驻留重绘掉帧，起速灵敏、落点轻盈）
 private val FluidPageEasing = CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f)
@@ -159,19 +157,18 @@ fun MainContent(
         }
     }
 
-    // 关键性能优化：在根组件 MainContent 层仅订阅低频状态（当前曲目、播放状态、错误提示），
-    // 彻底隔离每 120ms 变化的 currentPositionMs，杜绝播放音乐时引发 NavHost 与全站页面高频重绘卡顿！
-    val currentSong by remember(musicPlayerViewModel) {
-        musicPlayerViewModel.uiState.map { it.currentSong }.distinctUntilChanged()
-    }.collectAsState(initial = musicPlayerViewModel.uiState.value.currentSong)
-
-    val isPlaying by remember(musicPlayerViewModel) {
-        musicPlayerViewModel.uiState.map { it.isPlaying }.distinctUntilChanged()
-    }.collectAsState(initial = musicPlayerViewModel.uiState.value.isPlaying)
-
-    val playerError by remember(musicPlayerViewModel) {
-        musicPlayerViewModel.uiState.map { it.error }.distinctUntilChanged()
-    }.collectAsState(initial = musicPlayerViewModel.uiState.value.error)
+    // 关键性能优化：通过 derivedStateOf 在根组件 MainContent 层仅订阅低频状态（当前曲目、播放状态、错误提示），
+    // 既保证点击播放瞬间状态 0ms 同步，又彻底隔离每 120ms 变化的 currentPositionMs，杜绝引发 NavHost 重绘卡顿
+    val playerStateHolder = musicPlayerViewModel.uiState.collectAsState()
+    val currentSong by remember(playerStateHolder) {
+        derivedStateOf { playerStateHolder.value.currentSong }
+    }
+    val isPlaying by remember(playerStateHolder) {
+        derivedStateOf { playerStateHolder.value.isPlaying }
+    }
+    val playerError by remember(playerStateHolder) {
+        derivedStateOf { playerStateHolder.value.error }
+    }
 
     val likedSongs by libraryViewModel.likedSongs.collectAsState()
     val playlists by libraryViewModel.playlists.collectAsState()

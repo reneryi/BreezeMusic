@@ -636,17 +636,9 @@ private fun DesktopKrcKaraokeLineText(
                         }
                     }
                     currentPositionMs > word.startTimeMs -> {
-                        val prog = ((currentPositionMs - word.startTimeMs).toFloat() /
-                            word.durationMs.coerceAtLeast(1L)).coerceIn(0f, 1f)
-                        val brush = Brush.horizontalGradient(
-                            0.0f to playedStartColor,
-                            (prog - 0.08f).coerceAtLeast(0f) to playedEndColor,
-                            (prog + 0.08f).coerceAtMost(1f) to unplayedColor,
-                            1.0f to unplayedColor
-                        )
                         withStyle(
                             SpanStyle(
-                                brush = brush,
+                                color = playedEndColor,
                                 fontWeight = FontWeight.ExtraBold,
                                 shadow = textShadow
                             )

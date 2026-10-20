@@ -77,7 +77,7 @@ class SearchViewModel(
     init {
         // 延后在后台 IO 线程加载热搜词，避免冷启动首屏阶段与主页抢占网络与主线程资源
         viewModelScope.launch(Dispatchers.IO) {
-            delay(1600L)
+            delay(1200L)
             if (_hotKeywords.value.isEmpty()) {
                 runCatching { VipManager.music.searchHot() }.getOrNull()?.let {
                     if (it.isNotEmpty()) _hotKeywords.value = it

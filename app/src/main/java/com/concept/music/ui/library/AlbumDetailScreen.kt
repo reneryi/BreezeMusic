@@ -67,52 +67,53 @@ fun AlbumDetailScreen(
     var searchQuery by remember { mutableStateOf("") }
 
     fun loadData() {
-        coroutineScope.launch(Dispatchers.IO) {
+        coroutineScope.launch {
             loading = true
             error = null
             try {
-                val (detail, rawSongs) = coroutineScope {
-                    val detailDef = async { runCatching { VipManager.music.albumDetail(albumId) }.getOrNull() }
-                    val songsDef = async { runCatching { VipManager.music.albumSongs(albumId) }.getOrDefault(emptyList()) }
-                    detailDef.await() to songsDef.await()
+                val (resolvedAlbum, enrichedSongs) = withContext(Dispatchers.IO) {
+                    val (detail, rawSongs) = coroutineScope {
+                        val detailDef = async { runCatching { VipManager.music.albumDetail(albumId) }.getOrNull() }
+                        val songsDef = async { runCatching { VipManager.music.albumSongs(albumId) }.getOrDefault(emptyList()) }
+                        detailDef.await() to songsDef.await()
+                    }
+                    val firstSong = rawSongs.firstOrNull()
+                    val resolved = when {
+                        detail != null -> detail.copy(
+                            name = detail.name.takeIf { it.isNotBlank() && it != "精选专辑" }
+                                ?: firstSong?.album?.takeIf { it.isNotBlank() && it != "单曲" }
+                                ?: detail.name.ifBlank { "精选专辑" },
+                            artist = detail.artist.takeIf { it.isNotBlank() && it != "群星" && it != "未知歌手" }
+                                ?: firstSong?.artist?.takeIf { it.isNotBlank() && it != "未知歌手" }
+                                ?: detail.artist.ifBlank { "未知歌手" },
+                            coverUrl = detail.coverUrl.ifBlank { firstSong?.coverUrl.orEmpty() },
+                            songCount = if (rawSongs.isNotEmpty()) rawSongs.size else detail.songCount
+                        )
+                        firstSong != null -> AlbumItem(
+                            id = albumId,
+                            name = firstSong.album.takeIf { it.isNotBlank() && it != "单曲" } ?: "精选专辑",
+                            artist = firstSong.artist.ifBlank { "未知歌手" },
+                            coverUrl = firstSong.coverUrl,
+                            songCount = rawSongs.size
+                        )
+                        else -> null
+                    }
+                    val enriched = rawSongs.map { s ->
+                        s.copy(
+                            album = s.album.takeIf { it.isNotBlank() && it != "单曲" } ?: resolved?.name.orEmpty(),
+                            albumId = s.albumId.ifBlank { albumId },
+                            coverUrl = s.coverUrl.ifBlank { resolved?.coverUrl.orEmpty() },
+                            artist = s.artist.takeIf { it.isNotBlank() && it != "未知歌手" && it != "群星" } ?: resolved?.artist.orEmpty()
+                        )
+                    }
+                    if (resolved != null || enriched.isNotEmpty()) {
+                        albumSessionCache[albumId] = resolved to enriched
+                    }
+                    resolved to enriched
                 }
-                val firstSong = rawSongs.firstOrNull()
-                val resolvedAlbum = when {
-                    detail != null -> detail.copy(
-                        name = detail.name.takeIf { it.isNotBlank() && it != "精选专辑" }
-                            ?: firstSong?.album?.takeIf { it.isNotBlank() && it != "单曲" }
-                            ?: detail.name.ifBlank { "精选专辑" },
-                        artist = detail.artist.takeIf { it.isNotBlank() && it != "群星" && it != "未知歌手" }
-                            ?: firstSong?.artist?.takeIf { it.isNotBlank() && it != "未知歌手" }
-                            ?: detail.artist.ifBlank { "未知歌手" },
-                        coverUrl = detail.coverUrl.ifBlank { firstSong?.coverUrl.orEmpty() },
-                        songCount = if (rawSongs.isNotEmpty()) rawSongs.size else detail.songCount
-                    )
-                    firstSong != null -> AlbumItem(
-                        id = albumId,
-                        name = firstSong.album.takeIf { it.isNotBlank() && it != "单曲" } ?: "精选专辑",
-                        artist = firstSong.artist.ifBlank { "未知歌手" },
-                        coverUrl = firstSong.coverUrl,
-                        songCount = rawSongs.size
-                    )
-                    else -> null
-                }
-                val enrichedSongs = rawSongs.map { s ->
-                    s.copy(
-                        album = s.album.takeIf { it.isNotBlank() && it != "单曲" } ?: resolvedAlbum?.name.orEmpty(),
-                        albumId = s.albumId.ifBlank { albumId },
-                        coverUrl = s.coverUrl.ifBlank { resolvedAlbum?.coverUrl.orEmpty() },
-                        artist = s.artist.takeIf { it.isNotBlank() && it != "未知歌手" && it != "群星" } ?: resolvedAlbum?.artist.orEmpty()
-                    )
-                }
-                if (resolvedAlbum != null || enrichedSongs.isNotEmpty()) {
-                    albumSessionCache[albumId] = resolvedAlbum to enrichedSongs
-                }
-                withContext(Dispatchers.Main) {
-                    album = resolvedAlbum
-                    songs = enrichedSongs
-                    loading = false
-                }
+                album = resolvedAlbum
+                songs = enrichedSongs
+                loading = false
             } catch (e: Exception) {
                 error = e.message ?: "加载专辑信息失败"
                 loading = false

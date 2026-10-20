@@ -130,7 +130,7 @@ fun ArtistDetailScreen(
     }
 
     fun loadAllData() {
-        coroutineScope.launch(Dispatchers.IO) {
+        coroutineScope.launch {
             loading = true
             error = null
             songPage = 1
