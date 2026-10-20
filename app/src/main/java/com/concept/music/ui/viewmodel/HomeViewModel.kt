@@ -123,22 +123,12 @@ class HomeViewModel : ViewModel() {
         if (_fmChannels.value.isEmpty() && cachedChannels.isNotEmpty()) {
             _fmChannels.value = cachedChannels
         }
-
-        // 其余未显示的语种分类延后在后台预热
-        listOf("CHINESE", "WESTERN", "JPKR", "CANTON", "ALL").forEach { key ->
-            if (key != activePeriod && newSongCache[key].isNullOrEmpty()) {
-                val cachedPeriod = cache.getNewSongs(key)
-                if (cachedPeriod.isNotEmpty()) {
-                    newSongCache[key] = cachedPeriod
-                }
-            }
-        }
     }
 
     /**
      * 发现页整页刷新：
-     * - 主动下拉刷新 (isBackgroundRevalidate = false)：始终置 _loading = true 并在完成后回调 onFinished，修复下拉刷新一直旋转的问题
-     * - 静默后台更新 (isBackgroundRevalidate = true)：全程在 Dispatchers.IO 分批错峰执行，避开冷启动首屏渲染窗口，消除掉帧卡顿
+     * - 主动下拉刷新 (isBackgroundRevalidate = false)：始终置 _loading = true 并在完成后回调 onFinished
+     * - 静默后台更新 (isBackgroundRevalidate = true)：全程在 Dispatchers.IO 深度错峰执行，完全避开刚打开 App 前 1.2s 的动画与交互窗口
      */
     fun refresh(isBackgroundRevalidate: Boolean = false, onFinished: (() -> Unit)? = null) {
         request?.cancel()
@@ -153,32 +143,34 @@ class HomeViewModel : ViewModel() {
             if (!isBackgroundRevalidate) {
                 _loading.value = true
             } else {
-                // 若已有本地秒开缓存，避开 App 启动前 380ms 的首屏 UI 渲染与动画帧高峰期
-                delay(380L)
+                // 若已有本地秒开缓存，彻底避开刚打开 App 前 1200ms 的首屏渲染、JIT 预热与用户首次交互期
+                delay(1200L)
             }
             _error.value = null
             try {
                 val dailyJob = launch {
                     val daily = runCatching { VipManager.music.dailyRecommend() }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && daily.isNotEmpty()) {
-                        _songs.value = daily
+                        if (_songs.value.map { it.id } != daily.map { it.id }) {
+                            _songs.value = daily
+                        }
                         VipManager.discoverCache.saveDailyRecommend(currentUserId, daily)
                     }
                 }
                 val fmJob = launch {
-                    if (isBackgroundRevalidate) delay(80L)
+                    if (isBackgroundRevalidate) delay(280L)
                     val fm = runCatching { VipManager.music.personalFm(size = 20) }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && fm.isNotEmpty()) {
                         val wasEmpty = _personalFmSongs.value.isEmpty()
-                        _personalFmSongs.value = fm
                         if (wasEmpty || !isBackgroundRevalidate) {
+                            _personalFmSongs.value = fm
                             _personalFmIndex.value = 0
                         }
                         VipManager.discoverCache.savePersonalFm(currentUserId, fm)
                     }
                 }
                 val newSongJob = launch {
-                    if (isBackgroundRevalidate) delay(160L)
+                    if (isBackgroundRevalidate) delay(560L)
                     val period = _selectedNewSongPeriod.value
                     if (_currentNewSongs.value.isEmpty()) {
                         _newSongsLoading.value = true
@@ -186,24 +178,30 @@ class HomeViewModel : ViewModel() {
                     val list = runCatching { VipManager.music.newSongExpress(periodKey = period) }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && list.isNotEmpty()) {
                         newSongCache[period] = list
-                        _currentNewSongs.value = list
+                        if (_currentNewSongs.value.map { it.id } != list.map { it.id }) {
+                            _currentNewSongs.value = list
+                        }
                         VipManager.discoverCache.saveNewSongs(period, list)
                     }
                     _newSongsLoading.value = false
                 }
                 val radioJob = launch {
-                    if (isBackgroundRevalidate) delay(240L)
+                    if (isBackgroundRevalidate) delay(840L)
                     val radios = runCatching { VipManager.music.fmChannels() }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && radios.isNotEmpty()) {
-                        _fmChannels.value = radios
+                        if (_fmChannels.value.map { it.id } != radios.map { it.id }) {
+                            _fmChannels.value = radios
+                        }
                         VipManager.discoverCache.saveFmChannels(radios)
                     }
                 }
                 val rankJob = launch {
-                    if (isBackgroundRevalidate) delay(300L)
+                    if (isBackgroundRevalidate) delay(1100L)
                     val rankList = runCatching { VipManager.music.rankList() }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && rankList.isNotEmpty()) {
-                        _ranks.value = rankList
+                        if (_ranks.value.map { it.rankId } != rankList.map { it.rankId }) {
+                            _ranks.value = rankList
+                        }
                         VipManager.discoverCache.saveRanks(rankList)
                     }
                 }

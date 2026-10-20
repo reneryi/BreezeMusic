@@ -10,6 +10,7 @@ import com.concept.music.data.model.SearchTab
 import com.concept.music.data.model.Song
 import com.concept.music.data.repository.SearchHistoryRepository
 import com.concept.music.data.vip.VipManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,13 +75,24 @@ class SearchViewModel(
     private var loadMoreJob: Job? = null
 
     init {
-        loadHotKeywords()
+        // 延后在后台 IO 线程加载热搜词，避免冷启动首屏阶段与主页抢占网络与主线程资源
+        viewModelScope.launch(Dispatchers.IO) {
+            delay(1600L)
+            if (_hotKeywords.value.isEmpty()) {
+                runCatching { VipManager.music.searchHot() }.getOrNull()?.let {
+                    if (it.isNotEmpty()) _hotKeywords.value = it
+                }
+            }
+        }
     }
 
     fun loadHotKeywords() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
-                _hotKeywords.value = VipManager.music.searchHot()
+                val hot = VipManager.music.searchHot()
+                if (hot.isNotEmpty()) {
+                    _hotKeywords.value = hot
+                }
             } catch (_: Exception) {
             }
         }
@@ -93,7 +105,7 @@ class SearchViewModel(
             _suggestions.value = emptyList()
             return
         }
-        suggestJob = viewModelScope.launch {
+        suggestJob = viewModelScope.launch(Dispatchers.IO) {
             delay(180)
             try {
                 _suggestions.value = VipManager.music.searchSuggest(newQuery)
@@ -108,7 +120,6 @@ class SearchViewModel(
         _selectedTab.value = tab
         val currentKw = _query.value.trim()
         if (currentKw.isNotBlank()) {
-            // 若刚刚在综合页搜索过同一关键词，先展示已缓存结果实现 0ms 秒切，同时对被综合页截断的分类在后台静默拉取完整首屏分页数据
             val hasWarmCache = lastComplexKeyword == currentKw && when (tab) {
                 SearchTab.COMPLEX -> _complexResult.value.songs.isNotEmpty() ||
                     _complexResult.value.artists.isNotEmpty() ||
@@ -137,6 +148,9 @@ class SearchViewModel(
 
     fun resetTabToDefault() {
         _selectedTab.value = SearchTab.COMPLEX
+        if (_hotKeywords.value.isEmpty()) {
+            loadHotKeywords()
+        }
     }
 
     fun search(targetQuery: String = _query.value) {

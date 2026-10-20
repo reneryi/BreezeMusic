@@ -23,10 +23,44 @@ class UiAlignmentRegressionTest {
         val state = PlayerUiState()
         assertEquals(0, state.commentCount)
         assertEquals(CoverStyle.VINYL, state.coverStyle)
+        assertEquals(2, CoverStyle.entries.size)
+        assertTrue(CoverStyle.entries.contains(CoverStyle.SQUARE))
         assertTrue(state.showTranslation)
-        assertEquals(LyricAlignment.CENTER, state.lyricAlignment)
+        assertEquals(LyricAlignment.LEFT, state.lyricAlignment)
+        assertEquals(22f, state.lyricFontSize, 0.01f)
+        assertTrue(state.lyricBlurEnabled)
         assertTrue(state.lyricWordByWord)
         assertEquals("hot", state.commentType)
+    }
+
+    @Test
+    fun testChineseSongAutoHidesTranslationButton() {
+        val chineseSong = Song(id = "cn1", title = "淋雨一直走", artist = "张韶涵")
+        val chineseLyrics = LyricData(
+
+            lines = listOf(
+                LyricLine(0, 2000, "人都应该有梦", translation = "Everyone should have a dream"),
+                LyricLine(2000, 2000, "有梦就别怕痛", translation = "Don't be afraid of pain"),
+                LyricLine(4000, 2000, "有雷声在轰不停", translation = "Thunder is roaring")
+            )
+        )
+        assertFalse(
+            "Pure Chinese songs should hide the translation toggle button",
+            com.concept.music.ui.components.shouldShowTranslationButton(chineseSong, chineseLyrics)
+        )
+
+        val japaneseSong = Song(id = "jp1", title = "夜に駆ける", artist = "YOASOBI")
+        val japaneseLyrics = LyricData(
+
+            lines = listOf(
+                LyricLine(0, 2000, "沈むように溶けてゆくように", translation = "仿佛沉溺般 仿佛融化般"),
+                LyricLine(2000, 2000, "二人だけの空が広がる夜に", translation = "在只属于两人的天空延展的夜晚")
+            )
+        )
+        assertTrue(
+            "Japanese songs with translation should show the translation toggle button",
+            com.concept.music.ui.components.shouldShowTranslationButton(japaneseSong, japaneseLyrics)
+        )
     }
 
     @Test

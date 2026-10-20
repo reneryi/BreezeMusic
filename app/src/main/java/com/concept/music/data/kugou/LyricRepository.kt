@@ -17,15 +17,16 @@ class LyricRepository(
         }
     }
 
-    suspend fun getLyric(song: Song): LyricData = withContext(Dispatchers.IO) {
+    suspend fun getLyric(song: Song): LyricData {
         val cacheKey = song.id.ifBlank { song.hash }
         if (cacheKey.isNotBlank()) {
             synchronized(cache) {
-                cache[cacheKey]?.let { return@withContext it }
+                cache[cacheKey]?.let { return it }
             }
         }
 
-        val candidates = searchLyricCandidates(song)
+        return withContext(Dispatchers.IO) {
+            val candidates = searchLyricCandidates(song)
         if (candidates.isEmpty()) {
             val empty = LyricData()
             if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = empty }
@@ -62,6 +63,7 @@ class LyricRepository(
         val finalData = lrcData ?: LyricData()
         if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = finalData }
         finalData
+        }
     }
 
     private suspend fun searchLyricCandidates(song: Song): List<LyricCandidate> {

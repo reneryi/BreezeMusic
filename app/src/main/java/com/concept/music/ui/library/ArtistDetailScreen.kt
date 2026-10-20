@@ -48,10 +48,12 @@ import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.horizontalCategorySwipe
 import com.concept.music.ui.theme.rememberCategorySwitchGraphicModifier
 import com.concept.music.ui.theme.softClickable
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -128,7 +130,7 @@ fun ArtistDetailScreen(
     }
 
     fun loadAllData() {
-        coroutineScope.launch {
+        coroutineScope.launch(Dispatchers.IO) {
             loading = true
             error = null
             songPage = 1
@@ -207,53 +209,49 @@ fun ArtistDetailScreen(
         }
     }
 
-    // 静默全量加载单曲：只要停留在歌手主页，后台自动连续静默拉取后续分页，直到全部单曲加载完毕
-    LaunchedEffect(artistId, sortMethod, loading, songsLoading, hasMoreSongs) {
-        if (!loading && !songsLoading && hasMoreSongs && !loadingMoreSongs) {
+    // 按需触底分页加载：彻底取代刚进入页面时的主线程死循环拉取风暴，保证进入退出歌手页丝滑满帧
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val total = listState.layoutInfo.totalItemsCount
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            total > 4 && lastVisible >= total - 6
+        }
+    }
+
+    LaunchedEffect(shouldLoadMore, selectedTab, loading, songsLoading) {
+        if (!shouldLoadMore || loading || songsLoading) return@LaunchedEffect
+        if (selectedTab == 0 && hasMoreSongs && !loadingMoreSongs && songPage < 25) {
             loadingMoreSongs = true
-            try {
-                while (hasMoreSongs && songPage < 25) {
-                    delay(90)
+            withContext(Dispatchers.IO) {
+                try {
                     val nextPage = songPage + 1
                     val nextBatch = runCatching {
                         VipManager.music.artistSongs(artistId, sort = sortMethod, page = nextPage, pageSize = 100)
                     }.getOrDefault(emptyList())
-                    if (nextBatch.isEmpty()) {
-                        hasMoreSongs = false
-                        break
-                    }
                     val existingKeys = songs.map { it.hash.ifBlank { it.id }.lowercase() }.toHashSet()
                     val uniqueNew = nextBatch.filter { existingKeys.add(it.hash.ifBlank { it.id }.lowercase()) }
-                    if (uniqueNew.isEmpty()) {
-                        hasMoreSongs = false
-                        break
+                    withContext(Dispatchers.Main) {
+                        if (uniqueNew.isEmpty()) {
+                            hasMoreSongs = false
+                        } else {
+                            songs = songs + uniqueNew
+                            songPage = nextPage
+                            val targetTotal = artist?.songCount ?: 0
+                            hasMoreSongs = nextBatch.size >= 30 && (targetTotal == 0 || songs.size < targetTotal)
+                        }
                     }
-                    songs = songs + uniqueNew
-                    songPage = nextPage
-                    val targetTotal = artist?.songCount ?: 0
-                    hasMoreSongs = nextBatch.size >= 30 && (targetTotal == 0 || songs.size < targetTotal)
+                } finally {
+                    withContext(Dispatchers.Main) { loadingMoreSongs = false }
                 }
-            } finally {
-                loadingMoreSongs = false
             }
-        }
-    }
-
-    // 静默全量加载专辑：后台自动连续拉取剩余专辑页直至全部加载完毕
-    LaunchedEffect(artistId, loading, hasMoreAlbums) {
-        if (!loading && hasMoreAlbums && !loadingMoreAlbums) {
+        } else if (selectedTab == 1 && hasMoreAlbums && !loadingMoreAlbums && albumPage < 15) {
             loadingMoreAlbums = true
-            try {
-                while (hasMoreAlbums && albumPage < 15) {
-                    delay(120)
+            withContext(Dispatchers.IO) {
+                try {
                     val nextPage = albumPage + 1
                     val nextBatch = runCatching {
                         VipManager.music.artistAlbums(artistId, page = nextPage, pageSize = 50)
                     }.getOrDefault(emptyList())
-                    if (nextBatch.isEmpty()) {
-                        hasMoreAlbums = false
-                        break
-                    }
                     val existingIds = albums.map { it.id }.toHashSet()
                     val artistName = artist?.name.orEmpty()
                     val uniqueNew = nextBatch.filter { existingIds.add(it.id) }.map { alb ->
@@ -261,17 +259,19 @@ fun ArtistDetailScreen(
                             alb.copy(artist = artistName.ifBlank { alb.artist })
                         } else alb
                     }
-                    if (uniqueNew.isEmpty()) {
-                        hasMoreAlbums = false
-                        break
+                    withContext(Dispatchers.Main) {
+                        if (uniqueNew.isEmpty()) {
+                            hasMoreAlbums = false
+                        } else {
+                            albums = albums + uniqueNew
+                            albumPage = nextPage
+                            val targetTotal = artist?.albumCount ?: 0
+                            hasMoreAlbums = nextBatch.size >= 20 && (targetTotal == 0 || albums.size < targetTotal)
+                        }
                     }
-                    albums = albums + uniqueNew
-                    albumPage = nextPage
-                    val targetTotal = artist?.albumCount ?: 0
-                    hasMoreAlbums = nextBatch.size >= 20 && (targetTotal == 0 || albums.size < targetTotal)
+                } finally {
+                    withContext(Dispatchers.Main) { loadingMoreAlbums = false }
                 }
-            } finally {
-                loadingMoreAlbums = false
             }
         }
     }

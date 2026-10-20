@@ -7,6 +7,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
@@ -20,7 +21,6 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -63,6 +64,7 @@ import com.concept.music.ui.components.QueueBottomSheet
 import com.concept.music.ui.components.SongActionBottomSheet
 import com.concept.music.ui.components.SongDetailSheet
 import com.concept.music.ui.components.VipCenterScreen
+import com.concept.music.ui.components.ViperSoundEffectScreen
 import com.concept.music.ui.home.DailyRecommendScreen
 import com.concept.music.ui.home.HomeScreen
 import com.concept.music.ui.home.NewSongExpressScreen
@@ -81,6 +83,11 @@ import com.concept.music.ui.viewmodel.HomeViewModel
 import com.concept.music.ui.viewmodel.LibraryViewModel
 import com.concept.music.ui.viewmodel.MusicPlayerViewModel
 import com.concept.music.ui.viewmodel.SearchViewModel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+
+// 高帧率 120Hz 丝滑五次方减速曲线（消除长尾弹簧导致的双页面同时驻留重绘掉帧，起速灵敏、落点轻盈）
+private val FluidPageEasing = CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f)
 
 class MainActivity : ComponentActivity() {
 
@@ -105,7 +112,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 主动申请屏幕支持的最高物理刷新率档位（120Hz / 144Hz），消除国产系统对第三方应用默认限帧 60Hz/90Hz 的问题
+     * 主动申请屏幕支持的最高物理刷新率档位（120Hz / 144Hz）
      */
     private fun requestHighRefreshRateDisplayMode() {
         runCatching {
@@ -152,7 +159,20 @@ fun MainContent(
         }
     }
 
-    val playerUiState by musicPlayerViewModel.uiState.collectAsState()
+    // 关键性能优化：在根组件 MainContent 层仅订阅低频状态（当前曲目、播放状态、错误提示），
+    // 彻底隔离每 120ms 变化的 currentPositionMs，杜绝播放音乐时引发 NavHost 与全站页面高频重绘卡顿！
+    val currentSong by remember(musicPlayerViewModel) {
+        musicPlayerViewModel.uiState.map { it.currentSong }.distinctUntilChanged()
+    }.collectAsState(initial = musicPlayerViewModel.uiState.value.currentSong)
+
+    val isPlaying by remember(musicPlayerViewModel) {
+        musicPlayerViewModel.uiState.map { it.isPlaying }.distinctUntilChanged()
+    }.collectAsState(initial = musicPlayerViewModel.uiState.value.isPlaying)
+
+    val playerError by remember(musicPlayerViewModel) {
+        musicPlayerViewModel.uiState.map { it.error }.distinctUntilChanged()
+    }.collectAsState(initial = musicPlayerViewModel.uiState.value.error)
+
     val likedSongs by libraryViewModel.likedSongs.collectAsState()
     val playlists by libraryViewModel.playlists.collectAsState()
     val followedArtists by libraryViewModel.followedArtists.collectAsState()
@@ -160,6 +180,7 @@ fun MainContent(
     var showNowPlaying by remember { mutableStateOf(false) }
     var showGlobalQueueSheet by remember { mutableStateOf(false) }
     var showCommentsScreen by remember { mutableStateOf(false) }
+    var showViperEffectOverlay by remember { mutableStateOf(false) }
 
     var actionSheetSong by remember { mutableStateOf<Song?>(null) }
     var actionSheetRemoveCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -197,15 +218,16 @@ fun MainContent(
         currentRoute.startsWith("radio_station") ||
         currentRoute == "search" ||
         currentRoute == "settings" ||
-        currentRoute == "vip_center"
+        currentRoute == "vip_center" ||
+        currentRoute == "viper_effect"
 
     val showFloatingMiniBar = currentRoute != "login" &&
         currentRoute != "accounts" &&
         currentRoute != "settings" &&
-        currentRoute != "vip_center"
+        currentRoute != "vip_center" &&
+        currentRoute != "viper_effect"
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // 移除 Scaffold.bottomBar 的条件显隐，彻底根除进入独立子页面瞬间 innerPadding 突变引发的全屏布局抖动
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             contentWindowInsets = WindowInsets(0, 0, 0, 0)
@@ -224,26 +246,19 @@ fun MainContent(
                     if (bothMainTabs) {
                         val dir = if (target == Screen.Library.route) 1 else -1
                         slideInHorizontally(
-                            initialOffsetX = { fullWidth -> dir * (fullWidth / 7) },
-                            animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
-                        ) + scaleIn(
-                            initialScale = 0.94f,
-                            transformOrigin = TransformOrigin(0.5f, 0.5f),
-                            animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
-                        ) + fadeIn(animationSpec = tween(210, easing = FastOutSlowInEasing))
+                            initialOffsetX = { fullWidth -> dir * (fullWidth / 8) },
+                            animationSpec = tween(220, easing = FluidPageEasing)
+                        ) + fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing))
                     } else {
-                        // 进入独立页面：3D 空间弹簧上浮 + 侧滑推进 + 景深绽放，丝滑无抖动
+                        // 120Hz 高帧率丝滑入场：精简为 GPU 友好的水平流体推进 + 微缩放渐显，消除重度复合弹簧引起的过渡掉帧
                         slideInHorizontally(
-                            initialOffsetX = { fullWidth -> (fullWidth * 0.22f).toInt() },
-                            animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
-                        ) + slideInVertically(
-                            initialOffsetY = { fullHeight -> (fullHeight * 0.032f).toInt() },
-                            animationSpec = spring(dampingRatio = 0.84f, stiffness = Spring.StiffnessMediumLow)
+                            initialOffsetX = { fullWidth -> (fullWidth * 0.20f).toInt() },
+                            animationSpec = tween(250, easing = FluidPageEasing)
                         ) + scaleIn(
-                            initialScale = 0.93f,
-                            transformOrigin = TransformOrigin(0.5f, 0.55f),
-                            animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
-                        ) + fadeIn(animationSpec = tween(220, easing = FastOutSlowInEasing))
+                            initialScale = 0.96f,
+                            transformOrigin = TransformOrigin(0.5f, 0.5f),
+                            animationSpec = tween(250, easing = FluidPageEasing)
+                        ) + fadeIn(animationSpec = tween(190, easing = FastOutSlowInEasing))
                     }
                 },
                 exitTransition = {
@@ -255,47 +270,38 @@ fun MainContent(
                         val dir = if (target == Screen.Library.route) 1 else -1
                         slideOutHorizontally(
                             targetOffsetX = { fullWidth -> -dir * (fullWidth / 10) },
-                            animationSpec = tween(190, easing = FastOutSlowInEasing)
-                        ) + scaleOut(
-                            targetScale = 0.95f,
-                            animationSpec = tween(190, easing = FastOutSlowInEasing)
-                        ) + fadeOut(animationSpec = tween(160, easing = FastOutSlowInEasing))
+                            animationSpec = tween(180, easing = FluidPageEasing)
+                        ) + fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing))
                     } else {
-                        // 背景页平滑后退下沉，营造空间层次感
                         slideOutHorizontally(
-                            targetOffsetX = { fullWidth -> -(fullWidth * 0.08f).toInt() },
-                            animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)
+                            targetOffsetX = { fullWidth -> -(fullWidth * 0.07f).toInt() },
+                            animationSpec = tween(240, easing = FluidPageEasing)
                         ) + scaleOut(
-                            targetScale = 0.93f,
+                            targetScale = 0.96f,
                             transformOrigin = TransformOrigin(0.5f, 0.5f),
-                            animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow)
-                        ) + fadeOut(animationSpec = tween(210, easing = FastOutSlowInEasing))
+                            animationSpec = tween(240, easing = FluidPageEasing)
+                        ) + fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing))
                     }
                 },
                 popEnterTransition = {
-                    // 从独立页返回：底层页面由景深处柔和回弹浮现
                     slideInHorizontally(
-                        initialOffsetX = { fullWidth -> -(fullWidth * 0.08f).toInt() },
-                        animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+                        initialOffsetX = { fullWidth -> -(fullWidth * 0.07f).toInt() },
+                        animationSpec = tween(240, easing = FluidPageEasing)
                     ) + scaleIn(
-                        initialScale = 0.93f,
+                        initialScale = 0.96f,
                         transformOrigin = TransformOrigin(0.5f, 0.5f),
-                        animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
-                    ) + fadeIn(animationSpec = tween(210, easing = FastOutSlowInEasing))
+                        animationSpec = tween(240, easing = FluidPageEasing)
+                    ) + fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing))
                 },
                 popExitTransition = {
-                    // 独立页面退出：向右侧与微下方轻盈收拢滑出
                     slideOutHorizontally(
-                        targetOffsetX = { fullWidth -> (fullWidth * 0.24f).toInt() },
-                        animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
-                    ) + slideOutVertically(
-                        targetOffsetY = { fullHeight -> (fullHeight * 0.032f).toInt() },
-                        animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
+                        targetOffsetX = { fullWidth -> (fullWidth * 0.22f).toInt() },
+                        animationSpec = tween(230, easing = FluidPageEasing)
                     ) + scaleOut(
-                        targetScale = 0.92f,
-                        transformOrigin = TransformOrigin(0.5f, 0.55f),
-                        animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
-                    ) + fadeOut(animationSpec = tween(190, easing = FastOutSlowInEasing))
+                        targetScale = 0.95f,
+                        transformOrigin = TransformOrigin(0.5f, 0.5f),
+                        animationSpec = tween(230, easing = FluidPageEasing)
+                    ) + fadeOut(animationSpec = tween(170, easing = FastOutSlowInEasing))
                 }
             ) {
                 // 发现页
@@ -323,8 +329,8 @@ fun MainContent(
                             val target = channelId.ifBlank { "all" }
                             navController.navigate("radio_station/$target") { launchSingleTop = true }
                         },
-                        currentSong = playerUiState.currentSong,
-                        isPlaying = playerUiState.isPlaying,
+                        currentSong = currentSong,
+                        isPlaying = isPlaying,
                         onTogglePlayPause = { musicPlayerViewModel.togglePlayPause() },
                         onSongMoreClick = { song ->
                             actionSheetSong = song
@@ -341,7 +347,7 @@ fun MainContent(
                         onSongClick = { song, list ->
                             musicPlayerViewModel.playSong(song, list)
                         },
-                        currentSong = playerUiState.currentSong,
+                        currentSong = currentSong,
                         onSongMoreClick = { song ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = null
@@ -357,7 +363,7 @@ fun MainContent(
                         onSongClick = { song, list ->
                             musicPlayerViewModel.playSong(song, list)
                         },
-                        currentSong = playerUiState.currentSong,
+                        currentSong = currentSong,
                         onSongMoreClick = { song ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = null
@@ -375,7 +381,7 @@ fun MainContent(
                         onSongClick = { song, list ->
                             musicPlayerViewModel.playSong(song, list)
                         },
-                        currentSong = playerUiState.currentSong,
+                        currentSong = currentSong,
                         onSongMoreClick = { song ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = null
@@ -393,7 +399,7 @@ fun MainContent(
                         onSongClick = { song, list ->
                             musicPlayerViewModel.playSong(song, list)
                         },
-                        currentSong = playerUiState.currentSong,
+                        currentSong = currentSong,
                         onSongMoreClick = { song ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = null
@@ -432,7 +438,7 @@ fun MainContent(
                     )
                 }
 
-                // VIP 权益中心与守护沙盒独立页面（替代原固定深色抽屉，完整适配浅色/深色主题）
+                // VIP 权益中心独立页面
                 composable("vip_center") {
                     val account by libraryViewModel.accountState.collectAsState()
                     val vip by libraryViewModel.vipState.collectAsState()
@@ -453,7 +459,17 @@ fun MainContent(
                 composable("settings") {
                     SettingsScreen(
                         viewModel = musicPlayerViewModel,
-                        onBackClick = { navController.popBackStack() }
+                        onBackClick = { navController.popBackStack() },
+                        onOpenViperEffect = {
+                            navController.navigate("viper_effect") { launchSingleTop = true }
+                        }
+                    )
+                }
+
+                // 蝰蛇音效与专业均衡器独立页面路由
+                composable("viper_effect") {
+                    ViperSoundEffectScreen(
+                        onBack = { navController.popBackStack() }
                     )
                 }
 
@@ -467,7 +483,7 @@ fun MainContent(
                         onSongClick = { song, list ->
                             musicPlayerViewModel.playSong(song, list)
                         },
-                        currentSong = playerUiState.currentSong,
+                        currentSong = currentSong,
                         onSongMoreClick = { song, removeCallback ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = removeCallback
@@ -484,7 +500,7 @@ fun MainContent(
                         onSongClick = { song, list ->
                             musicPlayerViewModel.playSong(song, list)
                         },
-                        currentSong = playerUiState.currentSong,
+                        currentSong = currentSong,
                         onSongMoreClick = { song ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = null
@@ -505,7 +521,7 @@ fun MainContent(
                         onAlbumClick = { albumId ->
                             navController.navigate("album_detail/$albumId") { launchSingleTop = true }
                         },
-                        currentSong = playerUiState.currentSong,
+                        currentSong = currentSong,
                         onSongMoreClick = { song ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = null
@@ -537,7 +553,7 @@ fun MainContent(
                         onArtistClick = { artistId ->
                             navController.navigate("artist_detail/$artistId") { launchSingleTop = true }
                         },
-                        currentSong = playerUiState.currentSong,
+                        currentSong = currentSong,
                         onSongMoreClick = { song ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = null
@@ -555,13 +571,14 @@ fun MainContent(
 
                 // 独立全屏评论页面路由
                 composable("comments") {
+                    val fullState by musicPlayerViewModel.uiState.collectAsState()
                     val userAvatar = VipManager.accounts.state.value.profile?.avatarUrl ?: ""
                     CommentsScreen(
-                        song = playerUiState.currentSong,
-                        comments = playerUiState.comments,
-                        loading = playerUiState.commentsLoading,
-                        currentType = playerUiState.commentType,
-                        hasMore = playerUiState.commentsHasMore,
+                        song = fullState.currentSong,
+                        comments = fullState.comments,
+                        loading = fullState.commentsLoading,
+                        currentType = fullState.commentType,
+                        hasMore = fullState.commentsHasMore,
                         currentUserAvatar = userAvatar,
                         onBack = { navController.popBackStack() },
                         onTabSelected = { musicPlayerViewModel.setCommentType(it) },
@@ -576,26 +593,18 @@ fun MainContent(
             }
         }
 
-        // 底部「发现 / 我的」主导航栏：采用独立悬浮层 + 弹簧滑入/收起动画，进入独立页面时平滑下沉消失
+        // 底部「发现 / 我的」主导航栏
         AnimatedVisibility(
-            visible = showFloatingMiniBar && !isSubDetail && !showNowPlaying,
+            visible = showFloatingMiniBar && !isSubDetail && !showNowPlaying && !showViperEffectOverlay,
             modifier = Modifier.align(Alignment.BottomCenter),
             enter = slideInVertically(
                 initialOffsetY = { it },
-                animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
-            ) + scaleIn(
-                initialScale = 0.96f,
-                transformOrigin = TransformOrigin(0.5f, 1f),
-                animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
-            ) + fadeIn(animationSpec = tween(200, easing = FastOutSlowInEasing)),
+                animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+            ) + fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing)),
             exit = slideOutVertically(
                 targetOffsetY = { it },
-                animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
-            ) + scaleOut(
-                targetScale = 0.96f,
-                transformOrigin = TransformOrigin(0.5f, 1f),
-                animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
-            ) + fadeOut(animationSpec = tween(170, easing = FastOutSlowInEasing))
+                animationSpec = tween(180, easing = FluidPageEasing)
+            ) + fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing))
         ) {
             BottomNavBar(
                 currentRoute = currentRoute,
@@ -613,11 +622,11 @@ fun MainContent(
             )
         }
 
-        // 独立圆角长条形悬浮控制条：随底栏显隐通过弹簧物理动画自然上下顺滑过渡，告别突兀瞬移
+        // 独立圆角长条形悬浮控制条（隔离高频进度状态订阅，仅重绘胶囊自身）
         val miniBarBottomPadding by animateDpAsState(
             targetValue = if (isSubDetail) 10.dp else 66.dp,
             animationSpec = spring(
-                dampingRatio = 0.78f,
+                dampingRatio = 0.80f,
                 stiffness = Spring.StiffnessMediumLow
             ),
             label = "miniBarBottomPadding"
@@ -631,7 +640,7 @@ fun MainContent(
                     .navigationBarsPadding()
                     .padding(bottom = miniBarBottomPadding)
             ) {
-                playerUiState.error?.let { error ->
+                playerError?.let { error ->
                     Text(
                         text = error,
                         color = MaterialTheme.colorScheme.error,
@@ -643,27 +652,21 @@ fun MainContent(
                 }
 
                 AnimatedVisibility(
-                    visible = playerUiState.currentSong != null && !showNowPlaying,
+                    visible = currentSong != null && !showNowPlaying && !showViperEffectOverlay,
                     enter = slideInVertically(
                         initialOffsetY = { it },
-                        animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow)
-                    ) + fadeIn(tween(220)) + scaleIn(
-                        initialScale = 0.92f,
-                        animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow)
+                        animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
+                    ) + fadeIn(tween(200)) + scaleIn(
+                        initialScale = 0.94f,
+                        animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
                     ),
                     exit = slideOutVertically(
                         targetOffsetY = { it / 2 },
-                        animationSpec = tween(180)
-                    ) + fadeOut(tween(160)) + scaleOut(targetScale = 0.94f, animationSpec = tween(180))
+                        animationSpec = tween(170)
+                    ) + fadeOut(tween(150)) + scaleOut(targetScale = 0.95f, animationSpec = tween(170))
                 ) {
-                    MiniPlayerBar(
-                        currentSong = playerUiState.currentSong,
-                        isPlaying = playerUiState.isPlaying,
-                        currentPositionMs = playerUiState.currentPositionMs,
-                        durationMs = playerUiState.durationMs,
-                        onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
-                        onNextClick = { musicPlayerViewModel.skipToNext() },
-                        onPreviousClick = { musicPlayerViewModel.skipToPrevious() },
+                    IsolatedMiniPlayerBarHost(
+                        viewModel = musicPlayerViewModel,
                         onBarClick = { showNowPlaying = true },
                         onQueueClick = { showGlobalQueueSheet = true }
                     )
@@ -673,10 +676,13 @@ fun MainContent(
 
         // 从底部悬浮控制条点击队列按钮直接弹出的播放队列抽屉
         if (showGlobalQueueSheet && !showNowPlaying) {
+            val playerUiState by musicPlayerViewModel.uiState.collectAsState()
             QueueBottomSheet(
                 queue = playerUiState.playlistQueue,
                 currentIndex = playerUiState.currentIndex,
                 playMode = playerUiState.playMode,
+                climaxModeEnabled = playerUiState.climaxModeEnabled,
+                onToggleClimaxMode = { musicPlayerViewModel.toggleClimaxMode() },
                 onCyclePlayMode = { musicPlayerViewModel.cyclePlayMode() },
                 onDismiss = { showGlobalQueueSheet = false },
                 onSongClick = { song ->
@@ -690,103 +696,61 @@ fun MainContent(
             )
         }
 
-        // 沉浸式全屏 Edge-to-Edge 播放器（带 3D 弹簧绽放与收拢转场，100% 覆盖顶部系统状态栏）
+        // 沉浸式全屏 Edge-to-Edge 播放器
         AnimatedVisibility(
-            visible = showNowPlaying && playerUiState.currentSong != null,
+            visible = showNowPlaying && currentSong != null,
             enter = slideInVertically(
                 initialOffsetY = { it },
-                animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+                animationSpec = tween(270, easing = FluidPageEasing)
             ) + scaleIn(
-                initialScale = 0.92f,
+                initialScale = 0.94f,
                 transformOrigin = TransformOrigin(0.5f, 0.92f),
-                animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
-            ) + fadeIn(tween(220, easing = FastOutSlowInEasing)),
+                animationSpec = tween(270, easing = FluidPageEasing)
+            ) + fadeIn(tween(200, easing = FastOutSlowInEasing)),
             exit = slideOutVertically(
                 targetOffsetY = { it },
-                animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
+                animationSpec = tween(240, easing = FluidPageEasing)
             ) + scaleOut(
-                targetScale = 0.92f,
+                targetScale = 0.94f,
                 transformOrigin = TransformOrigin(0.5f, 0.92f),
-                animationSpec = spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMedium)
-            ) + fadeOut(tween(190, easing = FastOutSlowInEasing))
+                animationSpec = tween(240, easing = FluidPageEasing)
+            ) + fadeOut(tween(180, easing = FastOutSlowInEasing))
         ) {
-            val currentSong = playerUiState.currentSong
-            if (currentSong != null) {
-                val isCurrentSongLiked = libraryViewModel.isSongLiked(currentSong, likedSongs)
-
-                NowPlayingSheet(
-                    song = currentSong,
-                    isPlaying = playerUiState.isPlaying,
-                    currentPositionMs = playerUiState.currentPositionMs,
-                    durationMs = playerUiState.durationMs,
-                    playMode = playerUiState.playMode,
-                    currentQualityLabel = playerUiState.currentQualityLabel,
-                    lyricData = playerUiState.currentLyric,
-                    currentLyricIndex = playerUiState.currentLyricIndex,
-                    queue = playerUiState.playlistQueue,
-                    currentIndex = playerUiState.currentIndex,
-                    coverStyle = playerUiState.coverStyle,
-                    onSelectCoverStyle = { musicPlayerViewModel.setCoverStyle(it) },
-                    showTranslation = playerUiState.showTranslation,
-                    showPhonetic = playerUiState.showPhonetic,
-                    onToggleTranslation = { musicPlayerViewModel.toggleTranslation() },
-                    onTogglePhonetic = { musicPlayerViewModel.togglePhonetic() },
-                    lyricFontSize = playerUiState.lyricFontSize,
-                    lyricAlignment = playerUiState.lyricAlignment,
-                    lyricWordByWord = playerUiState.lyricWordByWord,
-                    commentCount = playerUiState.commentCount,
-                    playbackSpeed = playerUiState.playbackSpeed,
-                    playbackPitch = playerUiState.playbackPitch,
-                    linkPitchToSpeed = playerUiState.linkPitchToSpeed,
-                    sleepTimerRemainingSec = playerUiState.sleepTimerRemainingSec,
-                    sleepStopAfterCurrentSong = playerUiState.sleepStopAfterCurrentSong,
-                    climaxModeEnabled = playerUiState.climaxModeEnabled,
-                    climaxUnlockedForCurrentSong = playerUiState.climaxUnlockedForCurrentSong,
-                    accompanyModeEnabled = playerUiState.accompanyModeEnabled,
-                    isFavorite = isCurrentSongLiked,
-                    onToggleFavorite = {
-                        libraryViewModel.toggleFavorite(currentSong) { _, _, msg ->
-                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    onAddToPlaylist = {
-                        songToAddToPlaylist = currentSong
-                    },
-                    onSetLyricFontSize = { musicPlayerViewModel.setLyricFontSize(it) },
-                    onSetLyricAlignment = { musicPlayerViewModel.setLyricAlignment(it) },
-                    onSetLyricWordByWord = { musicPlayerViewModel.setLyricWordByWord(it) },
-                    onOpenComments = {
-                        musicPlayerViewModel.loadComments(isRefresh = true)
-                        showCommentsScreen = true
-                    },
-                    onSetPlaybackSpeed = { musicPlayerViewModel.setPlaybackSpeed(it) },
-                    onSetPlaybackPitch = { musicPlayerViewModel.setPlaybackPitch(it) },
-                    onSetLinkPitchToSpeed = { musicPlayerViewModel.setLinkPitchToSpeed(it) },
-                    onResetSpeedAndPitch = { musicPlayerViewModel.resetSpeedAndPitch() },
-                    onSetSleepTimer = { mins, stopAfter -> musicPlayerViewModel.setSleepTimer(mins, stopAfter) },
-                    onCancelSleepTimer = { musicPlayerViewModel.cancelSleepTimer() },
-                    onToggleClimaxMode = { musicPlayerViewModel.toggleClimaxMode() },
-                    onUnlockFullTrack = { musicPlayerViewModel.unlockFullTrackForCurrentSong() },
-                    onToggleAccompanyMode = { musicPlayerViewModel.toggleAccompanyMode() },
-                    onReorderQueueByMood = { mode -> musicPlayerViewModel.reorderQueueByMood(mode) },
-                    onMoveQueueItem = { fromIdx, toIdx -> musicPlayerViewModel.moveQueueItem(fromIdx, toIdx) },
-                    songDetail = playerUiState.songDetail,
-                    onDismiss = { showNowPlaying = false },
-                    onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
-                    onPrevious = { musicPlayerViewModel.skipToPrevious() },
-                    onNext = { musicPlayerViewModel.skipToNext() },
-                    onSeekTo = { musicPlayerViewModel.seekTo(it) },
-                    onSeekToLyricLine = { musicPlayerViewModel.seekToLyricLine(it) },
-                    onCyclePlayMode = { musicPlayerViewModel.cyclePlayMode() },
-                    onSelectQuality = { musicPlayerViewModel.setPreferredQuality(it) },
-                    onPlayQueueSong = { musicPlayerViewModel.playSong(it, playerUiState.playlistQueue) },
-                    onRemoveFromQueue = { musicPlayerViewModel.removeFromQueue(it) },
-                    onClearQueue = { musicPlayerViewModel.clearQueue() }
-                )
-            }
+            IsolatedNowPlayingHost(
+                musicPlayerViewModel = musicPlayerViewModel,
+                libraryViewModel = libraryViewModel,
+                likedSongs = likedSongs,
+                onDismiss = { showNowPlaying = false },
+                onAddToPlaylist = { songToAddToPlaylist = it },
+                onOpenComments = {
+                    musicPlayerViewModel.loadComments(isRefresh = true)
+                    showCommentsScreen = true
+                },
+                onOpenViperEffectPage = {
+                    showViperEffectOverlay = true
+                }
+            )
         }
 
-        if (showCommentsScreen && playerUiState.currentSong != null) {
+        // 从播放页进入的独立全屏「蝰蛇音效与专业均衡器」页面（丝滑侧滑叠加于播放页之上，返回直达播放页）
+        AnimatedVisibility(
+            visible = showViperEffectOverlay,
+            enter = slideInHorizontally(
+                initialOffsetX = { it },
+                animationSpec = tween(250, easing = FluidPageEasing)
+            ) + fadeIn(tween(190)),
+            exit = slideOutHorizontally(
+                targetOffsetX = { it },
+                animationSpec = tween(230, easing = FluidPageEasing)
+            ) + fadeOut(tween(170))
+        ) {
+            ViperSoundEffectScreen(
+                onBack = { showViperEffectOverlay = false }
+            )
+        }
+
+        if (showCommentsScreen && currentSong != null) {
+            val playerUiState by musicPlayerViewModel.uiState.collectAsState()
             Dialog(
                 onDismissRequest = { showCommentsScreen = false },
                 properties = DialogProperties(
@@ -842,7 +806,7 @@ fun MainContent(
                     songToAddToPlaylist = targetSong
                 },
                 onOpenComments = {
-                    if (playerUiState.currentSong?.id != targetSong.id) {
+                    if (currentSong?.id != targetSong.id) {
                         musicPlayerViewModel.playSong(targetSong, listOf(targetSong))
                     } else {
                         musicPlayerViewModel.loadComments(isRefresh = true)
@@ -910,12 +874,152 @@ fun MainContent(
             )
         }
 
-        FloatingLyricOverlay(
-            song = if (!showNowPlaying) playerUiState.currentSong else null,
-            lyricData = playerUiState.currentLyric,
-            currentLyricIndex = playerUiState.currentLyricIndex,
-            currentPositionMs = playerUiState.currentPositionMs,
-            onClickCapsule = { showNowPlaying = true }
+        // 独立隔离状态订阅的「桌面歌词」宿主
+        IsolatedDesktopLyricHost(
+            viewModel = musicPlayerViewModel,
+            visible = !showNowPlaying && !showViperEffectOverlay,
+            onOpenPlayer = { showNowPlaying = true }
         )
     }
+}
+
+@Composable
+private fun IsolatedMiniPlayerBarHost(
+    viewModel: MusicPlayerViewModel,
+    onBarClick: () -> Unit,
+    onQueueClick: () -> Unit
+) {
+    val playerUiState by viewModel.uiState.collectAsState()
+    MiniPlayerBar(
+        currentSong = playerUiState.currentSong,
+        isPlaying = playerUiState.isPlaying,
+        currentPositionMs = playerUiState.currentPositionMs,
+        durationMs = playerUiState.durationMs,
+        onTogglePlay = { viewModel.togglePlayPause() },
+        onNextClick = { viewModel.skipToNext() },
+        onPreviousClick = { viewModel.skipToPrevious() },
+        onBarClick = onBarClick,
+        onQueueClick = onQueueClick
+    )
+}
+
+@Composable
+private fun IsolatedNowPlayingHost(
+    musicPlayerViewModel: MusicPlayerViewModel,
+    libraryViewModel: LibraryViewModel,
+    likedSongs: List<Song>,
+    onDismiss: () -> Unit,
+    onAddToPlaylist: (Song) -> Unit,
+    onOpenComments: () -> Unit,
+    onOpenViperEffectPage: () -> Unit
+) {
+    val context = LocalContext.current
+    val playerUiState by musicPlayerViewModel.uiState.collectAsState()
+    val currentSong = playerUiState.currentSong ?: return
+    val isCurrentSongLiked = libraryViewModel.isSongLiked(currentSong, likedSongs)
+
+    NowPlayingSheet(
+        song = currentSong,
+        isPlaying = playerUiState.isPlaying,
+        currentPositionMs = playerUiState.currentPositionMs,
+        durationMs = playerUiState.durationMs,
+        playMode = playerUiState.playMode,
+        currentQualityLabel = playerUiState.currentQualityLabel,
+        lyricData = playerUiState.currentLyric,
+        currentLyricIndex = playerUiState.currentLyricIndex,
+        queue = playerUiState.playlistQueue,
+        currentIndex = playerUiState.currentIndex,
+        coverStyle = playerUiState.coverStyle,
+        onSelectCoverStyle = { musicPlayerViewModel.setCoverStyle(it) },
+        showTranslation = playerUiState.showTranslation,
+        showPhonetic = playerUiState.showPhonetic,
+        onToggleTranslation = { musicPlayerViewModel.toggleTranslation() },
+        onTogglePhonetic = { musicPlayerViewModel.togglePhonetic() },
+        lyricFontSize = playerUiState.lyricFontSize,
+        lyricAlignment = playerUiState.lyricAlignment,
+        lyricWordByWord = playerUiState.lyricWordByWord,
+        lyricBlurEnabled = playerUiState.lyricBlurEnabled,
+        lyricBlurIntensity = playerUiState.lyricBlurIntensity,
+        lyricLineSpacing = playerUiState.lyricLineSpacing,
+        lyricOffsetMs = playerUiState.lyricOffsetMs,
+        lyricHighlightTheme = playerUiState.lyricHighlightTheme,
+        lyricBackgroundDim = playerUiState.lyricBackgroundDim,
+        lyricKeepScreenOn = playerUiState.lyricKeepScreenOn,
+        commentCount = playerUiState.commentCount,
+        playbackSpeed = playerUiState.playbackSpeed,
+        playbackPitch = playerUiState.playbackPitch,
+        linkPitchToSpeed = playerUiState.linkPitchToSpeed,
+        sleepTimerRemainingSec = playerUiState.sleepTimerRemainingSec,
+        sleepStopAfterCurrentSong = playerUiState.sleepStopAfterCurrentSong,
+        sleepPendingStopAtTrackEnd = playerUiState.sleepPendingStopAtTrackEnd,
+        climaxModeEnabled = playerUiState.climaxModeEnabled,
+        climaxUnlockedForCurrentSong = playerUiState.climaxUnlockedForCurrentSong,
+        accompanyModeEnabled = playerUiState.accompanyModeEnabled,
+        isFavorite = isCurrentSongLiked,
+        onToggleFavorite = {
+            libraryViewModel.toggleFavorite(currentSong) { _, _, msg ->
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            }
+        },
+        onAddToPlaylist = {
+            onAddToPlaylist(currentSong)
+        },
+        onSetLyricFontSize = { musicPlayerViewModel.setLyricFontSize(it) },
+        onSetLyricAlignment = { musicPlayerViewModel.setLyricAlignment(it) },
+        onSetLyricWordByWord = { musicPlayerViewModel.setLyricWordByWord(it) },
+        onSetLyricBlurEnabled = { musicPlayerViewModel.setLyricBlurEnabled(it) },
+        onSetLyricBlurIntensity = { musicPlayerViewModel.setLyricBlurIntensity(it) },
+        onSetLyricLineSpacing = { musicPlayerViewModel.setLyricLineSpacing(it) },
+        onSetLyricOffsetMs = { musicPlayerViewModel.setLyricOffsetMs(it) },
+        onSetLyricHighlightTheme = { musicPlayerViewModel.setLyricHighlightTheme(it) },
+        onSetLyricBackgroundDim = { musicPlayerViewModel.setLyricBackgroundDim(it) },
+        onSetLyricKeepScreenOn = { musicPlayerViewModel.setLyricKeepScreenOn(it) },
+        onOpenComments = onOpenComments,
+        onOpenViperEffectPage = onOpenViperEffectPage,
+        onSetPlaybackSpeed = { musicPlayerViewModel.setPlaybackSpeed(it) },
+        onSetPlaybackPitch = { musicPlayerViewModel.setPlaybackPitch(it) },
+        onSetLinkPitchToSpeed = { musicPlayerViewModel.setLinkPitchToSpeed(it) },
+        onResetSpeedAndPitch = { musicPlayerViewModel.resetSpeedAndPitch() },
+        onSetSleepTimer = { mins, stopAfter -> musicPlayerViewModel.setSleepTimer(mins, stopAfter) },
+        onSetSleepStopAfterCurrentSongPref = { musicPlayerViewModel.setSleepStopAfterCurrentSongPreference(it) },
+        onCancelSleepTimer = { musicPlayerViewModel.cancelSleepTimer() },
+        onToggleClimaxMode = { musicPlayerViewModel.toggleClimaxMode() },
+        onUnlockFullTrack = { musicPlayerViewModel.unlockFullTrackForCurrentSong() },
+        onToggleAccompanyMode = { musicPlayerViewModel.toggleAccompanyMode() },
+        onReorderQueueByMood = { mode -> musicPlayerViewModel.reorderQueueByMood(mode) },
+        onMoveQueueItem = { fromIdx, toIdx -> musicPlayerViewModel.moveQueueItem(fromIdx, toIdx) },
+        songDetail = playerUiState.songDetail,
+        onDismiss = onDismiss,
+        onTogglePlay = { musicPlayerViewModel.togglePlayPause() },
+        onPrevious = { musicPlayerViewModel.skipToPrevious() },
+        onNext = { musicPlayerViewModel.skipToNext() },
+        onSeekTo = { musicPlayerViewModel.seekTo(it) },
+        onSeekToLyricLine = { musicPlayerViewModel.seekToLyricLine(it) },
+        onCyclePlayMode = { musicPlayerViewModel.cyclePlayMode() },
+        onSelectQuality = { musicPlayerViewModel.setPreferredQuality(it) },
+        onPlayQueueSong = { musicPlayerViewModel.playSong(it, playerUiState.playlistQueue) },
+        onRemoveFromQueue = { musicPlayerViewModel.removeFromQueue(it) },
+        onClearQueue = { musicPlayerViewModel.clearQueue() }
+    )
+}
+
+@Composable
+private fun IsolatedDesktopLyricHost(
+    viewModel: MusicPlayerViewModel,
+    visible: Boolean,
+    onOpenPlayer: () -> Unit
+) {
+    val playerUiState by viewModel.uiState.collectAsState()
+    val adjustedPos = (playerUiState.currentPositionMs + playerUiState.lyricOffsetMs).coerceAtLeast(0L)
+    FloatingLyricOverlay(
+        song = if (visible) playerUiState.currentSong else null,
+        lyricData = playerUiState.currentLyric,
+        currentLyricIndex = playerUiState.currentLyricIndex,
+        currentPositionMs = adjustedPos,
+        isPlaying = playerUiState.isPlaying,
+        onTogglePlay = { viewModel.togglePlayPause() },
+        onPrevious = { viewModel.skipToPrevious() },
+        onNext = { viewModel.skipToNext() },
+        onClickCapsule = onOpenPlayer
+    )
 }

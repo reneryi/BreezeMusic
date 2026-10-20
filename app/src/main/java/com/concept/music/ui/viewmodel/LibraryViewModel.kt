@@ -103,7 +103,7 @@ class LibraryViewModel(
                         val hasCached = _playlists.value.isNotEmpty() || _likedSongs.value.isNotEmpty()
                         if (hasCached) {
                             // 错峰延后静默同步，避开冷启动首屏渲染与发现页加载高峰，彻底消除打开 App 时的掉帧卡顿
-                            delay(550L)
+                            delay(1500L)
                         }
                         loadMusicLibrary()
                     }
@@ -163,7 +163,7 @@ class LibraryViewModel(
     fun refreshPlaylistsOnly() {
         val userId = accountState.value.currentId ?: return
         if (accountState.value.auth != AuthState.READY) return
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             _libraryLoading.value = true
             _libraryError.value = null
             try {
@@ -220,7 +220,7 @@ class LibraryViewModel(
                 if (!forceRefresh) return
             }
             musicLibraryJob?.cancel()
-            musicLibraryJob = viewModelScope.launch {
+            musicLibraryJob = viewModelScope.launch(Dispatchers.IO) {
                 if (_librarySongs.value.isEmpty() || forceRefresh) {
                     _libraryLoading.value = true
                 }
@@ -257,7 +257,7 @@ class LibraryViewModel(
                 _librarySongs.value = cachedTracks
             }
             musicLibraryJob?.cancel()
-            musicLibraryJob = viewModelScope.launch {
+            musicLibraryJob = viewModelScope.launch(Dispatchers.IO) {
                 if (cachedTracks.isEmpty() || forceRefresh) {
                     _libraryLoading.value = true
                 }

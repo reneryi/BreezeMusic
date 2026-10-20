@@ -2073,17 +2073,19 @@ fun RankDetailScreen(
         if (cached.isNotEmpty()) {
             rankSongs = cached
             loading = false
+            // 避开页面进入转场动画前 280ms 窗口，保证路由切换满帧丝滑
+            kotlinx.coroutines.delay(280L)
         } else {
             loading = true
         }
-        // 先秒出首屏前 100 首，再在后台静默补齐完整榜单曲目
         val firstBatch = viewModel.getRankSongs(selectedRankId)
         if (firstBatch.isNotEmpty()) {
             rankSongs = firstBatch
             loading = false
         }
+        kotlinx.coroutines.delay(350L)
         val fullBatch = viewModel.getRankSongsAll(selectedRankId, maxSongs = 300)
-        if (fullBatch.isNotEmpty()) {
+        if (fullBatch.isNotEmpty() && fullBatch.size > rankSongs.size) {
             rankSongs = fullBatch
         }
         loading = false

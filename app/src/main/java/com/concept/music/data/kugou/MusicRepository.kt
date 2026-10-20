@@ -5971,13 +5971,13 @@ class MusicApiRepository(
             ?: audioInfo?.text("res_hash")?.takeIf { isValidHash(it) }
 
         val verifiedExplicitResHash = explicitTopResHash?.takeIf {
-            topExplicitResSize <= 0L || (topExplicitResSize >= 7_500_000L && (sqSize <= 0L || topExplicitResSize > sqSize))
+            ((topExplicitResSize <= 0L && sqSize <= 0L && o.number("ResFileSize") == null) || (topExplicitResSize >= 7_500_000L && (sqSize <= 0L || topExplicitResSize > sqSize)))
         }
 
         val resHashCandidate = verifiedExplicitResHash
             ?: (if (isKmrHighActuallyHiRes) audioInfoHighHash else null)
             ?: relateResHash.takeIf {
-                it.isNotBlank() && (relateResSize <= 0L || (relateResSize >= 7_500_000L && (sqSize <= 0L || relateResSize > sqSize)))
+                it.isNotBlank() && ((relateResSize <= 0L && sqSize <= 0L) || (relateResSize >= 7_500_000L && (sqSize <= 0L || relateResSize > sqSize)))
             }.orEmpty()
 
         val hqHash = explicitHqHash
@@ -6008,7 +6008,7 @@ class MusicApiRepository(
 
         val resHash = resHashCandidate.takeIf {
             it.isNotBlank() &&
-                (resSize <= 0L || resSize >= 7_500_000L) &&
+                ((resSize <= 0L && sqSize <= 0L && o.number("ResFileSize") == null) || (resSize >= 7_500_000L && (sqSize <= 0L || resSize > sqSize))) &&
                 !it.equals(sqHash, ignoreCase = true) &&
                 !it.equals(hqHash, ignoreCase = true) &&
                 !it.equals(stdHash, ignoreCase = true)
@@ -6195,6 +6195,72 @@ class MusicApiRepository(
             replyCount = 0,
             replies = emptyList()
         )
+    }
+
+    /**
+     * 对齐 MakcRe/KuGouMusicApi v1.6.0 音效相关接口 (get_mode_info / get_model / playlist_effect)：
+     * 获取酷狗蝰蛇音效官方与社区调音师详细配置及实时使用热度
+     */
+    suspend fun fetchViperSoundEffects(): Map<String, com.concept.music.service.ViperOnlineEffectMeta> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val result = LinkedHashMap<String, com.concept.music.service.ViperOnlineEffectMeta>()
+        val session = accounts.context()?.session
+
+        // 1. 尝试调用酷狗音效社区与音效详情网关 (get_model / get_mode_info)
+        runCatching {
+            val resp = transport.call(
+                path = "/v1/get_model",
+                session = session,
+                query = mapOf("page" to "1", "pagesize" to "30"),
+                headers = mapOf("x-router" to "ksyx.kugou.com")
+            )
+            val list = resp.data.objects("list").ifEmpty { resp.data.objects("info") }
+            list.forEach { item ->
+                val id = item.text("mode_id") ?: item.text("id") ?: return@forEach
+                val name = item.text("name") ?: item.text("mode_name") ?: return@forEach
+                val intro = item.text("intro") ?: item.text("desc") ?: ""
+                val count = item.number("use_count") ?: item.number("user_count") ?: 0
+                val author = item.text("author_name") ?: item.text("username") ?: "酷狗认证调音师"
+                val usageStr = if (count >= 100_000_000) String.format("%.1f亿人使用", count / 100_000_000.0)
+                else if (count >= 10_000) "${count / 10_000}万人使用"
+                else "官方精调"
+                result[id] = com.concept.music.service.ViperOnlineEffectMeta(
+                    modeId = id,
+                    name = name,
+                    description = intro,
+                    usageText = usageStr,
+                    authorName = author,
+                    tuningSummary = item.text("param_desc").orEmpty()
+                )
+            }
+        }
+
+        // 2. 补充拉取指定模式详情 (get_mode_info)
+        listOf("1001", "1002", "1003", "1004", "1005", "1006").forEach { modeId ->
+            if (!result.containsKey(modeId)) {
+                runCatching {
+                    val infoResp = transport.call(
+                        path = "/v1/get_mode_info",
+                        session = session,
+                        query = mapOf("mode_id" to modeId),
+                        headers = mapOf("x-router" to "ksyx.kugou.com")
+                    )
+                    val d = infoResp.data
+                    val name = d.text("name") ?: d.text("mode_name")
+                    if (!name.isNullOrBlank()) {
+                        result[modeId] = com.concept.music.service.ViperOnlineEffectMeta(
+                            modeId = modeId,
+                            name = name,
+                            description = d.text("intro") ?: d.text("desc") ?: "",
+                            usageText = d.text("use_count_str") ?: "官方旗舰",
+                            authorName = d.text("author_name") ?: "蝰蛇声学实验室",
+                            tuningSummary = d.text("eq_summary") ?: ""
+                        )
+                    }
+                }
+            }
+        }
+
+        result
     }
 
     private fun imageUrl(value: String?): String {

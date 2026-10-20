@@ -2,9 +2,12 @@ package com.concept.music.ui.settings
 
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,19 +27,24 @@ import androidx.compose.ui.unit.sp
 import com.concept.music.data.model.AudioQuality
 import com.concept.music.service.AmbientSoundManager
 import com.concept.music.service.AudioCacheManager
+import com.concept.music.service.AudioEffectManager
+import com.concept.music.service.DesktopLyricColorScheme
+import com.concept.music.service.DesktopLyricLineMode
 import com.concept.music.service.SystemLyricBridge
 import com.concept.music.service.VipGuardianManager
 import com.concept.music.ui.theme.*
 import com.concept.music.ui.viewmodel.CoverStyle
 import com.concept.music.ui.viewmodel.LyricAlignment
 import com.concept.music.ui.viewmodel.MusicPlayerViewModel
+import java.util.Locale
 import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     viewModel: MusicPlayerViewModel,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onOpenViperEffect: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
@@ -47,11 +55,13 @@ fun SettingsScreen(
     val lyricFontSize = uiState.lyricFontSize
     val lyricAlignment = uiState.lyricAlignment
     val lyricWordByWord = uiState.lyricWordByWord
+    val lyricBlurEnabled = uiState.lyricBlurEnabled
     val playbackSpeed = uiState.playbackSpeed
     val playbackPitch = uiState.playbackPitch
     val linkPitchToSpeed = uiState.linkPitchToSpeed
     val sleepTimerRemainingSec = uiState.sleepTimerRemainingSec
     val sleepStopAfterCurrentSong = uiState.sleepStopAfterCurrentSong
+    val sleepPendingStopAtTrackEnd = uiState.sleepPendingStopAtTrackEnd
     val climaxModeEnabled = uiState.climaxModeEnabled
     val crossfadeSeconds = uiState.crossfadeSeconds
     val volumeNormalization = uiState.volumeNormalization
@@ -66,11 +76,12 @@ fun SettingsScreen(
     val guardianState by VipGuardianManager.state.collectAsState()
     val systemLyricState by SystemLyricBridge.state.collectAsState()
     val ambientState by AmbientSoundManager.state.collectAsState()
+    val audioEffectState by AudioEffectManager.state.collectAsState()
 
     val autoGuardianEnabled = guardianState.enabled
     val guardianStatusText = "${guardianState.lastRunTimeFormatted} · ${guardianState.lastResultSummary}"
     val guardianTodayDone = guardianState.lastRunDay.isNotBlank() && guardianState.lastResultSummary.contains("已激活")
-    val floatingLyricEnabled = systemLyricState.floatingCapsuleEnabled
+    val desktopLyricEnabled = systemLyricState.floatingCapsuleEnabled
     val statusBarLyricEnabled = systemLyricState.statusBarBroadcastEnabled
 
     LaunchedEffect(Unit) {
@@ -110,7 +121,7 @@ fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
                 contentPadding = PaddingValues(bottom = 140.dp, top = 8.dp)
             ) {
-                // 1. 视觉主题与色彩风格
+                // 1. 视觉主题与双封面播放样式
                 item {
                     SettingsSectionCard(
                         title = "外观与播放样式",
@@ -194,19 +205,16 @@ fun SettingsScreen(
                         )
 
                         Text(
-                            text = "播放页机芯皮肤",
+                            text = "封面播放页样式",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                         )
                         Text(
-                            text = "切换播放页主视觉样式",
+                            text = "精简为重构拟真黑胶封面与静态圆角方形封面",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             CoverStyle.entries.forEach { style ->
                                 FilterChip(
                                     selected = coverStyle == style,
@@ -222,12 +230,50 @@ fun SettingsScreen(
                     }
                 }
 
-                // 2. 音质策略与无缝播放体验（现代音乐 App 专业设置）
+                // 2. 音质策略、蝰蛇音效中心与副歌速刷
                 item {
                     SettingsSectionCard(
-                        title = "音质与听感",
+                        title = "音质与蝰蛇声效",
                         icon = Icons.Rounded.HighQuality
                     ) {
+                        // 独立蝰蛇音效与专业均衡器入口卡
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = ConceptPrimary.copy(alpha = 0.12f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .softCardClickable(shape = RoundedCornerShape(16.dp), onClick = onOpenViperEffect)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                    Icon(Icons.Rounded.GraphicEq, contentDescription = null, tint = ConceptPrimary, modifier = Modifier.size(22.dp))
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            text = "蝰蛇音效与专业均衡器",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = if (audioEffectState.isEnabled) "当前已启用：${audioEffectState.currentPreset.label}" else "25款酷狗分类音效 · 详细声学参数 · 10段专业均衡器",
+                                            fontSize = 11.sp,
+                                            color = if (audioEffectState.isEnabled) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = ConceptPrimary)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
                         Text(
                             text = "默认在线播放音质",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
@@ -319,8 +365,8 @@ fun SettingsScreen(
                         )
 
                         SettingToggleRow(
-                            title = "副歌高潮速听",
-                            subtitle = "直达 30~45 秒副歌精华段，支持随时听整首",
+                            title = "副歌速刷",
+                            subtitle = "直达 30~45 秒副歌高潮精华段，支持在播放队列随时开关",
                             checked = climaxModeEnabled,
                             onCheckedChange = { viewModel.setClimaxMode(it) },
                             thumbColor = VipGold
@@ -352,10 +398,10 @@ fun SettingsScreen(
                     }
                 }
 
-                // 4. 歌词排版、音译注音与系统级歌词投射
+                // 4. 歌词页排版、景深模糊与桌面歌词设置
                 item {
                     SettingsSectionCard(
-                        title = "歌词与桌面歌词",
+                        title = "歌词页与桌面歌词",
                         icon = Icons.Rounded.Lyrics
                     ) {
                         Row(
@@ -368,8 +414,8 @@ fun SettingsScreen(
                         Slider(
                             value = lyricFontSize,
                             onValueChange = { viewModel.setLyricFontSize(it) },
-                            valueRange = 14f..26f,
-                            steps = 5,
+                            valueRange = 16f..30f,
+                            steps = 6,
                             colors = SliderDefaults.colors(thumbColor = ConceptPrimary, activeTrackColor = ConceptPrimary)
                         )
 
@@ -380,18 +426,24 @@ fun SettingsScreen(
                         ) {
                             Text("歌词对齐方式", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                FilterChip(
-                                    selected = lyricAlignment == LyricAlignment.CENTER,
-                                    onClick = { viewModel.setLyricAlignment(LyricAlignment.CENTER) },
-                                    label = { Text("居中对齐", fontSize = 12.sp) }
-                                )
-                                FilterChip(
-                                    selected = lyricAlignment == LyricAlignment.LEFT,
-                                    onClick = { viewModel.setLyricAlignment(LyricAlignment.LEFT) },
-                                    label = { Text("左对齐", fontSize = 12.sp) }
-                                )
+                                LyricAlignment.entries.forEach { align ->
+                                    FilterChip(
+                                        selected = lyricAlignment == align,
+                                        onClick = { viewModel.setLyricAlignment(align) },
+                                        label = { Text(align.label, fontSize = 12.sp) }
+                                    )
+                                }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingToggleRow(
+                            title = "歌词阶梯景深高斯模糊",
+                            subtitle = "以当前唱诵行为视觉焦点，远端歌词呈柔和高斯虚化",
+                            checked = lyricBlurEnabled,
+                            onCheckedChange = { viewModel.setLyricBlurEnabled(it) }
+                        )
 
                         Spacer(modifier = Modifier.height(10.dp))
 
@@ -417,7 +469,7 @@ fun SettingsScreen(
 
                         SettingToggleRow(
                             title = "外语中文翻译",
-                            subtitle = "在原文歌词下方同步显示中文译文",
+                            subtitle = "在外语歌曲下方同步显示中文译文（中文歌自动隐藏）",
                             checked = showTranslation,
                             onCheckedChange = {
                                 if (showTranslation != it) viewModel.toggleTranslation()
@@ -430,11 +482,43 @@ fun SettingsScreen(
                         )
 
                         SettingToggleRow(
-                            title = "应用内悬浮歌词",
-                            subtitle = "浏览非播放页时在顶部悬浮显示逐字歌词",
-                            checked = floatingLyricEnabled,
+                            title = "桌面歌词",
+                            subtitle = "启用多风格悬浮桌面歌词（支持6套配色、单双行、无框透明度与控播栏）",
+                            checked = desktopLyricEnabled,
                             onCheckedChange = { SystemLyricBridge.setFloatingCapsuleEnabled(it) }
                         )
+
+                        if (desktopLyricEnabled) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                DesktopLyricColorScheme.entries.forEach { scheme ->
+                                    val selected = systemLyricState.desktopColorScheme == scheme
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = { SystemLyricBridge.setDesktopColorScheme(scheme) },
+                                        label = { Text(scheme.label, fontSize = 11.sp) }
+                                    )
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                DesktopLyricLineMode.entries.forEach { mode ->
+                                    val selected = systemLyricState.desktopLineMode == mode
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = { SystemLyricBridge.setDesktopLineMode(mode) },
+                                        label = { Text(mode.label, fontSize = 11.sp) }
+                                    )
+                                }
+                            }
+                        }
 
                         Spacer(modifier = Modifier.height(10.dp))
 
@@ -498,17 +582,10 @@ fun SettingsScreen(
                                 }
                             }
                         }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "可在手机桌面添加「微风音乐」小组件，快捷控播并查看 VIP 状态。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
 
-                // 6. 倍速变调、睡眠定时与白噪音混音
+                // 6. 倍速变调与带记忆功能的睡眠定时
                 item {
                     SettingsSectionCard(
                         title = "倍速与睡眠定时",
@@ -520,7 +597,7 @@ fun SettingsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "当前倍速：${String.format(java.util.Locale.getDefault(), "%.2f", playbackSpeed)}x · 音调：${String.format(java.util.Locale.getDefault(), "%.2f", playbackPitch)}x",
+                                text = "当前倍速：${String.format(Locale.getDefault(), "%.2f", playbackSpeed)}x · 音调：${String.format(Locale.getDefault(), "%.2f", playbackPitch)}x",
                                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                             )
                             if (playbackSpeed != 1.0f || playbackPitch != 1.0f) {
@@ -552,34 +629,12 @@ fun SettingsScreen(
                             onCheckedChange = { viewModel.setLinkPitchToSpeed(it) }
                         )
 
-                        if (ambientState.masterEnabled && ambientState.hasActiveChannel) {
-                            HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 10.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "环境白噪音混音舱正在运行",
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        color = ConceptPrimary,
-                                        fontWeight = FontWeight.SemiBold
-                                    )
-                                )
-                                TextButton(onClick = { AmbientSoundManager.setMasterEnabled(false) }) {
-                                    Text("关闭环境音", color = VipGold)
-                                }
-                            }
-                        }
-
                         HorizontalDivider(
                             modifier = Modifier.padding(vertical = 12.dp),
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
                         )
 
+                        val isSleepActive = sleepTimerRemainingSec > 0L || sleepPendingStopAtTrackEnd
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -588,17 +643,18 @@ fun SettingsScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("睡眠定时关闭", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
                                 val status = when {
-                                    sleepTimerRemainingSec > 0L -> "剩余 ${sleepTimerRemainingSec / 60}分${sleepTimerRemainingSec % 60}秒 后自动停止"
-                                    sleepStopAfterCurrentSong -> "将在当前曲目播放完毕后停止"
-                                    else -> "未开启，结束前音量平滑渐弱"
+                                    sleepTimerRemainingSec > 0L -> "剩余 ${sleepTimerRemainingSec / 60}分${sleepTimerRemainingSec % 60}秒 后停止" +
+                                        if (sleepStopAfterCurrentSong) "（播完当前歌曲再停）" else ""
+                                    sleepPendingStopAtTrackEnd -> "将在当前曲目播放完毕后自动停止"
+                                    else -> "未开启定时，结束前音量平滑渐弱"
                                 }
                                 Text(
                                     text = status,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = if (sleepTimerRemainingSec > 0L || sleepStopAfterCurrentSong) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = if (isSleepActive) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            if (sleepTimerRemainingSec > 0L || sleepStopAfterCurrentSong) {
+                            if (isSleepActive) {
                                 TextButton(onClick = { viewModel.cancelSleepTimer() }) {
                                     Text("取消定时", color = MaterialTheme.colorScheme.error)
                                 }
@@ -615,21 +671,34 @@ fun SettingsScreen(
                                 FilterChip(
                                     selected = false,
                                     onClick = {
-                                        viewModel.setSleepTimer(mins, false)
-                                        Toast.makeText(context, "已开启 $mins 分钟睡眠定时", Toast.LENGTH_SHORT).show()
+                                        viewModel.setSleepTimer(mins, sleepStopAfterCurrentSong)
+                                        Toast.makeText(
+                                            context,
+                                            "已开启 $mins 分钟睡眠定时" + if (sleepStopAfterCurrentSong) "（播完当前歌曲再停）" else "",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     },
                                     label = { Text("${mins}分钟", fontSize = 12.sp) }
                                 )
                             }
                             FilterChip(
-                                selected = sleepStopAfterCurrentSong && sleepTimerRemainingSec == 0L,
+                                selected = sleepPendingStopAtTrackEnd && sleepTimerRemainingSec == 0L,
                                 onClick = {
                                     viewModel.setSleepTimer(0, true)
                                     Toast.makeText(context, "将在当前歌曲播完后自动暂停", Toast.LENGTH_SHORT).show()
                                 },
-                                label = { Text("播完当前曲目", fontSize = 12.sp) }
+                                label = { Text("仅播完当前这首", fontSize = 12.sp) }
                             )
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        SettingToggleRow(
+                            title = "播完当前歌曲再停（自动记忆）",
+                            subtitle = "倒计时归零后等待当前歌曲完整播完再暂停，设置永久记忆",
+                            checked = sleepStopAfterCurrentSong,
+                            onCheckedChange = { viewModel.setSleepStopAfterCurrentSongPreference(it) }
+                        )
                     }
                 }
 
@@ -725,9 +794,9 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "• 音频引擎：Media3 ExoPlayer · 边听边存 · 5 段均衡与空间混响\n" +
-                                "• 视觉体验：幽邃微蓝与水彩漫染双主题 · 120Hz 流畅动效\n" +
-                                "• 核心特性：心流专注 · KRC 逐字音译 · 每日 VIP 自动守护",
+                            text = "• 音频引擎：Media3 ExoPlayer · 蝰蛇音效矩阵 · 10段专业均衡器\n" +
+                                "• 视觉体验：彗星流光进度条 · 景深高斯模糊歌词 · 120Hz 高刷动效\n" +
+                                "• 核心特性：副歌速刷 · 多风格桌面歌词 · 5款高定歌词海报 · VIP自动守护",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 19.sp
@@ -779,11 +848,10 @@ private fun SettingsSectionCard(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val isDark = LocalIsDarkTheme.current
     val sectionAccent = when {
         title.contains("外观") || title.contains("主题") -> ConceptVioletAccent
         title.contains("音质") -> ConceptMintAccent
-        title.contains("耳机") -> ConceptCoralAccent
+        title.contains("外设") -> ConceptCoralAccent
         title.contains("歌词") -> ConceptCyanAccent
         title.contains("VIP") -> VipGold
         title.contains("缓存") -> ConceptAmberAccent

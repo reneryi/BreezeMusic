@@ -39,9 +39,14 @@ import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.softClickable
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
+
+private val albumSessionCache = ConcurrentHashMap<String, Pair<AlbumItem?, List<Song>>>()
 
 @Composable
 fun AlbumDetailScreen(
@@ -53,15 +58,16 @@ fun AlbumDetailScreen(
     modifier: Modifier = Modifier
 ) {
     val coroutineScope = rememberCoroutineScope()
-    var album by remember { mutableStateOf<AlbumItem?>(null) }
-    var songs by remember { mutableStateOf<List<Song>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    val cachedPair = remember(albumId) { albumSessionCache[albumId] }
+    var album by remember(albumId) { mutableStateOf<AlbumItem?>(cachedPair?.first) }
+    var songs by remember(albumId) { mutableStateOf<List<Song>>(cachedPair?.second ?: emptyList()) }
+    var loading by remember(albumId) { mutableStateOf(cachedPair == null) }
     var error by remember { mutableStateOf<String?>(null) }
     var isIntroExpanded by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
 
     fun loadData() {
-        coroutineScope.launch {
+        coroutineScope.launch(Dispatchers.IO) {
             loading = true
             error = null
             try {
@@ -99,9 +105,14 @@ fun AlbumDetailScreen(
                         artist = s.artist.takeIf { it.isNotBlank() && it != "未知歌手" && it != "群星" } ?: resolvedAlbum?.artist.orEmpty()
                     )
                 }
-                album = resolvedAlbum
-                songs = enrichedSongs
-                loading = false
+                if (resolvedAlbum != null || enrichedSongs.isNotEmpty()) {
+                    albumSessionCache[albumId] = resolvedAlbum to enrichedSongs
+                }
+                withContext(Dispatchers.Main) {
+                    album = resolvedAlbum
+                    songs = enrichedSongs
+                    loading = false
+                }
             } catch (e: Exception) {
                 error = e.message ?: "加载专辑信息失败"
                 loading = false
