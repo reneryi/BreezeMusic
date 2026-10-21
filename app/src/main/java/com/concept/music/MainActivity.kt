@@ -583,6 +583,7 @@ fun MainContent(
                         onTabSelected = { musicPlayerViewModel.setCommentType(it) },
                         onLoadMore = { musicPlayerViewModel.loadComments(isRefresh = false) },
                         onRefresh = { musicPlayerViewModel.loadComments(isRefresh = true) },
+                        onLoadReplies = { musicPlayerViewModel.loadCommentReplies(it) },
                         onPostComment = { content, replyId, replyUser ->
                             musicPlayerViewModel.postComment(content, replyId, replyUser)
                         },
@@ -679,10 +680,14 @@ fun MainContent(
             QueueBottomSheet(
                 queue = playerUiState.playlistQueue,
                 currentIndex = playerUiState.currentIndex,
+                recentQueues = playerUiState.recentQueues,
+                activeQueueId = playerUiState.activeQueueId,
                 playMode = playerUiState.playMode,
                 climaxModeEnabled = playerUiState.climaxModeEnabled,
                 onToggleClimaxMode = { musicPlayerViewModel.toggleClimaxMode() },
                 onCyclePlayMode = { musicPlayerViewModel.cyclePlayMode() },
+                onSwitchRecentQueue = { musicPlayerViewModel.switchToRecentQueue(it) },
+                onDeleteRecentQueue = { musicPlayerViewModel.deleteRecentQueue(it) },
                 onDismiss = { showGlobalQueueSheet = false },
                 onSongClick = { song ->
                     musicPlayerViewModel.playSong(song, playerUiState.playlistQueue)
@@ -748,35 +753,38 @@ fun MainContent(
             )
         }
 
-        if (showCommentsScreen && currentSong != null) {
+        AnimatedVisibility(
+            visible = showCommentsScreen && currentSong != null,
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = tween(250, easing = FluidPageEasing)
+            ) + fadeIn(tween(180)),
+            exit = slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = tween(220, easing = FluidPageEasing)
+            ) + fadeOut(tween(160))
+        ) {
             val playerUiState by musicPlayerViewModel.uiState.collectAsState()
-            Dialog(
-                onDismissRequest = { showCommentsScreen = false },
-                properties = DialogProperties(
-                    usePlatformDefaultWidth = false,
-                    decorFitsSystemWindows = false
-                )
-            ) {
-                val userAvatar = VipManager.accounts.state.value.profile?.avatarUrl ?: ""
-                CommentsScreen(
-                    song = playerUiState.currentSong,
-                    comments = playerUiState.comments,
-                    loading = playerUiState.commentsLoading,
-                    currentType = playerUiState.commentType,
-                    hasMore = playerUiState.commentsHasMore,
-                    currentUserAvatar = userAvatar,
-                    onBack = {
-                        showCommentsScreen = false
-                    },
-                    onTabSelected = { musicPlayerViewModel.setCommentType(it) },
-                    onLoadMore = { musicPlayerViewModel.loadComments(isRefresh = false) },
-                    onRefresh = { musicPlayerViewModel.loadComments(isRefresh = true) },
-                    onPostComment = { content, replyId, replyUser ->
-                        musicPlayerViewModel.postComment(content, replyId, replyUser)
-                    },
-                    onLikeComment = { musicPlayerViewModel.likeComment(it) }
-                )
-            }
+            val userAvatar = VipManager.accounts.state.value.profile?.avatarUrl ?: ""
+            CommentsScreen(
+                song = playerUiState.currentSong,
+                comments = playerUiState.comments,
+                loading = playerUiState.commentsLoading,
+                currentType = playerUiState.commentType,
+                hasMore = playerUiState.commentsHasMore,
+                currentUserAvatar = userAvatar,
+                onBack = {
+                    showCommentsScreen = false
+                },
+                onTabSelected = { musicPlayerViewModel.setCommentType(it) },
+                onLoadMore = { musicPlayerViewModel.loadComments(isRefresh = false) },
+                onRefresh = { musicPlayerViewModel.loadComments(isRefresh = true) },
+                onLoadReplies = { musicPlayerViewModel.loadCommentReplies(it) },
+                onPostComment = { content, replyId, replyUser ->
+                    musicPlayerViewModel.postComment(content, replyId, replyUser)
+                },
+                onLikeComment = { musicPlayerViewModel.likeComment(it) }
+            )
         }
 
         if (actionSheetSong != null) {
@@ -928,6 +936,10 @@ private fun IsolatedNowPlayingHost(
         currentLyricIndex = playerUiState.currentLyricIndex,
         queue = playerUiState.playlistQueue,
         currentIndex = playerUiState.currentIndex,
+        recentQueues = playerUiState.recentQueues,
+        activeQueueId = playerUiState.activeQueueId,
+        onSwitchRecentQueue = { musicPlayerViewModel.switchToRecentQueue(it) },
+        onDeleteRecentQueue = { musicPlayerViewModel.deleteRecentQueue(it) },
         coverStyle = playerUiState.coverStyle,
         playerBackgroundStyle = playerUiState.playerBackgroundStyle,
         dynamicCoverAccentEnabled = playerUiState.dynamicCoverAccentEnabled,

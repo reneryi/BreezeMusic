@@ -9,7 +9,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.concept.music.data.kugou.ClaimOutcome
 import com.concept.music.data.kugou.today
-import com.concept.music.data.vip.ListeningGradeManager
 import com.concept.music.data.vip.VipManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,17 +22,17 @@ import java.util.Locale
 
 data class VipGuardianState(
     val enabled: Boolean = true,
-    val autoReportEightSongs: Boolean = true,
+    val autoReportEightSongs: Boolean = false,
     val running: Boolean = false,
     val lastRunDay: String = "",
     val lastRunTimeFormatted: String = "尚未执行",
-    val lastResultSummary: String = "待触发每日静默领 VIP 守护"
+    val lastResultSummary: String = "待触发每日自动领 VIP"
 )
 
 /**
- * 全自动静默养号守护管理器 ([INNOV-03])
- * 结合 Android JobScheduler 周期后台任务与应用启动自检：
- * 每日自动执行概念版 VIP 签到领取 + 升级 SVIP + 8 首听歌任务上报，无需手动点开福利中心。
+ * 概念版 VIP 自动领取守护管理器：
+ * 严格遵循「VIP 领取只负责将 VIP 权益正确领取，绝不伪造听歌记录或影响听歌时长与其他设置」的原则，
+ * 彻底移除刷歌打卡、播放历史上传与听歌时长触发逻辑。
  */
 object VipGuardianManager {
     private const val JOB_ID_VIP_GUARDIAN = 311601
@@ -49,14 +48,13 @@ object VipGuardianManager {
         val p = appCtx.getSharedPreferences("concept_vip_guardian", Context.MODE_PRIVATE)
         prefs = p
         val enabled = p.getBoolean("guardian_enabled", true)
-        val autoSongs = p.getBoolean("auto_report_songs", true)
         val lastDay = p.getString("last_run_day", "") ?: ""
         val lastTime = p.getString("last_run_time", "尚未执行") ?: "尚未执行"
-        val lastSummary = p.getString("last_summary", "待触发每日静默领 VIP 守护") ?: "待触发每日静默领 VIP 守护"
+        val lastSummary = p.getString("last_summary", "待触发每日自动领 VIP") ?: "待触发每日自动领 VIP"
 
         _state.value = VipGuardianState(
             enabled = enabled,
-            autoReportEightSongs = autoSongs,
+            autoReportEightSongs = false,
             running = false,
             lastRunDay = lastDay,
             lastRunTimeFormatted = lastTime,
@@ -65,7 +63,6 @@ object VipGuardianManager {
 
         if (enabled) {
             schedulePeriodicJob(appCtx)
-            // 若今日尚未成功执行过静默守护，则在后台协程静默触发一次检查
             val currentDay = today()
             if (lastDay != currentDay) {
                 triggerGuardianNow(appCtx, isManual = false)
@@ -86,9 +83,9 @@ object VipGuardianManager {
         }
     }
 
-    fun setAutoReportEightSongs(enabled: Boolean) {
-        _state.value = _state.value.copy(autoReportEightSongs = enabled)
-        prefs?.edit()?.putBoolean("auto_report_songs", enabled)?.apply()
+    fun setAutoReportEightSongs(@Suppress("UNUSED_PARAMETER") enabled: Boolean) {
+        _state.value = _state.value.copy(autoReportEightSongs = false)
+        prefs?.edit()?.putBoolean("auto_report_songs", false)?.apply()
     }
 
     fun schedulePeriodicJob(context: Context) {
@@ -99,7 +96,7 @@ object VipGuardianManager {
             val component = ComponentName(context, VipGuardianJobService::class.java)
             val jobInfo = JobInfo.Builder(JOB_ID_VIP_GUARDIAN, component)
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                .setPeriodic(6 * 60 * 60 * 1000L) // 每 6 小时巡检一次当日权益
+                .setPeriodic(6 * 60 * 60 * 1000L)
                 .build()
             scheduler.schedule(jobInfo)
         }
@@ -111,7 +108,7 @@ object VipGuardianManager {
         onComplete: ((String) -> Unit)? = null
     ) {
         if (_state.value.running) {
-            onComplete?.invoke("静默养号守护正在执行中，请稍候")
+            onComplete?.invoke("正在领取中，请稍候")
             return
         }
         val appCtx = context.applicationContext
@@ -124,37 +121,20 @@ object VipGuardianManager {
                 VipManager.initialize(appCtx)
                 val accountCtx = VipManager.accounts.context()
                 if (accountCtx == null) {
-                    "未登录酷狗账号，待登录后自动守护"
+                    "未登录账号"
                 } else {
-                    // [P0-3] 先执行概念版专属听歌打卡任务 (/youth/v2/report/listen_song)，确保满足领取/升级前置听歌条件
-                    if (_state.value.autoReportEightSongs) {
-                        runCatching {
-                            val dailySongs = VipManager.music.dailyRecommend().take(8)
-                            if (dailySongs.isNotEmpty()) {
-                                dailySongs.forEach { song ->
-                                    val mxid = song.albumAudioId.takeIf { it > 0L }
-                                        ?: song.audioId.takeIf { it > 0L }
-                                        ?: 666075191L
-                                    VipManager.music.reportListenSong(mxid)
-                                    VipManager.music.uploadPlayHistory(song)
-                                    ListeningGradeManager.onSongCompleted(song)
-                                }
-                            } else {
-                                VipManager.music.reportListenSong(666075191L)
-                            }
-                        }
-                    }
+                    // 仅执行纯净的概念版 VIP 权益领取，不触发任何刷歌或听歌时长修改
                     val claimRes = VipManager.vip.claim(accountCtx, automatic = !isManual)
                     when (claimRes.outcome) {
                         ClaimOutcome.SUCCESS, ClaimOutcome.ALREADY_DONE -> {
                             prefs?.edit()?.putString("last_run_day", currentDay)?.apply()
-                            "今日概念版 VIP 已激活 · 听歌打卡与满级任务已同步"
+                            "今日概念版 VIP 已激活"
                         }
                         else -> claimRes.message
                     }
                 }
             } catch (e: Exception) {
-                "静默巡检暂缓：${e.message ?: "网络波动"}"
+                "暂缓：${e.message ?: "网络波动"}"
             }
 
             val updatedDay = if (summary.contains("已激活")) currentDay else _state.value.lastRunDay
@@ -179,9 +159,6 @@ object VipGuardianManager {
     }
 }
 
-/**
- * 系统级 JobService 守护进程，由 Android JobScheduler 定时唤醒执行
- */
 class VipGuardianJobService : JobService() {
     override fun onStartJob(params: JobParameters?): Boolean {
         VipGuardianManager.init(applicationContext)

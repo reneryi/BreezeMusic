@@ -711,6 +711,7 @@ class MusicApiRepository(
             val playCnt = infoObj.text("play_count") ?: infoObj.text("playcount") ?: ""
             val createUid = infoObj.text("list_create_userid") ?: infoObj.text("userid") ?: ""
             val createListId = infoObj.text("list_create_listid") ?: infoObj.text("listid") ?: infoObj.text("specialid") ?: ""
+            val creator = infoObj.text("nickname") ?: infoObj.text("username") ?: infoObj.text("user_name") ?: ""
 
             if (name.isBlank() && pic.isNullOrBlank() && count <= 0) {
                 null
@@ -722,6 +723,7 @@ class MusicApiRepository(
                     trackCount = count,
                     playCount = playCnt,
                     description = desc,
+                    creatorName = creator,
                     isCreatedByMe = false,
                     isFavorite = false,
                     isLiked = false,
@@ -759,6 +761,7 @@ class MusicApiRepository(
                 val gid = infoObj.text("global_collection_id") ?: infoObj.text("gid") ?: playlistId
                 val desc = infoObj.text("intro") ?: ""
                 val playCnt = infoObj.text("playcount") ?: ""
+                val creator = infoObj.text("nickname") ?: infoObj.text("username") ?: infoObj.text("user_name") ?: ""
                 Playlist(
                     id = gid.ifBlank { playlistId },
                     title = name,
@@ -766,6 +769,7 @@ class MusicApiRepository(
                     trackCount = count,
                     playCount = playCnt,
                     description = desc,
+                    creatorName = creator,
                     isCreatedByMe = false,
                     isFavorite = false,
                     isLiked = false,
@@ -4641,6 +4645,10 @@ class MusicApiRepository(
         finalSongs
     }
 
+    @Volatile
+    var lastServerRawDsec: Long = 0L
+        private set
+
     // 听歌等级与时长统计
     suspend fun userGradeInfo(dSec: Long? = null, diffSec: Long? = null): UserGradeInfo {
         val session = accounts.context()?.session
@@ -4735,21 +4743,17 @@ class MusicApiRepository(
                 ?: data.text("d_min")?.toLongOrNull()
                 ?: data.text("listen_time")?.toLongOrNull() ?: 0L
 
-            // 若接口同时返回精确秒数 d_sec 与分钟数 duration，优先取精度更高的秒数；若 d_sec 被服务端整百/整小时截断而 duration 含分钟余数，则保留精确分钟
+            if (dSecField > 0L) {
+                lastServerRawDsec = dSecField
+            }
+
+            // 严格对齐酷狗官方客户端展示逻辑：
+            // 服务端 duration 字段为官方实际累计听歌分钟数（不受 VIP 签到任务积分虚增影响），d_sec 仅记录供上报使用
             val totalSec = when {
-                dSecField > 0L && durationMinField > 0L -> {
-                    val dSecMins = dSecField / 60L
-                    if (dSecMins % 60L == 0L && durationMinField % 60L != 0L && kotlin.math.abs(dSecMins - durationMinField) <= 60L) {
-                        durationMinField * 60L + (dSecField % 60L)
-                    } else {
-                        dSecField
-                    }
-                }
-                dSecField > 0L -> dSecField
                 durationMinField > 0L -> {
-                    // 区分 duration 是分钟还是秒（超过 2,000,000 通常为秒）
                     if (durationMinField > 2_000_000L) durationMinField else durationMinField * 60L
                 }
+                dSecField > 0L -> dSecField
                 else -> 0L
             }
             val totalMin = totalSec / 60L
@@ -5340,13 +5344,9 @@ class MusicApiRepository(
     var lastSongCommentCount: Int = 0
         private set
 
-    suspend fun songComments(song: Song, type: String = "hot", page: Int = 1, pageSize: Int = 30): List<SongComment> {
-        if (page == 1) {
-            lastSongCommentCount = 0
-        }
+    private suspend fun resolveCommentMixSongId(song: Song): Long {
         var mixSongId = song.albumAudioId.takeIf { it > 0 } ?: song.audioId.takeIf { it > 0 } ?: 0L
         val cleanHash = song.hash.trim().lowercase()
-
         if (mixSongId <= 0 && cleanHash.isNotBlank()) {
             runCatching {
                 val infoResp = transport.callAdvanced(
@@ -5363,9 +5363,18 @@ class MusicApiRepository(
                 if (resolvedMixId > 0) mixSongId = resolvedMixId
             }
         }
+        return mixSongId
+    }
 
-        if (mixSongId <= 0 && cleanHash.isBlank()) return emptyList()
+    suspend fun songComments(song: Song, type: String = "hot", page: Int = 1, pageSize: Int = 30): List<SongComment> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (page == 1 && lastSongCommentCount < 0) {
+            lastSongCommentCount = 0
+        }
+        val mixSongId = resolveCommentMixSongId(song)
+        val cleanHash = song.hash.trim().lowercase()
+        if (mixSongId <= 0 && cleanHash.isBlank()) return@withContext emptyList()
         val extData = cleanHash.ifBlank { "0" }
+        val isHotTab = type != "new"
 
         fun extractTotalCount(root: JsonObject): Int {
             val d = root.obj("data")
@@ -5379,65 +5388,169 @@ class MusicApiRepository(
                 d?.number("total"),
                 d?.number("total_count"),
                 d?.number("all_count"),
+                d?.number("comments_count"),
                 d?.number("weight_count")
             ).maxOrNull() ?: 0
         }
 
-        val classifyComments = runCatching {
-            val response = transport.call(
-                path = "/mcomment/v1/cmt_classify_list",
-                method = "POST",
-                query = mapOf(
-                    "mixsongid" to mixSongId.toString(),
-                    "need_show_image" to "1",
-                    "p" to page.toString(),
-                    "pagesize" to pageSize.toString(),
-                    "extdata" to extData,
-                    "code" to "fc4be23b4e972707f36b8a828a93ba8a",
-                    "sort_method" to (if (type == "new") "2" else "1")
-                )
-            )
-            val parsedCount = extractTotalCount(response.data)
-            val list = parseCommentList(response.data, isHotDefault = (type == "hot"))
-            if (parsedCount > 0) {
-                lastSongCommentCount = maxOf(lastSongCommentCount, parsedCount)
-            } else if (list.isNotEmpty()) {
-                lastSongCommentCount = maxOf(lastSongCommentCount, list.size)
-            }
-            list
-        }.getOrNull()
-
-        if (classifyComments.isNullOrEmpty() || lastSongCommentCount <= classifyComments.size) {
-            val fallbackComments = runCatching {
+        val classifyCommentsDef = async {
+            runCatching {
                 val response = transport.call(
-                    path = "/mcomment/v1/cmtlist",
+                    path = "/mcomment/v1/cmt_classify_list",
                     method = "POST",
                     query = mapOf(
-                        "ver" to "6",
                         "mixsongid" to mixSongId.toString(),
                         "need_show_image" to "1",
                         "p" to page.toString(),
                         "pagesize" to pageSize.toString(),
-                        "show_classify" to "1",
-                        "show_hotword_list" to "1",
                         "extdata" to extData,
-                        "code" to "fc4be23b4e972707f36b8a828a93ba8a"
+                        "code" to "fc4be23b4e972707f36b8a828a93ba8a",
+                        "sort_method" to (if (isHotTab) "1" else "2"),
+                        "type" to (if (isHotTab) "1" else "2")
                     )
                 )
                 val parsedCount = extractTotalCount(response.data)
-                val list = parseCommentList(response.data, isHotDefault = (type == "hot"))
                 if (parsedCount > 0) {
                     lastSongCommentCount = maxOf(lastSongCommentCount, parsedCount)
-                } else if (list.isNotEmpty()) {
-                    lastSongCommentCount = maxOf(lastSongCommentCount, list.size)
                 }
-                list
+                parseCommentList(response.data, preferHotList = isHotTab)
             }.getOrDefault(emptyList())
-
-            if (classifyComments.isNullOrEmpty()) return fallbackComments
         }
 
-        return classifyComments ?: emptyList()
+        val cmtListDef = async {
+            if (isHotTab && page > 1) {
+                emptyList()
+            } else {
+                runCatching {
+                    val response = transport.call(
+                        path = "/mcomment/v1/cmtlist",
+                        method = "POST",
+                        query = mapOf(
+                            "ver" to "6",
+                            "mixsongid" to mixSongId.toString(),
+                            "need_show_image" to "1",
+                            "p" to page.toString(),
+                            "pagesize" to pageSize.toString(),
+                            "show_classify" to "1",
+                            "show_hotword_list" to "1",
+                            "extdata" to extData,
+                            "code" to "fc4be23b4e972707f36b8a828a93ba8a"
+                        )
+                    )
+                    val parsedCount = extractTotalCount(response.data)
+                    if (parsedCount > 0) {
+                        lastSongCommentCount = maxOf(lastSongCommentCount, parsedCount)
+                    }
+                    parseCommentList(response.data, preferHotList = isHotTab)
+                }.getOrDefault(emptyList())
+            }
+        }
+
+        val classifyList = classifyCommentsDef.await()
+        val fallbackList = cmtListDef.await()
+
+        val mergedRaw = if (isHotTab) {
+            (fallbackList + classifyList)
+                .distinctBy { it.id }
+                .sortedWith(
+                    compareByDescending<SongComment> { it.isHot }
+                        .thenByDescending { it.likeCount }
+                        .thenByDescending { it.replyCount }
+                )
+        } else {
+            (classifyList.ifEmpty { fallbackList })
+                .distinctBy { it.id }
+                .sortedByDescending { it.timeFormatted }
+        }
+
+        if (lastSongCommentCount <= 0 && mergedRaw.isNotEmpty()) {
+            lastSongCommentCount = mergedRaw.size
+        }
+
+        // 自动并发预取前 6 条含楼中楼回复评论的子回复列表，确保打开评论页即可展示完整楼中楼
+        val candidatesForReplyFetch = mergedRaw
+            .filter { it.replyCount > 0 && it.replies.isEmpty() && it.id.isNotBlank() }
+            .take(6)
+            .map { it.id }
+            .toSet()
+
+        if (candidatesForReplyFetch.isEmpty()) {
+            return@withContext mergedRaw
+        }
+
+        val repliesByParentId = coroutineScope {
+            candidatesForReplyFetch.map { parentId ->
+                async {
+                    val fetchedReplies = runCatching {
+                        songCommentReplies(song, parentId, page = 1, pageSize = 10, resolvedMixSongId = mixSongId)
+                    }.getOrDefault(emptyList())
+                    parentId to fetchedReplies
+                }
+            }.associate { it.await() }
+        }
+
+        mergedRaw.map { cmt ->
+            val fetched = repliesByParentId[cmt.id]
+            if (!fetched.isNullOrEmpty()) {
+                cmt.copy(
+                    replies = fetched,
+                    replyCount = maxOf(cmt.replyCount, fetched.size)
+                )
+            } else cmt
+        }
+    }
+
+    suspend fun songCommentReplies(
+        song: Song,
+        commentId: String,
+        page: Int = 1,
+        pageSize: Int = 20,
+        resolvedMixSongId: Long = 0L
+    ): List<SongComment> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (commentId.isBlank()) return@withContext emptyList()
+        val mixSongId = resolvedMixSongId.takeIf { it > 0L } ?: resolveCommentMixSongId(song)
+        val extData = song.hash.trim().lowercase().ifBlank { "0" }
+        val session = accounts.context()?.session
+
+        val primaryReplies = runCatching {
+            val response = transport.call(
+                path = "/mcomment/v1/replylist",
+                method = "POST",
+                session = session,
+                query = mapOf(
+                    "ver" to "6",
+                    "mixsongid" to mixSongId.toString(),
+                    "cmtid" to commentId,
+                    "tid" to commentId,
+                    "p" to page.toString(),
+                    "pagesize" to pageSize.toString(),
+                    "extdata" to extData,
+                    "code" to "fc4be23b4e972707f36b8a828a93ba8a"
+                )
+            )
+            parseReplyItems(response.data, parentCommentId = commentId)
+        }.getOrDefault(emptyList())
+
+        if (primaryReplies.isNotEmpty()) return@withContext primaryReplies
+
+        runCatching {
+            val response = transport.call(
+                path = "/mcomment/v2/replylist",
+                method = "GET",
+                session = session,
+                query = mapOf(
+                    "ver" to "6",
+                    "mixsongid" to mixSongId.toString(),
+                    "cmtid" to commentId,
+                    "tid" to commentId,
+                    "p" to page.toString(),
+                    "pagesize" to pageSize.toString(),
+                    "extdata" to extData,
+                    "code" to "fc4be23b4e972707f36b8a828a93ba8a"
+                )
+            )
+            parseReplyItems(response.data, parentCommentId = commentId)
+        }.getOrDefault(emptyList())
     }
 
     suspend fun likeSongComment(song: Song, commentId: String, like: Boolean): Boolean {
@@ -5462,58 +5575,126 @@ class MusicApiRepository(
         }.getOrDefault(false)
     }
 
-    private fun parseCommentList(root: JsonObject, isHotDefault: Boolean): List<SongComment> {
+    private fun extractCommentLikeCount(o: JsonObject): Int {
+        val likeObj = o.obj("like")
+        return listOfNotNull(
+            o.number("like_count"),
+            likeObj?.number("count"),
+            likeObj?.number("like_count"),
+            likeObj?.number("praisecount"),
+            likeObj?.number("like_num"),
+            o.number("praisecount"),
+            o.number("like_num"),
+            o.number("likes")
+        ).maxOrNull() ?: 0
+    }
+
+    private fun extractCommentIsLiked(o: JsonObject): Boolean {
+        val likeObj = o.obj("like")
+        return o.number("is_like") == 1 ||
+            likeObj?.number("is_like") == 1 ||
+            likeObj?.number("status") == 1
+    }
+
+    private fun parseReplyItems(
+        root: JsonObject,
+        parentCommentId: String,
+        defaultReplyUserName: String? = null
+    ): List<SongComment> {
         val dataObj = root.obj("data") ?: root
-        val list = listOf("list", "weight_list", "hot_list", "lists", "comments", "info").asSequence()
-            .mapNotNull { key -> (dataObj.arr(key) ?: root.arr(key))?.takeIf { it.size() > 0 } }.firstOrNull() ?: return emptyList()
+        val arr = listOf("list", "reply_list", "replys", "children", "comments", "lists", "info")
+            .asSequence()
+            .mapNotNull { key -> (dataObj.arr(key) ?: root.arr(key))?.takeIf { it.size() > 0 } }
+            .firstOrNull() ?: return emptyList()
+
+        return arr.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull { r ->
+            val rId = r.text("id") ?: r.text("reply_id") ?: r.text("cmtid") ?: ""
+            val rContent = (r.text("content") ?: r.text("text") ?: "").trim()
+            if (rContent.isBlank()) return@mapNotNull null
+            val rUdetail = r.obj("udetail") ?: r.obj("user")
+            val rUId = r.text("user_id") ?: rUdetail?.text("user_id") ?: r.text("userid") ?: ""
+            val rUName = r.text("user_name") ?: r.text("nick_name")
+                ?: rUdetail?.text("user_name") ?: rUdetail?.text("nickname") ?: "酷狗乐迷"
+            val rAvatar = imageUrl(
+                r.text("user_pic") ?: r.text("avatar") ?: r.text("pic")
+                    ?: rUdetail?.text("user_pic") ?: rUdetail?.text("avatar")
+            )
+            val rTime = r.text("addtime") ?: r.text("time") ?: "近期"
+            val rLikes = extractCommentLikeCount(r)
+            val rIsLiked = extractCommentIsLiked(r)
+            val rIp = (r.text("location") ?: r.text("ip_location") ?: r.text("province")
+                ?: rUdetail?.text("location") ?: "").removePrefix("IP属地:").removePrefix("IP属地：").trim()
+            val rReplyUser = r.text("reply_user_name") ?: r.text("reply_username")
+                ?: r.obj("reply_user")?.text("user_name")
+                ?: r.obj("puser")?.text("user_name")
+                ?: defaultReplyUserName
+
+            SongComment(
+                id = rId.ifBlank { "${parentCommentId}_${rTime}_${rContent.hashCode()}" },
+                userId = rUId,
+                userName = rUName,
+                userAvatar = rAvatar,
+                content = rContent,
+                timeFormatted = rTime,
+                likeCount = rLikes,
+                isLiked = rIsLiked,
+                ipLocation = rIp,
+                parentId = parentCommentId,
+                rootId = parentCommentId,
+                replyUserName = rReplyUser
+            )
+        }
+    }
+
+    private fun parseCommentList(root: JsonObject, preferHotList: Boolean): List<SongComment> {
+        val dataObj = root.obj("data") ?: root
+        val candidateKeys = if (preferHotList) {
+            listOf("weight_list", "hot_list", "list", "lists", "comments", "info")
+        } else {
+            listOf("list", "lists", "comments", "info", "weight_list", "hot_list")
+        }
+
+        var matchedKey = ""
+        val list = candidateKeys.asSequence()
+            .mapNotNull { key ->
+                val arr = (dataObj.arr(key) ?: root.arr(key))?.takeIf { it.size() > 0 }
+                if (arr != null) {
+                    matchedKey = key
+                    arr
+                } else null
+            }.firstOrNull() ?: return emptyList()
+
+        val fromWeightOrHotArray = matchedKey == "weight_list" || matchedKey == "hot_list"
 
         return list.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull { o ->
             val id = o.text("id") ?: o.text("cmtid") ?: ""
-            val content = o.text("content") ?: return@mapNotNull null
+            val content = (o.text("content") ?: "").trim()
             if (content.isBlank()) return@mapNotNull null
 
-            val uDetail = o.obj("udetail")
+            val uDetail = o.obj("udetail") ?: o.obj("user")
             val uId = o.text("user_id") ?: uDetail?.text("user_id") ?: ""
-            val uName = o.text("user_name") ?: o.text("nick_name") ?: uDetail?.text("user_name") ?: uDetail?.text("nickname") ?: "酷狗乐友"
-            val uAvatar = imageUrl(o.text("user_pic") ?: o.text("avatar") ?: o.text("pic") ?: uDetail?.text("user_pic") ?: uDetail?.text("avatar"))
+            val uName = o.text("user_name") ?: o.text("nick_name")
+                ?: uDetail?.text("user_name") ?: uDetail?.text("nickname") ?: "酷狗乐友"
+            val uAvatar = imageUrl(
+                o.text("user_pic") ?: o.text("avatar") ?: o.text("pic")
+                    ?: uDetail?.text("user_pic") ?: uDetail?.text("avatar")
+            )
             val time = o.text("addtime") ?: o.text("time") ?: "近期"
-            val likes = o.number("like_count") ?: o.obj("like")?.number("like_count") ?: o.number("praisecount") ?: 0
-            val isLiked = o.number("is_like") == 1 || o.obj("like")?.number("is_like") == 1
-            val isHot = isHotDefault || o.number("is_hot") == 1 || likes >= 10
-            val ipLocation = o.text("location") ?: o.text("ip_location") ?: o.text("province") ?: uDetail?.text("location") ?: "广东"
+            val likes = extractCommentLikeCount(o)
+            val isLiked = extractCommentIsLiked(o)
+            val isHot = fromWeightOrHotArray || o.number("is_hot") == 1 || o.number("weight") == 1 || likes >= 50
+            val vipLvl = o.number("vip_type") ?: uDetail?.number("vip_type") ?: o.number("m_type") ?: 0
+            val ipLocation = (o.text("location") ?: o.text("ip_location") ?: o.text("province")
+                ?: uDetail?.text("location") ?: "").removePrefix("IP属地:").removePrefix("IP属地：").trim()
 
-            val replyList = o.arr("reply_list") ?: o.arr("children") ?: o.arr("replys")
-            val replies = if (replyList != null && replyList.size() > 0) {
-                replyList.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull inner@ { r ->
-                    val rId = r.text("id") ?: r.text("reply_id") ?: ""
-                    val rContent = r.text("content") ?: return@inner null
-                    val rUdetail = r.obj("udetail")
-                    val rUId = r.text("user_id") ?: rUdetail?.text("user_id") ?: ""
-                    val rUName = r.text("user_name") ?: r.text("nick_name") ?: rUdetail?.text("user_name") ?: "乐迷"
-                    val rAvatar = imageUrl(r.text("user_pic") ?: r.text("avatar") ?: rUdetail?.text("user_pic"))
-                    val rTime = r.text("addtime") ?: r.text("time") ?: "近期"
-                    val rLikes = r.number("like_count") ?: 0
-                    val rIsLiked = r.number("is_like") == 1 || r.obj("like")?.number("is_like") == 1
-                    val rIp = r.text("location") ?: r.text("ip_location") ?: "浙江"
-                    val rReplyUser = r.text("reply_user_name") ?: r.text("reply_username") ?: uName
-                    SongComment(
-                        id = rId,
-                        userId = rUId,
-                        userName = rUName,
-                        userAvatar = rAvatar,
-                        content = rContent,
-                        timeFormatted = rTime,
-                        likeCount = rLikes,
-                        isLiked = rIsLiked,
-                        ipLocation = rIp,
-                        parentId = id,
-                        rootId = id,
-                        replyUserName = rReplyUser
-                    )
-                }
-            } else emptyList()
-
-            val replyCount = o.number("reply_num") ?: o.number("reply_count") ?: replies.size
+            val inlineReplies = parseReplyItems(o, parentCommentId = id, defaultReplyUserName = uName)
+            val replyCount = listOfNotNull(
+                o.number("reply_num"),
+                o.number("reply_count"),
+                o.number("replys_count"),
+                o.obj("reply")?.number("count"),
+                inlineReplies.size
+            ).maxOrNull() ?: 0
 
             SongComment(
                 id = id,
@@ -5525,9 +5706,10 @@ class MusicApiRepository(
                 likeCount = likes,
                 isLiked = isLiked,
                 isHot = isHot,
+                vipLevel = vipLvl,
                 ipLocation = ipLocation,
                 replyCount = replyCount,
-                replies = replies
+                replies = inlineReplies
             )
         }
     }

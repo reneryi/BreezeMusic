@@ -11,10 +11,10 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.concept.music.data.kugou.KugouCsccReporter
 import com.concept.music.data.model.AudioQuality
 import com.concept.music.data.model.LyricData
 import com.concept.music.data.model.Song
-import com.concept.music.data.kugou.KugouCsccReporter
 import com.concept.music.data.model.SongComment
 import com.concept.music.data.model.SongDetailInfo
 import com.concept.music.data.vip.ListeningGradeManager
@@ -56,11 +56,11 @@ enum class CoverStyle(val label: String) {
  * 封面播放页五款高定背景视觉模式
  */
 enum class PlayerBackgroundStyle(val label: String, val subtitle: String) {
-    COVER_BLUR("封面虚化", "经典专辑封面柔和高斯虚化"),
-    FLUID_AURORA("流体极光", "封面取色多核动态流体渐变"),
-    RHYTHM_HALO("律动光晕", "随音乐节奏呼吸扩散的同心光环"),
-    STARLIGHT_NEBULA("暗夜星尘", "深邃星云微光与漂浮萤火微粒"),
-    DEEP_OLED("极简纯黑", "纯粹OLED暗黑画布与微弱背光")
+    COVER_BLUR("封面虚化", "柔和色彩弥散"),
+    FLUID_AURORA("流体极光", "动态多核流光"),
+    RHYTHM_HALO("律动光晕", "呼吸感同心光环"),
+    STARLIGHT_NEBULA("暗夜星尘", "深邃微光星云"),
+    DEEP_OLED("极简纯黑", "纯粹暗黑画布")
 }
 
 enum class LyricAlignment(val label: String) {
@@ -79,6 +79,15 @@ enum class LyricHighlightTheme(val label: String, val primaryHex: Long, val seco
 }
 
 @Immutable
+data class SavedPlayQueue(
+    val id: String,
+    val title: String,
+    val songs: List<Song>,
+    val currentIndex: Int = 0,
+    val updatedAtMs: Long = System.currentTimeMillis()
+)
+
+@Immutable
 data class PlayerUiState(
     val currentSong: Song? = null,
     val isPlaying: Boolean = false,
@@ -87,6 +96,8 @@ data class PlayerUiState(
     val bufferedPositionMs: Long = 0L,
     val playlistQueue: List<Song> = emptyList(),
     val currentIndex: Int = 0,
+    val recentQueues: List<SavedPlayQueue> = emptyList(),
+    val activeQueueId: String = "",
     val playMode: PlayMode = PlayMode.REPEAT_ALL,
     val preferredQuality: AudioQuality = AudioQuality.HIGH,
     val currentQualityLabel: String = "高品 320K",
@@ -95,8 +106,8 @@ data class PlayerUiState(
     val coverStyle: CoverStyle = CoverStyle.VINYL,
     val playerBackgroundStyle: PlayerBackgroundStyle = PlayerBackgroundStyle.COVER_BLUR,
     val dynamicCoverAccentEnabled: Boolean = true,
-    val showTranslation: Boolean = true,
-    val showPhonetic: Boolean = true,
+    val showTranslation: Boolean = false,
+    val showPhonetic: Boolean = false,
     val lyricFontSize: Float = 22f,
     val lyricTranslationScale: Float = 0.82f,
     val lyricAlignment: LyricAlignment = LyricAlignment.LEFT,
@@ -230,7 +241,6 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
             currentSong?.let { ListeningGradeManager.onSongCompleted(it) }
-            // 若开启了“播完当前歌曲再停”且处于待停机状态（倒计时已归零或仅播完本首），则在切歌瞬间拦截并暂停，同时保留用户的“播完当前歌曲再停”记忆开关
             if (mutableState.value.sleepPendingStopAtTrackEnd && mutableState.value.sleepTimerRemainingSec <= 0L) {
                 activePlayer?.pause()
                 activePlayer?.volume = 1f
@@ -274,10 +284,13 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             activePlayer?.volume = 1f
         }
 
+        val updatedRecent = syncActiveQueueInRecent(q, newIdx, mutableState.value.activeQueueId, mutableState.value.recentQueues)
         mutableState.value = mutableState.value.copy(
             currentSong = resolvedSong,
             currentQualityLabel = transQualityLabel,
             currentIndex = newIdx,
+            recentQueues = updatedRecent.first,
+            activeQueueId = updatedRecent.second,
             currentPositionMs = startPos,
             durationMs = resolvedSong.durationMs,
             climaxUnlockedForCurrentSong = false,
@@ -346,6 +359,92 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    private fun buildQueueTitle(songs: List<Song>): String {
+        if (songs.isEmpty()) return "空队列"
+        val first = songs.first().title.take(10)
+        return if (songs.size == 1) {
+            "单曲 · $first"
+        } else {
+            "$first 等 ${songs.size} 首"
+        }
+    }
+
+    private fun isSameQueueLineage(a: List<Song>, b: List<Song>): Boolean {
+        if (a.isEmpty() || b.isEmpty()) return false
+        if (a.size == b.size && a.first().id == b.first().id && a.last().id == b.last().id) return true
+        val setA = a.take(30).map { it.id }.toSet()
+        val setB = b.take(30).map { it.id }.toSet()
+        val overlap = setA.intersect(setB).size
+        val minSize = minOf(setA.size, setB.size)
+        return minSize >= 3 && overlap * 10 >= minSize * 7
+    }
+
+    private fun syncActiveQueueInRecent(
+        queue: List<Song>,
+        currentIndex: Int,
+        currentActiveId: String,
+        existingRecent: List<SavedPlayQueue>
+    ): Pair<List<SavedPlayQueue>, String> {
+        if (queue.isEmpty()) return existingRecent to currentActiveId
+        val cleanSongs = queue.take(150).map { it.copy(playUrl = "") }
+        val now = System.currentTimeMillis()
+        val matchedExisting = existingRecent.find { it.id == currentActiveId && isSameQueueLineage(it.songs, cleanSongs) }
+            ?: existingRecent.find { isSameQueueLineage(it.songs, cleanSongs) }
+
+        val targetId = matchedExisting?.id ?: "q_$now"
+        val updatedEntry = SavedPlayQueue(
+            id = targetId,
+            title = buildQueueTitle(cleanSongs),
+            songs = cleanSongs,
+            currentIndex = currentIndex.coerceIn(0, (cleanSongs.size - 1).coerceAtLeast(0)),
+            updatedAtMs = now
+        )
+        val newList = buildList {
+            add(updatedEntry)
+            existingRecent.forEach { item ->
+                if (item.id != targetId && !isSameQueueLineage(item.songs, cleanSongs)) {
+                    add(item)
+                }
+            }
+        }.take(3)
+        return newList to targetId
+    }
+
+    fun switchToRecentQueue(queueId: String) {
+        val state = mutableState.value
+        val target = state.recentQueues.find { it.id == queueId } ?: return
+        if (target.songs.isEmpty()) return
+        val safeIdx = target.currentIndex.coerceIn(0, target.songs.lastIndex)
+        val song = target.songs[safeIdx]
+        mutableState.value = state.copy(activeQueueId = target.id)
+        playSong(song, target.songs)
+    }
+
+    fun deleteRecentQueue(queueId: String) {
+        val state = mutableState.value
+        val remaining = state.recentQueues.filterNot { it.id == queueId }
+        if (queueId == state.activeQueueId) {
+            val nextQueue = remaining.firstOrNull()
+            if (nextQueue != null && nextQueue.songs.isNotEmpty()) {
+                val idx = nextQueue.currentIndex.coerceIn(0, nextQueue.songs.lastIndex)
+                mutableState.value = state.copy(
+                    recentQueues = remaining,
+                    activeQueueId = nextQueue.id
+                )
+                playSong(nextQueue.songs[idx], nextQueue.songs)
+            } else {
+                mutableState.value = state.copy(
+                    recentQueues = emptyList(),
+                    activeQueueId = ""
+                )
+                clearQueue()
+            }
+        } else {
+            mutableState.value = state.copy(recentQueues = remaining)
+            persistPlaybackStateAsync()
+        }
+    }
+
     private fun restorePersistedPlaybackState() {
         val savedCover = runCatching {
             val raw = prefs.getString("cover_style", CoverStyle.VINYL.name) ?: CoverStyle.VINYL.name
@@ -365,8 +464,9 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val savedQuality = runCatching {
             AudioQuality.valueOf(prefs.getString("preferred_quality_v2", AudioQuality.HIGH.name) ?: AudioQuality.HIGH.name)
         }.getOrDefault(AudioQuality.HIGH)
-        val savedShowTrans = prefs.getBoolean("show_translation", true)
-        val savedShowPhonetic = prefs.getBoolean("show_phonetic", true)
+        // 外语翻译与音译注音默认关闭
+        val savedShowTrans = prefs.getBoolean("show_translation_v3", false)
+        val savedShowPhonetic = prefs.getBoolean("show_phonetic_v3", false)
         val savedFontSize = prefs.getFloat("lyric_font_size_v2", 22f).coerceIn(16f, 30f)
         val savedAlign = runCatching {
             LyricAlignment.valueOf(prefs.getString("lyric_alignment_v2", LyricAlignment.LEFT.name) ?: LyricAlignment.LEFT.name)
@@ -385,7 +485,6 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val savedBgDim = prefs.getFloat("lyric_bg_dim", 0.72f).coerceIn(0.35f, 0.92f)
         val savedKeepScreenOn = prefs.getBoolean("lyric_keep_screen_on", true)
 
-        // 睡眠定时“播完当前歌曲再停”记忆开关持久化恢复
         val savedSleepStopAfterSong = prefs.getBoolean("sleep_stop_after_song_pref", false)
 
         val savedClimaxMode = prefs.getBoolean("climax_mode_enabled", false)
@@ -400,6 +499,14 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             runCatching {
                 val type = object : TypeToken<List<Song>>() {}.type
                 gson.fromJson<List<Song>>(queueJson, type) ?: emptyList()
+            }.getOrDefault(emptyList())
+        } else emptyList()
+
+        val recentQueuesJson = prefs.getString("saved_recent_queues_json", null)
+        val restoredRecentQueues: List<SavedPlayQueue> = if (!recentQueuesJson.isNullOrBlank()) {
+            runCatching {
+                val type = object : TypeToken<List<SavedPlayQueue>>() {}.type
+                gson.fromJson<List<SavedPlayQueue>>(recentQueuesJson, type) ?: emptyList()
             }.getOrDefault(emptyList())
         } else emptyList()
 
@@ -426,6 +533,14 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             .coerceIn(0, (sanitizedQueue.size - 1).coerceAtLeast(0))
         val restoredSong = sanitizedQueue.getOrNull(savedIndex)
         val savedPosMs = prefs.getLong("saved_position_ms", 0L).coerceAtLeast(0L)
+        val savedActiveQueueId = prefs.getString("saved_active_queue_id", "").orEmpty()
+
+        val (syncedRecent, activeQueueId) = syncActiveQueueInRecent(
+            queue = sanitizedQueue,
+            currentIndex = savedIndex,
+            currentActiveId = savedActiveQueueId,
+            existingRecent = restoredRecentQueues.take(3)
+        )
 
         val effectiveRestoredQuality = if (restoredSong != null) {
             restoredSong.actualPlayQuality?.takeIf { it in restoredSong.effectiveQualities }
@@ -462,6 +577,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             autoPlayOnStartup = savedAutoPlay,
             playlistQueue = sanitizedQueue,
             currentIndex = savedIndex,
+            recentQueues = syncedRecent,
+            activeQueueId = activeQueueId,
             currentSong = restoredSong,
             currentPositionMs = if (restoredSong != null) savedPosMs else 0L,
             durationMs = restoredSong?.durationMs ?: 0L,
@@ -487,6 +604,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             runCatching {
                 val cleanQueue = snapshot.playlistQueue.take(150).map { it.copy(playUrl = "") }
                 val queueJson = gson.toJson(cleanQueue)
+                val recentJson = gson.toJson(
+                    snapshot.recentQueues.take(3).map { rq ->
+                        rq.copy(songs = rq.songs.take(120).map { s -> s.copy(playUrl = "") })
+                    }
+                )
                 prefs.edit()
                     .putString("cover_style", snapshot.coverStyle.name)
                     .putString("player_bg_style", snapshot.playerBackgroundStyle.name)
@@ -495,8 +617,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     .putBoolean("smooth_play_pause_fade", snapshot.smoothPlayPauseFade)
                     .putString("play_mode", snapshot.playMode.name)
                     .putString("preferred_quality_v2", snapshot.preferredQuality.name)
-                    .putBoolean("show_translation", snapshot.showTranslation)
-                    .putBoolean("show_phonetic", snapshot.showPhonetic)
+                    .putBoolean("show_translation_v3", snapshot.showTranslation)
+                    .putBoolean("show_phonetic_v3", snapshot.showPhonetic)
                     .putFloat("lyric_font_size_v2", snapshot.lyricFontSize)
                     .putString("lyric_alignment_v2", snapshot.lyricAlignment.name)
                     .putBoolean("lyric_word_by_word", snapshot.lyricWordByWord)
@@ -515,6 +637,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     .putBoolean("pause_on_headset_disconnect", snapshot.pauseOnHeadsetDisconnect)
                     .putBoolean("auto_play_on_startup", snapshot.autoPlayOnStartup)
                     .putString("saved_queue_json", queueJson)
+                    .putString("saved_recent_queues_json", recentJson)
+                    .putString("saved_active_queue_id", snapshot.activeQueueId)
                     .putInt("saved_current_index", snapshot.currentIndex)
                     .putLong("saved_position_ms", snapshot.currentPositionMs)
                     .apply()
@@ -553,11 +677,20 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             AudioQuality.STANDARD -> "标准 128K"
         }
 
+        val (updatedRecentQueues, newActiveQueueId) = syncActiveQueueInRecent(
+            queue = list,
+            currentIndex = index,
+            currentActiveId = mutableState.value.activeQueueId,
+            existingRecent = mutableState.value.recentQueues
+        )
+
         mutableState.value = mutableState.value.copy(
             loading = true,
             error = null,
             playlistQueue = list,
             currentIndex = index,
+            recentQueues = updatedRecentQueues,
+            activeQueueId = newActiveQueueId,
             currentSong = song,
             currentPositionMs = seekToPositionMs,
             durationMs = song.durationMs,
@@ -695,24 +828,23 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             try {
                 val data = VipManager.lyric.getLyric(song)
                 if (mutableState.value.currentSong?.id == song.id) {
-                mutableState.value = mutableState.value.copy(
-                    lyricLoading = false,
-                    currentLyric = data
-                )
-                updateLyricIndex(mutableState.value.currentPositionMs)
+                    mutableState.value = mutableState.value.copy(
+                        lyricLoading = false,
+                        currentLyric = data
+                    )
+                    updateLyricIndex(mutableState.value.currentPositionMs)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (_: Exception) {
                 if (mutableState.value.currentSong?.id == song.id) {
-                mutableState.value = mutableState.value.copy(
-                    lyricLoading = false,
-                    currentLyric = LyricData()
-                )
+                    mutableState.value = mutableState.value.copy(
+                        lyricLoading = false,
+                        currentLyric = LyricData()
+                    )
+                }
             }
         }
-    }
-
     }
 
     fun togglePlayPause() {
@@ -842,7 +974,13 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
         val insertIndex = (newCurrentIndex + 1).coerceAtMost(queue.size)
         queue.add(insertIndex, song)
-        mutableState.value = state.copy(playlistQueue = queue, currentIndex = newCurrentIndex)
+        val (updatedRecent, activeId) = syncActiveQueueInRecent(queue, newCurrentIndex, state.activeQueueId, state.recentQueues)
+        mutableState.value = state.copy(
+            playlistQueue = queue,
+            currentIndex = newCurrentIndex,
+            recentQueues = updatedRecent,
+            activeQueueId = activeId
+        )
         persistPlaybackStateAsync()
 
         activePlayer?.let { player ->
@@ -874,9 +1012,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             } else {
                 state.currentIndex
             }
+            val (updatedRecent, activeId) = syncActiveQueueInRecent(queue, newCurrentIndex, state.activeQueueId, state.recentQueues)
             mutableState.value = state.copy(
                 playlistQueue = queue,
-                currentIndex = newCurrentIndex
+                currentIndex = newCurrentIndex,
+                recentQueues = updatedRecent,
+                activeQueueId = activeId
             )
             persistPlaybackStateAsync()
             activePlayer?.let { player ->
@@ -899,8 +1040,13 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         activePlayer?.clearMediaItems()
         songsByMediaId.clear()
         val st = mutableState.value
+        val remainingRecent = st.recentQueues.filterNot { it.id == st.activeQueueId }
         mutableState.value = PlayerUiState(
             coverStyle = st.coverStyle,
+            playerBackgroundStyle = st.playerBackgroundStyle,
+            dynamicCoverAccentEnabled = st.dynamicCoverAccentEnabled,
+            lyricTranslationScale = st.lyricTranslationScale,
+            smoothPlayPauseFade = st.smoothPlayPauseFade,
             playMode = st.playMode,
             preferredQuality = st.preferredQuality,
             currentQualityLabel = st.preferredQuality.label,
@@ -916,7 +1062,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             lyricHighlightTheme = st.lyricHighlightTheme,
             lyricBackgroundDim = st.lyricBackgroundDim,
             lyricKeepScreenOn = st.lyricKeepScreenOn,
-            sleepStopAfterCurrentSong = st.sleepStopAfterCurrentSong
+            sleepStopAfterCurrentSong = st.sleepStopAfterCurrentSong,
+            climaxModeEnabled = st.climaxModeEnabled,
+            crossfadeSeconds = st.crossfadeSeconds,
+            volumeNormalization = st.volumeNormalization,
+            wifiOnlyLossless = st.wifiOnlyLossless,
+            pauseOnHeadsetDisconnect = st.pauseOnHeadsetDisconnect,
+            autoPlayOnStartup = st.autoPlayOnStartup,
+            recentQueues = remainingRecent,
+            activeQueueId = ""
         )
         persistPlaybackStateAsync()
     }
@@ -982,17 +1136,20 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         } else {
             reorderedRemaining
         }
+        val (updatedRecent, activeId) = syncActiveQueueInRecent(newQueue, 0, state.activeQueueId, state.recentQueues)
         mutableState.value = state.copy(
             playlistQueue = newQueue,
-            currentIndex = 0
+            currentIndex = 0,
+            recentQueues = updatedRecent,
+            activeQueueId = activeId
         )
         persistPlaybackStateAsync()
         prefetchNextSong(newQueue, 0)
 
         return when (mode) {
-            "sleep" -> "已开启「🌙 睡前渐缓」漫游重排（由动感平滑过渡至舒缓）"
-            "commute" -> "已开启「⚡ 通勤渐燃」漫游重排（高能节拍优先唤醒）"
-            else -> "已开启「🌊 声学漫游」丝滑重排（相近声学特征无缝衔接）"
+            "sleep" -> "已开启「睡前渐缓」重排"
+            "commute" -> "已开启「通勤渐燃」重排"
+            else -> "已开启「声学漫游」重排"
         }
     }
 
@@ -1006,9 +1163,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val newCurrentIndex = if (currentSongId != null) {
             queue.indexOfFirst { it.id == currentSongId }.coerceAtLeast(0)
         } else state.currentIndex
+        val (updatedRecent, activeId) = syncActiveQueueInRecent(queue, newCurrentIndex, state.activeQueueId, state.recentQueues)
         mutableState.value = state.copy(
             playlistQueue = queue,
-            currentIndex = newCurrentIndex
+            currentIndex = newCurrentIndex,
+            recentQueues = updatedRecent,
+            activeQueueId = activeId
         )
         persistPlaybackStateAsync()
         prefetchNextSong(queue, newCurrentIndex)
@@ -1172,24 +1332,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         activePlayer?.playbackParameters = PlaybackParameters(1.0f, 1.0f)
     }
 
-    /**
-     * 持久化记忆“播完当前歌曲再停”开关偏好，无需每次打开定时弹窗重新勾选
-     */
     fun setSleepStopAfterCurrentSongPreference(enabled: Boolean) {
         mutableState.value = mutableState.value.copy(sleepStopAfterCurrentSong = enabled)
         prefs.edit().putBoolean("sleep_stop_after_song_pref", enabled).apply()
     }
 
-    /**
-     * 睡眠定时器 ([FUNC-03] 增强版)
-     * - 支持持久化记忆 `sleepStopAfterCurrentSong` 偏好
-     * - 当倒计时结束或取消时，保留用户的 `sleepStopAfterCurrentSong` 记忆开关，仅改变 `sleepPendingStopAtTrackEnd`
-     */
     fun setSleepTimer(minutes: Int, stopAfterCurrentSong: Boolean = mutableState.value.sleepStopAfterCurrentSong) {
         sleepTimerJob?.cancel()
         activePlayer?.volume = 1f
 
-        // 同步持久化记忆用户的“播完当前歌曲再停”偏好
         prefs.edit().putBoolean("sleep_stop_after_song_pref", stopAfterCurrentSong).apply()
 
         if (minutes <= 0 && !stopAfterCurrentSong) {
@@ -1236,7 +1387,6 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     sleepPendingStopAtTrackEnd = false
                 )
             } else {
-                // 已开启“播完当前歌曲再停”：倒计时归零后进入等待本曲结束状态，且不重置 sleepStopAfterCurrentSong 记忆开关
                 mutableState.value = mutableState.value.copy(
                     sleepTimerRemainingSec = 0L,
                     sleepPendingStopAtTrackEnd = true
@@ -1248,16 +1398,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun cancelSleepTimer() {
         sleepTimerJob?.cancel()
         activePlayer?.volume = 1f
-        // 取消当前定时任务，但保留用户偏好的 sleepStopAfterCurrentSong 记忆开关状态
         mutableState.value = mutableState.value.copy(
             sleepTimerRemainingSec = 0L,
             sleepPendingStopAtTrackEnd = false
         )
     }
 
-    /**
-     * 「副歌速刷」高潮速听探索模式控制 ([INNOV-01])
-     */
     fun toggleClimaxMode() {
         setClimaxMode(!mutableState.value.climaxModeEnabled)
     }
@@ -1322,13 +1468,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         mutableState.value = mutableState.value.copy(
             commentType = type,
             commentsPage = 1,
-            comments = emptyList()
+            comments = emptyList(),
+            commentsHasMore = true
         )
         loadComments(isRefresh = true)
     }
 
     fun loadComments(isRefresh: Boolean = false) {
         val song = mutableState.value.currentSong ?: return
+        if (!isRefresh && (mutableState.value.commentsLoading || !mutableState.value.commentsHasMore)) return
         val page = if (isRefresh) 1 else mutableState.value.commentsPage + 1
         val type = mutableState.value.commentType
 
@@ -1340,15 +1488,38 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 val merged: List<SongComment> = (current + list).distinctBy { it.id }
                 val serverCount = VipManager.music.lastSongCommentCount
                 val count = if (serverCount > 0) serverCount else if (merged.isNotEmpty()) maxOf(mutableState.value.commentCount, merged.size) else mutableState.value.commentCount
+                val addedNewItems = isRefresh || merged.size > current.size
                 mutableState.value = mutableState.value.copy(
                     comments = merged,
                     commentsLoading = false,
                     commentsPage = page,
-                    commentsHasMore = list.isNotEmpty(),
+                    commentsHasMore = list.isNotEmpty() && addedNewItems,
                     commentCount = count
                 )
             }.onFailure {
                 mutableState.value = mutableState.value.copy(commentsLoading = false)
+            }
+        }
+    }
+
+    fun loadCommentReplies(commentId: String) {
+        val song = mutableState.value.currentSong ?: return
+        if (commentId.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val replies = VipManager.music.songCommentReplies(song, commentId, page = 1, pageSize = 30)
+                if (replies.isNotEmpty()) {
+                    val updatedList = mutableState.value.comments.map { cmt ->
+                        if (cmt.id == commentId) {
+                            val mergedReplies = (cmt.replies + replies).distinctBy { it.id }
+                            cmt.copy(
+                                replies = mergedReplies,
+                                replyCount = maxOf(cmt.replyCount, mergedReplies.size)
+                            )
+                        } else cmt
+                    }
+                    mutableState.value = mutableState.value.copy(comments = updatedList)
+                }
             }
         }
     }
@@ -1495,7 +1666,6 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             activePlayingSong = null
             songPlaybackStartTimestamp = 0L
         }
-        // 若处于“播完当前歌曲再停”待停机状态且倒计时已归零，则播完本首即停止，同时保留用户的“播完当前歌曲再停”记忆开关
         if (mutableState.value.sleepPendingStopAtTrackEnd && mutableState.value.sleepTimerRemainingSec <= 0L) {
             activePlayer?.pause()
             activePlayer?.volume = 1f
@@ -1537,10 +1707,6 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
             viewModelScope.launch(Dispatchers.IO) {
                 runCatching { VipManager.music.uploadPlayHistory(song) }
-                runCatching {
-                    val mxid = song.albumAudioId.takeIf { it > 0L } ?: song.audioId.takeIf { it > 0L } ?: 0L
-                    if (mxid > 0L) VipManager.music.reportListenSong(mxid)
-                }
             }
 
             AudioCacheManager.refreshCacheSize(getApplication())
@@ -1566,7 +1732,6 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
 
-        // 「副歌速刷」高潮速听自动跨轨淡出与切歌逻辑 ([INNOV-01])
         if (st.climaxModeEnabled && !st.climaxUnlockedForCurrentSong && song != null && isPlayingNow) {
             val climaxEnd = song.effectiveClimaxEndMs
             val remainClimaxMs = climaxEnd - pos
@@ -1580,7 +1745,6 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
 
-        // 若处于“播完本首后停止”待停机状态且倒计时已归零，在曲末最后 5 秒平滑淡出音量
         if (st.sleepPendingStopAtTrackEnd && st.sleepTimerRemainingSec <= 0L && dur > 5_000L && isPlayingNow) {
             val remainTrackMs = dur - pos
             if (remainTrackMs in 1L..5_000L) {

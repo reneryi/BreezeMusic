@@ -1,10 +1,9 @@
 package com.concept.music.ui.components
 
-import com.concept.music.ui.theme.conceptSheetSpringEntrance
-
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -12,7 +11,7 @@ import androidx.compose.material.icons.rounded.Comment
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -23,12 +22,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.SongComment
+import com.concept.music.ui.comment.formatCommentLikeCount
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
+import com.concept.music.ui.theme.conceptSheetSpringEntrance
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -46,6 +47,21 @@ fun CommentsSheet(
     val subText = MaterialTheme.colorScheme.onSurfaceVariant
     val elevatedBg = conceptElevatedSurfaceColor()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val listState = rememberLazyListState()
+
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            totalItems > 0 && lastVisibleIndex >= totalItems - 4
+        }
+    }
+    LaunchedEffect(shouldLoadMore, hasMore, loading, comments.size) {
+        if (shouldLoadMore && hasMore && !loading && comments.isNotEmpty()) {
+            onLoadMore()
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -82,11 +98,11 @@ fun CommentsSheet(
                         imageVector = Icons.Rounded.Comment,
                         contentDescription = null,
                         tint = ConceptPrimary,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
-                    Spacer(modifier = Modifier.width(10.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "乐迷评论",
+                        text = "歌曲评论",
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
                             color = primaryText,
@@ -111,7 +127,7 @@ fun CommentsSheet(
                 FilterChip(
                     selected = currentType == "hot",
                     onClick = { if (currentType != "hot") onTabSelected("hot") },
-                    label = { Text("最热评论", fontSize = 12.sp, fontWeight = if (currentType == "hot") FontWeight.Bold else FontWeight.Normal) },
+                    label = { Text("最热", fontSize = 12.sp, fontWeight = if (currentType == "hot") FontWeight.Bold else FontWeight.Normal) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = ConceptPrimary.copy(alpha = 0.18f),
                         selectedLabelColor = ConceptPrimary,
@@ -125,7 +141,7 @@ fun CommentsSheet(
                 FilterChip(
                     selected = currentType == "new",
                     onClick = { if (currentType != "new") onTabSelected("new") },
-                    label = { Text("最新评论", fontSize = 12.sp, fontWeight = if (currentType == "new") FontWeight.Bold else FontWeight.Normal) },
+                    label = { Text("最新", fontSize = 12.sp, fontWeight = if (currentType == "new") FontWeight.Bold else FontWeight.Normal) },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = ConceptPrimary.copy(alpha = 0.18f),
                         selectedLabelColor = ConceptPrimary,
@@ -156,16 +172,17 @@ fun CommentsSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "暂无相关评论，成为第一个留下足迹的人吧",
+                        text = "暂无评论",
                         style = MaterialTheme.typography.bodyMedium.copy(color = subText)
                     )
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
                     items(comments, key = { it.id }) { comment ->
@@ -173,39 +190,22 @@ fun CommentsSheet(
                     }
 
                     item {
-                        if (hasMore) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 12.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (loading) {
-                                    CircularProgressIndicator(
-                                        color = ConceptPrimary,
-                                        modifier = Modifier.size(24.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                } else {
-                                    OutlinedButton(
-                                        onClick = onLoadMore,
-                                        shape = RoundedCornerShape(20.dp),
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = ConceptPrimary)
-                                    ) {
-                                        Text("加载更多评论", fontSize = 13.sp)
-                                    }
-                                }
-                            }
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (loading) {
+                                CircularProgressIndicator(
+                                    color = ConceptPrimary,
+                                    modifier = Modifier.size(22.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else if (!hasMore) {
                                 Text(
-                                    text = "—— 已显示全部评论 ——",
-                                    color = subText.copy(alpha = 0.6f),
+                                    text = "已显示全部评论",
+                                    color = subText.copy(alpha = 0.5f),
                                     fontSize = 12.sp
                                 )
                             }
@@ -278,7 +278,7 @@ private fun CommentCard(comment: SongComment) {
                                 shape = RoundedCornerShape(6.dp)
                             ) {
                                 Text(
-                                    text = "神评",
+                                    text = "热评",
                                     color = if (isDark) VipGold else Color(0xFFB87900),
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
@@ -303,14 +303,16 @@ private fun CommentCard(comment: SongComment) {
                         tint = if (comment.likeCount > 50) Color(0xFFFF5252) else subText.copy(alpha = 0.6f),
                         modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "${comment.likeCount}",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = subText,
-                            fontSize = 12.sp
+                    if (comment.likeCount > 0) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = formatCommentLikeCount(comment.likeCount),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = subText,
+                                fontSize = 12.sp
+                            )
                         )
-                    )
+                    }
                 }
             }
 

@@ -25,6 +25,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -42,13 +43,13 @@
             </intent-filter>
         </service>
 
-        <!-- Phase 3: 每日自动静默养号守护 JobService ([INNOV-03]) -->
+        <!-- 每日自动静默领取 VIP 守护 JobService -->
         <service
             android:name=".service.VipGuardianJobService"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
 
-        <!-- Phase 3: 酷狗概念版流光桌面小组件 ([INNOV-03]) -->
+        <!-- 酷狗概念版流光桌面小组件 -->
         <receiver
             android:name=".service.ConceptMusicWidgetProvider"
             android:exported="true"

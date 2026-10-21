@@ -38,6 +38,7 @@ import com.concept.music.data.model.Playlist
 import com.concept.music.data.model.Song
 import com.concept.music.ui.components.AddToPlaylistDialog
 import com.concept.music.ui.components.CreatePlaylistDialog
+import com.concept.music.ui.components.FloatingScrollToTopButton
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptCoralAccent
 import com.concept.music.ui.theme.ConceptMintAccent
@@ -535,54 +536,57 @@ fun PlaylistDetailScreen(
                 }
             }
 
-            // 智能悬浮「定位当前歌曲」按钮（固定在右侧偏下位置）：
-            // 仅当当前播放歌曲包含于当前正在浏览的歌单（我喜欢 / 自建歌单 / 收藏歌单等）时才显现；不包含时自动隐藏
-            AnimatedVisibility(
-                visible = playingSongIndex >= 0,
-                enter = fadeIn() + scaleIn(initialScale = 0.85f),
-                exit = fadeOut() + scaleOut(targetScale = 0.85f),
+            // 右下角悬浮按钮组：返回顶部（歌单超30首且下滚时展示）+ 极简纯图标定位当前播放歌曲
+            val showScrollToTop by remember {
+                derivedStateOf {
+                    filteredAndSortedSongs.size > 30 && listState.firstVisibleItemIndex > 4
+                }
+            }
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .navigationBarsPadding()
-                    .padding(end = 18.dp, bottom = 104.dp)
+                    .padding(end = 18.dp, bottom = 104.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Surface(
-                    shape = CircleShape,
-                    color = ConceptPrimary,
-                    shadowElevation = 8.dp,
-                    modifier = Modifier
-                        .height(42.dp)
-                        .softCardClickable {
+                FloatingScrollToTopButton(
+                    visible = showScrollToTop,
+                    onClick = {
+                        coroutineScope.launch {
+                            listState.animateScrollToItem(0)
+                        }
+                    }
+                )
+
+                AnimatedVisibility(
+                    visible = playingSongIndex >= 0,
+                    enter = fadeIn() + scaleIn(initialScale = 0.85f),
+                    exit = fadeOut() + scaleOut(targetScale = 0.85f)
+                ) {
+                    FilledIconButton(
+                        onClick = {
                             if (playingSongIndex >= 0) {
                                 coroutineScope.launch {
-                                    // LazyColumn 前 2 项为 Header 与搜索栏，曲目索引从 2 开始；留出 2 行上下文使定位更直观
                                     val targetLazyIndex = (2 + playingSongIndex - 2).coerceAtLeast(0)
                                     listState.animateScrollToItem(targetLazyIndex)
-                                    Toast.makeText(
-                                        context,
-                                        "已定位至第 ${playingSongIndex + 1} 首：${currentSong?.title.orEmpty()}",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
                                 }
                             }
-                        }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        },
+                        shape = CircleShape,
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = ConceptPrimary,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .size(42.dp)
+                            .shadow(8.dp, CircleShape)
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.MyLocation,
                             contentDescription = "定位当前播放歌曲",
                             tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = "定位 #${playingSongIndex + 1}",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                            modifier = Modifier.size(19.dp)
                         )
                     }
                 }
@@ -899,21 +903,16 @@ private fun PlaylistHeaderCard(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(accentColor)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
+                if (!playlist?.creatorName.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "共 $displayCount 首歌曲",
-                        style = MaterialTheme.typography.bodyMedium.copy(
+                        text = playlist!!.creatorName,
+                        style = MaterialTheme.typography.bodySmall.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 13.sp
-                        )
+                            fontSize = 12.5.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))

@@ -302,9 +302,9 @@ fun LibraryScreen(
                             Spacer(modifier = Modifier.height(3.dp))
                             Text(
                                 text = if (focusPodState.activeTracks.isNotEmpty()) {
-                                    "已混音 ${focusPodState.activeTracks.size} 路白噪音 · 时长实时累计"
+                                    "正在混音 ${focusPodState.activeTracks.size} 路环境音"
                                 } else {
-                                    "番茄专注 · 白噪音混音 · 场景轻音"
+                                    "专注定时与环境伴音舱"
                                 },
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1183,7 +1183,7 @@ private fun UnifiedProfileAndGradeCard(
                     }
 
                     Text(
-                        text = if (isLoggedIn) "无损音质与云端曲库已就绪" else "登录同步红心曲库与听歌等级",
+                        text = if (isLoggedIn) "云端曲库与听歌等级已同步" else "登录同步云端歌单与听歌时长",
                         style = MaterialTheme.typography.bodySmall.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 12.sp

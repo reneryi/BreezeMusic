@@ -3,7 +3,6 @@ package com.concept.music.service
 import android.content.Context
 import android.content.SharedPreferences
 import com.concept.music.data.kugou.today
-import com.concept.music.data.vip.ListeningGradeManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -14,8 +13,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 「概念胶囊工作台 (Concept Focus Pod)」
- * 番茄钟 × 心流场景音乐 × 程序化环境白噪音 × 酷狗听歌等级时长四位一体引擎
+ * 「心流舱 (Focus Pod)」
+ * 专注计时 × 心流场景音乐 × 程序化环境白噪音混音引擎
+ * （听歌时长仅在实际播放歌曲时由播放器记录，心流计时器本身不再虚增听歌时长）
  */
 enum class FocusPreset(
     val id: String,
@@ -25,10 +25,10 @@ enum class FocusPreset(
     val sceneId: String,
     val ambientSceneKey: String
 ) {
-    POMODORO_25("pomo_25", "25分钟 · 标准心流番茄", "深度心流轻音 + 雨夜自习白噪音", 25, "STUDY", "rain_study"),
-    DEEP_STUDY_45("deep_45", "45分钟 · 沉浸代码研习", "放空自愈旋律 + 温暖黑胶底噪", 45, "HEALING", "retro_vinyl"),
-    NIGHT_READ_30("night_30", "30分钟 · 深夜静读伴眠", "晚安梦游纯音 + 深海潮汐呼吸", 30, "SLEEP", "deep_ocean"),
-    CAFE_FLOW_60("cafe_60", "60分钟 · 街角黑胶漫游", "独立爵士慢调 + 林间篝火暖流", 60, "CAFE", "camp_night")
+    POMODORO_25("pomo_25", "25分钟 · 标准专注", "心流轻音 · 雨夜窗台", 25, "STUDY", "rain_study"),
+    DEEP_STUDY_45("deep_45", "45分钟 · 深度研习", "自愈旋律 · 黑胶底噪", 45, "HEALING", "retro_vinyl"),
+    NIGHT_READ_30("night_30", "30分钟 · 静读伴眠", "晚安纯音 · 深海潮汐", 30, "SLEEP", "deep_ocean"),
+    CAFE_FLOW_60("cafe_60", "60分钟 · 慢调漫游", "慵懒爵士 · 林间篝火", 60, "CAFE", "camp_night")
 }
 
 data class FocusPodState(
@@ -131,7 +131,6 @@ object FocusPodManager {
                     val newMins = _state.value.totalFocusMinutesToday + 1
                     _state.value = _state.value.copy(totalFocusMinutesToday = newMins)
                     saveStats(_state.value.completedPodsToday, newMins)
-                    ListeningGradeManager.recordPlaybackSeconds(60L)
                 }
             }
 

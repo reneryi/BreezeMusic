@@ -10,6 +10,7 @@ data class Playlist(
     val trackCount: Int = 0,
     val playCount: String = "",
     val description: String = "",
+    val creatorName: String = "",
     val isCreatedByMe: Boolean = true,
     val isFavorite: Boolean = false,
     val isLiked: Boolean = false,

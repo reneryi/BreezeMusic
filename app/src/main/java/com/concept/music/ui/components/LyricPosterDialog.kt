@@ -224,7 +224,7 @@ fun LyricPosterDialog(
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
-                                text = "精选五款设计师视觉模板 · 支持1080P原画导出与分享",
+                                text = "选择歌词与模板导出分享",
                                 color = Color.White.copy(alpha = 0.58f),
                                 fontSize = 11.sp
                             )

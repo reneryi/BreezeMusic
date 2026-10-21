@@ -30,7 +30,7 @@ import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import kotlin.math.abs
 
 /**
- * 歌单网格项 (画廊式无外框设计：仅歌单封面为圆角，下方歌单名最多两行超出省略号，外层 Column 不裁切圆角)
+ * 歌单网格项 (画廊式无外框设计：仅歌单封面为圆角，下方歌单名最多两行超出省略号，去除重复的曲目数副标题)
  */
 @Composable
 fun PlaylistGridItem(
@@ -81,7 +81,7 @@ fun PlaylistGridItem(
                 )
             }
 
-            if (playlist.playCount.isNotEmpty() || playlist.trackCount > 0) {
+            if (playlist.playCount.isNotEmpty()) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -102,7 +102,7 @@ fun PlaylistGridItem(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = if (playlist.playCount.isNotEmpty()) playlist.playCount else "${playlist.trackCount} 首",
+                            text = playlist.playCount,
                             color = Color.White.copy(alpha = 0.95f),
                             fontSize = 10.5.sp,
                             fontWeight = FontWeight.SemiBold
@@ -123,19 +123,6 @@ fun PlaylistGridItem(
                 lineHeight = 18.sp
             ),
             maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 2.dp)
-        )
-
-        Spacer(modifier = Modifier.height(2.dp))
-
-        Text(
-            text = "${playlist.trackCount} 首曲目",
-            style = MaterialTheme.typography.labelSmall.copy(
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 11.5.sp
-            ),
-            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 2.dp)
         )

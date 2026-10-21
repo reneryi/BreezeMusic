@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -44,6 +45,16 @@ import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
 import com.concept.music.ui.theme.softClickable
+import kotlinx.coroutines.launch
+
+internal fun formatCommentLikeCount(count: Int): String {
+    return when {
+        count <= 0 -> "0"
+        count < 1_000 -> count.toString()
+        count < 10_000 -> String.format(java.util.Locale.US, "%.1fk", count / 1000.0)
+        else -> String.format(java.util.Locale.US, "%.1fw", count / 10000.0)
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,6 +69,7 @@ fun CommentsScreen(
     onTabSelected: (String) -> Unit = {},
     onLoadMore: () -> Unit = {},
     onRefresh: () -> Unit = {},
+    onLoadReplies: (commentId: String) -> Unit = {},
     onPostComment: (content: String, replyToCommentId: String?, replyToUserName: String?) -> Unit = { _, _, _ -> },
     onLikeComment: (commentId: String) -> Unit = {}
 ) {
@@ -68,10 +80,31 @@ fun CommentsScreen(
     val subText = MaterialTheme.colorScheme.onSurfaceVariant
     val elevatedBg = conceptElevatedSurfaceColor()
     val barBg = conceptSheetContainerColor()
+    val coroutineScope = rememberCoroutineScope()
 
     var replyTarget by remember { mutableStateOf<Pair<String, String>?>(null) }
     var commentInputText by remember { mutableStateOf("") }
     var expandedCommentIds by remember { mutableStateOf(setOf<String>()) }
+    val listState = rememberLazyListState()
+
+    // 下滑浏览时自然静默加载更多评论，无需手动点击按钮
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            totalItems > 0 && lastVisibleIndex >= totalItems - 4
+        }
+    }
+    LaunchedEffect(shouldLoadMore, hasMore, loading, comments.size) {
+        if (shouldLoadMore && hasMore && !loading && comments.isNotEmpty()) {
+            onLoadMore()
+        }
+    }
+
+    val showScrollToTop by remember {
+        derivedStateOf { listState.firstVisibleItemIndex > 5 }
+    }
 
     ConceptStageBackground(modifier = Modifier.fillMaxSize()) {
         Scaffold(
@@ -82,6 +115,8 @@ fun CommentsScreen(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
                 TopAppBar(
+                    modifier = Modifier.statusBarsPadding(),
+                    windowInsets = WindowInsets(0, 0, 0, 0),
                     title = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -196,7 +231,7 @@ fun CommentsScreen(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "正在回复 @$targetUser",
+                                        text = "回复 @$targetUser",
                                         color = ConceptPrimary,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold
@@ -226,7 +261,7 @@ fun CommentsScreen(
                         if (avatarToUse.isNotBlank()) {
                             AsyncImage(
                                 model = avatarToUse,
-                                contentDescription = "当前用户头像",
+                                contentDescription = "用户头像",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .size(36.dp)
@@ -259,7 +294,7 @@ fun CommentsScreen(
                                 .heightIn(min = 44.dp, max = 96.dp),
                             placeholder = {
                                 Text(
-                                    text = if (replyTarget != null) "回复 @${replyTarget?.second}: 写下你想说的话吧~" else "写下你想说的话吧~",
+                                    text = if (replyTarget != null) "回复 @${replyTarget?.second}..." else "分享你的听歌感受...",
                                     color = subText.copy(alpha = 0.7f),
                                     fontSize = 13.sp
                                 )
@@ -285,7 +320,7 @@ fun CommentsScreen(
                                     onPostComment(content, replyTarget?.first, replyTarget?.second)
                                     commentInputText = ""
                                     replyTarget = null
-                                    Toast.makeText(context, "评论发表成功", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "评论已发送", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             enabled = commentInputText.isNotBlank(),
@@ -307,121 +342,133 @@ fun CommentsScreen(
                 }
             }
         ) { innerPadding ->
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    FilterChip(
-                        selected = currentType == "hot",
-                        onClick = { if (currentType != "hot") onTabSelected("hot") },
-                        label = {
-                            Text(
-                                text = "最热评论",
-                                fontSize = 13.sp,
-                                fontWeight = if (currentType == "hot") FontWeight.Bold else FontWeight.Normal
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = ConceptPrimary.copy(alpha = 0.18f),
-                            selectedLabelColor = ConceptPrimary,
-                            containerColor = elevatedBg,
-                            labelColor = subText
-                        ),
-                        border = null,
-                        shape = RoundedCornerShape(16.dp)
-                    )
-
-                    FilterChip(
-                        selected = currentType == "new",
-                        onClick = { if (currentType != "new") onTabSelected("new") },
-                        label = {
-                            Text(
-                                text = "最新评论",
-                                fontSize = 13.sp,
-                                fontWeight = if (currentType == "new") FontWeight.Bold else FontWeight.Normal
-                            )
-                        },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = ConceptPrimary.copy(alpha = 0.18f),
-                            selectedLabelColor = ConceptPrimary,
-                            containerColor = elevatedBg,
-                            labelColor = subText
-                        ),
-                        border = null,
-                        shape = RoundedCornerShape(16.dp)
-                    )
-                }
-
-                if (loading && comments.isEmpty()) {
-                    Box(
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Row(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .weight(1f),
-                        contentAlignment = Alignment.Center
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        CircularProgressIndicator(color = ConceptPrimary, modifier = Modifier.size(36.dp))
+                        FilterChip(
+                            selected = currentType == "hot",
+                            onClick = {
+                                if (currentType != "hot") {
+                                    onTabSelected("hot")
+                                    coroutineScope.launch { listState.scrollToItem(0) }
+                                }
+                            },
+                            label = {
+                                Text(
+                                    text = "最热",
+                                    fontSize = 13.sp,
+                                    fontWeight = if (currentType == "hot") FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = ConceptPrimary.copy(alpha = 0.18f),
+                                selectedLabelColor = ConceptPrimary,
+                                containerColor = elevatedBg,
+                                labelColor = subText
+                            ),
+                            border = null,
+                            shape = RoundedCornerShape(16.dp)
+                        )
+
+                        FilterChip(
+                            selected = currentType == "new",
+                            onClick = {
+                                if (currentType != "new") {
+                                    onTabSelected("new")
+                                    coroutineScope.launch { listState.scrollToItem(0) }
+                                }
+                            },
+                            label = {
+                                Text(
+                                    text = "最新",
+                                    fontSize = 13.sp,
+                                    fontWeight = if (currentType == "new") FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = ConceptPrimary.copy(alpha = 0.18f),
+                                selectedLabelColor = ConceptPrimary,
+                                containerColor = elevatedBg,
+                                labelColor = subText
+                            ),
+                            border = null,
+                            shape = RoundedCornerShape(16.dp)
+                        )
                     }
-                } else if (comments.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .weight(1f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.Comment,
-                                contentDescription = null,
-                                tint = subText.copy(alpha = 0.4f),
-                                modifier = Modifier.size(56.dp)
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = "暂无音乐评论，成为第一个留下足迹的人吧",
-                                style = MaterialTheme.typography.bodyMedium.copy(color = subText)
-                            )
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .weight(1f),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        items(comments, key = { it.id }) { comment ->
-                            val isExpanded = expandedCommentIds.contains(comment.id)
-                            RootCommentCard(
-                                comment = comment,
-                                isExpanded = isExpanded,
-                                isDark = isDark,
-                                onToggleExpand = {
-                                    expandedCommentIds = if (isExpanded) {
-                                        expandedCommentIds - comment.id
-                                    } else {
-                                        expandedCommentIds + comment.id
-                                    }
-                                },
-                                onReplyRoot = {
-                                    replyTarget = comment.id to comment.userName
-                                },
-                                onReplySub = { _, replyUserName ->
-                                    replyTarget = comment.id to replyUserName
-                                },
-                                onLikeComment = onLikeComment
-                            )
-                        }
 
-                        item {
-                            if (hasMore) {
+                    if (loading && comments.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = ConceptPrimary, modifier = Modifier.size(36.dp))
+                        }
+                    } else if (comments.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .weight(1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.Comment,
+                                    contentDescription = null,
+                                    tint = subText.copy(alpha = 0.4f),
+                                    modifier = Modifier.size(56.dp)
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "暂无评论",
+                                    style = MaterialTheme.typography.bodyMedium.copy(color = subText)
+                                )
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .weight(1f),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(comments, key = { it.id }) { comment ->
+                                val isExpanded = expandedCommentIds.contains(comment.id)
+                                RootCommentCard(
+                                    comment = comment,
+                                    isExpanded = isExpanded,
+                                    isDark = isDark,
+                                    onToggleExpand = {
+                                        if (!isExpanded) {
+                                            expandedCommentIds = expandedCommentIds + comment.id
+                                            onLoadReplies(comment.id)
+                                        } else {
+                                            expandedCommentIds = expandedCommentIds - comment.id
+                                        }
+                                    },
+                                    onReplyRoot = {
+                                        replyTarget = comment.id to comment.userName
+                                    },
+                                    onReplySub = { _, replyUserName ->
+                                        replyTarget = comment.id to replyUserName
+                                    },
+                                    onLikeComment = onLikeComment
+                                )
+                            }
+
+                            item {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -429,31 +476,49 @@ fun CommentsScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     if (loading) {
-                                        CircularProgressIndicator(color = ConceptPrimary, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                                    } else {
-                                        OutlinedButton(
-                                            onClick = onLoadMore,
-                                            shape = RoundedCornerShape(20.dp),
-                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = ConceptPrimary)
-                                        ) {
-                                            Text("加载更多评论", fontSize = 13.sp)
-                                        }
+                                        CircularProgressIndicator(
+                                            color = ConceptPrimary,
+                                            modifier = Modifier.size(22.dp),
+                                            strokeWidth = 2.dp
+                                        )
+                                    } else if (!hasMore) {
+                                        Text(
+                                            text = "已显示全部评论",
+                                            color = subText.copy(alpha = 0.5f),
+                                            fontSize = 12.sp
+                                        )
                                     }
                                 }
-                            } else {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 18.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "—— 已经到底啦 · 更多心声等你开启 ——",
-                                        color = subText.copy(alpha = 0.6f),
-                                        fontSize = 12.sp
-                                    )
-                                }
                             }
+                        }
+                    }
+                }
+
+                // 悬浮返回顶部按钮（简洁纯图标）
+                AnimatedVisibility(
+                    visible = showScrollToTop,
+                    enter = fadeIn() + scaleIn(),
+                    exit = fadeOut() + scaleOut(),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 18.dp, bottom = 18.dp)
+                ) {
+                    Surface(
+                        onClick = {
+                            coroutineScope.launch { listState.animateScrollToItem(0) }
+                        },
+                        shape = CircleShape,
+                        color = ConceptPrimary.copy(alpha = 0.9f),
+                        shadowElevation = 6.dp,
+                        modifier = Modifier.size(42.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Rounded.VerticalAlignTop,
+                                contentDescription = "返回顶部",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
                 }
@@ -524,7 +589,9 @@ private fun RootCommentCard(
                                 fontWeight = FontWeight.SemiBold,
                                 color = primaryText,
                                 fontSize = 14.sp
-                            )
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         if (comment.vipLevel > 0) {
                             Spacer(modifier = Modifier.width(6.dp))
@@ -533,7 +600,7 @@ private fun RootCommentCard(
                                 shape = RoundedCornerShape(4.dp)
                             ) {
                                 Text(
-                                    text = "VIP${comment.vipLevel}",
+                                    text = "VIP",
                                     color = if (isDark) VipGold else Color(0xFFB87900),
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold,
@@ -548,11 +615,11 @@ private fun RootCommentCard(
                                 shape = RoundedCornerShape(4.dp)
                             ) {
                                 Text(
-                                    text = "精选神评",
+                                    text = "热评",
                                     color = Color(0xFFFF5252),
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                                 )
                             }
                         }
@@ -565,26 +632,21 @@ private fun RootCommentCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "UID: ${comment.userId.take(8)}",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = subText.copy(alpha = 0.7f),
-                                fontSize = 10.sp
-                            )
-                        )
-                        Text(
-                            text = "IP属地: ${comment.ipLocation}",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = subText.copy(alpha = 0.8f),
-                                fontSize = 10.sp
-                            )
-                        )
-                        Text(
                             text = comment.timeFormatted,
                             style = MaterialTheme.typography.labelSmall.copy(
-                                color = subText.copy(alpha = 0.8f),
-                                fontSize = 10.sp
+                                color = subText.copy(alpha = 0.78f),
+                                fontSize = 11.sp
                             )
                         )
+                        if (comment.ipLocation.isNotBlank()) {
+                            Text(
+                                text = comment.ipLocation,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = subText.copy(alpha = 0.7f),
+                                    fontSize = 11.sp
+                                )
+                            )
+                        }
                     }
                 }
 
@@ -600,14 +662,17 @@ private fun RootCommentCard(
                         tint = if (comment.isLiked) Color(0xFFFF5252) else subText.copy(alpha = 0.7f),
                         modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Text(
-                        text = if (comment.likeCount > 10000) "${comment.likeCount / 10000}万" else "${comment.likeCount}",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = subText,
-                            fontSize = 11.sp
+                    if (comment.likeCount > 0) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = formatCommentLikeCount(comment.likeCount),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = if (comment.isLiked) Color(0xFFFF5252) else subText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
                         )
-                    )
+                    }
                 }
             }
 
@@ -625,12 +690,28 @@ private fun RootCommentCard(
 
             Spacer(modifier = Modifier.height(6.dp))
 
+            val totalRepliesCount = maxOf(comment.replyCount, comment.replies.size)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 48.dp),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                if (totalRepliesCount > 0 && comment.replies.isEmpty()) {
+                    Text(
+                        text = "查看 $totalRepliesCount 条回复 ▾",
+                        color = ConceptPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .softClickable(onClick = onToggleExpand)
+                            .padding(vertical = 4.dp)
+                    )
+                } else {
+                    Spacer(modifier = Modifier.width(1.dp))
+                }
+
                 TextButton(
                     onClick = onReplyRoot,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
@@ -649,7 +730,6 @@ private fun RootCommentCard(
             if (comment.replies.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(6.dp))
                 val visibleReplies = if (isExpanded) comment.replies else comment.replies.take(3)
-                val totalRepliesCount = maxOf(comment.replyCount, comment.replies.size)
                 val remaining = totalRepliesCount - visibleReplies.size
 
                 Column(modifier = Modifier.padding(start = 24.dp)) {
@@ -665,7 +745,7 @@ private fun RootCommentCard(
                         )
                     }
 
-                    if (totalRepliesCount > 3) {
+                    if (totalRepliesCount > 3 || remaining > 0) {
                         Row(
                             modifier = Modifier
                                 .padding(start = 32.dp, top = 4.dp)
@@ -675,8 +755,8 @@ private fun RootCommentCard(
                         ) {
                             Text(
                                 text = if (!isExpanded) {
-                                    val countToShow = if (remaining > 0) remaining else comment.replies.size - 3
-                                    "展开剩余 $countToShow 条回复 ▾"
+                                    val countToShow = if (remaining > 0) remaining else (comment.replies.size - 3).coerceAtLeast(1)
+                                    "展开更多 $countToShow 条回复 ▾"
                                 } else {
                                     "收起回复 ▴"
                                 },
@@ -776,15 +856,16 @@ private fun TreeBranchReplyNode(
                         )
                     )
 
-                    Spacer(modifier = Modifier.width(6.dp))
-
-                    Text(
-                        text = "IP: ${reply.ipLocation}",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = subText.copy(alpha = 0.7f),
-                            fontSize = 10.sp
+                    if (reply.ipLocation.isNotBlank()) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = reply.ipLocation,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = subText.copy(alpha = 0.7f),
+                                fontSize = 10.sp
+                            )
                         )
-                    )
+                    }
 
                     Spacer(modifier = Modifier.width(6.dp))
 
@@ -809,14 +890,16 @@ private fun TreeBranchReplyNode(
                             tint = if (reply.isLiked) Color(0xFFFF5252) else subText.copy(alpha = 0.6f),
                             modifier = Modifier.size(13.dp)
                         )
-                        Spacer(modifier = Modifier.width(2.dp))
-                        Text(
-                            text = "${reply.likeCount}",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = subText,
-                                fontSize = 10.sp
+                        if (reply.likeCount > 0) {
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text(
+                                text = formatCommentLikeCount(reply.likeCount),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = subText,
+                                    fontSize = 10.sp
+                                )
                             )
-                        )
+                        }
                     }
                 }
 

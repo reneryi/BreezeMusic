@@ -32,6 +32,7 @@ import com.concept.music.data.model.AlbumItem
 import com.concept.music.data.model.ArtistItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
+import com.concept.music.ui.components.FloatingScrollToTopButton
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
 import com.concept.music.ui.theme.ConceptCoralAccent
@@ -328,11 +329,20 @@ fun ArtistDetailScreen(
                 }
             }
         ) { innerPadding ->
+            val showScrollToTop by remember {
+                derivedStateOf {
+                    selectedTab == 0 && filteredSongs.size > 30 && listState.firstVisibleItemIndex > 4
+                }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
                     .horizontalCategorySwipe(
                         currentIndex = selectedTab,
                         itemCount = 3,
@@ -571,12 +581,6 @@ fun ArtistDetailScreen(
                                             fontSize = 15.sp,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "${filteredSongs.size} 首",
-                                            fontSize = 12.5.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
                                     }
 
                                     // 开放式最热 / 最新文字切换（带滑动横条）
@@ -703,12 +707,7 @@ fun ArtistDetailScreen(
                                         text = "歌手姓名：${artist?.name ?: "未知"}",
                                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
                                     )
-                                    Text(
-                                        text = "作品收录：单曲 $totalSongCountDisplay 首  ·  专辑 $totalAlbumCountDisplay 张",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    )
+
                                     if (songs.isNotEmpty()) {
                                         val topWorks = songs.take(3).joinToString(" / ") { "《${it.title}》" }
                                         Text(
@@ -753,6 +752,20 @@ fun ArtistDetailScreen(
                         }
                     }
                 }
+            }
+
+            FloatingScrollToTopButton(
+                visible = showScrollToTop,
+                onClick = {
+                    coroutineScope.launch {
+                        listState.animateScrollToItem(0)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 18.dp, bottom = 104.dp)
+            )
             }
         }
     }

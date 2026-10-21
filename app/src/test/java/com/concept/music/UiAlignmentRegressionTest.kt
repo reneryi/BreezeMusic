@@ -7,6 +7,7 @@ import com.concept.music.ui.viewmodel.LyricAlignment
 import com.concept.music.ui.viewmodel.LyricHighlightTheme
 import com.concept.music.ui.viewmodel.PlayerBackgroundStyle
 import com.concept.music.ui.viewmodel.PlayerUiState
+import com.concept.music.ui.viewmodel.SavedPlayQueue
 import com.concept.music.service.AudioEffectState
 import com.concept.music.service.SystemLyricState
 import com.google.gson.JsonObject
@@ -29,7 +30,8 @@ class UiAlignmentRegressionTest {
         assertEquals(CoverStyle.VINYL, state.coverStyle)
         assertEquals(2, CoverStyle.entries.size)
         assertTrue(CoverStyle.entries.contains(CoverStyle.SQUARE))
-        assertTrue(state.showTranslation)
+        assertFalse(state.showTranslation)
+        assertFalse(state.showPhonetic)
         assertEquals(LyricAlignment.LEFT, state.lyricAlignment)
         assertEquals(22f, state.lyricFontSize, 0.01f)
         assertTrue(state.lyricBlurEnabled)
@@ -38,7 +40,7 @@ class UiAlignmentRegressionTest {
         assertEquals(PlayerBackgroundStyle.COVER_BLUR, state.playerBackgroundStyle)
         assertEquals(5, PlayerBackgroundStyle.entries.size)
         assertTrue(state.dynamicCoverAccentEnabled)
-        assertEquals(0.80f, state.lyricTranslationScale, 0.01f)
+        assertEquals(0.82f, state.lyricTranslationScale, 0.01f)
         assertEquals(LyricHighlightTheme.ICE_BLUE, state.lyricHighlightTheme)
         assertTrue(LyricHighlightTheme.entries.contains(LyricHighlightTheme.DYNAMIC_COVER))
         assertEquals(0.88f, SystemLyricState().desktopWidthFraction, 0.01f)
@@ -46,10 +48,19 @@ class UiAlignmentRegressionTest {
     }
 
     @Test
-    fun testChineseSongAutoHidesTranslationButton() {
+    fun testPlayerCommentCountFormatting() {
+        assertEquals("", com.concept.music.ui.components.formatPlayerCommentCount(0))
+        assertEquals("999", com.concept.music.ui.components.formatPlayerCommentCount(999))
+        assertEquals("1.0k", com.concept.music.ui.components.formatPlayerCommentCount(1000))
+        assertEquals("2.4k", com.concept.music.ui.components.formatPlayerCommentCount(2380))
+        assertEquals("1.0w", com.concept.music.ui.components.formatPlayerCommentCount(10000))
+        assertEquals("2.6w", com.concept.music.ui.components.formatPlayerCommentCount(25800))
+    }
+
+    @Test
+    fun testChineseSongAutoHidesTranslationButtonAndPhoneticDetection() {
         val chineseSong = Song(id = "cn1", title = "淋雨一直走", artist = "张韶涵")
         val chineseLyrics = LyricData(
-
             lines = listOf(
                 LyricLine(0, 2000, "人都应该有梦", translation = "Everyone should have a dream"),
                 LyricLine(2000, 2000, "有梦就别怕痛", translation = "Don't be afraid of pain"),
@@ -60,37 +71,41 @@ class UiAlignmentRegressionTest {
             "Pure Chinese songs should hide the translation toggle button",
             com.concept.music.ui.components.shouldShowTranslationButton(chineseSong, chineseLyrics)
         )
+        assertFalse(
+            "Pure Chinese songs without phonetic lines should hide phonetic button",
+            com.concept.music.ui.components.shouldShowPhoneticButton(chineseSong, chineseLyrics)
+        )
 
         val japaneseSong = Song(id = "jp1", title = "夜に駆ける", artist = "YOASOBI")
         val japaneseLyrics = LyricData(
-
             lines = listOf(
-                LyricLine(0, 2000, "沈むように溶けてゆくように", translation = "仿佛沉溺般 仿佛融化般"),
-                LyricLine(2000, 2000, "二人だけの空が広がる夜に", translation = "在只属于两人的天空延展的夜晚")
+                LyricLine(0, 2000, "沈むように溶けてゆくように", translation = "仿佛沉溺般 仿佛融化般", phonetic = "shizumu you ni tokete yuku you ni"),
+                LyricLine(2000, 2000, "二人だけの空が広がる夜に", translation = "在只属于两人的天空延展的夜晚", phonetic = "futari dake no sora ga hirogaru yoru ni")
             )
         )
         assertTrue(
             "Japanese songs with translation should show the translation toggle button",
             com.concept.music.ui.components.shouldShowTranslationButton(japaneseSong, japaneseLyrics)
         )
+        assertTrue(
+            "Japanese songs with phonetic should show the phonetic toggle button",
+            com.concept.music.ui.components.shouldShowPhoneticButton(japaneseSong, japaneseLyrics)
+        )
     }
 
     @Test
     fun testCommentCountResolutionLogic() {
-        // 场景 1: 服务器返回有效评论总数，优先使用服务器总数
         var serverCount = 1420
-        var mergedList = listOf(
+        val mergedList = listOf(
             SongComment(id = "1", userId = "u1", userName = "User 1", userAvatar = "", content = "评论1", timeFormatted = "10分钟前")
         )
         var count = if (serverCount > 0) serverCount else if (mergedList.isNotEmpty()) maxOf(0, mergedList.size) else 0
         assertEquals(1420, count)
 
-        // 场景 2: 服务器未返回 count (<= 0)，降级使用已加载评论列表大小
         serverCount = 0
         count = if (serverCount > 0) serverCount else if (mergedList.isNotEmpty()) maxOf(0, mergedList.size) else 0
         assertEquals(1, count)
 
-        // 场景 3: 刷新时若未获取到新评论，保留之前的计数
         val previousCount = 25
         val emptyList = emptyList<SongComment>()
         count = if (serverCount > 0) serverCount else if (emptyList.isNotEmpty()) maxOf(previousCount, emptyList.size) else previousCount
@@ -99,7 +114,6 @@ class UiAlignmentRegressionTest {
 
     @Test
     fun testTreeBranchRepliesExpandThreshold() {
-        // 评论回复小于等于 3 条时，默认全部展示且不展示“展开剩余”折叠按钮
         val commentWith2Replies = SongComment(
             id = "c1",
             userId = "u1",
@@ -116,7 +130,6 @@ class UiAlignmentRegressionTest {
         assertEquals(2, visibleRepliesInitial.size)
         assertFalse(commentWith2Replies.replies.size > 3)
 
-        // 评论回复多于 3 条时（例如 5 条），默认截断展示前 3 条，计算剩余 2 条
         val commentWith5Replies = SongComment(
             id = "c2",
             userId = "u1",
@@ -134,14 +147,12 @@ class UiAlignmentRegressionTest {
         val remainingCount = commentWith5Replies.replies.size - 3
         assertEquals(2, remainingCount)
 
-        // 展开状态下展示全部 5 条
         val visibleRepliesExpanded = commentWith5Replies.replies
         assertEquals(5, visibleRepliesExpanded.size)
     }
 
     @Test
     fun testLyricDualLinePreviewResolution() {
-        // 构造含双语翻译的歌词行
         val line1 = LyricLine(
             startTimeMs = 1000,
             durationMs = 2000,
@@ -156,7 +167,6 @@ class UiAlignmentRegressionTest {
         )
         val lyricData = LyricData(lines = listOf(line1, line2))
 
-        // 当开启翻译且当前行有翻译时，第二行展示译文
         val currentLyricIndex = 0
         val currentLineObj = lyricData.lines.getOrNull(currentLyricIndex)
         val showTranslation = true
@@ -167,7 +177,6 @@ class UiAlignmentRegressionTest {
         }
         assertEquals("每一个夜晚在我的梦里", subTextWithTrans)
 
-        // 当关闭翻译时，第二行展示下一行歌词主文本
         val subTextWithoutTrans = if (false && !currentLineObj?.translation.isNullOrBlank()) {
             currentLineObj?.translation ?: ""
         } else {
@@ -195,7 +204,6 @@ class UiAlignmentRegressionTest {
 
     @Test
     fun testSongEffectiveQualitiesAndHighestQualityAutoDetection() {
-        // 当未显式传递 availableQualities 时，应根据音频标志（isHiRes, isLossless 等）动态计算
         val songHiResAuto = Song(
             id = "auto_hires",
             title = "HiRes Auto",
@@ -261,17 +269,14 @@ class UiAlignmentRegressionTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {
             val vm = com.concept.music.ui.viewmodel.SearchViewModel()
-            // 验证已彻底清除写死的模拟搜索记录
             assertTrue(vm.searchHistory.value.isEmpty())
 
-            // 验证搜索后历史记录正常追加与去重
             vm.search("夜曲")
             assertEquals(listOf("夜曲"), vm.searchHistory.value)
 
             vm.search("晴天")
             assertEquals(listOf("晴天", "夜曲"), vm.searchHistory.value)
 
-            // 验证单项移除与清空
             vm.removeHistoryItem("夜曲")
             assertEquals(listOf("晴天"), vm.searchHistory.value)
 
@@ -290,12 +295,10 @@ class UiAlignmentRegressionTest {
             assertFalse(vm.hasSearched.value)
             assertEquals("", vm.lastSearchedKeyword.value)
 
-            // 执行搜索
             vm.search("冷门未收录歌曲")
             assertTrue(vm.hasSearched.value)
             assertEquals("冷门未收录歌曲", vm.lastSearchedKeyword.value)
 
-            // 清空搜索重置
             vm.clearQuery()
             assertFalse(vm.hasSearched.value)
             assertEquals("", vm.lastSearchedKeyword.value)
@@ -338,16 +341,13 @@ class UiAlignmentRegressionTest {
             val vm = com.concept.music.ui.viewmodel.SearchViewModel()
             assertEquals(SearchTab.COMPLEX, vm.selectedTab.value)
 
-            // 模拟第一次搜索并切换到「专辑」页
             vm.search("周杰伦")
             vm.selectTab(SearchTab.ALBUM)
             assertEquals(SearchTab.ALBUM, vm.selectedTab.value)
 
-            // 模拟返回退出搜索 (clearQuery)，必须重置回「综合」(COMPLEX)
             vm.clearQuery()
             assertEquals(SearchTab.COMPLEX, vm.selectedTab.value)
 
-            // 模拟在「专辑」页直接输入新词发起下一次搜索，也必须自动归位到「综合」(COMPLEX)
             vm.selectTab(SearchTab.ALBUM)
             assertEquals(SearchTab.ALBUM, vm.selectedTab.value)
             vm.search("林俊杰")
@@ -370,7 +370,6 @@ class UiAlignmentRegressionTest {
         val accounts = AccountRepository(store, auth, transport)
         val repo = MusicApiRepository(transport, accounts)
 
-        // 1. 仅有 is_hires=1 或 ResFileHash 但缺少有效母带文件大小 (ResFileSize=0) 的歌曲绝不能被误标为 Hi-Res
         val fakeHiResJson = com.google.gson.JsonParser.parseString(
             """
             {
@@ -390,7 +389,6 @@ class UiAlignmentRegressionTest {
         assertFalse("Unverified ResFileHash with 0 size must NOT be marked Hi-Res", parsedFake.isHiRes)
         assertTrue("Should be marked as SQ Lossless instead", parsedFake.isLossless)
 
-        // 2. 当一首支持高音质的歌曲实际以 320K (AudioQuality.HIGH) 播放时，songDetail 必须展示 320K 对应的真实参数而非虚标 96kHz/24bit
         val playingAt320 = parsedFake.copy(
             actualPlayQuality = AudioQuality.HIGH,
             bitrateKbps = 320,

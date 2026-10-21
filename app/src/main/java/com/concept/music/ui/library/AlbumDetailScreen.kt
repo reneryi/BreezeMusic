@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -31,6 +32,7 @@ import coil.compose.AsyncImage
 import com.concept.music.data.model.AlbumItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
+import com.concept.music.ui.components.FloatingScrollToTopButton
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
 import com.concept.music.ui.theme.ConceptPrimary
@@ -174,10 +176,20 @@ fun AlbumDetailScreen(
                 }
             }
         ) { innerPadding ->
-            LazyColumn(
+            val listState = rememberLazyListState()
+            val showScrollToTop by remember {
+                derivedStateOf {
+                    filteredSongs.size > 30 && listState.firstVisibleItemIndex > 4
+                }
+            }
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+            ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 112.dp)
             ) {
                 // 1. 开放式无框专辑头部（去除外层灰盒与简介内嵌框，营造大视野呼吸感）
@@ -316,12 +328,6 @@ fun AlbumDetailScreen(
                                 fontSize = 15.sp,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "${filteredSongs.size} 首",
-                                fontSize = 12.5.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -412,6 +418,21 @@ fun AlbumDetailScreen(
                         onMoreClick = { onSongMoreClick(song) }
                     )
                 }
+            }
+
+            FloatingScrollToTopButton(
+                visible = showScrollToTop,
+                accentColor = ConceptAmberAccent,
+                onClick = {
+                    coroutineScope.launch {
+                        listState.animateScrollToItem(0)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 18.dp, bottom = 104.dp)
+            )
             }
         }
     }

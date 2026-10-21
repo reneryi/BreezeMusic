@@ -27,42 +27,67 @@ class LyricRepository(
 
         return withContext(Dispatchers.IO) {
             val candidates = searchLyricCandidates(song)
-        if (candidates.isEmpty()) {
-            val empty = LyricData()
-            if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = empty }
-            return@withContext empty
-        }
+            if (candidates.isEmpty()) {
+                val empty = LyricData()
+                if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = empty }
+                return@withContext empty
+            }
 
-        // 1. 尝试首个最佳候选
-        val firstCandidate = candidates.first()
-        var bestData = downloadLyric(firstCandidate.id, firstCandidate.accesskey, fmt = "krc")
+            fun scoreLyricData(data: LyricData?): Int {
+                if (data == null || data.lines.isEmpty()) return 0
+                var s = 10
+                if (data.isKrc) s += 5
+                if (data.hasTranslation) s += 20
+                if (data.hasPhonetic) s += 20
+                return s
+            }
 
-        // 2. 若首个候选暂无翻译，且歌曲属于非中文歌曲，优先扩大候选搜索范围以获取含官方中文翻译的歌词
-        val isChineseSong = song.title.any { it in '\u4e00'..'\u9fff' }
-        val maxCandidatesToCheck = if (!isChineseSong) 6 else 4
-        if ((bestData == null || (!bestData.hasTranslation && !isChineseSong)) && candidates.size > 1) {
-            for (i in 1 until candidates.size.coerceAtMost(maxCandidatesToCheck)) {
-                val alt = candidates[i]
-                val altData = downloadLyric(alt.id, alt.accesskey, fmt = "krc")
-                if (altData != null && altData.hasTranslation) {
-                    bestData = altData
-                    break
-                } else if (bestData == null && altData != null && altData.lines.isNotEmpty()) {
-                    bestData = altData
+            // 1. 尝试首个最佳候选
+            val firstCandidate = candidates.first()
+            var bestData = downloadLyric(firstCandidate.id, firstCandidate.accesskey, fmt = "krc")
+            var bestScore = scoreLyricData(bestData)
+
+            // 2. 若首个候选缺少翻译或音译注音（例如日韩歌/外语歌/粤语歌），扩大候选搜索范围择优挑选含官方翻译与注音的 KRC
+            val maxCandidatesToCheck = 6
+            if ((bestData == null || !bestData.hasTranslation || !bestData.hasPhonetic) && candidates.size > 1) {
+                for (i in 1 until candidates.size.coerceAtMost(maxCandidatesToCheck)) {
+                    val alt = candidates[i]
+                    val altData = downloadLyric(alt.id, alt.accesskey, fmt = "krc") ?: continue
+                    val altScore = scoreLyricData(altData)
+                    if (altScore > bestScore) {
+                        bestData = altData
+                        bestScore = altScore
+                        if (altData.hasTranslation && altData.hasPhonetic) break
+                    } else if (bestData != null && altData.lines.size == bestData.lines.size) {
+                        // 合并同一歌词不同候选的翻译层与音译层
+                        val needTrans = !bestData.hasTranslation && altData.hasTranslation
+                        val needPhonetic = !bestData.hasPhonetic && altData.hasPhonetic
+                        if (needTrans || needPhonetic) {
+                            val mergedLines = bestData.lines.mapIndexed { idx, line ->
+                                val other = altData.lines.getOrNull(idx)
+                                line.copy(
+                                    translation = line.translation ?: other?.translation,
+                                    phonetic = line.phonetic ?: other?.phonetic
+                                )
+                            }
+                            bestData = bestData.copy(lines = mergedLines)
+                            bestScore = scoreLyricData(bestData)
+                            if (bestData.hasTranslation && bestData.hasPhonetic) break
+                        }
+                    }
                 }
             }
-        }
 
-        if (bestData != null && bestData.lines.isNotEmpty()) {
-            if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = bestData }
-            return@withContext bestData
-        }
+            if (bestData != null && bestData.lines.isNotEmpty()) {
+                if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = bestData }
+                return@withContext bestData
+            }
 
-        // 3. KRC 不可用时降级 LRC
-        val lrcData = downloadLyric(firstCandidate.id, firstCandidate.accesskey, fmt = "lrc")
-        val finalData = lrcData ?: LyricData()
-        if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = finalData }
-        finalData
+            // 3. KRC 不可用时降级 LRC
+            val lrcData = downloadLyric(firstCandidate.id, firstCandidate.accesskey, fmt = "lrc")
+            val finalData = lrcData ?: LyricData()
+            if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = finalData }
+            finalData
         }
     }
 

@@ -51,12 +51,24 @@ object KrcDecoder {
         val lines = mutableListOf<LyricLine>()
         val rawLines = text.split("\r\n", "\n")
 
+        // 统计总时间戳行数，以精确对齐 [language:...] 行索引（避免空时间戳行导致后续译文/注音错位）
+        val totalTimeLines = rawLines.count { raw ->
+            val trimmed = raw.trim()
+            trimmed.isNotEmpty() &&
+                METADATA_PREFIXES.none { trimmed.startsWith(it, ignoreCase = true) } &&
+                LINE_REGEX.matches(trimmed)
+        }
+        val useRawTimeIndexForTrans = translations.size == totalTimeLines
+        val useRawTimeIndexForPhonetic = phonetics.size == totalTimeLines
+        var rawTimeLineIndex = 0
+
         for (rawLine in rawLines) {
             val line = rawLine.trim()
             if (line.isEmpty()) continue
             if (METADATA_PREFIXES.any { line.startsWith(it, ignoreCase = true) }) continue
 
             val match = LINE_REGEX.find(line) ?: continue
+            val currentTimeIdx = rawTimeLineIndex++
             val lineStart = match.groupValues[1].toLongOrNull() ?: continue
             val lineDuration = match.groupValues[2].toLongOrNull() ?: continue
             val rest = match.groupValues[3]
@@ -77,9 +89,11 @@ object KrcDecoder {
 
             val lineText = if (words.isNotEmpty()) lineTextBuilder.toString() else rest.replace(Regex("<[^>]+>"), "").trim()
             if (lineText.isNotEmpty()) {
-                val lineIndex = lines.size
-                val translation = translations.getOrNull(lineIndex)?.ifBlank { null }
-                val phonetic = phonetics.getOrNull(lineIndex)?.ifBlank { null }
+                val nonBlankIndex = lines.size
+                val transIdx = if (useRawTimeIndexForTrans) currentTimeIdx else nonBlankIndex
+                val phoneticIdx = if (useRawTimeIndexForPhonetic) currentTimeIdx else nonBlankIndex
+                val translation = translations.getOrNull(transIdx)?.ifBlank { null }
+                val phonetic = phonetics.getOrNull(phoneticIdx)?.ifBlank { null }
                 lines.add(LyricLine(lineStart, lineDuration, lineText, words, translation, phonetic))
             }
         }
@@ -89,7 +103,11 @@ object KrcDecoder {
     }
 
     /**
-     * [创新3] 同时提取 KRC `[language:...]` 中的中文翻译层 (translations) 与音译注音层 (phonetics: 罗马音/粤拼/韩文音译)
+     * 精准提取 KRC `[language:...]` 中的外语中文翻译层 (translations) 与音译注音层 (phonetics: 罗马音/粤拼/韩文音译)：
+     * 酷狗官方 KRC 协议规范（参考 MakcRe/KuGouMusicApi util/util.js decodeLyric）：
+     * - type == 1 且每行为单元素中文字符串 `[["整句中文译文"]]` -> 外语中文翻译层 (translations)
+     * - type == 0 或每行为多元素逐字数组 `[["wa", "ta", "shi"]]` 或不含中文的注音 -> 音译注音层 (phonetics)
+     * - 同时兼容无 type 字段或单层测试数据
      */
     internal fun extractKrcLanguageLayers(text: String): Pair<List<String>, List<String>> {
         val translations = mutableListOf<String>()
@@ -116,32 +134,65 @@ object KrcDecoder {
                 if (lc.size() == 0) continue
 
                 val typeVal = obj.get("type")?.asInt ?: -1
-                val hasChinese = lc.any { item ->
+                var hasChinese = false
+                var multiTokenRowCount = 0
+                var nonEmptyRowCount = 0
+
+                for (item in lc) {
                     if (item.isJsonArray) {
-                        item.asJsonArray.any { str -> str.asString.any { it in '\u4e00'..'\u9fff' } }
-                    } else {
-                        item.asString.any { it in '\u4e00'..'\u9fff' }
+                        val arr = item.asJsonArray
+                        val nonBlankTokens = arr.mapNotNull {
+                            val s = it.asString.trim()
+                            if (s.isNotEmpty() && s != "//") s else null
+                        }
+                        if (nonBlankTokens.isNotEmpty()) {
+                            nonEmptyRowCount++
+                            if (arr.size() > 1) multiTokenRowCount++
+                            if (nonBlankTokens.any { tok -> tok.any { ch -> ch in '\u4e00'..'\u9fff' } }) {
+                                hasChinese = true
+                            }
+                        }
+                    } else if (item.isJsonPrimitive) {
+                        val s = item.asString.trim()
+                        if (s.isNotEmpty() && s != "//") {
+                            nonEmptyRowCount++
+                            if (s.any { ch -> ch in '\u4e00'..'\u9fff' }) {
+                                hasChinese = true
+                            }
+                        }
                     }
                 }
 
-                if (typeVal == 0 || (hasChinese && typeVal != 1)) {
-                    if (translationObj == null || hasChinese) {
-                        translationObj = obj
+                // 逐字音译层 (type=0) 在 lyricContent 中通常以多元素数组存储每个字对应的读音；
+                // 而整句翻译层 (type=1) 在 lyricContent 中每行仅包含 1 个完整句子字符串。
+                val isMultiTokenPerLine = nonEmptyRowCount > 0 && multiTokenRowCount * 2 >= nonEmptyRowCount
+
+                when {
+                    // 含中文且按整句单字符串存储：明确为中文翻译层（兼容酷狗真实接口 type=1 及测试数据 type=0）
+                    hasChinese && !isMultiTokenPerLine -> {
+                        if (translationObj == null || typeVal == 1) {
+                            translationObj = obj
+                        } else if (phoneticObj == null) {
+                            phoneticObj = obj
+                        }
                     }
-                } else if (typeVal == 1 || !hasChinese) {
-                    if (phoneticObj == null) {
-                        phoneticObj = obj
+                    // 不含中文（如罗马音、粤拼、英文音标）或按逐字多元素切分存储（如逐字注音/谐音）：明确为音译注音层
+                    !hasChinese || isMultiTokenPerLine || typeVal == 0 -> {
+                        if (phoneticObj == null || typeVal == 0) {
+                            phoneticObj = obj
+                        } else if (translationObj == null && hasChinese) {
+                            translationObj = obj
+                        }
+                    }
+                    typeVal == 1 -> {
+                        if (translationObj == null) translationObj = obj
                     }
                 }
             }
 
-            if (translationObj == null && contentArr.size() == 1 && phoneticObj != null) {
-                // 若仅有一个语言层且未标记 type=1，兼容旧测试将其作为默认翻译层，同时若非纯中文也可供音译使用
-                val onlyObj = contentArr[0].asJsonObject
-                val onlyType = onlyObj.get("type")?.asInt
-                if (onlyType == null || onlyType == 0) {
-                    translationObj = onlyObj
-                }
+            fun cleanLayerText(raw: String): String {
+                val trimmed = raw.trim()
+                return if (trimmed == "//" || trimmed == "/") "" else trimmed
             }
 
             fun parseLayerLines(obj: com.google.gson.JsonObject?, target: MutableList<String>) {
@@ -149,10 +200,13 @@ object KrcDecoder {
                 for (lineItem in lc) {
                     if (lineItem.isJsonArray) {
                         val lineArr = lineItem.asJsonArray
-                        val joined = lineArr.joinToString(" ") { it.asString.trim() }.replace(Regex("\\s+"), " ").trim()
-                        target.add(joined)
+                        val joined = lineArr.mapNotNull {
+                            val token = cleanLayerText(it.asString)
+                            token.takeIf { t -> t.isNotEmpty() }
+                        }.joinToString(" ").replace(Regex("\\s+"), " ").trim()
+                        target.add(cleanLayerText(joined))
                     } else {
-                        target.add(lineItem.asString.trim())
+                        target.add(cleanLayerText(lineItem.asString))
                     }
                 }
             }
@@ -187,10 +241,9 @@ object KrcDecoder {
             }
             val startTimeMs = min * 60_000L + sec * 1000L + ms
             val lineText = match.groupValues[4].trim()
-            if (lineText.isNotEmpty()) {
-                // 检查是否为行内中英/音译分割: "原文 // 音译 // 翻译" 或 "Hello // 你好"
+            if (lineText.isNotEmpty() && lineText != "//") {
                 val doubleSlashParts = if (lineText.contains(" // ")) {
-                    lineText.split(" // ", limit = 3).map { it.trim() }.filter { it.isNotBlank() }
+                    lineText.split(" // ", limit = 3).map { it.trim() }.filter { it.isNotBlank() && it != "//" }
                 } else null
 
                 if (doubleSlashParts != null && doubleSlashParts.size == 3) {

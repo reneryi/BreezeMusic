@@ -37,8 +37,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import com.concept.music.data.model.*
+import com.concept.music.ui.components.FloatingScrollToTopButton
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
 import com.concept.music.ui.theme.ConceptMintAccent
@@ -358,26 +360,46 @@ fun SearchScreen(
                                     if (songResults.isEmpty()) {
                                         EmptySearchState(message = "未找到“$displayKw”的相关单曲")
                                     } else {
-                                        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                                            itemsIndexed(songResults) { index, song ->
-                                                SongItemRow(
-                                                    song = song,
-                                                    orderIndex = index + 1,
-                                                    isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                                                    onClick = { onSongClick(song, songResults) },
-                                                    onMoreClick = { onSongMoreClick(song) }
-                                                )
+                                        val searchScope = rememberCoroutineScope()
+                                        val showSongSearchScrollTop by remember {
+                                            derivedStateOf {
+                                                songResults.size > 30 && listState.firstVisibleItemIndex > 4
                                             }
-                                            if (loadingMore) {
-                                                item {
-                                                    Box(
-                                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                                        contentAlignment = Alignment.Center
-                                                    ) {
-                                                        CircularProgressIndicator(color = ConceptPrimary, modifier = Modifier.size(24.dp))
+                                        }
+                                        Box(modifier = Modifier.fillMaxSize()) {
+                                            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                                                itemsIndexed(songResults) { index, song ->
+                                                    SongItemRow(
+                                                        song = song,
+                                                        orderIndex = index + 1,
+                                                        isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                                                        onClick = { onSongClick(song, songResults) },
+                                                        onMoreClick = { onSongMoreClick(song) }
+                                                    )
+                                                }
+                                                if (loadingMore) {
+                                                    item {
+                                                        Box(
+                                                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            CircularProgressIndicator(color = ConceptPrimary, modifier = Modifier.size(24.dp))
+                                                        }
                                                     }
                                                 }
                                             }
+                                            FloatingScrollToTopButton(
+                                                visible = showSongSearchScrollTop,
+                                                onClick = {
+                                                    searchScope.launch {
+                                                        listState.animateScrollToItem(0)
+                                                    }
+                                                },
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomEnd)
+                                                    .navigationBarsPadding()
+                                                    .padding(end = 18.dp, bottom = 104.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -638,7 +660,7 @@ private fun ComplexSearchResultView(
                     item {
                         SongSectionBlock(
                             title = "单曲与演绎版本",
-                            subtitle = "优先展示原唱母带及热门 Live / 翻唱",
+                            subtitle = null,
                             songs = result.songs.take(10),
                             allSongs = result.songs,
                             currentSong = currentSong,

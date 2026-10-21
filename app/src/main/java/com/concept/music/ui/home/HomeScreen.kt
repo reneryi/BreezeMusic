@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -54,6 +55,7 @@ import com.concept.music.data.model.FmChannel
 import com.concept.music.data.model.RankItem
 import com.concept.music.data.model.Song
 import com.concept.music.ui.components.BadgeTag
+import com.concept.music.ui.components.FloatingScrollToTopButton
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
 import com.concept.music.ui.theme.ConceptCoralAccent
@@ -352,7 +354,7 @@ fun HomeScreen(
                                     .padding(horizontal = 4.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = "全部 ${ranks.size} 榜",
+                                    text = "全部榜单",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.5.sp,
                                     fontWeight = FontWeight.SemiBold
@@ -623,7 +625,7 @@ fun HomeScreen(
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "融合红心与听歌偏好 · 共 ${fmPool.size} 首",
+                                text = "融合红心与日常听歌偏好",
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 11.5.sp
@@ -782,12 +784,7 @@ fun HomeScreen(
                                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                                 )
                             }
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "已加载 ${quickFmSongs.size} 首专属曲目",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 11.sp
-                            )
+
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -839,7 +836,7 @@ fun HomeScreen(
                     ) {
                         Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("播放电台 (${quickFmSongs.size}首)", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                        Text("播放全部", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                     }
 
                     var qfmRefreshSpin by remember { mutableIntStateOf(0) }
@@ -1331,7 +1328,7 @@ private fun NewSongExpressSectionCard(
                         .padding(horizontal = 2.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = if (songs.isNotEmpty()) "全部 ${songs.size} 首" else "查看全部",
+                        text = "查看全部",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -1654,10 +1651,22 @@ fun NewSongExpressScreen(
         ) { innerPadding ->
             val periodKeys = remember { NEW_SONG_PERIOD_TABS.map { it.key } }
             val curPeriodIdx = periodKeys.indexOf(selectedPeriod).coerceAtLeast(0)
-            LazyColumn(
+            val newSongListState = rememberLazyListState()
+            val newSongScope = rememberCoroutineScope()
+            val showNewSongScrollTop by remember {
+                derivedStateOf {
+                    songs.size > 30 && newSongListState.firstVisibleItemIndex > 2
+                }
+            }
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
+            ) {
+            LazyColumn(
+                state = newSongListState,
+                modifier = Modifier
+                    .fillMaxSize()
                     .horizontalCategorySwipe(
                         currentIndex = curPeriodIdx,
                         itemCount = periodKeys.size,
@@ -1739,12 +1748,6 @@ fun NewSongExpressScreen(
                                 fontSize = 15.sp,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "${songs.size} 首",
-                                fontSize = 12.5.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1814,13 +1817,7 @@ fun NewSongExpressScreen(
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.ExtraBold
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        text = "${group.indexedSongs.size} 首",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Medium
-                                    )
+
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1879,6 +1876,21 @@ fun NewSongExpressScreen(
                         }
                     }
                 }
+            }
+
+            FloatingScrollToTopButton(
+                visible = showNewSongScrollTop,
+                accentColor = violetAccent,
+                onClick = {
+                    newSongScope.launch {
+                        newSongListState.animateScrollToItem(0)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 18.dp, bottom = 104.dp)
+            )
             }
         }
     }
@@ -2158,7 +2170,7 @@ fun RankDetailScreen(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "全部榜单 (${ranks.size})",
+                                text = "全部榜单",
                                 color = accentColor,
                                 fontSize = 12.5.sp,
                                 fontWeight = FontWeight.Bold
@@ -2172,10 +2184,21 @@ fun RankDetailScreen(
             val currentQuickIndex = remember(quickSwitchRanks, currentRank) {
                 quickSwitchRanks.indexOfFirst { it.rankId == currentRank.rankId }.coerceAtLeast(0)
             }
-            LazyColumn(
+            val rankListState = rememberLazyListState()
+            val showRankScrollTop by remember {
+                derivedStateOf {
+                    filteredSongs.size > 30 && rankListState.firstVisibleItemIndex > 4
+                }
+            }
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
+            ) {
+            LazyColumn(
+                state = rankListState,
+                modifier = Modifier
+                    .fillMaxSize()
                     .horizontalCategorySwipe(
                         currentIndex = currentQuickIndex,
                         itemCount = quickSwitchRanks.size,
@@ -2324,7 +2347,7 @@ fun RankDetailScreen(
                                     }
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Text(
-                                        text = "播放全部 (${filteredSongs.size})",
+                                        text = "播放全部",
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = MaterialTheme.colorScheme.onSurface
@@ -2399,6 +2422,21 @@ fun RankDetailScreen(
                     }
                 }
             }
+
+            FloatingScrollToTopButton(
+                visible = showRankScrollTop,
+                accentColor = accentColor,
+                onClick = {
+                    coroutineScope.launch {
+                        rankListState.animateScrollToItem(0)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 18.dp, bottom = 104.dp)
+            )
+            }
         }
     }
 
@@ -2462,7 +2500,7 @@ private fun RankGridPickerSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "全部榜单 (${ranks.size})",
+                    text = "全部榜单",
                     style = MaterialTheme.typography.titleMedium.copy(
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.onSurface
@@ -2712,10 +2750,21 @@ fun DailyRecommendScreen(
             },
             containerColor = Color.Transparent
         ) { padding ->
-            LazyColumn(
+            val dailyListState = rememberLazyListState()
+            val dailyScope = rememberCoroutineScope()
+            val showDailyScrollTop by remember {
+                derivedStateOf {
+                    dailySongs.size > 30 && dailyListState.firstVisibleItemIndex > 4
+                }
+            }
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
+                    .padding(padding)
+            ) {
+            LazyColumn(
+                state = dailyListState,
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 100.dp)
             ) {
                 // 开放式日推头部（去除外层圆角卡片盒）
@@ -2782,7 +2831,7 @@ fun DailyRecommendScreen(
                                 }
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "播放全部 (${dailySongs.size})",
+                                    text = "播放全部",
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 14.sp,
                                     color = MaterialTheme.colorScheme.onSurface
@@ -2829,6 +2878,21 @@ fun DailyRecommendScreen(
                         }
                     }
                 }
+            }
+
+            FloatingScrollToTopButton(
+                visible = showDailyScrollTop,
+                accentColor = ConceptCoralAccent,
+                onClick = {
+                    dailyScope.launch {
+                        dailyListState.animateScrollToItem(0)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 18.dp, bottom = 104.dp)
+            )
             }
         }
     }

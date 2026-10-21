@@ -25,6 +25,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -50,6 +51,7 @@ import coil.compose.AsyncImage
 import com.concept.music.data.model.FmChannel
 import com.concept.music.data.model.Song
 import com.concept.music.ui.components.PlayingAudioWaveIndicator
+import com.concept.music.ui.components.FloatingScrollToTopButton
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptCoralAccent
 import com.concept.music.ui.theme.ConceptCyanAccent
@@ -229,7 +231,7 @@ fun RadioScreen(
                                 )
                                 Spacer(modifier = Modifier.width(5.dp))
                                 Text(
-                                    text = if (showAllStationsGrid) "收起电台 (${fmChannels.size})" else "切换电台 (${fmChannels.size})",
+                                    text = if (showAllStationsGrid) "收起电台" else "切换电台",
                                     color = currentCategoryAccent,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
@@ -251,10 +253,21 @@ fun RadioScreen(
             }
         ) { innerPadding ->
             val currentCatIdx = categories.indexOf(selectedCategory).coerceAtLeast(0)
-            LazyColumn(
+            val radioListState = rememberLazyListState()
+            val showRadioScrollTop by remember {
+                derivedStateOf {
+                    stationSongs.size > 30 && radioListState.firstVisibleItemIndex > 4
+                }
+            }
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
+            ) {
+            LazyColumn(
+                state = radioListState,
+                modifier = Modifier
+                    .fillMaxSize()
                     .horizontalCategorySwipe(
                         currentIndex = currentCatIdx,
                         itemCount = categories.size,
@@ -441,7 +454,7 @@ fun RadioScreen(
                                     Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
-                                        text = "播放 (${stationSongs.size})",
+                                        text = "播放全部",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         maxLines = 1
@@ -617,31 +630,14 @@ fun RadioScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "漫游列表",
-                                style = MaterialTheme.typography.titleSmall.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 15.sp
-                                )
+                        Text(
+                            text = "漫游列表",
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 15.sp
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "${stationSongs.size} 首",
-                                style = MaterialTheme.typography.labelMedium.copy(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                        }
-                        if (!showAllStationsGrid) {
-                            Text(
-                                text = "点击右上角可切换更多电台",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
-                                )
-                            )
-                        }
+                        )
                     }
                 }
 
@@ -678,6 +674,21 @@ fun RadioScreen(
                         )
                     }
                 }
+            }
+
+            FloatingScrollToTopButton(
+                visible = showRadioScrollTop,
+                accentColor = currentCategoryAccent,
+                onClick = {
+                    scope.launch {
+                        radioListState.animateScrollToItem(0)
+                    }
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(end = 18.dp, bottom = 104.dp)
+            )
             }
         }
     }
