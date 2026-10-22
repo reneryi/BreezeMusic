@@ -33,6 +33,7 @@ import com.concept.music.data.model.ArtistItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
 import com.concept.music.ui.theme.ConceptCoralAccent
@@ -329,9 +330,12 @@ fun ArtistDetailScreen(
                 }
             }
         ) { innerPadding ->
-            val showScrollToTop by remember {
+            val showScrollToTop by remember(selectedTab, filteredSongs.size) {
                 derivedStateOf {
-                    selectedTab == 0 && filteredSongs.size > 30 && listState.firstVisibleItemIndex > 4
+                    selectedTab == 0 && (
+                        listState.firstVisibleItemIndex > 2 ||
+                            (listState.firstVisibleItemIndex == 2 && listState.firstVisibleItemScrollOffset > 100)
+                        )
                 }
             }
             Box(
@@ -758,7 +762,7 @@ fun ArtistDetailScreen(
                 visible = showScrollToTop,
                 onClick = {
                     coroutineScope.launch {
-                        listState.animateScrollToItem(0)
+                        listState.smoothFastScrollToItem(0)
                     }
                 },
                 modifier = Modifier

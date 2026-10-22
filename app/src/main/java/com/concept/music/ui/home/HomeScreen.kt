@@ -56,6 +56,7 @@ import com.concept.music.data.model.RankItem
 import com.concept.music.data.model.Song
 import com.concept.music.ui.components.BadgeTag
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
 import com.concept.music.ui.theme.ConceptCoralAccent
@@ -1653,9 +1654,10 @@ fun NewSongExpressScreen(
             val curPeriodIdx = periodKeys.indexOf(selectedPeriod).coerceAtLeast(0)
             val newSongListState = rememberLazyListState()
             val newSongScope = rememberCoroutineScope()
-            val showNewSongScrollTop by remember {
+            val showNewSongScrollTop by remember(songs.size) {
                 derivedStateOf {
-                    songs.size > 30 && newSongListState.firstVisibleItemIndex > 2
+                    newSongListState.firstVisibleItemIndex > 1 ||
+                        (newSongListState.firstVisibleItemIndex == 1 && newSongListState.firstVisibleItemScrollOffset > 140)
                 }
             }
             Box(
@@ -1883,7 +1885,7 @@ fun NewSongExpressScreen(
                 accentColor = violetAccent,
                 onClick = {
                     newSongScope.launch {
-                        newSongListState.animateScrollToItem(0)
+                        newSongListState.smoothFastScrollToItem(0)
                     }
                 },
                 modifier = Modifier
@@ -2185,9 +2187,16 @@ fun RankDetailScreen(
                 quickSwitchRanks.indexOfFirst { it.rankId == currentRank.rankId }.coerceAtLeast(0)
             }
             val rankListState = rememberLazyListState()
-            val showRankScrollTop by remember {
+            val showRankScrollTop by remember(filteredSongs.size) {
                 derivedStateOf {
-                    filteredSongs.size > 30 && rankListState.firstVisibleItemIndex > 4
+                    rankListState.firstVisibleItemIndex > 2 ||
+                        (rankListState.firstVisibleItemIndex == 2 && rankListState.firstVisibleItemScrollOffset > 100)
+                }
+            }
+            val playingRankSongIndex = remember(filteredSongs, currentSong?.id, currentSong?.hash) {
+                if (currentSong == null) -1
+                else filteredSongs.indexOfFirst {
+                    it.id == currentSong.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(it.hash, ignoreCase = true))
                 }
             }
             Box(
@@ -2411,7 +2420,7 @@ fun RankDetailScreen(
                         }
                     }
                 } else {
-                    itemsIndexed(filteredSongs, key = { idx, s -> "rank_${s.id}_$idx" }) { index, song ->
+                    itemsIndexed(filteredSongs, key = { idx, s -> "rank_${s.id}_$idx" }, contentType = { _, _ -> "song_row" }) { index, song ->
                         SongItemRow(
                             song = song,
                             orderIndex = index + 1,
@@ -2423,19 +2432,57 @@ fun RankDetailScreen(
                 }
             }
 
-            FloatingScrollToTopButton(
-                visible = showRankScrollTop,
-                accentColor = accentColor,
-                onClick = {
-                    coroutineScope.launch {
-                        rankListState.animateScrollToItem(0)
-                    }
-                },
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .navigationBarsPadding()
-                    .padding(end = 18.dp, bottom = 104.dp)
-            )
+                    .padding(end = 18.dp, bottom = 104.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                FloatingScrollToTopButton(
+                    visible = showRankScrollTop,
+                    accentColor = accentColor,
+                    onClick = {
+                        coroutineScope.launch {
+                            rankListState.smoothFastScrollToItem(0)
+                        }
+                    }
+                )
+
+                AnimatedVisibility(
+                    visible = playingRankSongIndex >= 0,
+                    enter = fadeIn() + scaleIn(initialScale = 0.85f),
+                    exit = fadeOut() + scaleOut(targetScale = 0.85f)
+                ) {
+                    val headerCount = if (quickSwitchRanks.size > 1) 3 else 2
+                    FilledIconButton(
+                        onClick = {
+                            if (playingRankSongIndex >= 0) {
+                                coroutineScope.launch {
+                                    val targetLazyIndex = (headerCount + playingRankSongIndex - 2).coerceAtLeast(0)
+                                    rankListState.smoothFastScrollToItem(targetLazyIndex)
+                                }
+                            }
+                        },
+                        shape = CircleShape,
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = accentColor,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .size(42.dp)
+                            .shadow(8.dp, CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MyLocation,
+                            contentDescription = "定位当前播放歌曲",
+                            tint = Color.White,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                }
+            }
             }
         }
     }
@@ -2752,9 +2799,10 @@ fun DailyRecommendScreen(
         ) { padding ->
             val dailyListState = rememberLazyListState()
             val dailyScope = rememberCoroutineScope()
-            val showDailyScrollTop by remember {
+            val showDailyScrollTop by remember(dailySongs.size) {
                 derivedStateOf {
-                    dailySongs.size > 30 && dailyListState.firstVisibleItemIndex > 4
+                    dailyListState.firstVisibleItemIndex > 2 ||
+                        (dailyListState.firstVisibleItemIndex == 2 && dailyListState.firstVisibleItemScrollOffset > 100)
                 }
             }
             Box(
@@ -2866,7 +2914,7 @@ fun DailyRecommendScreen(
                         }
                     }
                 } else {
-                    itemsIndexed(dailySongs, key = { index, song -> "daily_page_${song.id}_$index" }) { index, song ->
+                    itemsIndexed(dailySongs, key = { index, song -> "daily_page_${song.id}_$index" }, contentType = { _, _ -> "song_row" }) { index, song ->
                         Box(modifier = Modifier.padding(horizontal = 12.dp)) {
                             SongItemRow(
                                 song = song,
@@ -2885,7 +2933,7 @@ fun DailyRecommendScreen(
                 accentColor = ConceptCoralAccent,
                 onClick = {
                     dailyScope.launch {
-                        dailyListState.animateScrollToItem(0)
+                        dailyListState.smoothFastScrollToItem(0)
                     }
                 },
                 modifier = Modifier

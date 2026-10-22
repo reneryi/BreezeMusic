@@ -108,8 +108,9 @@ data class PlayerUiState(
     val dynamicCoverAccentEnabled: Boolean = true,
     val showTranslation: Boolean = false,
     val showPhonetic: Boolean = false,
-    val lyricFontSize: Float = 22f,
-    val lyricTranslationScale: Float = 0.82f,
+    val lyricFontSize: Float = 24f,
+    val lyricTranslationScale: Float = 0.84f,
+    val motionOrientationPermissionEnabled: Boolean = true,
     val lyricAlignment: LyricAlignment = LyricAlignment.LEFT,
     val lyricWordByWord: Boolean = true,
     val lyricBlurEnabled: Boolean = true,
@@ -162,6 +163,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private var resolveJob: Job? = null
     private var lyricJob: Job? = null
+    private var commentsJob: Job? = null
     private var progressJob: Job? = null
     private var prefetchJob: Job? = null
     private var sleepTimerJob: Job? = null
@@ -285,6 +287,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         val updatedRecent = syncActiveQueueInRecent(q, newIdx, mutableState.value.activeQueueId, mutableState.value.recentQueues)
+        commentsJob?.cancel()
         mutableState.value = mutableState.value.copy(
             currentSong = resolvedSong,
             currentQualityLabel = transQualityLabel,
@@ -294,7 +297,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             currentPositionMs = startPos,
             durationMs = resolvedSong.durationMs,
             climaxUnlockedForCurrentSong = false,
-            songDetail = VipManager.music.songDetail(resolvedSong)
+            songDetail = VipManager.music.songDetail(resolvedSong),
+            comments = emptyList(),
+            commentCount = 0,
+            commentsPage = 1,
+            commentsHasMore = true
         )
 
         persistPlaybackStateAsync()
@@ -406,7 +413,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     add(item)
                 }
             }
-        }.take(3)
+        }.take(5)
         return newList to targetId
     }
 
@@ -467,7 +474,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         // 外语翻译与音译注音默认关闭
         val savedShowTrans = prefs.getBoolean("show_translation_v3", false)
         val savedShowPhonetic = prefs.getBoolean("show_phonetic_v3", false)
-        val savedFontSize = prefs.getFloat("lyric_font_size_v2", 22f).coerceIn(16f, 30f)
+        val savedFontSize = prefs.getFloat("lyric_font_size_v3", 24f).coerceIn(18f, 34f)
+        val savedMotionPerm = prefs.getBoolean("motion_orientation_sensor_enabled", true)
         val savedAlign = runCatching {
             LyricAlignment.valueOf(prefs.getString("lyric_alignment_v2", LyricAlignment.LEFT.name) ?: LyricAlignment.LEFT.name)
         }.getOrDefault(LyricAlignment.LEFT)
@@ -539,7 +547,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             queue = sanitizedQueue,
             currentIndex = savedIndex,
             currentActiveId = savedActiveQueueId,
-            existingRecent = restoredRecentQueues.take(3)
+            existingRecent = restoredRecentQueues.take(5)
         )
 
         val effectiveRestoredQuality = if (restoredSong != null) {
@@ -559,6 +567,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             showTranslation = savedShowTrans,
             showPhonetic = savedShowPhonetic,
             lyricFontSize = savedFontSize,
+            motionOrientationPermissionEnabled = savedMotionPerm,
             lyricAlignment = savedAlign,
             lyricWordByWord = savedWordByWord,
             lyricBlurEnabled = savedBlurEnabled,
@@ -605,7 +614,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 val cleanQueue = snapshot.playlistQueue.take(150).map { it.copy(playUrl = "") }
                 val queueJson = gson.toJson(cleanQueue)
                 val recentJson = gson.toJson(
-                    snapshot.recentQueues.take(3).map { rq ->
+                    snapshot.recentQueues.take(5).map { rq ->
                         rq.copy(songs = rq.songs.take(120).map { s -> s.copy(playUrl = "") })
                     }
                 )
@@ -619,7 +628,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     .putString("preferred_quality_v2", snapshot.preferredQuality.name)
                     .putBoolean("show_translation_v3", snapshot.showTranslation)
                     .putBoolean("show_phonetic_v3", snapshot.showPhonetic)
-                    .putFloat("lyric_font_size_v2", snapshot.lyricFontSize)
+                    .putFloat("lyric_font_size_v3", snapshot.lyricFontSize)
+                    .putBoolean("motion_orientation_sensor_enabled", snapshot.motionOrientationPermissionEnabled)
                     .putString("lyric_alignment_v2", snapshot.lyricAlignment.name)
                     .putBoolean("lyric_word_by_word", snapshot.lyricWordByWord)
                     .putBoolean("lyric_blur_enabled", snapshot.lyricBlurEnabled)
@@ -1053,6 +1063,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             showTranslation = st.showTranslation,
             showPhonetic = st.showPhonetic,
             lyricFontSize = st.lyricFontSize,
+            motionOrientationPermissionEnabled = st.motionOrientationPermissionEnabled,
             lyricAlignment = st.lyricAlignment,
             lyricWordByWord = st.lyricWordByWord,
             lyricBlurEnabled = st.lyricBlurEnabled,
@@ -1215,7 +1226,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun setLyricFontSize(size: Float) {
-        mutableState.value = mutableState.value.copy(lyricFontSize = size.coerceIn(16f, 30f))
+        mutableState.value = mutableState.value.copy(lyricFontSize = size.coerceIn(18f, 34f))
+        persistPlaybackStateAsync()
+    }
+
+    fun setMotionOrientationPermissionEnabled(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(motionOrientationPermissionEnabled = enabled)
         persistPlaybackStateAsync()
     }
 
@@ -1477,26 +1493,44 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun loadComments(isRefresh: Boolean = false) {
         val song = mutableState.value.currentSong ?: return
         if (!isRefresh && (mutableState.value.commentsLoading || !mutableState.value.commentsHasMore)) return
+        if (isRefresh) {
+            commentsJob?.cancel()
+        }
         val page = if (isRefresh) 1 else mutableState.value.commentsPage + 1
         val type = mutableState.value.commentType
+        val targetSongId = song.id
+        val targetSongHash = song.hash
 
-        viewModelScope.launch {
-            mutableState.value = mutableState.value.copy(commentsLoading = true)
+        commentsJob = viewModelScope.launch {
+            mutableState.value = mutableState.value.copy(
+                commentsLoading = true,
+                commentsPage = if (isRefresh) 1 else mutableState.value.commentsPage
+            )
             runCatching {
                 val list = VipManager.music.songComments(song, type = type, page = page, pageSize = 30)
+                val activeSong = mutableState.value.currentSong
+                if (activeSong == null || (activeSong.id != targetSongId && activeSong.hash != targetSongHash)) {
+                    return@launch
+                }
                 val current = if (isRefresh) emptyList<SongComment>() else mutableState.value.comments
                 val merged: List<SongComment> = (current + list).distinctBy { it.id }
                 val serverCount = VipManager.music.lastSongCommentCount
-                val count = if (serverCount > 0) serverCount else if (merged.isNotEmpty()) maxOf(mutableState.value.commentCount, merged.size) else mutableState.value.commentCount
+                val prevCount = if (isRefresh) 0 else mutableState.value.commentCount
+                val count = when {
+                    serverCount > 0 -> maxOf(serverCount, merged.size)
+                    merged.isNotEmpty() -> maxOf(prevCount, merged.size)
+                    else -> prevCount
+                }
                 val addedNewItems = isRefresh || merged.size > current.size
                 mutableState.value = mutableState.value.copy(
                     comments = merged,
                     commentsLoading = false,
                     commentsPage = page,
-                    commentsHasMore = list.isNotEmpty() && addedNewItems,
+                    commentsHasMore = list.size >= 8 && addedNewItems,
                     commentCount = count
                 )
-            }.onFailure {
+            }.onFailure { e ->
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 mutableState.value = mutableState.value.copy(commentsLoading = false)
             }
         }

@@ -705,6 +705,8 @@ class LibraryViewModel(
                     _playlists.value = _playlists.value.map {
                         if (it.isLiked) it.copy(trackCount = (it.trackCount - 1).coerceAtLeast(0)) else it
                     }
+                    VipManager.discoverCache.saveLikedSongs(accountState.value.currentId, _likedSongs.value)
+                    VipManager.discoverCache.saveUserPlaylists(accountState.value.currentId, _playlists.value)
                     onResult(true, false, "已从「我喜欢的音乐」中移除")
                 } else {
                     _likedSongs.value = prevLikedList
@@ -724,9 +726,12 @@ class LibraryViewModel(
                     _playlists.value = _playlists.value.map {
                         if (it.isLiked) it.copy(trackCount = it.trackCount + 1) else it
                     }
+                    VipManager.discoverCache.saveLikedSongs(accountState.value.currentId, _likedSongs.value)
+                    VipManager.discoverCache.saveUserPlaylists(accountState.value.currentId, _playlists.value)
                     launch {
                         runCatching { VipManager.music.playlistSongs(likedPl) }.getOrNull()?.let { fresh ->
                             _likedSongs.value = fresh
+                            VipManager.discoverCache.saveLikedSongs(accountState.value.currentId, fresh)
                             if (_librarySection.value == "我喜欢") {
                                 _librarySongs.value = fresh
                             }

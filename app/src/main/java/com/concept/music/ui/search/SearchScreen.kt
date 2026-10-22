@@ -41,6 +41,7 @@ import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import com.concept.music.data.model.*
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
 import com.concept.music.ui.theme.ConceptMintAccent
@@ -361,14 +362,15 @@ fun SearchScreen(
                                         EmptySearchState(message = "未找到“$displayKw”的相关单曲")
                                     } else {
                                         val searchScope = rememberCoroutineScope()
-                                        val showSongSearchScrollTop by remember {
+                                        val showSongSearchScrollTop by remember(songResults.size) {
                                             derivedStateOf {
-                                                songResults.size > 30 && listState.firstVisibleItemIndex > 4
+                                                listState.firstVisibleItemIndex > 2 ||
+                                                    (listState.firstVisibleItemIndex == 2 && listState.firstVisibleItemScrollOffset > 100)
                                             }
                                         }
                                         Box(modifier = Modifier.fillMaxSize()) {
                                             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                                                itemsIndexed(songResults) { index, song ->
+                                                itemsIndexed(songResults, key = { idx, s -> "search_song_${s.id}_$idx" }, contentType = { _, _ -> "song_row" }) { index, song ->
                                                     SongItemRow(
                                                         song = song,
                                                         orderIndex = index + 1,
@@ -392,7 +394,7 @@ fun SearchScreen(
                                                 visible = showSongSearchScrollTop,
                                                 onClick = {
                                                     searchScope.launch {
-                                                        listState.animateScrollToItem(0)
+                                                        listState.smoothFastScrollToItem(0)
                                                     }
                                                 },
                                                 modifier = Modifier

@@ -21,7 +21,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.concept.music.data.model.KugouCommentEmojiParser
 import com.concept.music.data.model.SongComment
+import com.concept.music.ui.comment.CommentImagesGrid
 import com.concept.music.ui.comment.formatCommentLikeCount
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.LocalIsDarkTheme
@@ -185,7 +187,7 @@ fun CommentsSheet(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
-                    items(comments, key = { it.id }) { comment ->
+                    items(comments, key = { it.id }, contentType = { "comment_sheet_card" }) { comment ->
                         CommentCard(comment = comment)
                     }
 
@@ -287,13 +289,27 @@ private fun CommentCard(comment: SongComment) {
                             }
                         }
                     }
-                    Text(
-                        text = comment.timeFormatted,
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            color = subText,
-                            fontSize = 11.sp
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = comment.timeFormatted,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = subText,
+                                fontSize = 11.sp
+                            )
                         )
-                    )
+                        if (comment.ipLocation.isNotBlank()) {
+                            Text(
+                                text = "IP属地：${comment.ipLocation}",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    color = subText.copy(alpha = 0.72f),
+                                    fontSize = 11.sp
+                                )
+                            )
+                        }
+                    }
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -319,12 +335,20 @@ private fun CommentCard(comment: SongComment) {
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = comment.content,
+                text = KugouCommentEmojiParser.formatContent(comment.content),
                 style = MaterialTheme.typography.bodyMedium.copy(
                     color = primaryText.copy(alpha = 0.92f),
                     lineHeight = 20.sp
                 )
             )
+
+            if (comment.images.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                CommentImagesGrid(
+                    images = comment.images,
+                    onImageClick = {}
+                )
+            }
         }
     }
 }

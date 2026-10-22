@@ -39,6 +39,7 @@ import com.concept.music.data.model.Song
 import com.concept.music.ui.components.AddToPlaylistDialog
 import com.concept.music.ui.components.CreatePlaylistDialog
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptCoralAccent
 import com.concept.music.ui.theme.ConceptMintAccent
@@ -479,7 +480,7 @@ fun PlaylistDetailScreen(
                     }
 
                     // 4. 歌曲列表
-                    itemsIndexed(filteredAndSortedSongs, key = { idx, s -> "${s.id}_${s.hash}_$idx" }) { index, song ->
+                    itemsIndexed(filteredAndSortedSongs, key = { idx, s -> "${s.id}_${s.hash}_$idx" }, contentType = { _, _ -> "song_row" }) { index, song ->
                         val isCurrentTrack = currentSong != null && viewModel.isSameSong(song, currentSong)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -537,9 +538,10 @@ fun PlaylistDetailScreen(
             }
 
             // 右下角悬浮按钮组：返回顶部（歌单超30首且下滚时展示）+ 极简纯图标定位当前播放歌曲
-            val showScrollToTop by remember {
+            val showScrollToTop by remember(filteredAndSortedSongs.size) {
                 derivedStateOf {
-                    filteredAndSortedSongs.size > 30 && listState.firstVisibleItemIndex > 4
+                    listState.firstVisibleItemIndex > 2 ||
+                        (listState.firstVisibleItemIndex == 2 && listState.firstVisibleItemScrollOffset > 100)
                 }
             }
             Column(
@@ -554,7 +556,7 @@ fun PlaylistDetailScreen(
                     visible = showScrollToTop,
                     onClick = {
                         coroutineScope.launch {
-                            listState.animateScrollToItem(0)
+                            listState.smoothFastScrollToItem(0)
                         }
                     }
                 )
@@ -569,7 +571,7 @@ fun PlaylistDetailScreen(
                             if (playingSongIndex >= 0) {
                                 coroutineScope.launch {
                                     val targetLazyIndex = (2 + playingSongIndex - 2).coerceAtLeast(0)
-                                    listState.animateScrollToItem(targetLazyIndex)
+                                    listState.smoothFastScrollToItem(targetLazyIndex)
                                 }
                             }
                         },

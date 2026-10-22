@@ -14,6 +14,7 @@ import com.concept.music.data.model.RankItem
 import com.concept.music.data.model.SearchIntent
 import com.concept.music.data.model.SearchResult
 import com.concept.music.data.model.Song
+import com.concept.music.data.model.KugouCommentEmojiParser
 import com.concept.music.data.model.SongComment
 import com.concept.music.data.model.SongDetailInfo
 import com.concept.music.data.model.UserGradeInfo
@@ -311,7 +312,7 @@ class MusicApiRepository(
         }
     }
 
-    // 新建歌单
+    // 新建歌单 (对齐 MakcRe/KuGouMusicApi module/playlist_add.js，支持双路由网关云同步)
     suspend fun createPlaylist(name: String): Boolean = auth { ctx ->
         val session = ctx.session
         val clientTime = System.currentTimeMillis() / 1000
@@ -334,24 +335,47 @@ class MusicApiRepository(
             "userid" to session.userId,
             "token" to session.token
         )
-        val response = runCatching {
-            transport.call(
+        val primaryOk = runCatching {
+            val response = transport.call(
                 path = "/cloudlist.service/v5/add_list",
                 session = session,
                 query = query,
                 body = body,
                 method = "POST"
             )
-        }.getOrNull()
-        response != null && response.status == 1
+            response.status == 1 || response.code == 0
+        }.getOrDefault(false)
+        if (primaryOk) return@auth true
+
+        runCatching {
+            val response = transport.call(
+                path = "/v5/add_list",
+                session = session,
+                query = query,
+                body = body,
+                headers = mapOf("x-router" to "cloudlist.service.kugou.com"),
+                method = "POST"
+            )
+            response.status == 1 || response.code == 0
+        }.getOrDefault(false)
     }
 
-    // 收藏歌单
+    // 收藏歌单 (对齐 MakcRe/KuGouMusicApi module/playlist_add.js，补齐 source_listid/gid 并支持双路由云端同步)
     suspend fun collectPlaylist(playlist: Playlist): Boolean = auth { ctx ->
         val session = ctx.session
+        val clientTime = System.currentTimeMillis() / 1000
         var authorUid = playlist.listCreateUserid.ifBlank { "0" }
         var authorListId = playlist.listCreateListid.ifBlank { "0" }
-        val gid = playlist.globalCollectionId.ifBlank { playlist.id }
+        var gid = playlist.globalCollectionId.ifBlank { playlist.id }
+        if (!gid.contains("_") && gid.all { it.isDigit() }) {
+            runCatching {
+                playlistInfo(gid)?.let { resolved ->
+                    if (resolved.globalCollectionId.isNotBlank()) gid = resolved.globalCollectionId
+                    if (resolved.listCreateUserid.isNotBlank()) authorUid = resolved.listCreateUserid
+                    if (resolved.listCreateListid.isNotBlank()) authorListId = resolved.listCreateListid
+                }
+            }
+        }
         if ((authorUid == "0" || authorListId == "0") && gid.contains("_")) {
             val parts = gid.split("_")
             if (parts.size >= 4) {
@@ -372,15 +396,35 @@ class MusicApiRepository(
             addProperty("list_create_gid", gid)
             addProperty("from_shupinmv", 0)
         }
-        val response = runCatching {
-            transport.call(
+        val query = mapOf(
+            "last_time" to clientTime.toString(),
+            "last_area" to "gztx",
+            "userid" to session.userId,
+            "token" to session.token
+        )
+        val primaryOk = runCatching {
+            val response = transport.call(
                 path = "/cloudlist.service/v5/add_list",
                 session = session,
+                query = query,
                 body = body,
                 method = "POST"
             )
-        }.getOrNull()
-        response != null && response.status == 1
+            response.status == 1 || response.code == 0
+        }.getOrDefault(false)
+        if (primaryOk) return@auth true
+
+        runCatching {
+            val response = transport.call(
+                path = "/v5/add_list",
+                session = session,
+                query = query,
+                body = body,
+                headers = mapOf("x-router" to "cloudlist.service.kugou.com"),
+                method = "POST"
+            )
+            response.status == 1 || response.code == 0
+        }.getOrDefault(false)
     }
 
     // 取消收藏或删除自建歌单
@@ -445,7 +489,7 @@ class MusicApiRepository(
         rawResponse != null
     }
 
-    // 向歌单添加歌曲
+    // 向歌单添加歌曲 (对齐 MakcRe/KuGouMusicApi module/playlist_tracks_add.js，补齐歌手-歌名标准格式与双路由同步)
     suspend fun addSongToPlaylist(playlistId: Long, song: Song): Boolean = auth { ctx ->
         val session = ctx.session
         val clientTime = System.currentTimeMillis() / 1000
@@ -455,16 +499,23 @@ class MusicApiRepository(
             "userid" to session.userId,
             "token" to session.token
         )
+        val fullTrackName = if (song.artist.isNotBlank() && song.artist != "未知歌手" && !song.title.contains(" - ")) {
+            "${song.artist} - ${song.title}"
+        } else {
+            song.title
+        }
+        val mixId = song.albumAudioId.takeIf { it > 0L } ?: song.audioId.takeIf { it > 0L } ?: song.id.toLongOrNull() ?: 0L
+        val primaryHash = song.hash128.ifBlank { song.hash }.uppercase()
         val songItem = JsonObject().apply {
             addProperty("number", 1)
-            addProperty("name", song.title)
-            addProperty("hash", song.hash)
-            addProperty("size", 0)
+            addProperty("name", fullTrackName)
+            addProperty("hash", primaryHash)
+            addProperty("size", song.fileSizeByte.coerceAtLeast(0L))
             addProperty("sort", 0)
-            addProperty("timelen", song.durationMs / 1000)
-            addProperty("bitrate", 0)
+            addProperty("timelen", (song.durationMs / 1000).coerceAtLeast(0L))
+            addProperty("bitrate", song.bitrateKbps.takeIf { it > 0 } ?: 128)
             addProperty("album_id", song.albumId.toLongOrNull() ?: 0L)
-            addProperty("mixsongid", song.albumAudioId)
+            addProperty("mixsongid", mixId)
         }
         val dataArr = JsonArray().apply { add(songItem) }
         val body = JsonObject().apply {
@@ -477,19 +528,32 @@ class MusicApiRepository(
             addProperty("scene", "false;null")
             add("data", dataArr)
         }
-        val response = runCatching {
-            transport.call(
+        val primaryOk = runCatching {
+            val response = transport.call(
                 path = "/cloudlist.service/v6/add_song",
                 session = session,
                 query = query,
                 body = body,
                 method = "POST"
             )
-        }.getOrNull()
-        response != null && response.status == 1
+            response.status == 1 || response.code == 0
+        }.getOrDefault(false)
+        if (primaryOk) return@auth true
+
+        runCatching {
+            val response = transport.call(
+                path = "/v6/add_song",
+                session = session,
+                query = query,
+                body = body,
+                headers = mapOf("x-router" to "cloudlist.service.kugou.com"),
+                method = "POST"
+            )
+            response.status == 1 || response.code == 0
+        }.getOrDefault(false)
     }
 
-    // 从歌单删除歌曲
+    // 从歌单删除歌曲 (对齐 MakcRe/KuGouMusicApi module/playlist_tracks_del.js，当 fileId 为 0 时自动解析云端真实 fileid)
     suspend fun removeSongFromPlaylist(playlistId: Long, song: Song): Boolean = auth { ctx ->
         val session = ctx.session
         val clientTime = System.currentTimeMillis() / 1000
@@ -499,10 +563,31 @@ class MusicApiRepository(
             "userid" to session.userId,
             "token" to session.token
         )
+        var resolvedFileId = song.fileId
+        if (resolvedFileId <= 0L) {
+            runCatching {
+                val targetPl = userPlaylists().firstOrNull { it.listId == playlistId }
+                if (targetPl != null) {
+                    val tracks = fetchPlaylistSongsAll(targetPl.globalCollectionId.ifBlank { targetPl.id }, session)
+                    val matched = tracks.firstOrNull { t ->
+                        (t.hash.isNotBlank() && t.hash.equals(song.hash, ignoreCase = true)) ||
+                            (t.albumAudioId > 0L && t.albumAudioId == song.albumAudioId) ||
+                            (t.id.isNotBlank() && t.id == song.id)
+                    }
+                    if (matched != null && matched.fileId > 0L) {
+                        resolvedFileId = matched.fileId
+                    }
+                }
+            }
+        }
         val songItem = JsonObject().apply {
-            addProperty("fileid", song.fileId)
-            if (song.fileId == 0L) {
-                addProperty("hash", song.hash)
+            addProperty("fileid", resolvedFileId)
+            if (song.hash.isNotBlank()) {
+                addProperty("hash", song.hash.uppercase())
+            }
+            val mixId = song.albumAudioId.takeIf { it > 0L } ?: song.audioId
+            if (mixId > 0L) {
+                addProperty("mixsongid", mixId)
             }
         }
         val dataArr = JsonArray().apply { add(songItem) }
@@ -514,16 +599,29 @@ class MusicApiRepository(
             addProperty("list_ver", 0)
             add("data", dataArr)
         }
-        val response = runCatching {
-            transport.call(
+        val primaryOk = runCatching {
+            val response = transport.call(
                 path = "/cloudlist.service/v4/delete_songs",
                 session = session,
                 query = query,
                 body = body,
                 method = "POST"
             )
-        }.getOrNull()
-        response != null && response.status == 1
+            response.status == 1 || response.code == 0
+        }.getOrDefault(false)
+        if (primaryOk) return@auth true
+
+        runCatching {
+            val response = transport.call(
+                path = "/v4/delete_songs",
+                session = session,
+                query = query,
+                body = body,
+                headers = mapOf("x-router" to "cloudlist.service.kugou.com"),
+                method = "POST"
+            )
+            response.status == 1 || response.code == 0
+        }.getOrDefault(false)
     }
 
     suspend fun playlistSongs(playlist: Playlist): List<Song> = auth { ctx ->
@@ -4649,21 +4747,52 @@ class MusicApiRepository(
     var lastServerRawDsec: Long = 0L
         private set
 
-    // 听歌等级与时长统计
-    suspend fun userGradeInfo(dSec: Long? = null, diffSec: Long? = null): UserGradeInfo {
+    // 听歌等级与时长统计（严格对齐 MakcRe/KuGouMusicApi module/user_detail.js /v3/get_my_info 与 /v2/get_grade_info）
+    suspend fun userGradeInfo(dSec: Long? = null, diffSec: Long? = null): UserGradeInfo = coroutineScope {
         val session = accounts.context()?.session
-            ?: return UserGradeInfo(level = 0, score = 0, totalListenMinutes = 0, todayListenMinutes = 0, nextLevelScore = 100, progressPercent = 0f, totalListenSeconds = 0L)
+            ?: return@coroutineScope UserGradeInfo(level = 0, score = 0, totalListenMinutes = 0, todayListenMinutes = 0, nextLevelScore = 100, progressPercent = 0f, totalListenSeconds = 0L)
 
-        return runCatching {
+        runCatching {
             val clientTime = System.currentTimeMillis() / 1000
             val userIdNum = session.userId.toLongOrNull() ?: 0L
             val isReport = dSec != null && diffSec != null && dSec > 0L && diffSec > 0L
+
+            // 1. 并发查询官方用户中心 /v3/get_my_info (module/user_detail.js) 获取权威账号听歌时长 duration(分钟) 与 user_grade
+            val myInfoDef = async {
+                runCatching {
+                    val pkPayload = KugouSigner.gson.toJson(mapOf("token" to session.token, "clienttime" to clientTime))
+                    val pkRsa = KugouSigner.rsa(pkPayload).uppercase()
+                    val resp = transport.callAdvanced(
+                        path = "/v3/get_my_info",
+                        method = "POST",
+                        session = session,
+                        query = mapOf("plat" to "1", "clientver" to KugouSigner.CLIENT_VERSION.toString()),
+                        body = json(
+                            "plat" to 1,
+                            "userid" to userIdNum,
+                            "token" to session.token,
+                            "p" to pkRsa,
+                            "pk" to pkRsa,
+                            "clienttime" to clientTime
+                        ),
+                        headers = mapOf(
+                            "x-router" to "usercenter.kugou.com",
+                            "User-Agent" to "Android15-1070-11083-46-0-NetMusic-wifi"
+                        ),
+                        sign = true,
+                        includeDefaultParams = true
+                    )
+                    resp.data.obj("data") ?: resp.data
+                }.getOrNull()
+            }
+
+            // 2. 查询或上报 /v2/get_grade_info (补全 token 字段确保鉴权通过)
             val p = if (isReport) {
                 val md5 = KugouSigner.md5("${dSec}${diffSec}00")
                 val reportJson = "{\"token\":\"${session.token}\",\"md5\":\"$md5\"}"
                 KugouSigner.rsa(reportJson).uppercase()
             } else {
-                val innerJson = "{\"clienttime\":$clientTime,\"userid\":$userIdNum}"
+                val innerJson = "{\"clienttime\":$clientTime,\"token\":\"${session.token}\",\"userid\":$userIdNum}"
                 KugouSigner.rsa(innerJson).uppercase()
             }
             val clientVer = 10597
@@ -4700,55 +4829,77 @@ class MusicApiRepository(
                 )
             }
 
-            val response = transport.callAdvanced(
-                path = "/v2/get_grade_info",
-                host = "http://userinfo.user.kugou.com",
-                method = "POST",
-                session = session,
-                body = requestBody,
-                query = mapOf("dfid" to d.dfid),
-                headers = mapOf(
-                    "Content-Type" to "text/plain; charset=ISO-8859-1",
-                    "User-Agent" to "Android15-1070-10597-201-0-get_user_grade_info-wifi",
-                    "KG-THash" to String.format("%07x", (System.currentTimeMillis() and 0xfffffff)),
-                    "KG-Rec" to "1",
-                    "KG-RC" to "1"
-                ),
-                sign = false,
-                includeDefaultParams = false
-            )
+            val gradeData = runCatching {
+                val response = transport.callAdvanced(
+                    path = "/v2/get_grade_info",
+                    host = "http://userinfo.user.kugou.com",
+                    method = "POST",
+                    session = session,
+                    body = requestBody,
+                    query = mapOf("dfid" to d.dfid),
+                    headers = mapOf(
+                        "Content-Type" to "text/plain; charset=ISO-8859-1",
+                        "User-Agent" to "Android15-1070-10597-201-0-get_user_grade_info-wifi",
+                        "KG-THash" to String.format("%07x", (System.currentTimeMillis() and 0xfffffff)),
+                        "KG-Rec" to "1",
+                        "KG-RC" to "1"
+                    ),
+                    sign = false,
+                    includeDefaultParams = false
+                )
+                val status = response.data.number("status") ?: response.status
+                val errorCode = response.data.number("error_code") ?: response.code
+                if (status == 1 && errorCode == 0) {
+                    response.data.obj("data") ?: response.data
+                } else null
+            }.getOrNull()
 
-            val status = response.data.number("status") ?: 1
-            val errorCode = response.data.number("error_code") ?: 0
-            if (status != 1 || errorCode != 0) {
-                throw IllegalStateException("get_grade_info business error: status=$status, error_code=$errorCode")
+            val myInfoData = myInfoDef.await()
+            if (gradeData == null && myInfoData == null) {
+                throw IllegalStateException("Both get_grade_info and get_my_info failed")
             }
 
-            val data = response.data.obj("data") ?: response.data
-            val level = data.number("p_grade") ?: data.number("pGrade")
-                ?: data.number("grade") ?: data.number("level") ?: 0
-            val score = data.text("p_current_point")?.toLongOrNull()
-                ?: data.text("pCurrentPoint")?.toLongOrNull()
-                ?: data.text("score")?.toLongOrNull() ?: 0L
-            val nextScore = data.text("p_next_grade_point")?.toLongOrNull()
-                ?: data.text("pNextGradePoint")?.toLongOrNull()
-                ?: data.text("next_score")?.toLongOrNull() ?: 0L
-            val currentGradeBasePoint = data.text("p_grade_point")?.toLongOrNull()
-                ?: data.text("pGradePoint")?.toLongOrNull() ?: 0L
+            val level = gradeData?.number("p_grade") ?: gradeData?.number("pGrade")
+                ?: gradeData?.number("grade") ?: gradeData?.number("level")
+                ?: myInfoData?.number("p_grade") ?: myInfoData?.number("user_grade")
+                ?: myInfoData?.number("grade") ?: 0
 
-            val dSecField = data.text("d_sec")?.toLongOrNull()
-                ?: data.text("dSec")?.toLongOrNull()
-                ?: data.text("listen_sec")?.toLongOrNull() ?: 0L
-            val durationMinField = data.text("duration")?.toLongOrNull()
-                ?: data.text("d_min")?.toLongOrNull()
-                ?: data.text("listen_time")?.toLongOrNull() ?: 0L
+            val score = gradeData?.text("p_current_point")?.toLongOrNull()
+                ?: gradeData?.text("pCurrentPoint")?.toLongOrNull()
+                ?: gradeData?.text("score")?.toLongOrNull()
+                ?: myInfoData?.text("p_current_point")?.toLongOrNull()
+                ?: myInfoData?.text("user_score")?.toLongOrNull() ?: 0L
+
+            val nextScore = gradeData?.text("p_next_grade_point")?.toLongOrNull()
+                ?: gradeData?.text("pNextGradePoint")?.toLongOrNull()
+                ?: gradeData?.text("next_score")?.toLongOrNull() ?: 0L
+
+            val currentGradeBasePoint = gradeData?.text("p_grade_point")?.toLongOrNull()
+                ?: gradeData?.text("pGradePoint")?.toLongOrNull() ?: 0L
+
+            val dSecField = gradeData?.text("d_sec")?.toLongOrNull()
+                ?: gradeData?.text("dSec")?.toLongOrNull()
+                ?: gradeData?.text("listen_sec")?.toLongOrNull() ?: 0L
+
+            val myInfoDurationMin = myInfoData?.text("duration")?.toLongOrNull()
+                ?: myInfoData?.text("r_duration")?.toLongOrNull()
+                ?: myInfoData?.text("listen_duration")?.toLongOrNull() ?: 0L
+
+            val gradeDurationMin = gradeData?.text("duration")?.toLongOrNull()
+                ?: gradeData?.text("d_min")?.toLongOrNull()
+                ?: gradeData?.text("listen_time")?.toLongOrNull() ?: 0L
+
+            val durationMinField = maxOf(myInfoDurationMin, gradeDurationMin)
 
             if (dSecField > 0L) {
                 lastServerRawDsec = dSecField
+            } else if (durationMinField > 0L && lastServerRawDsec <= 0L) {
+                lastServerRawDsec = if (durationMinField > 2_000_000L) durationMinField else durationMinField * 60L
             }
 
             // 严格对齐酷狗官方客户端展示逻辑：
-            // 服务端 duration 字段为官方实际累计听歌分钟数（不受 VIP 签到任务积分虚增影响），d_sec 仅记录供上报使用
+            // 优先采用官方账号 duration 字段（实际累计听歌分钟数，不受 VIP 签到/打卡任务积分影响），
+            // 仅当接口完全未返回 duration 时，才根据等级或合理范围内的 d_sec 折算
             val totalSec = when {
                 durationMinField > 0L -> {
                     if (durationMinField > 2_000_000L) durationMinField else durationMinField * 60L
@@ -4758,10 +4909,10 @@ class MusicApiRepository(
             }
             val totalMin = totalSec / 60L
 
-            val remainSecFromServer = data.text("remain_d_sec")?.toLongOrNull()
-                ?: data.text("need_d_sec")?.toLongOrNull()
-                ?: data.text("upgrade_d_sec")?.toLongOrNull()
-                ?: data.text("next_d_sec")?.toLongOrNull()?.let { nextD ->
+            val remainSecFromServer = gradeData?.text("remain_d_sec")?.toLongOrNull()
+                ?: gradeData?.text("need_d_sec")?.toLongOrNull()
+                ?: gradeData?.text("upgrade_d_sec")?.toLongOrNull()
+                ?: gradeData?.text("next_d_sec")?.toLongOrNull()?.let { nextD ->
                     if (nextD > totalSec) nextD - totalSec else 0L
                 } ?: 0L
 
@@ -4897,10 +5048,10 @@ class MusicApiRepository(
                 path = "/playhistory/v1/upload_songs",
                 session = session,
                 method = "POST",
-                query = mapOf("plat" to "3"),
+                query = mapOf("plat" to "3", "userid" to session.userId, "token" to session.token),
                 body = body
             )
-            response.data.number("status") == 1
+            response.status == 1 || response.code == 0 || response.data.number("status") == 1
         }.getOrDefault(false)
     }
 
@@ -5344,6 +5495,8 @@ class MusicApiRepository(
     var lastSongCommentCount: Int = 0
         private set
 
+    private val songCommentCountCache = ConcurrentHashMap<String, Int>()
+
     private suspend fun resolveCommentMixSongId(song: Song): Long {
         var mixSongId = song.albumAudioId.takeIf { it > 0 } ?: song.audioId.takeIf { it > 0 } ?: 0L
         val cleanHash = song.hash.trim().lowercase()
@@ -5366,15 +5519,63 @@ class MusicApiRepository(
         return mixSongId
     }
 
+    /**
+     * 对齐 MakcRe/KuGouMusicApi module/comment_count.js:
+     * 针对当前播放曲目实时查询精确评论总数，避免不同歌曲之间残留上一首歌的评论数
+     */
+    suspend fun fetchSongCommentCount(song: Song, resolvedMixId: Long = 0L): Int = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val cacheKey = "${song.id}_${song.hash}".lowercase()
+        val mixSongId = resolvedMixId.takeIf { it > 0L } ?: resolveCommentMixSongId(song)
+        val cleanHash = song.hash.trim().lowercase()
+
+        val countFromApi = runCatching {
+            val response = transport.call(
+                path = "/mcomment/v1/cmt_count",
+                method = "GET",
+                query = buildMap {
+                    put("code", "fc4be23b4e972707f36b8a828a93ba8a")
+                    if (mixSongId > 0L) put("mixsongid", mixSongId.toString())
+                    if (cleanHash.isNotBlank()) {
+                        put("extdata", cleanHash)
+                        put("hash", cleanHash)
+                    }
+                    put("childrenid", if (mixSongId > 0L) mixSongId.toString() else cleanHash)
+                }
+            )
+            val d = response.data.obj("data") ?: response.data
+            listOfNotNull(
+                d.number("count"),
+                d.number("total"),
+                d.number("all_count"),
+                cleanHash.takeIf { it.isNotBlank() }?.let { d.number(it) ?: d.obj("list")?.number(it) },
+                mixSongId.takeIf { it > 0L }?.let { d.number(it.toString()) ?: d.obj("list")?.number(it.toString()) },
+                response.data.number("count"),
+                response.data.number("total")
+            ).maxOrNull() ?: 0
+        }.getOrDefault(0)
+
+        if (countFromApi > 0) {
+            songCommentCountCache[cacheKey] = countFromApi
+            return@withContext countFromApi
+        }
+        songCommentCountCache[cacheKey] ?: 0
+    }
+
     suspend fun songComments(song: Song, type: String = "hot", page: Int = 1, pageSize: Int = 30): List<SongComment> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        if (page == 1 && lastSongCommentCount < 0) {
-            lastSongCommentCount = 0
+        val songCacheKey = "${song.id}_${song.hash}".lowercase()
+        if (page == 1) {
+            // 切换歌曲或重新拉取第一页时必须立即重置上一首歌的评论计数缓存，杜绝评论数卡死不刷新
+            lastSongCommentCount = songCommentCountCache[songCacheKey] ?: 0
         }
         val mixSongId = resolveCommentMixSongId(song)
         val cleanHash = song.hash.trim().lowercase()
-        if (mixSongId <= 0 && cleanHash.isBlank()) return@withContext emptyList()
+        if (mixSongId <= 0 && cleanHash.isBlank()) {
+            lastSongCommentCount = 0
+            return@withContext emptyList()
+        }
         val extData = cleanHash.ifBlank { "0" }
         val isHotTab = type != "new"
+        val session = accounts.context()?.session
 
         fun extractTotalCount(root: JsonObject): Int {
             val d = root.obj("data")
@@ -5393,11 +5594,16 @@ class MusicApiRepository(
             ).maxOrNull() ?: 0
         }
 
+        val countDef = async {
+            if (page == 1) fetchSongCommentCount(song, mixSongId) else 0
+        }
+
         val classifyCommentsDef = async {
             runCatching {
                 val response = transport.call(
                     path = "/mcomment/v1/cmt_classify_list",
                     method = "POST",
+                    session = session,
                     query = mapOf(
                         "mixsongid" to mixSongId.toString(),
                         "need_show_image" to "1",
@@ -5412,65 +5618,76 @@ class MusicApiRepository(
                 val parsedCount = extractTotalCount(response.data)
                 if (parsedCount > 0) {
                     lastSongCommentCount = maxOf(lastSongCommentCount, parsedCount)
+                    songCommentCountCache[songCacheKey] = lastSongCommentCount
                 }
-                parseCommentList(response.data, preferHotList = isHotTab)
+                parseCommentList(response.data, preferHotList = isHotTab, page = page)
             }.getOrDefault(emptyList())
         }
 
         val cmtListDef = async {
-            if (isHotTab && page > 1) {
-                emptyList()
-            } else {
-                runCatching {
-                    val response = transport.call(
-                        path = "/mcomment/v1/cmtlist",
-                        method = "POST",
-                        query = mapOf(
-                            "ver" to "6",
-                            "mixsongid" to mixSongId.toString(),
-                            "need_show_image" to "1",
-                            "p" to page.toString(),
-                            "pagesize" to pageSize.toString(),
-                            "show_classify" to "1",
-                            "show_hotword_list" to "1",
-                            "extdata" to extData,
-                            "code" to "fc4be23b4e972707f36b8a828a93ba8a"
-                        )
+            runCatching {
+                val response = transport.call(
+                    path = "/mcomment/v1/cmtlist",
+                    method = "POST",
+                    session = session,
+                    query = mapOf(
+                        "ver" to "6",
+                        "mixsongid" to mixSongId.toString(),
+                        "need_show_image" to "1",
+                        "p" to page.toString(),
+                        "pagesize" to pageSize.toString(),
+                        "show_classify" to "1",
+                        "show_hotword_list" to "1",
+                        "extdata" to extData,
+                        "code" to "fc4be23b4e972707f36b8a828a93ba8a"
                     )
-                    val parsedCount = extractTotalCount(response.data)
-                    if (parsedCount > 0) {
-                        lastSongCommentCount = maxOf(lastSongCommentCount, parsedCount)
-                    }
-                    parseCommentList(response.data, preferHotList = isHotTab)
-                }.getOrDefault(emptyList())
-            }
+                )
+                val parsedCount = extractTotalCount(response.data)
+                if (parsedCount > 0) {
+                    lastSongCommentCount = maxOf(lastSongCommentCount, parsedCount)
+                    songCommentCountCache[songCacheKey] = lastSongCommentCount
+                }
+                parseCommentList(response.data, preferHotList = isHotTab, page = page)
+            }.getOrDefault(emptyList())
         }
 
+        val explicitCount = countDef.await()
+        if (explicitCount > 0) {
+            lastSongCommentCount = maxOf(lastSongCommentCount, explicitCount)
+            songCommentCountCache[songCacheKey] = lastSongCommentCount
+        }
         val classifyList = classifyCommentsDef.await()
         val fallbackList = cmtListDef.await()
 
         val mergedRaw = if (isHotTab) {
+            // 最热评论：第一页优先展示高权重热评 (isHot=true) 并按点赞量降序，后续分页保持热评与高赞流畅加载
+            (classifyList + fallbackList)
+                .distinctBy { it.id }
+                .sortedWith(
+                    compareByDescending<SongComment> { if (page == 1) it.isHot else false }
+                        .thenByDescending { it.likeCount }
+                        .thenByDescending { it.replyCount }
+                        .thenByDescending { it.timestampMs }
+                )
+        } else {
+            // 最新评论：优先采用 /mcomment/v1/cmtlist 实时最新流，并严格按真实毫秒时间戳降序排列（越新越靠前）
             (fallbackList + classifyList)
                 .distinctBy { it.id }
                 .sortedWith(
-                    compareByDescending<SongComment> { it.isHot }
-                        .thenByDescending { it.likeCount }
-                        .thenByDescending { it.replyCount }
+                    compareByDescending<SongComment> { it.timestampMs }
+                        .thenByDescending { it.id }
                 )
-        } else {
-            (classifyList.ifEmpty { fallbackList })
-                .distinctBy { it.id }
-                .sortedByDescending { it.timeFormatted }
         }
 
         if (lastSongCommentCount <= 0 && mergedRaw.isNotEmpty()) {
             lastSongCommentCount = mergedRaw.size
+            songCommentCountCache[songCacheKey] = lastSongCommentCount
         }
 
-        // 自动并发预取前 6 条含楼中楼回复评论的子回复列表，确保打开评论页即可展示完整楼中楼
+        // 自动并发预取本页所有含楼中楼回复评论的子回复列表（默认展示前 3 条平级回复，点击查看全部进入独立楼中楼页面）
         val candidatesForReplyFetch = mergedRaw
-            .filter { it.replyCount > 0 && it.replies.isEmpty() && it.id.isNotBlank() }
-            .take(6)
+            .filter { it.replyCount > 0 && it.replies.size < minOf(it.replyCount, 3) && it.id.isNotBlank() }
+            .take(12)
             .map { it.id }
             .toSet()
 
@@ -5492,9 +5709,10 @@ class MusicApiRepository(
         mergedRaw.map { cmt ->
             val fetched = repliesByParentId[cmt.id]
             if (!fetched.isNullOrEmpty()) {
+                val combinedReplies = (cmt.replies + fetched).distinctBy { it.id }
                 cmt.copy(
-                    replies = fetched,
-                    replyCount = maxOf(cmt.replyCount, fetched.size)
+                    replies = combinedReplies,
+                    replyCount = maxOf(cmt.replyCount, combinedReplies.size)
                 )
             } else cmt
         }
@@ -5522,6 +5740,7 @@ class MusicApiRepository(
                     "mixsongid" to mixSongId.toString(),
                     "cmtid" to commentId,
                     "tid" to commentId,
+                    "need_show_image" to "1",
                     "p" to page.toString(),
                     "pagesize" to pageSize.toString(),
                     "extdata" to extData,
@@ -5543,6 +5762,7 @@ class MusicApiRepository(
                     "mixsongid" to mixSongId.toString(),
                     "cmtid" to commentId,
                     "tid" to commentId,
+                    "need_show_image" to "1",
                     "p" to page.toString(),
                     "pagesize" to pageSize.toString(),
                     "extdata" to extData,
@@ -5596,6 +5816,84 @@ class MusicApiRepository(
             likeObj?.number("status") == 1
     }
 
+    private fun extractCommentIpLocation(o: JsonObject, uDetail: JsonObject?): String {
+        val raw = listOfNotNull(
+            o.text("location"),
+            o.text("ip_location"),
+            o.text("ip_loc"),
+            o.text("iploc"),
+            o.text("province"),
+            o.text("city"),
+            o.text("user_loc"),
+            o.text("area"),
+            uDetail?.text("location"),
+            uDetail?.text("ip_location"),
+            uDetail?.text("ip_loc"),
+            uDetail?.text("iploc"),
+            uDetail?.text("province"),
+            uDetail?.text("city"),
+            uDetail?.text("area"),
+            o.obj("ext")?.text("location"),
+            o.obj("ext")?.text("ip_location")
+        ).firstOrNull { it.isNotBlank() && it != "null" && it != "未知" && it != "0" }.orEmpty()
+
+        return raw
+            .removePrefix("IP属地:")
+            .removePrefix("IP属地：")
+            .removePrefix("来自")
+            .trim()
+    }
+
+    private fun extractCommentImages(o: JsonObject): List<String> {
+        val urls = mutableListOf<String>()
+        val arrayKeys = listOf("images", "img_list", "pic_list", "pictures", "imgs", "pics", "image_list")
+        for (key in arrayKeys) {
+            val arr = o.arr(key) ?: o.obj("content_ext")?.arr(key) ?: o.obj("ext")?.arr(key)
+            if (arr != null) {
+                for (el in arr) {
+                    if (el.isJsonPrimitive && el.asJsonPrimitive.isString) {
+                        val u = imageUrl(el.asString)
+                        if (u.isNotBlank()) urls.add(u)
+                    } else if (el.isJsonObject) {
+                        val imgObj = el.asJsonObject
+                        val u = imageUrl(
+                            imgObj.text("url") ?: imgObj.text("img") ?: imgObj.text("pic")
+                                ?: imgObj.text("big_url") ?: imgObj.text("origin_url") ?: imgObj.text("thumb_url")
+                        )
+                        if (u.isNotBlank()) urls.add(u)
+                    }
+                }
+            }
+        }
+        val singleImg = o.text("u_pic") ?: o.text("comment_pic") ?: o.text("image_url") ?: o.text("img_url")
+        if (!singleImg.isNullOrBlank()) {
+            val u = imageUrl(singleImg)
+            if (u.isNotBlank()) urls.add(u)
+        }
+        return urls.distinct()
+    }
+
+    private fun parseCommentTimestampMs(rawTime: String?): Long {
+        if (rawTime.isNullOrBlank()) return 0L
+        val trimmed = rawTime.trim()
+        trimmed.toLongOrNull()?.let { num ->
+            return if (num in 100_000_000L..9_999_999_999L) num * 1000L else num
+        }
+        val dateMatch = Regex("""(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?""").find(trimmed)
+        if (dateMatch != null) {
+            return runCatching {
+                val y = dateMatch.groupValues[1].toInt()
+                val m = dateMatch.groupValues[2].toInt()
+                val d = dateMatch.groupValues[3].toInt()
+                val hh = dateMatch.groupValues[4].takeIf { it.isNotEmpty() }?.toInt() ?: 0
+                val mm = dateMatch.groupValues[5].takeIf { it.isNotEmpty() }?.toInt() ?: 0
+                val ss = dateMatch.groupValues[6].takeIf { it.isNotEmpty() }?.toInt() ?: 0
+                java.time.LocalDateTime.of(y, m, d, hh, mm, ss).atZone(CHINA_ZONE).toInstant().toEpochMilli()
+            }.getOrDefault(0L)
+        }
+        return 0L
+    }
+
     private fun parseReplyItems(
         root: JsonObject,
         parentCommentId: String,
@@ -5604,13 +5902,18 @@ class MusicApiRepository(
         val dataObj = root.obj("data") ?: root
         val arr = listOf("list", "reply_list", "replys", "children", "comments", "lists", "info")
             .asSequence()
-            .mapNotNull { key -> (dataObj.arr(key) ?: root.arr(key))?.takeIf { it.size() > 0 } }
+            .mapNotNull { key ->
+                (dataObj.arr(key) ?: root.arr(key) ?: root.obj("reply")?.arr(key))?.takeIf { it.size() > 0 }
+            }
             .firstOrNull() ?: return emptyList()
 
         return arr.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull { r ->
             val rId = r.text("id") ?: r.text("reply_id") ?: r.text("cmtid") ?: ""
-            val rContent = (r.text("content") ?: r.text("text") ?: "").trim()
-            if (rContent.isBlank()) return@mapNotNull null
+            val rawContent = (r.text("content") ?: r.text("text") ?: "").trim()
+            val formattedContent = KugouCommentEmojiParser.formatContent(rawContent)
+            val rImages = extractCommentImages(r)
+            if (formattedContent.isBlank() && rImages.isEmpty()) return@mapNotNull null
+
             val rUdetail = r.obj("udetail") ?: r.obj("user")
             val rUId = r.text("user_id") ?: rUdetail?.text("user_id") ?: r.text("userid") ?: ""
             val rUName = r.text("user_name") ?: r.text("nick_name")
@@ -5619,57 +5922,72 @@ class MusicApiRepository(
                 r.text("user_pic") ?: r.text("avatar") ?: r.text("pic")
                     ?: rUdetail?.text("user_pic") ?: rUdetail?.text("avatar")
             )
-            val rTime = r.text("addtime") ?: r.text("time") ?: "近期"
+            val rTime = r.text("addtime") ?: r.text("createtime") ?: r.text("time") ?: "近期"
+            val rTs = parseCommentTimestampMs(rTime)
             val rLikes = extractCommentLikeCount(r)
             val rIsLiked = extractCommentIsLiked(r)
-            val rIp = (r.text("location") ?: r.text("ip_location") ?: r.text("province")
-                ?: rUdetail?.text("location") ?: "").removePrefix("IP属地:").removePrefix("IP属地：").trim()
+            val rIp = extractCommentIpLocation(r, rUdetail)
             val rReplyUser = r.text("reply_user_name") ?: r.text("reply_username")
                 ?: r.obj("reply_user")?.text("user_name")
                 ?: r.obj("puser")?.text("user_name")
+                ?: r.obj("pcontent")?.text("user_name")
                 ?: defaultReplyUserName
 
             SongComment(
-                id = rId.ifBlank { "${parentCommentId}_${rTime}_${rContent.hashCode()}" },
+                id = rId.ifBlank { "${parentCommentId}_${rTime}_${formattedContent.hashCode()}" },
                 userId = rUId,
                 userName = rUName,
                 userAvatar = rAvatar,
-                content = rContent,
+                content = formattedContent.ifBlank { "[图片评论]" },
                 timeFormatted = rTime,
                 likeCount = rLikes,
                 isLiked = rIsLiked,
                 ipLocation = rIp,
                 parentId = parentCommentId,
                 rootId = parentCommentId,
-                replyUserName = rReplyUser
+                replyUserName = rReplyUser,
+                images = rImages,
+                timestampMs = rTs
             )
         }
     }
 
-    private fun parseCommentList(root: JsonObject, preferHotList: Boolean): List<SongComment> {
+    private fun parseCommentList(root: JsonObject, preferHotList: Boolean, page: Int = 1): List<SongComment> {
         val dataObj = root.obj("data") ?: root
-        val candidateKeys = if (preferHotList) {
+        // 关键修复：
+        // 1. 当处于“最热”且 page == 1 时，同时合并 weight_list/hot_list 与常规 list（之前 firstOrNull 仅取了 weight_list 导致评论只显示寥寥数条）；
+        // 2. 当 page > 1 或处于“最新”时，优先读取分页 list/lists/comments，使上滑加载更多能持续获取完整后续分页！
+        val candidateKeys = if (preferHotList && page == 1) {
             listOf("weight_list", "hot_list", "list", "lists", "comments", "info")
         } else {
             listOf("list", "lists", "comments", "info", "weight_list", "hot_list")
         }
 
-        var matchedKey = ""
-        val list = candidateKeys.asSequence()
-            .mapNotNull { key ->
-                val arr = (dataObj.arr(key) ?: root.arr(key))?.takeIf { it.size() > 0 }
-                if (arr != null) {
-                    matchedKey = key
-                    arr
-                } else null
-            }.firstOrNull() ?: return emptyList()
+        val collectedEntries = mutableListOf<Pair<JsonObject, Boolean>>()
+        val seenIds = HashSet<String>()
 
-        val fromWeightOrHotArray = matchedKey == "weight_list" || matchedKey == "hot_list"
+        for (key in candidateKeys) {
+            val arr = (dataObj.arr(key) ?: root.arr(key))?.takeIf { it.size() > 0 } ?: continue
+            val isHotArray = key == "weight_list" || key == "hot_list"
+            if (!preferHotList && isHotArray && collectedEntries.isNotEmpty()) continue
+            if (preferHotList && page > 1 && isHotArray) continue
 
-        return list.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull { o ->
+            for (el in arr) {
+                if (!el.isJsonObject) continue
+                val obj = el.asJsonObject
+                val cid = obj.text("id") ?: obj.text("cmtid") ?: ""
+                if (cid.isNotBlank() && seenIds.add(cid)) {
+                    collectedEntries.add(obj to isHotArray)
+                }
+            }
+        }
+
+        return collectedEntries.mapNotNull { (o, fromWeightOrHotArray) ->
             val id = o.text("id") ?: o.text("cmtid") ?: ""
-            val content = (o.text("content") ?: "").trim()
-            if (content.isBlank()) return@mapNotNull null
+            val rawContent = (o.text("content") ?: o.text("text") ?: "").trim()
+            val formattedContent = KugouCommentEmojiParser.formatContent(rawContent)
+            val images = extractCommentImages(o)
+            if (formattedContent.isBlank() && images.isEmpty()) return@mapNotNull null
 
             val uDetail = o.obj("udetail") ?: o.obj("user")
             val uId = o.text("user_id") ?: uDetail?.text("user_id") ?: ""
@@ -5679,13 +5997,13 @@ class MusicApiRepository(
                 o.text("user_pic") ?: o.text("avatar") ?: o.text("pic")
                     ?: uDetail?.text("user_pic") ?: uDetail?.text("avatar")
             )
-            val time = o.text("addtime") ?: o.text("time") ?: "近期"
+            val time = o.text("addtime") ?: o.text("createtime") ?: o.text("time") ?: "近期"
+            val ts = parseCommentTimestampMs(time)
             val likes = extractCommentLikeCount(o)
             val isLiked = extractCommentIsLiked(o)
             val isHot = fromWeightOrHotArray || o.number("is_hot") == 1 || o.number("weight") == 1 || likes >= 50
             val vipLvl = o.number("vip_type") ?: uDetail?.number("vip_type") ?: o.number("m_type") ?: 0
-            val ipLocation = (o.text("location") ?: o.text("ip_location") ?: o.text("province")
-                ?: uDetail?.text("location") ?: "").removePrefix("IP属地:").removePrefix("IP属地：").trim()
+            val ipLocation = extractCommentIpLocation(o, uDetail)
 
             val inlineReplies = parseReplyItems(o, parentCommentId = id, defaultReplyUserName = uName)
             val replyCount = listOfNotNull(
@@ -5701,7 +6019,7 @@ class MusicApiRepository(
                 userId = uId,
                 userName = uName,
                 userAvatar = uAvatar,
-                content = content,
+                content = formattedContent.ifBlank { "[图片评论]" },
                 timeFormatted = time,
                 likeCount = likes,
                 isLiked = isLiked,
@@ -5709,7 +6027,9 @@ class MusicApiRepository(
                 vipLevel = vipLvl,
                 ipLocation = ipLocation,
                 replyCount = replyCount,
-                replies = inlineReplies
+                replies = inlineReplies,
+                images = images,
+                timestampMs = ts
             )
         }
     }

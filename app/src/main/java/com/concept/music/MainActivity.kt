@@ -186,6 +186,74 @@ fun MainContent(
     var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
     var showCreatePlaylistFromGlobal by remember { mutableStateOf(false) }
     var detailSheetSong by remember { mutableStateOf<Song?>(null) }
+    val mainScope = rememberCoroutineScope()
+
+    val navigateToSongArtist: (Song) -> Unit = { targetSong ->
+        showNowPlaying = false
+        val directId = targetSong.artistId.trim()
+        if (directId.isNotBlank() && directId != "0") {
+            navController.navigate("artist_detail/$directId") { launchSingleTop = true }
+        } else {
+            val cleanArtist = targetSong.artist
+                .split("、", "/", "&", "feat.", "Feat.", ",")
+                .firstOrNull()
+                ?.trim()
+                .orEmpty()
+            if (cleanArtist.isBlank()) {
+                Toast.makeText(context, "未获取到歌手信息", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "正在进入「$cleanArtist」主页...", Toast.LENGTH_SHORT).show()
+                mainScope.launch {
+                    val resolvedId = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching {
+                            VipManager.music.searchArtists(cleanArtist, page = 1, pageSize = 5)
+                                .firstOrNull { it.id.isNotBlank() && it.id != "0" }
+                                ?.id
+                        }.getOrNull()
+                    }
+                    if (!resolvedId.isNullOrBlank()) {
+                        navController.navigate("artist_detail/$resolvedId") { launchSingleTop = true }
+                    } else {
+                        Toast.makeText(context, "未找到「$cleanArtist」的歌手主页", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+    }
+
+    val navigateToSongAlbum: (Song) -> Unit = { targetSong ->
+        showNowPlaying = false
+        val directAlbumId = targetSong.albumId.trim()
+        if (directAlbumId.isNotBlank() && directAlbumId != "0") {
+            navController.navigate("album_detail/$directAlbumId") { launchSingleTop = true }
+        } else {
+            val kw = "${targetSong.album.ifBlank { targetSong.title }} ${targetSong.artist}".trim()
+            Toast.makeText(context, "正在定位所属专辑...", Toast.LENGTH_SHORT).show()
+            mainScope.launch {
+                val resolvedAlbumId = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching {
+                        val fromSearch = VipManager.music.searchSongs(
+                            "${targetSong.title} ${targetSong.artist}".trim(),
+                            page = 1,
+                            pageSize = 6
+                        ).firstOrNull { it.albumId.isNotBlank() && it.albumId != "0" }?.albumId
+                        if (!fromSearch.isNullOrBlank()) {
+                            fromSearch
+                        } else {
+                            VipManager.music.searchAlbums(kw, page = 1, pageSize = 5)
+                                .firstOrNull { it.id.isNotBlank() && it.id != "0" }
+                                ?.id
+                        }
+                    }.getOrNull()
+                }
+                if (!resolvedAlbumId.isNullOrBlank()) {
+                    navController.navigate("album_detail/$resolvedAlbumId") { launchSingleTop = true }
+                } else {
+                    Toast.makeText(context, "该曲目暂无关联专辑详情", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
@@ -575,6 +643,7 @@ fun MainContent(
                     CommentsScreen(
                         song = fullState.currentSong,
                         comments = fullState.comments,
+                        totalCount = fullState.commentCount,
                         loading = fullState.commentsLoading,
                         currentType = fullState.commentType,
                         hasMore = fullState.commentsHasMore,
@@ -732,7 +801,9 @@ fun MainContent(
                 },
                 onOpenViperEffectPage = {
                     showViperEffectOverlay = true
-                }
+                },
+                onOpenArtist = navigateToSongArtist,
+                onOpenAlbum = navigateToSongAlbum
             )
         }
 
@@ -769,6 +840,7 @@ fun MainContent(
             CommentsScreen(
                 song = playerUiState.currentSong,
                 comments = playerUiState.comments,
+                totalCount = playerUiState.commentCount,
                 loading = playerUiState.commentsLoading,
                 currentType = playerUiState.commentType,
                 hasMore = playerUiState.commentsHasMore,
@@ -820,18 +892,10 @@ fun MainContent(
                     }
                     showCommentsScreen = true
                 },
-                onOpenArtist = if (targetSong.artistId.isNotBlank() && targetSong.artistId != "0") {
-                    {
-                        showNowPlaying = false
-                        navController.navigate("artist_detail/${targetSong.artistId}") { launchSingleTop = true }
-                    }
+                onOpenArtist = if (targetSong.artist.isNotBlank()) {
+                    { navigateToSongArtist(targetSong) }
                 } else null,
-                onOpenAlbum = if (targetSong.albumId.isNotBlank() && targetSong.albumId != "0") {
-                    {
-                        showNowPlaying = false
-                        navController.navigate("album_detail/${targetSong.albumId}") { launchSingleTop = true }
-                    }
-                } else null,
+                onOpenAlbum = { navigateToSongAlbum(targetSong) },
                 onOpenSongDetail = {
                     detailSheetSong = targetSong
                 },
@@ -918,7 +982,9 @@ private fun IsolatedNowPlayingHost(
     onDismiss: () -> Unit,
     onAddToPlaylist: (Song) -> Unit,
     onOpenComments: () -> Unit,
-    onOpenViperEffectPage: () -> Unit
+    onOpenViperEffectPage: () -> Unit,
+    onOpenArtist: (Song) -> Unit = {},
+    onOpenAlbum: (Song) -> Unit = {}
 ) {
     val context = LocalContext.current
     val playerUiState by musicPlayerViewModel.uiState.collectAsState()
@@ -1016,7 +1082,10 @@ private fun IsolatedNowPlayingHost(
         onSelectQuality = { musicPlayerViewModel.setPreferredQuality(it) },
         onPlayQueueSong = { musicPlayerViewModel.playSong(it, playerUiState.playlistQueue) },
         onRemoveFromQueue = { musicPlayerViewModel.removeFromQueue(it) },
-        onClearQueue = { musicPlayerViewModel.clearQueue() }
+        onClearQueue = { musicPlayerViewModel.clearQueue() },
+        onOpenArtist = { onOpenArtist(currentSong) },
+        onOpenAlbum = { onOpenAlbum(currentSong) },
+        motionOrientationPermissionEnabled = playerUiState.motionOrientationPermissionEnabled
     )
 }
 

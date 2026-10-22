@@ -1,6 +1,12 @@
 package com.concept.music.ui.settings
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -65,6 +71,18 @@ fun SettingsScreen(
     val pauseOnHeadsetDisconnect = uiState.pauseOnHeadsetDisconnect
     val autoPlayOnStartup = uiState.autoPlayOnStartup
     val smoothPlayPauseFade = uiState.smoothPlayPauseFade
+    val motionOrientationPermissionEnabled = uiState.motionOrientationPermissionEnabled
+
+    val motionPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        viewModel.setMotionOrientationPermissionEnabled(true)
+        if (granted) {
+            Toast.makeText(context, "已授权设备动作与方向权限，开启手机自动旋转后在封面播放页横放即可进入横屏", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "已开启横放感应开关（建议在系统权限中允许“身体活动/设备动作与方向”）", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     val cacheSizeBytes by AudioCacheManager.cacheSizeBytes.collectAsState()
     val pinnedSongs by AudioCacheManager.pinnedSongIds.collectAsState()
@@ -422,6 +440,29 @@ fun SettingsScreen(
                             checked = smoothPlayPauseFade,
                             onCheckedChange = { viewModel.setSmoothPlayPauseFade(it) }
                         )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SettingToggleRow(
+                            title = "横放手机自动进入横屏播放",
+                            subtitle = "需开启系统自动旋转并授权“设备动作与方向”，仅在封面播放页生效",
+                            checked = motionOrientationPermissionEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                    val hasPerm = ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.ACTIVITY_RECOGNITION
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    if (!hasPerm) {
+                                        motionPermLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+                                    } else {
+                                        viewModel.setMotionOrientationPermissionEnabled(true)
+                                    }
+                                } else {
+                                    viewModel.setMotionOrientationPermissionEnabled(enabled)
+                                }
+                            }
+                        )
                     }
                 }
 
@@ -441,8 +482,8 @@ fun SettingsScreen(
                         Slider(
                             value = lyricFontSize,
                             onValueChange = { viewModel.setLyricFontSize(it) },
-                            valueRange = 16f..30f,
-                            steps = 6,
+                            valueRange = 18f..34f,
+                            steps = 7,
                             colors = SliderDefaults.colors(thumbColor = ConceptPrimary, activeTrackColor = ConceptPrimary)
                         )
 

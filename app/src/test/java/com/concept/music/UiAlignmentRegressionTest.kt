@@ -33,14 +33,15 @@ class UiAlignmentRegressionTest {
         assertFalse(state.showTranslation)
         assertFalse(state.showPhonetic)
         assertEquals(LyricAlignment.LEFT, state.lyricAlignment)
-        assertEquals(22f, state.lyricFontSize, 0.01f)
+        assertEquals(24f, state.lyricFontSize, 0.01f)
         assertTrue(state.lyricBlurEnabled)
         assertTrue(state.lyricWordByWord)
         assertEquals("hot", state.commentType)
         assertEquals(PlayerBackgroundStyle.COVER_BLUR, state.playerBackgroundStyle)
         assertEquals(5, PlayerBackgroundStyle.entries.size)
         assertTrue(state.dynamicCoverAccentEnabled)
-        assertEquals(0.82f, state.lyricTranslationScale, 0.01f)
+        assertEquals(0.84f, state.lyricTranslationScale, 0.01f)
+        assertTrue(state.motionOrientationPermissionEnabled)
         assertEquals(LyricHighlightTheme.ICE_BLUE, state.lyricHighlightTheme)
         assertTrue(LyricHighlightTheme.entries.contains(LyricHighlightTheme.DYNAMIC_COVER))
         assertEquals(0.88f, SystemLyricState().desktopWidthFraction, 0.01f)
@@ -398,5 +399,14 @@ class UiAlignmentRegressionTest {
         assertTrue(detail.audioQuality.contains("320kbps"))
         assertEquals("320 kbps", detail.bitRate)
         assertTrue(detail.sampleRate.contains("44.1 kHz"))
+    }
+
+    @Test
+    fun testKugouCommentEmojiParserConvertsCodesAndBracketTags() {
+        val raw = "太好听了[em]e400132[/em] 永远支持[爱心][赞]"
+        val parsed = KugouCommentEmojiParser.parseEmojiContent(raw)
+        assertFalse(parsed.contains("[em]"))
+        assertTrue(parsed.contains("❤️"))
+        assertTrue(parsed.contains("👍"))
     }
 }

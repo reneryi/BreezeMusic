@@ -10,8 +10,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,7 +20,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.MoreVert
@@ -51,10 +48,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import coil.size.Precision
 import com.concept.music.data.model.Song
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
+
+private val SongRowOuterShape = RoundedCornerShape(16.dp)
+private val SongCoverCornerShape = RoundedCornerShape(13.dp)
+private val SongBadgeCornerShape = RoundedCornerShape(5.dp)
 
 @Composable
 fun SongItemRow(
@@ -73,22 +75,33 @@ fun SongItemRow(
         if (song.coverUrl.isNotBlank()) {
             ImageRequest.Builder(context)
                 .data(song.coverUrl)
-                .size(144, 144)
+                .size(136, 136)
+                .precision(Precision.INEXACT)
+                .memoryCacheKey(song.coverUrl)
+                .diskCacheKey(song.coverUrl)
+                .allowHardware(true)
                 .crossfade(false)
                 .build()
         } else null
+    }
+
+    val orderLabel = remember(orderIndex) {
+        orderIndex?.toString()?.padStart(2, '0').orEmpty()
+    }
+    val subtitleText = remember(song.artist, song.album) {
+        if (song.album.isNotBlank() && song.album != "单曲") "${song.artist} · ${song.album}" else song.artist
     }
 
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 2.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(SongRowOuterShape)
             .background(
                 if (isPlaying) ConceptPrimary.copy(alpha = 0.12f) else Color.Transparent
             )
             .softClickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (orderIndex != null) {
@@ -101,7 +114,7 @@ fun SongItemRow(
                 } else {
                     val isTopThree = orderIndex in 1..3
                     Text(
-                        text = orderIndex.toString().padStart(2, '0'),
+                        text = orderLabel,
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontWeight = if (isTopThree) FontWeight.Bold else FontWeight.SemiBold,
                             color = if (isTopThree) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -113,17 +126,17 @@ fun SongItemRow(
 
         Box(
             modifier = Modifier
-                .size(50.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .size(48.dp)
+                .clip(SongCoverCornerShape)
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center
         ) {
             if (imageModel != null) {
                 AsyncImage(
                     model = imageModel,
-                    contentDescription = song.title,
+                    contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    filterQuality = FilterQuality.Medium,
+                    filterQuality = FilterQuality.Low,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
@@ -185,7 +198,7 @@ fun SongItemRow(
                 }
 
                 Text(
-                    text = if (song.album.isNotBlank() && song.album != "单曲") "${song.artist} · ${song.album}" else song.artist,
+                    text = subtitleText,
                     style = MaterialTheme.typography.bodySmall.copy(
                         color = if (isPlaying) ConceptPrimary.copy(alpha = 0.82f) else MaterialTheme.colorScheme.onSurfaceVariant
                     ),
@@ -196,7 +209,7 @@ fun SongItemRow(
         }
 
         if (onMoreClick != null) {
-            IconButton(onClick = onMoreClick) {
+            IconButton(onClick = onMoreClick, modifier = Modifier.size(38.dp)) {
                 Icon(
                     imageVector = Icons.Rounded.MoreVert,
                     contentDescription = "更多",
@@ -241,7 +254,7 @@ fun PlayingAudioWaveIndicator(
         label = "bar3"
     )
 
-    // 采用 Canvas 硬件加速绘制跳动音律柱，仅在 Draw 阶段更新，完全消除每帧 Layout 重排开销（保障 120fps 满帧滚动）
+    // 采用 Canvas 硬件加速绘制跳动音律柱，仅在 Draw 阶段更新，完全消除每帧 Layout 重排开销
     Canvas(
         modifier = modifier
             .width(18.dp)
@@ -269,7 +282,7 @@ fun PlayingAudioWaveIndicator(
 fun BadgeTag(text: String, color: Color) {
     Surface(
         color = color.copy(alpha = 0.16f),
-        shape = RoundedCornerShape(5.dp)
+        shape = SongBadgeCornerShape
     ) {
         Text(
             text = text,

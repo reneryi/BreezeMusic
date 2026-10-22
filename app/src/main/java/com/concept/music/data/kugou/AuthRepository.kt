@@ -10,11 +10,12 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
 
     /**
      * [P0-1] 概念版设备注册 (对齐 MakcRe/KuGouMusicApi register_dev.js)
-     * 当本地 dfid 尚未初始化 ("-") 时，向 usersdfid.kugou.com 注册设备获取真实 dfid 并持久化。
+     * 支持首次自动注册与手动强制刷新 (forceRefresh=true)，当远端风控接口不可达时使用设备特征指纹生成合规 24 位 DFID，
+     * 彻底杜绝设备标识停留在无用的 "-" 状态。
      */
-    suspend fun registerDevice(): String? {
+    suspend fun registerDevice(forceRefresh: Boolean = false): String? {
         val current = store.device()
-        if (current.dfid.isNotBlank() && current.dfid != "-") {
+        if (!forceRefresh && current.dfid.isNotBlank() && current.dfid != "-") {
             return current.dfid
         }
         val nowSec = clock.instant().epochSecond
@@ -49,7 +50,7 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
                 sign = true,
                 includeDefaultParams = false
             )
-            resp.data.text("dfid")?.takeIf { it.isNotBlank() && it != "-" }
+            (resp.data.text("dfid") ?: resp.data.obj("data")?.text("dfid"))?.takeIf { it.isNotBlank() && it != "-" }
         }.getOrNull() ?: runCatching {
             val resp = transport.callAdvanced(
                 path = "/risk/v1/r_register_dev",
@@ -68,10 +69,13 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
                 sign = true,
                 includeDefaultParams = false
             )
-            resp.data.text("dfid")?.takeIf { it.isNotBlank() && it != "-" }
-        }.getOrNull()
+            (resp.data.text("dfid") ?: resp.data.obj("data")?.text("dfid"))?.takeIf { it.isNotBlank() && it != "-" }
+        }.getOrNull() ?: run {
+            val salt = if (forceRefresh) nowSec.toString() else "v1"
+            "2" + KugouSigner.md5("kugou_lite_${current.guid}_${current.mid}_$salt").lowercase().take(23)
+        }
 
-        if (!registeredDfid.isNullOrBlank()) {
+        if (registeredDfid.isNotBlank() && registeredDfid != "-") {
             store.saveDfid(registeredDfid)
         }
         return registeredDfid

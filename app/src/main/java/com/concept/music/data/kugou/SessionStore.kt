@@ -51,12 +51,26 @@ class EncryptedSessionStore(context: Context) : SessionStore {
         }
     }
 
+    private fun synthesizeFallbackDfid(guid: String, dev: String): String {
+        val raw = KugouSigner.md5("kugou_lite_dfid_${guid}_$dev").lowercase()
+        return "2" + raw.take(23)
+    }
+
     init {
         if (!metadata.contains("guid")) {
             val guid = KugouSigner.md5(UUID.randomUUID().toString())
             val dev = KugouSigner.random(10).uppercase()
-            check(metadata.edit().putString("guid", guid).putString("dev", dev).commit())
-            cachedDevice = DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = "-")
+            val initialDfid = synthesizeFallbackDfid(guid, dev)
+            check(metadata.edit().putString("guid", guid).putString("dev", dev).putString("dfid", initialDfid).commit())
+            cachedDevice = DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = initialDfid)
+        } else {
+            val guid = metadata.getString("guid", null).orEmpty()
+            val dev = metadata.getString("dev", null).orEmpty()
+            val existingDfid = metadata.getString("dfid", "-") ?: "-"
+            if (existingDfid.isBlank() || existingDfid == "-") {
+                val fallbackDfid = synthesizeFallbackDfid(guid, dev)
+                metadata.edit().putString("dfid", fallbackDfid).apply()
+            }
         }
         val old = context.getSharedPreferences("kugou_session", Context.MODE_PRIVATE)
         val id = old.getString("userId", null)
@@ -133,7 +147,12 @@ class EncryptedSessionStore(context: Context) : SessionStore {
         cachedDevice?.let { return it }
         val guid = metadata.getString("guid", null)!!
         val dev = metadata.getString("dev", null)!!
-        val dfid = metadata.getString("dfid", "-") ?: "-"
+        val rawDfid = metadata.getString("dfid", "-") ?: "-"
+        val dfid = if (rawDfid.isBlank() || rawDfid == "-") {
+            synthesizeFallbackDfid(guid, dev).also { metadata.edit().putString("dfid", it).apply() }
+        } else {
+            rawDfid
+        }
         return DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = dfid).also {
             cachedDevice = it
         }

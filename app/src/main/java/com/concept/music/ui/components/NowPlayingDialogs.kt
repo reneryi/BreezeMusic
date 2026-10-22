@@ -1,10 +1,23 @@
 package com.concept.music.ui.components
 
-import android.content.Context
+import android.content.res.Configuration
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -16,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -23,16 +37,27 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.concept.music.data.model.AudioQuality
 import com.concept.music.data.model.Song
@@ -50,21 +75,22 @@ import com.concept.music.ui.viewmodel.LyricHighlightTheme
 import com.concept.music.ui.viewmodel.PlayMode
 import com.concept.music.ui.viewmodel.PlayerBackgroundStyle
 import com.concept.music.ui.viewmodel.SavedPlayQueue
+import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * 歌词显示设置抽屉 (LyricSettingsDialog)：
- * - 已按用户要求移除「音译注音」、「外语翻译」（两者直接在歌词页按歌曲语言自动展示开关，默认关闭）；
- * - 已移除「全局桌面悬浮歌词」（封面播放页进度条上方已有专属按钮入口）；
- * - 所有选中项取消边框线设计，采用现代无边框色块填充。
+ * 紧凑型重构版「歌词显示设置 (LyricSettingsDialog)」：
+ * 1. 告别冗长占满全屏的卡片堆叠，采用单行内联滑块 (Inline Label + Slider + Value) 与 2x2 矩阵式开关卡片；
+ * 2. 默认主歌词字号提升至 24sp（范围 18sp..34sp）；
+ * 3. 完美适配竖屏与横屏播放模式（横屏下自动切换为宽屏双栏紧凑布局）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LyricSettingsDialog(
     fontSize: Float,
-    translationScale: Float = 0.82f,
+    translationScale: Float = 0.84f,
     alignment: LyricAlignment,
     wordByWord: Boolean,
     blurEnabled: Boolean,
@@ -89,6 +115,8 @@ internal fun LyricSettingsDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val systemLyricState by SystemLyricBridge.state.collectAsState()
     val statusBarLyricEnabled = systemLyricState.statusBarBroadcastEnabled
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -97,7 +125,7 @@ internal fun LyricSettingsDialog(
     val cardBg = conceptElevatedSurfaceColor()
     val textPrimary = MaterialTheme.colorScheme.onSurface
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
-    val themeAccent = MaterialTheme.colorScheme.primary
+    val themeAccent = dynamicAccentColor
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -105,44 +133,59 @@ internal fun LyricSettingsDialog(
         containerColor = sheetBg,
         contentColor = textPrimary,
         windowInsets = WindowInsets(0, 0, 0, 0),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
+        dragHandle = {
+            Surface(
+                modifier = Modifier
+                    .padding(top = 10.dp, bottom = 4.dp)
+                    .width(38.dp)
+                    .height(4.dp),
+                shape = CircleShape,
+                color = textSecondary.copy(alpha = 0.28f)
+            ) {}
+        }
     ) {
         CompositionLocalProvider(LocalContentColor provides textPrimary) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 6.dp)
+                    .padding(horizontal = if (isLandscape) 22.dp else 18.dp, vertical = 4.dp)
                     .navigationBarsPadding()
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                // 顶部紧凑标题栏 + 恢复默认
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Tune,
+                            contentDescription = null,
+                            tint = themeAccent,
+                            modifier = Modifier.size(18.dp)
+                        )
                         Text(
                             text = "歌词显示设置",
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.ExtraBold,
                                 color = textPrimary,
-                                fontSize = 18.sp
+                                fontSize = 16.5.sp
                             )
-                        )
-                        Text(
-                            text = "调节歌词配色、字号排版与景深效果",
-                            color = textSecondary,
-                            fontSize = 11.5.sp
                         )
                     }
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(10.dp),
                         color = themeAccent.copy(alpha = 0.14f),
                         contentColor = themeAccent,
-                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(12.dp)) {
-                            onSetFontSize(22f)
-                            onSetTranslationScale(0.82f)
+                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(10.dp)) {
+                            onSetFontSize(24f)
+                            onSetTranslationScale(0.84f)
                             onSetLineSpacing(14f)
                             onSetAlignment(LyricAlignment.LEFT)
                             onSetBlurEnabled(true)
@@ -153,360 +196,569 @@ internal fun LyricSettingsDialog(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         ) {
-                            Icon(Icons.Rounded.RestartAlt, contentDescription = null, tint = themeAccent, modifier = Modifier.size(15.dp))
+                            Icon(Icons.Rounded.RestartAlt, contentDescription = null, tint = themeAccent, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("恢复默认", color = themeAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("恢复默认", color = themeAccent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
 
-                // 1. 歌词焦点配色与对齐排版（无边框现代胶囊）
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = cardBg,
-                    contentColor = textPrimary,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            text = "歌词焦点配色",
-                            color = textPrimary,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                if (isLandscape) {
+                    // 横屏模式：左右双栏并排紧凑布局，一屏尽览无需滚动
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1.05f),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            LyricHighlightTheme.entries.forEach { theme ->
-                                val selected = highlightTheme == theme
-                                val swatchColor = if (theme == LyricHighlightTheme.DYNAMIC_COVER) {
-                                    dynamicAccentColor
-                                } else {
-                                    Color(theme.primaryHex)
-                                }
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = if (selected) swatchColor.copy(alpha = 0.22f) else sheetBg,
-                                    contentColor = textPrimary,
-                                    modifier = Modifier.softCardClickable(shape = RoundedCornerShape(12.dp)) {
-                                        onSetHighlightTheme(theme)
-                                    }
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(10.dp)
-                                                .clip(CircleShape)
-                                                .background(swatchColor)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = theme.label,
-                                            color = if (selected) swatchColor else textPrimary,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        HorizontalDivider(color = textPrimary.copy(alpha = 0.07f))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "对齐方式",
-                                color = textPrimary,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                LyricAlignment.entries.forEach { item ->
-                                    val selected = alignment == item
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = if (selected) themeAccent.copy(alpha = 0.20f) else sheetBg,
-                                        contentColor = if (selected) themeAccent else textPrimary,
-                                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(10.dp)) {
-                                            onSetAlignment(item)
-                                        }
-                                    ) {
-                                        Text(
-                                            text = item.label,
-                                            color = if (selected) themeAccent else textSecondary,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 6.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 2. 字号、副歌词比例与行距调节
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = cardBg,
-                    contentColor = textPrimary,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("主歌词字号", color = textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Text("${fontSize.toInt()} sp", color = themeAccent, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Slider(
-                            value = fontSize,
-                            onValueChange = onSetFontSize,
-                            valueRange = 16f..30f,
-                            steps = 6,
-                            colors = SliderDefaults.colors(thumbColor = themeAccent, activeTrackColor = themeAccent),
-                            modifier = Modifier.height(30.dp)
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("译文/注音字号比例", color = textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Text("${(translationScale * 100).roundToInt()}%", color = themeAccent, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Slider(
-                            value = translationScale,
-                            onValueChange = onSetTranslationScale,
-                            valueRange = 0.65f..0.95f,
-                            colors = SliderDefaults.colors(thumbColor = themeAccent, activeTrackColor = themeAccent),
-                            modifier = Modifier.height(30.dp)
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("行间距", color = textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Text("${lineSpacing.toInt()} dp", color = themeAccent, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Slider(
-                            value = lineSpacing,
-                            onValueChange = onSetLineSpacing,
-                            valueRange = 8f..24f,
-                            steps = 7,
-                            colors = SliderDefaults.colors(thumbColor = themeAccent, activeTrackColor = themeAccent),
-                            modifier = Modifier.height(30.dp)
-                        )
-                    }
-                }
-
-                // 3. 景深模糊与背景暗度
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = cardBg,
-                    contentColor = textPrimary,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("阶梯景深模糊", color = textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text("非当前行随距离自然虚化", color = textSecondary, fontSize = 11.5.sp)
-                            }
-                            Switch(
-                                checked = blurEnabled,
-                                onCheckedChange = onSetBlurEnabled,
-                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = themeAccent)
+                            LyricThemeAndAlignCompactCard(
+                                highlightTheme = highlightTheme,
+                                alignment = alignment,
+                                offsetMs = offsetMs,
+                                dynamicAccentColor = themeAccent,
+                                cardBg = cardBg,
+                                sheetBg = sheetBg,
+                                textPrimary = textPrimary,
+                                textSecondary = textSecondary,
+                                onSetHighlightTheme = onSetHighlightTheme,
+                                onSetAlignment = onSetAlignment,
+                                onSetOffsetMs = onSetOffsetMs
                             )
                         }
-
-                        if (blurEnabled) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("模糊强度", color = textPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                Text(String.format(Locale.getDefault(), "%.1fx", blurIntensity), color = themeAccent, fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
-                            }
-                            Slider(
-                                value = blurIntensity,
-                                onValueChange = onSetBlurIntensity,
-                                valueRange = 0.4f..1.8f,
-                                colors = SliderDefaults.colors(thumbColor = themeAccent, activeTrackColor = themeAccent),
-                                modifier = Modifier.height(28.dp)
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            LyricSlidersCompactCard(
+                                fontSize = fontSize,
+                                translationScale = translationScale,
+                                lineSpacing = lineSpacing,
+                                backgroundDim = backgroundDim,
+                                blurEnabled = blurEnabled,
+                                blurIntensity = blurIntensity,
+                                themeAccent = themeAccent,
+                                cardBg = cardBg,
+                                textPrimary = textPrimary,
+                                textSecondary = textSecondary,
+                                onSetFontSize = onSetFontSize,
+                                onSetTranslationScale = onSetTranslationScale,
+                                onSetLineSpacing = onSetLineSpacing,
+                                onSetBackgroundDim = onSetBackgroundDim,
+                                onSetBlurIntensity = onSetBlurIntensity
+                            )
+                            LyricTogglesGridCard(
+                                wordByWord = wordByWord,
+                                blurEnabled = blurEnabled,
+                                keepScreenOn = keepScreenOn,
+                                statusBarLyricEnabled = statusBarLyricEnabled,
+                                themeAccent = themeAccent,
+                                cardBg = cardBg,
+                                textPrimary = textPrimary,
+                                textSecondary = textSecondary,
+                                onSetWordByWord = onSetWordByWord,
+                                onSetBlurEnabled = onSetBlurEnabled,
+                                onSetKeepScreenOn = onSetKeepScreenOn,
+                                onSetStatusBarLyric = { SystemLyricBridge.setStatusBarBroadcastEnabled(context, it) }
                             )
                         }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("背景压暗度", color = textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Text("${(backgroundDim * 100).toInt()}%", color = themeAccent, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Slider(
-                            value = backgroundDim,
-                            onValueChange = onSetBackgroundDim,
-                            valueRange = 0.40f..0.92f,
-                            colors = SliderDefaults.colors(thumbColor = themeAccent, activeTrackColor = themeAccent),
-                            modifier = Modifier.height(28.dp)
-                        )
                     }
+                } else {
+                    // 竖屏模式：三组高密度紧凑面板，告别占满全屏
+                    LyricThemeAndAlignCompactCard(
+                        highlightTheme = highlightTheme,
+                        alignment = alignment,
+                        offsetMs = offsetMs,
+                        dynamicAccentColor = themeAccent,
+                        cardBg = cardBg,
+                        sheetBg = sheetBg,
+                        textPrimary = textPrimary,
+                        textSecondary = textSecondary,
+                        onSetHighlightTheme = onSetHighlightTheme,
+                        onSetAlignment = onSetAlignment,
+                        onSetOffsetMs = onSetOffsetMs
+                    )
+
+                    LyricSlidersCompactCard(
+                        fontSize = fontSize,
+                        translationScale = translationScale,
+                        lineSpacing = lineSpacing,
+                        backgroundDim = backgroundDim,
+                        blurEnabled = blurEnabled,
+                        blurIntensity = blurIntensity,
+                        themeAccent = themeAccent,
+                        cardBg = cardBg,
+                        textPrimary = textPrimary,
+                        textSecondary = textSecondary,
+                        onSetFontSize = onSetFontSize,
+                        onSetTranslationScale = onSetTranslationScale,
+                        onSetLineSpacing = onSetLineSpacing,
+                        onSetBackgroundDim = onSetBackgroundDim,
+                        onSetBlurIntensity = onSetBlurIntensity
+                    )
+
+                    LyricTogglesGridCard(
+                        wordByWord = wordByWord,
+                        blurEnabled = blurEnabled,
+                        keepScreenOn = keepScreenOn,
+                        statusBarLyricEnabled = statusBarLyricEnabled,
+                        themeAccent = themeAccent,
+                        cardBg = cardBg,
+                        textPrimary = textPrimary,
+                        textSecondary = textSecondary,
+                        onSetWordByWord = onSetWordByWord,
+                        onSetBlurEnabled = onSetBlurEnabled,
+                        onSetKeepScreenOn = onSetKeepScreenOn,
+                        onSetStatusBarLyric = { SystemLyricBridge.setStatusBarBroadcastEnabled(context, it) }
+                    )
                 }
 
-                // 4. 歌词时间轴微调校准
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = cardBg,
-                    contentColor = textPrimary,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("时间轴校准", color = textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                text = String.format(Locale.getDefault(), "%+.1f 秒", offsetMs / 1000f),
-                                color = if (offsetMs != 0L) VipGold else themeAccent,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.5.sp
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            listOf(
-                                -500L to "-0.5s",
-                                -100L to "-0.1s",
-                                0L to "重置 0s",
-                                100L to "+0.1s",
-                                500L to "+0.5s"
-                            ).forEach { (delta, label) ->
-                                val isHighlight = delta == 0L && offsetMs == 0L
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = if (isHighlight) themeAccent.copy(alpha = 0.20f) else sheetBg,
-                                    contentColor = if (isHighlight) themeAccent else textPrimary,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .softCardClickable {
-                                            if (delta == 0L) onSetOffsetMs(0L) else onSetOffsetMs(offsetMs + delta)
-                                        }
-                                ) {
-                                    Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 8.dp)) {
-                                        Text(
-                                            text = label,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isHighlight) themeAccent else textPrimary
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 5. 逐字动效、屏幕常亮与状态栏歌词广播
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = cardBg,
-                    contentColor = textPrimary,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        LyricSettingSwitchRow(
-                            title = "KRC 逐字流光染色",
-                            subtitle = "歌词随人声毫秒级逐字扫光",
-                            checked = wordByWord,
-                            accentColor = themeAccent,
-                            textPrimary = textPrimary,
-                            textSecondary = textSecondary,
-                            onCheckedChange = onSetWordByWord
-                        )
-                        LyricSettingSwitchRow(
-                            title = "歌词页屏幕常亮",
-                            subtitle = "播放时保持歌词界面常亮不息屏",
-                            checked = keepScreenOn,
-                            accentColor = themeAccent,
-                            textPrimary = textPrimary,
-                            textSecondary = textSecondary,
-                            onCheckedChange = onSetKeepScreenOn
-                        )
-                        LyricSettingSwitchRow(
-                            title = "状态栏歌词广播",
-                            subtitle = "适配 Flyme / HyperOS / OriginOS 状态栏歌词",
-                            checked = statusBarLyricEnabled,
-                            accentColor = themeAccent,
-                            textPrimary = textPrimary,
-                            textSecondary = textSecondary,
-                            onCheckedChange = { SystemLyricBridge.setStatusBarBroadcastEnabled(context, it) }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(6.dp))
             }
         }
     }
 }
 
 @Composable
-private fun LyricSettingSwitchRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    accentColor: Color = ConceptPrimary,
-    textPrimary: Color = MaterialTheme.colorScheme.onSurface,
-    textSecondary: Color = MaterialTheme.colorScheme.onSurfaceVariant,
-    onCheckedChange: (Boolean) -> Unit
+private fun LyricThemeAndAlignCompactCard(
+    highlightTheme: LyricHighlightTheme,
+    alignment: LyricAlignment,
+    offsetMs: Long,
+    dynamicAccentColor: Color,
+    cardBg: Color,
+    sheetBg: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    onSetHighlightTheme: (LyricHighlightTheme) -> Unit,
+    onSetAlignment: (LyricAlignment) -> Unit,
+    onSetOffsetMs: (Long) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = cardBg,
+        contentColor = textPrimary,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // 配色横向胶囊
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                LyricHighlightTheme.entries.forEach { theme ->
+                    val selected = highlightTheme == theme
+                    val swatchColor = if (theme == LyricHighlightTheme.DYNAMIC_COVER) {
+                        dynamicAccentColor
+                    } else {
+                        Color(theme.primaryHex)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (selected) swatchColor.copy(alpha = 0.22f) else sheetBg,
+                        contentColor = textPrimary,
+                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(10.dp)) {
+                            onSetHighlightTheme(theme)
+                        }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(swatchColor)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = theme.label,
+                                color = if (selected) swatchColor else textPrimary,
+                                fontSize = 11.5.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 对齐方式 + 时间轴微调合并紧凑栏
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    LyricAlignment.entries.forEach { item ->
+                        val selected = alignment == item
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (selected) dynamicAccentColor.copy(alpha = 0.20f) else sheetBg,
+                            modifier = Modifier.softCardClickable(shape = RoundedCornerShape(8.dp)) {
+                                onSetAlignment(item)
+                            }
+                        ) {
+                            Text(
+                                text = item.label,
+                                color = if (selected) dynamicAccentColor else textSecondary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                            )
+                        }
+                    }
+                }
+
+                // 紧凑型时间轴微调器
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = sheetBg,
+                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(8.dp)) {
+                            onSetOffsetMs(offsetMs - 200L)
+                        }
+                    ) {
+                        Text(
+                            text = "-0.2s",
+                            color = textPrimary,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp)
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (offsetMs != 0L) VipGold.copy(alpha = 0.18f) else dynamicAccentColor.copy(alpha = 0.14f),
+                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(8.dp)) {
+                            onSetOffsetMs(0L)
+                        }
+                    ) {
+                        Text(
+                            text = if (offsetMs == 0L) "校准 0.0s" else String.format(Locale.getDefault(), "%+.1fs", offsetMs / 1000f),
+                            color = if (offsetMs != 0L) VipGold else dynamicAccentColor,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = sheetBg,
+                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(8.dp)) {
+                            onSetOffsetMs(offsetMs + 200L)
+                        }
+                    ) {
+                        Text(
+                            text = "+0.2s",
+                            color = textPrimary,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LyricSlidersCompactCard(
+    fontSize: Float,
+    translationScale: Float,
+    lineSpacing: Float,
+    backgroundDim: Float,
+    blurEnabled: Boolean,
+    blurIntensity: Float,
+    themeAccent: Color,
+    cardBg: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    onSetFontSize: (Float) -> Unit,
+    onSetTranslationScale: (Float) -> Unit,
+    onSetLineSpacing: (Float) -> Unit,
+    onSetBackgroundDim: (Float) -> Unit,
+    onSetBlurIntensity: (Float) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = cardBg,
+        contentColor = textPrimary,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            CompactInlineSliderRow(
+                label = "主词字号",
+                valueText = "${fontSize.toInt()}sp",
+                value = fontSize,
+                valueRange = 18f..34f,
+                steps = 7,
+                accentColor = themeAccent,
+                textPrimary = textPrimary,
+                onValueChange = onSetFontSize
+            )
+            CompactInlineSliderRow(
+                label = "译文比例",
+                valueText = "${(translationScale * 100).roundToInt()}%",
+                value = translationScale,
+                valueRange = 0.65f..0.95f,
+                steps = 0,
+                accentColor = themeAccent,
+                textPrimary = textPrimary,
+                onValueChange = onSetTranslationScale
+            )
+            CompactInlineSliderRow(
+                label = "行间距离",
+                valueText = "${lineSpacing.toInt()}dp",
+                value = lineSpacing,
+                valueRange = 8f..24f,
+                steps = 7,
+                accentColor = themeAccent,
+                textPrimary = textPrimary,
+                onValueChange = onSetLineSpacing
+            )
+            CompactInlineSliderRow(
+                label = "背景压暗",
+                valueText = "${(backgroundDim * 100).toInt()}%",
+                value = backgroundDim,
+                valueRange = 0.40f..0.92f,
+                steps = 0,
+                accentColor = themeAccent,
+                textPrimary = textPrimary,
+                onValueChange = onSetBackgroundDim
+            )
+            if (blurEnabled) {
+                CompactInlineSliderRow(
+                    label = "景深强度",
+                    valueText = String.format(Locale.getDefault(), "%.1fx", blurIntensity),
+                    value = blurIntensity,
+                    valueRange = 0.4f..1.8f,
+                    steps = 0,
+                    accentColor = themeAccent,
+                    textPrimary = textPrimary,
+                    onValueChange = onSetBlurIntensity
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactInlineSliderRow(
+    label: String,
+    valueText: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    steps: Int,
+    accentColor: Color,
+    textPrimary: Color,
+    onValueChange: (Float) -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(32.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
-            Text(title, color = textPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text(subtitle, color = textSecondary, fontSize = 11.5.sp)
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
+        Text(
+            text = label,
+            color = textPrimary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.width(58.dp)
+        )
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = valueRange,
+            steps = steps,
+            colors = SliderDefaults.colors(
+                thumbColor = accentColor,
+                activeTrackColor = accentColor
+            ),
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 4.dp)
+        )
+        Text(
+            text = valueText,
+            color = accentColor,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.width(42.dp),
+            maxLines = 1
         )
     }
 }
 
+@Composable
+private fun LyricTogglesGridCard(
+    wordByWord: Boolean,
+    blurEnabled: Boolean,
+    keepScreenOn: Boolean,
+    statusBarLyricEnabled: Boolean,
+    themeAccent: Color,
+    cardBg: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    onSetWordByWord: (Boolean) -> Unit,
+    onSetBlurEnabled: (Boolean) -> Unit,
+    onSetKeepScreenOn: (Boolean) -> Unit,
+    onSetStatusBarLyric: (Boolean) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            CompactTogglePillTile(
+                icon = Icons.Rounded.AutoAwesome,
+                title = "KRC 逐字流光",
+                subtitle = if (wordByWord) "已开启扫光" else "整行高亮",
+                checked = wordByWord,
+                accentColor = themeAccent,
+                cardBg = cardBg,
+                textPrimary = textPrimary,
+                textSecondary = textSecondary,
+                onToggle = { onSetWordByWord(!wordByWord) },
+                modifier = Modifier.weight(1f)
+            )
+            CompactTogglePillTile(
+                icon = Icons.Rounded.BlurOn,
+                title = "阶梯景深虚化",
+                subtitle = if (blurEnabled) "远端自然虚化" else "已关闭虚化",
+                checked = blurEnabled,
+                accentColor = themeAccent,
+                cardBg = cardBg,
+                textPrimary = textPrimary,
+                textSecondary = textSecondary,
+                onToggle = { onSetBlurEnabled(!blurEnabled) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            CompactTogglePillTile(
+                icon = Icons.Rounded.LightMode,
+                title = "歌词屏幕常亮",
+                subtitle = if (keepScreenOn) "播放不息屏" else "跟随系统",
+                checked = keepScreenOn,
+                accentColor = themeAccent,
+                cardBg = cardBg,
+                textPrimary = textPrimary,
+                textSecondary = textSecondary,
+                onToggle = { onSetKeepScreenOn(!keepScreenOn) },
+                modifier = Modifier.weight(1f)
+            )
+            CompactTogglePillTile(
+                icon = Icons.Rounded.NotificationsActive,
+                title = "状态栏歌词",
+                subtitle = if (statusBarLyricEnabled) "广播已开启" else "点击开启",
+                checked = statusBarLyricEnabled,
+                accentColor = themeAccent,
+                cardBg = cardBg,
+                textPrimary = textPrimary,
+                textSecondary = textSecondary,
+                onToggle = { onSetStatusBarLyric(!statusBarLyricEnabled) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactTogglePillTile(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    accentColor: Color,
+    cardBg: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = if (checked) accentColor.copy(alpha = 0.18f) else cardBg,
+        modifier = modifier.softCardClickable(shape = RoundedCornerShape(14.dp), onClick = onToggle)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 11.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = if (checked) accentColor.copy(alpha = 0.24f) else textPrimary.copy(alpha = 0.07f),
+                modifier = Modifier.size(30.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = title,
+                        tint = if (checked) accentColor else textSecondary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = if (checked) accentColor else textPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = subtitle,
+                    color = if (checked) accentColor.copy(alpha = 0.8f) else textSecondary,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(if (checked) accentColor else textSecondary.copy(alpha = 0.25f))
+            )
+        }
+    }
+}
+
 /**
- * 现代重构版播放队列 (QueueBottomSheet)：
- * 1. 增加最近 3 个播放队列切换栏（支持一键切换与单独删除按钮）；
- * 2. 强化「播放模式」与「副歌速刷」双功能大卡片视觉标识；
- * 3. 优化「AI 漫游」分段胶囊显示；
- * 4. 歌曲列表去除圆角长方框背景，改为现代通透无框行；
- * 5. 移除「置顶」按钮，支持按住歌曲或右侧手柄自由上下拖动排序。
+ * 深度重构版播放队列 (QueueBottomSheet)：
+ * 1. 应用播放页的智能封面取色效果（accentColor & secondaryAccentColor 弥散渲染）；
+ * 2. 播放顺序模式按钮改为精致小按钮，与封面播放页 Canvas 矢量风格完全统一，置于右上角、清空按钮左侧；
+ * 3. 右上角新增自研立体叠卡图标「最近」按钮，点击进入「3D 错位重叠卡片页面」，支持手势左右滑动挑选最多 5 个最近队列；
+ * 4. 针对横屏与竖屏同时做自适应高度与宽度优化。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -517,6 +769,8 @@ fun QueueBottomSheet(
     activeQueueId: String = "",
     playMode: PlayMode = PlayMode.REPEAT_ALL,
     climaxModeEnabled: Boolean = false,
+    accentColor: Color = ConceptPrimary,
+    secondaryAccentColor: Color = ConceptPrimary,
     onToggleClimaxMode: () -> Unit = {},
     onCyclePlayMode: () -> Unit = {},
     onSwitchRecentQueue: (String) -> Unit = {},
@@ -529,22 +783,25 @@ fun QueueBottomSheet(
     onMoveQueueItem: (Int, Int) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val density = LocalDensity.current
     val listState = rememberLazyListState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var activeMoodMode by remember { mutableStateOf("") }
+    var showRecentDeckPage by remember { mutableStateOf(false) }
 
     var draggingIndex by remember { mutableStateOf<Int?>(null) }
     var dragAccumulatedPx by remember { mutableFloatStateOf(0f) }
-    val rowHeightPx = with(density) { 58.dp.toPx() }
+    val rowHeightPx = with(density) { 56.dp.toPx() }
 
-    val sheetBg = conceptSheetContainerColor()
+    val baseSheetBg = conceptSheetContainerColor()
     val cardBg = conceptElevatedSurfaceColor()
     val textPrimary = MaterialTheme.colorScheme.onSurface
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
 
-    LaunchedEffect(currentIndex) {
-        if (currentIndex in queue.indices && draggingIndex == null) {
+    LaunchedEffect(currentIndex, showRecentDeckPage) {
+        if (!showRecentDeckPage && currentIndex in queue.indices && draggingIndex == null) {
             listState.scrollToItem((currentIndex - 1).coerceAtLeast(0))
         }
     }
@@ -552,539 +809,1023 @@ fun QueueBottomSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = sheetBg,
+        containerColor = baseSheetBg,
         windowInsets = WindowInsets(0, 0, 0, 0),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        dragHandle = {
+            Surface(
+                modifier = Modifier
+                    .padding(top = 10.dp, bottom = 4.dp)
+                    .width(40.dp)
+                    .height(4.dp),
+                shape = CircleShape,
+                color = accentColor.copy(alpha = 0.45f)
+            ) {}
+        }
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 4.dp)
-                .navigationBarsPadding()
-        ) {
-            // 1. 顶部标题栏 + 清空队列
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "播放队列",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            color = textPrimary,
-                            fontSize = 19.sp
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            accentColor.copy(alpha = 0.16f),
+                            secondaryAccentColor.copy(alpha = 0.06f),
+                            Color.Transparent
                         )
                     )
-                    if (queue.isNotEmpty()) {
+                )
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = if (isLandscape) 22.dp else 18.dp, vertical = 4.dp)
+                    .navigationBarsPadding()
+            ) {
+                // 1. 顶部栏：标题 + 右上角 [最近队列叠卡按钮] + [统一播放模式小按钮] + [清空]
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (showRecentDeckPage) {
+                            Surface(
+                                shape = CircleShape,
+                                color = accentColor.copy(alpha = 0.16f),
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .softClickable { showRecentDeckPage = false }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                        contentDescription = "返回当前队列",
+                                        tint = accentColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = if (showRecentDeckPage) "最近播放队列" else "播放队列",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = textPrimary,
+                                fontSize = 18.5.sp
+                            )
+                        )
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = ConceptPrimary.copy(alpha = 0.14f)
+                            color = accentColor.copy(alpha = 0.16f)
                         ) {
                             Text(
-                                text = "${(currentIndex + 1).coerceAtMost(queue.size)}/${queue.size}",
-                                color = ConceptPrimary,
+                                text = if (showRecentDeckPage) {
+                                    "${recentQueues.size.coerceAtMost(5)}/5"
+                                } else if (queue.isNotEmpty()) {
+                                    "${(currentIndex + 1).coerceAtMost(queue.size)}/${queue.size}"
+                                } else "0/0",
+                                color = accentColor,
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
                             )
                         }
                     }
-                }
 
-                if (queue.isNotEmpty()) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color(0xFFFF6B6B).copy(alpha = 0.12f),
-                        modifier = Modifier.softClickable(onClick = onClear)
+                    // 右上角按钮簇：最近按钮 -> 播放顺序模式小按钮（清空左边）-> 清空按钮
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.DeleteSweep,
-                                contentDescription = "清空",
-                                tint = Color(0xFFFF6B6B),
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text("清空", color = Color(0xFFFF6B6B), fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
+                        // 自研图标：最近队列 3D 叠卡入口按钮
+                        QueueRecentStackIconButton(
+                            active = showRecentDeckPage,
+                            count = recentQueues.size.coerceAtMost(5),
+                            accentColor = accentColor,
+                            textPrimary = textPrimary,
+                            cardBg = cardBg,
+                            onClick = { showRecentDeckPage = !showRecentDeckPage }
+                        )
 
-            // 2. 最近三个播放队列切换栏（带删除按钮）
-            if (recentQueues.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    recentQueues.take(3).forEachIndexed { idx, savedQueue ->
-                        val isCurrentQueue = savedQueue.id == activeQueueId || (activeQueueId.isBlank() && idx == 0)
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isCurrentQueue) ConceptPrimary.copy(alpha = 0.18f) else cardBg,
-                            modifier = Modifier.softCardClickable(shape = RoundedCornerShape(12.dp)) {
-                                if (!isCurrentQueue) {
-                                    onSwitchRecentQueue(savedQueue.id)
+                        // 与封面播放页完全统一的矢量播放顺序模式小按钮（位于清空按钮左侧）
+                        QueueUnifiedPlayModeSmallButton(
+                            playMode = playMode,
+                            accentColor = accentColor,
+                            cardBg = cardBg,
+                            onClick = {
+                                onCyclePlayMode()
+                                val nextLabel = when (playMode) {
+                                    PlayMode.REPEAT_ALL -> "单曲循环"
+                                    PlayMode.REPEAT_ONE -> "随机播放"
+                                    PlayMode.SHUFFLE -> "列表循环"
                                 }
+                                Toast.makeText(context, "已切换为：$nextLabel", Toast.LENGTH_SHORT).show()
                             }
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp)
+                        )
+
+                        if (queue.isNotEmpty() && !showRecentDeckPage) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFFFF6B6B).copy(alpha = 0.13f),
+                                modifier = Modifier
+                                    .height(32.dp)
+                                    .softClickable(onClick = onClear)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isCurrentQueue) ConceptPrimary else textSecondary.copy(alpha = 0.4f))
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = savedQueue.title,
-                                    color = if (isCurrentQueue) ConceptPrimary else textPrimary,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = if (isCurrentQueue) FontWeight.Bold else FontWeight.Medium,
-                                    maxLines = 1
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .size(20.dp)
-                                        .clip(CircleShape)
-                                        .softClickable { onDeleteRecentQueue(savedQueue.id) },
-                                    contentAlignment = Alignment.Center
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Rounded.Close,
-                                        contentDescription = "删除此队列",
-                                        tint = if (isCurrentQueue) ConceptPrimary else textSecondary.copy(alpha = 0.7f),
-                                        modifier = Modifier.size(13.dp)
+                                        imageVector = Icons.Rounded.DeleteSweep,
+                                        contentDescription = "清空",
+                                        tint = Color(0xFFFF6B6B),
+                                        modifier = Modifier.size(15.dp)
                                     )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // 3. 强化标识的双功能主卡片：「播放模式」与「副歌速刷」
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                val (modeIcon, modeName, modeSub) = when (playMode) {
-                    PlayMode.REPEAT_ALL -> Triple(Icons.Rounded.Repeat, "列表循环", "按序循环整列")
-                    PlayMode.REPEAT_ONE -> Triple(Icons.Rounded.RepeatOne, "单曲循环", "专注循环当前")
-                    PlayMode.SHUFFLE -> Triple(Icons.Rounded.Shuffle, "随机播放", "打破顺序漫游")
-                }
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = ConceptPrimary.copy(alpha = 0.14f),
-                    modifier = Modifier
-                        .weight(1f)
-                        .softCardClickable(shape = RoundedCornerShape(16.dp), onClick = onCyclePlayMode)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = ConceptPrimary.copy(alpha = 0.22f),
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = modeIcon,
-                                    contentDescription = modeName,
-                                    tint = ConceptPrimary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = modeName,
-                                color = ConceptPrimary,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Text(
-                                text = modeSub,
-                                color = textSecondary,
-                                fontSize = 10.5.sp
-                            )
-                        }
-                    }
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = if (climaxModeEnabled) VipGold.copy(alpha = 0.20f) else cardBg,
-                    modifier = Modifier
-                        .weight(1f)
-                        .softCardClickable(shape = RoundedCornerShape(16.dp)) {
-                            onToggleClimaxMode()
-                            Toast.makeText(
-                                context,
-                                if (!climaxModeEnabled) "已开启副歌速刷" else "已关闭副歌速刷",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = if (climaxModeEnabled) VipGold.copy(alpha = 0.26f) else textPrimary.copy(alpha = 0.08f),
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Whatshot,
-                                    contentDescription = "副歌速刷",
-                                    tint = if (climaxModeEnabled) VipGold else textSecondary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = if (climaxModeEnabled) "副歌速刷 · 已开" else "副歌速刷",
-                                color = if (climaxModeEnabled) VipGold else textPrimary,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Text(
-                                text = "30秒高潮精华连播",
-                                color = textSecondary,
-                                fontSize = 10.5.sp
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 4. 现代简洁版 AI 漫游条
-            if (queue.size > 2) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = cardBg.copy(alpha = 0.7f),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.AutoAwesome,
-                            contentDescription = null,
-                            tint = ConceptPrimary,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = "AI 漫游",
-                            color = textPrimary,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.width(2.dp))
-                        listOf(
-                            "sleep" to "睡前渐缓",
-                            "commute" to "通勤渐燃",
-                            "harmonic" to "声学漫游"
-                        ).forEach { (modeKey, label) ->
-                            val isSelected = activeMoodMode == modeKey
-                            Surface(
-                                shape = RoundedCornerShape(9.dp),
-                                color = if (isSelected) ConceptPrimary else ConceptPrimary.copy(alpha = 0.10f),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .softCardClickable(shape = RoundedCornerShape(9.dp)) {
-                                        activeMoodMode = modeKey
-                                        val msg = onReorderQueueByMood(modeKey)
-                                        if (msg.isNotBlank()) {
-                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                            ) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier.padding(vertical = 5.dp)
-                                ) {
+                                    Spacer(modifier = Modifier.width(3.dp))
                                     Text(
-                                        text = label,
-                                        color = if (isSelected) Color.White else ConceptPrimary,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1
+                                        text = "清空",
+                                        color = Color(0xFFFF6B6B),
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold
                                     )
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-            // 5. 无边框现代队列列表（支持长按或拖动手柄自由拖动排序，移除置顶按钮）
-            if (queue.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(220.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
-                            contentDescription = null,
-                            tint = textSecondary.copy(alpha = 0.45f),
-                            modifier = Modifier.size(44.dp)
+                AnimatedContent(
+                    targetState = showRecentDeckPage,
+                    transitionSpec = {
+                        (fadeIn(tween(220)) + scaleIn(initialScale = 0.95f, animationSpec = tween(220)))
+                            .togetherWith(fadeOut(tween(180)) + scaleOut(targetScale = 0.95f, animationSpec = tween(180)))
+                    },
+                    label = "QueueDeckViewSwitch"
+                ) { inRecentDeck ->
+                    if (inRecentDeck) {
+                        // 3D 错位重叠卡片挑选页面（上限 5 个最近队列）
+                        RecentQueuesStaggeredDeckPage(
+                            recentQueues = recentQueues.take(5),
+                            activeQueueId = activeQueueId,
+                            accentColor = accentColor,
+                            secondaryAccentColor = secondaryAccentColor,
+                            cardBg = cardBg,
+                            textPrimary = textPrimary,
+                            textSecondary = textSecondary,
+                            isLandscape = isLandscape,
+                            onSelectQueue = { qId ->
+                                onSwitchRecentQueue(qId)
+                                showRecentDeckPage = false
+                            },
+                            onDeleteQueue = onDeleteRecentQueue
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "播放队列为空",
-                            color = textSecondary,
-                            fontSize = 13.sp
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.heightIn(max = 430.dp)
-                ) {
-                    itemsIndexed(queue, key = { _, item -> item.id }) { index, item ->
-                        val isPlayingThis = index == currentIndex
-                        val isDraggingThis = draggingIndex == index
-                        val currentIdxState by rememberUpdatedState(index)
-
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .graphicsLayer {
-                                    translationY = if (isDraggingThis) dragAccumulatedPx else 0f
-                                    scaleX = if (isDraggingThis) 1.02f else 1f
-                                    scaleY = if (isDraggingThis) 1.02f else 1f
-                                    alpha = if (isDraggingThis) 0.94f else 1f
-                                }
-                                .background(
-                                    if (isDraggingThis) cardBg
-                                    else if (isPlayingThis) ConceptPrimary.copy(alpha = 0.08f)
-                                    else Color.Transparent,
-                                    shape = RoundedCornerShape(12.dp)
-                                )
-                                .pointerInput(queue.size) {
-                                    detectDragGesturesAfterLongPress(
-                                        onDragStart = {
-                                            draggingIndex = currentIdxState
-                                            dragAccumulatedPx = 0f
-                                        },
-                                        onDrag = { change, dragAmount ->
-                                            change.consume()
-                                            val activeIdx = draggingIndex ?: return@detectDragGesturesAfterLongPress
-                                            dragAccumulatedPx += dragAmount.y
-                                            val indexShift = (dragAccumulatedPx / rowHeightPx).toInt()
-                                            if (indexShift != 0) {
-                                                val targetIdx = (activeIdx + indexShift).coerceIn(0, queue.lastIndex)
-                                                if (targetIdx != activeIdx) {
-                                                    onMoveQueueItem(activeIdx, targetIdx)
-                                                    draggingIndex = targetIdx
-                                                    dragAccumulatedPx -= indexShift * rowHeightPx
-                                                }
-                                            }
-                                        },
-                                        onDragEnd = {
-                                            draggingIndex = null
-                                            dragAccumulatedPx = 0f
-                                        },
-                                        onDragCancel = {
-                                            draggingIndex = null
-                                            dragAccumulatedPx = 0f
-                                        }
-                                    )
-                                }
-                                .clickable { onSongClick(item) }
-                        ) {
+                    } else {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            // 副歌速刷 + AI 漫游智能工具条（融合播放页取色）
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 6.dp, vertical = 9.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier.width(28.dp),
-                                    contentAlignment = Alignment.CenterStart
-                                ) {
-                                    if (isPlayingThis) {
-                                        PlayingAudioWaveIndicator()
-                                    } else {
-                                        Text(
-                                            text = (index + 1).toString().padStart(2, '0'),
-                                            color = textSecondary.copy(alpha = 0.6f),
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (climaxModeEnabled) VipGold.copy(alpha = 0.22f) else cardBg,
+                                    modifier = Modifier.softCardClickable(shape = RoundedCornerShape(12.dp)) {
+                                        onToggleClimaxMode()
+                                        Toast.makeText(
+                                            context,
+                                            if (!climaxModeEnabled) "已开启副歌速刷 (30秒高潮连播)" else "已关闭副歌速刷",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
                                     }
-                                }
-
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(ConceptPrimary.copy(alpha = 0.10f)),
-                                    contentAlignment = Alignment.Center
                                 ) {
-                                    if (item.coverUrl.isNotBlank()) {
-                                        AsyncImage(
-                                            model = item.coverUrl,
-                                            contentDescription = item.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    } else {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                                    ) {
                                         Icon(
-                                            imageVector = Icons.Rounded.MusicNote,
-                                            contentDescription = null,
-                                            tint = ConceptPrimary.copy(alpha = 0.6f),
-                                            modifier = Modifier.size(18.dp)
+                                            imageVector = Icons.Rounded.Whatshot,
+                                            contentDescription = "副歌速刷",
+                                            tint = if (climaxModeEnabled) VipGold else accentColor,
+                                            modifier = Modifier.size(15.dp)
                                         )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.width(12.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = item.title,
-                                        color = if (isPlayingThis) ConceptPrimary else textPrimary,
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontWeight = if (isPlayingThis) FontWeight.Bold else FontWeight.Medium,
-                                            fontSize = 14.sp
-                                        ),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (item.isHiRes) {
-                                            BadgeTag(text = "Hi-Res", color = VipGold)
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                        } else if (item.isLossless) {
-                                            BadgeTag(text = "SQ", color = ConceptPrimary)
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                        }
+                                        Spacer(modifier = Modifier.width(4.dp))
                                         Text(
-                                            text = item.artist,
-                                            color = if (isPlayingThis) ConceptPrimary.copy(alpha = 0.82f) else textSecondary,
+                                            text = if (climaxModeEnabled) "副歌速刷·开" else "副歌速刷",
+                                            color = if (climaxModeEnabled) VipGold else textPrimary,
                                             fontSize = 11.5.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            fontWeight = FontWeight.ExtraBold
                                         )
                                     }
                                 }
 
-                                // 拖拽排序手柄（支持直接按住上下拖动调整顺序）
-                                Box(
-                                    modifier = Modifier
-                                        .size(32.dp)
-                                        .pointerInput(queue.size) {
-                                            detectVerticalDragGestures(
-                                                onDragStart = {
-                                                    draggingIndex = currentIdxState
-                                                    dragAccumulatedPx = 0f
-                                                },
-                                                onVerticalDrag = { change, dragAmount ->
-                                                    change.consume()
-                                                    val activeIdx = draggingIndex ?: return@detectVerticalDragGestures
-                                                    dragAccumulatedPx += dragAmount
-                                                    val indexShift = (dragAccumulatedPx / rowHeightPx).toInt()
-                                                    if (indexShift != 0) {
-                                                        val targetIdx = (activeIdx + indexShift).coerceIn(0, queue.lastIndex)
-                                                        if (targetIdx != activeIdx) {
-                                                            onMoveQueueItem(activeIdx, targetIdx)
-                                                            draggingIndex = targetIdx
-                                                            dragAccumulatedPx -= indexShift * rowHeightPx
-                                                        }
-                                                    }
-                                                },
-                                                onDragEnd = {
-                                                    draggingIndex = null
-                                                    dragAccumulatedPx = 0f
-                                                },
-                                                onDragCancel = {
-                                                    draggingIndex = null
-                                                    dragAccumulatedPx = 0f
-                                                }
+                                if (queue.size > 2) {
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = cardBg.copy(alpha = 0.8f),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.AutoAwesome,
+                                                contentDescription = null,
+                                                tint = accentColor,
+                                                modifier = Modifier.size(13.dp)
                                             )
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.DragHandle,
-                                        contentDescription = "按住拖动排序",
-                                        tint = if (isDraggingThis) ConceptPrimary else textSecondary.copy(alpha = 0.45f),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-
-                                IconButton(
-                                    onClick = { onRemoveSong(item) },
-                                    modifier = Modifier.size(30.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Close,
-                                        contentDescription = "移除",
-                                        tint = textSecondary.copy(alpha = 0.6f),
-                                        modifier = Modifier.size(16.dp)
-                                    )
+                                            listOf(
+                                                "sleep" to "睡前渐缓",
+                                                "commute" to "通勤渐燃",
+                                                "harmonic" to "声学漫游"
+                                            ).forEach { (modeKey, label) ->
+                                                val isSelected = activeMoodMode == modeKey
+                                                Surface(
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    color = if (isSelected) accentColor else accentColor.copy(alpha = 0.12f),
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .softCardClickable(shape = RoundedCornerShape(8.dp)) {
+                                                            activeMoodMode = modeKey
+                                                            val msg = onReorderQueueByMood(modeKey)
+                                                            if (msg.isNotBlank()) {
+                                                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                ) {
+                                                    Box(
+                                                        contentAlignment = Alignment.Center,
+                                                        modifier = Modifier.padding(vertical = 4.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = label,
+                                                            color = if (isSelected) Color.White else accentColor,
+                                                            fontSize = 10.5.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            maxLines = 1
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
-                            HorizontalDivider(
-                                color = textPrimary.copy(alpha = 0.05f),
-                                thickness = 0.5.dp,
-                                modifier = Modifier.padding(start = 80.dp, end = 8.dp)
-                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            if (queue.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(if (isLandscape) 180.dp else 220.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
+                                            contentDescription = null,
+                                            tint = textSecondary.copy(alpha = 0.45f),
+                                            modifier = Modifier.size(44.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("播放队列为空", color = textSecondary, fontSize = 13.sp)
+                                    }
+                                }
+                            } else {
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier.heightIn(max = if (isLandscape) 250.dp else 420.dp)
+                                ) {
+                                    itemsIndexed(
+                                        items = queue,
+                                        key = { _, item -> item.id },
+                                        contentType = { _, _ -> "queue_song_row" }
+                                    ) { index, item ->
+                                        val isPlayingThis = index == currentIndex
+                                        val isDraggingThis = draggingIndex == index
+                                        val currentIdxState by rememberUpdatedState(index)
+
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .graphicsLayer {
+                                                    translationY = if (isDraggingThis) dragAccumulatedPx else 0f
+                                                    scaleX = if (isDraggingThis) 1.02f else 1f
+                                                    scaleY = if (isDraggingThis) 1.02f else 1f
+                                                    alpha = if (isDraggingThis) 0.94f else 1f
+                                                }
+                                                .background(
+                                                    if (isDraggingThis) cardBg
+                                                    else if (isPlayingThis) accentColor.copy(alpha = 0.14f)
+                                                    else Color.Transparent,
+                                                    shape = RoundedCornerShape(12.dp)
+                                                )
+                                                .pointerInput(queue.size) {
+                                                    detectDragGesturesAfterLongPress(
+                                                        onDragStart = {
+                                                            draggingIndex = currentIdxState
+                                                            dragAccumulatedPx = 0f
+                                                        },
+                                                        onDrag = { change, dragAmount ->
+                                                            change.consume()
+                                                            val activeIdx = draggingIndex ?: return@detectDragGesturesAfterLongPress
+                                                            dragAccumulatedPx += dragAmount.y
+                                                            val indexShift = (dragAccumulatedPx / rowHeightPx).toInt()
+                                                            if (indexShift != 0) {
+                                                                val targetIdx = (activeIdx + indexShift).coerceIn(0, queue.lastIndex)
+                                                                if (targetIdx != activeIdx) {
+                                                                    onMoveQueueItem(activeIdx, targetIdx)
+                                                                    draggingIndex = targetIdx
+                                                                    dragAccumulatedPx -= indexShift * rowHeightPx
+                                                                }
+                                                            }
+                                                        },
+                                                        onDragEnd = {
+                                                            draggingIndex = null
+                                                            dragAccumulatedPx = 0f
+                                                        },
+                                                        onDragCancel = {
+                                                            draggingIndex = null
+                                                            dragAccumulatedPx = 0f
+                                                        }
+                                                    )
+                                                }
+                                                .clickable { onSongClick(item) }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 6.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier.width(28.dp),
+                                                    contentAlignment = Alignment.CenterStart
+                                                ) {
+                                                    if (isPlayingThis) {
+                                                        PlayingAudioWaveIndicator(color = accentColor)
+                                                    } else {
+                                                        Text(
+                                                            text = (index + 1).toString().padStart(2, '0'),
+                                                            color = textSecondary.copy(alpha = 0.6f),
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.SemiBold
+                                                        )
+                                                    }
+                                                }
+
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(40.dp)
+                                                        .clip(RoundedCornerShape(10.dp))
+                                                        .background(accentColor.copy(alpha = 0.12f)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    if (item.coverUrl.isNotBlank()) {
+                                                        AsyncImage(
+                                                            model = item.coverUrl,
+                                                            contentDescription = item.title,
+                                                            contentScale = ContentScale.Crop,
+                                                            modifier = Modifier.fillMaxSize()
+                                                        )
+                                                    } else {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.MusicNote,
+                                                            contentDescription = null,
+                                                            tint = accentColor.copy(alpha = 0.6f),
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                    }
+                                                }
+
+                                                Spacer(modifier = Modifier.width(12.dp))
+
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = item.title,
+                                                        color = if (isPlayingThis) accentColor else textPrimary,
+                                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                                            fontWeight = if (isPlayingThis) FontWeight.Bold else FontWeight.Medium,
+                                                            fontSize = 14.sp
+                                                        ),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        if (item.isHiRes) {
+                                                            BadgeTag(text = "Hi-Res", color = VipGold)
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                        } else if (item.isLossless) {
+                                                            BadgeTag(text = "SQ", color = accentColor)
+                                                            Spacer(modifier = Modifier.width(4.dp))
+                                                        }
+                                                        Text(
+                                                            text = item.artist,
+                                                            color = if (isPlayingThis) accentColor.copy(alpha = 0.85f) else textSecondary,
+                                                            fontSize = 11.5.sp,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                }
+
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(32.dp)
+                                                        .pointerInput(queue.size) {
+                                                            detectVerticalDragGestures(
+                                                                onDragStart = {
+                                                                    draggingIndex = currentIdxState
+                                                                    dragAccumulatedPx = 0f
+                                                                },
+                                                                onVerticalDrag = { change, dragAmount ->
+                                                                    change.consume()
+                                                                    val activeIdx = draggingIndex ?: return@detectVerticalDragGestures
+                                                                    dragAccumulatedPx += dragAmount
+                                                                    val indexShift = (dragAccumulatedPx / rowHeightPx).toInt()
+                                                                    if (indexShift != 0) {
+                                                                        val targetIdx = (activeIdx + indexShift).coerceIn(0, queue.lastIndex)
+                                                                        if (targetIdx != activeIdx) {
+                                                                            onMoveQueueItem(activeIdx, targetIdx)
+                                                                            draggingIndex = targetIdx
+                                                                            dragAccumulatedPx -= indexShift * rowHeightPx
+                                                                        }
+                                                                    }
+                                                                },
+                                                                onDragEnd = {
+                                                                    draggingIndex = null
+                                                                    dragAccumulatedPx = 0f
+                                                                },
+                                                                onDragCancel = {
+                                                                    draggingIndex = null
+                                                                    dragAccumulatedPx = 0f
+                                                                }
+                                                            )
+                                                        },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.DragHandle,
+                                                        contentDescription = "按住拖动排序",
+                                                        tint = if (isDraggingThis) accentColor else textSecondary.copy(alpha = 0.45f),
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+
+                                                IconButton(
+                                                    onClick = { onRemoveSong(item) },
+                                                    modifier = Modifier.size(30.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.Close,
+                                                        contentDescription = "移除",
+                                                        tint = textSecondary.copy(alpha = 0.6f),
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            }
+
+                                            HorizontalDivider(
+                                                color = textPrimary.copy(alpha = 0.05f),
+                                                thickness = 0.5.dp,
+                                                modifier = Modifier.padding(start = 80.dp, end = 8.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+            }
         }
     }
 }
 
 /**
- * 封面播放页「更多功能控制台」重构：
- * - 彻底取消所有选中边框线 (`.border(...)`)，消除边框与圆角不匹配的问题；
- * - 改用柔和饱满的色块填充 + 发光圆点指示选中状态；
- * - 精简所有副标题文案，彻底杜绝小字截断与生硬表达。
+ * 自研图标：最近队列立体错位叠卡按钮
+ */
+@Composable
+private fun QueueRecentStackIconButton(
+    active: Boolean,
+    count: Int,
+    accentColor: Color,
+    textPrimary: Color,
+    cardBg: Color,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = if (active) accentColor else accentColor.copy(alpha = 0.14f),
+        modifier = Modifier
+            .height(32.dp)
+            .softCardClickable(shape = RoundedCornerShape(10.dp), onClick = onClick)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 9.dp)
+        ) {
+            val iconColor = if (active) Color.White else accentColor
+            Canvas(modifier = Modifier.size(16.dp)) {
+                val strokeW = 1.4.dp.toPx()
+                // 后层右偏卡片
+                drawRoundRect(
+                    color = iconColor.copy(alpha = 0.45f),
+                    topLeft = Offset(size.width * 0.28f, size.height * 0.08f),
+                    size = Size(size.width * 0.64f, size.height * 0.68f),
+                    cornerRadius = CornerRadius(2.5.dp.toPx(), 2.5.dp.toPx()),
+                    style = Stroke(width = strokeW)
+                )
+                // 中层卡片
+                drawRoundRect(
+                    color = iconColor.copy(alpha = 0.72f),
+                    topLeft = Offset(size.width * 0.16f, size.height * 0.18f),
+                    size = Size(size.width * 0.64f, size.height * 0.68f),
+                    cornerRadius = CornerRadius(2.5.dp.toPx(), 2.5.dp.toPx()),
+                    style = Stroke(width = strokeW)
+                )
+                // 前层主卡片
+                drawRoundRect(
+                    color = iconColor,
+                    topLeft = Offset(size.width * 0.04f, size.height * 0.28f),
+                    size = Size(size.width * 0.64f, size.height * 0.68f),
+                    cornerRadius = CornerRadius(2.5.dp.toPx(), 2.5.dp.toPx()),
+                    style = Stroke(width = strokeW)
+                )
+            }
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = if (count > 0) "最近 $count" else "最近",
+                color = if (active) Color.White else accentColor,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+    }
+}
+
+/**
+ * 与封面播放页完全统一的矢量播放顺序模式小按钮（置于右上角，清空按钮左边）
+ */
+@Composable
+private fun QueueUnifiedPlayModeSmallButton(
+    playMode: PlayMode,
+    accentColor: Color,
+    cardBg: Color,
+    onClick: () -> Unit
+) {
+    val label = when (playMode) {
+        PlayMode.REPEAT_ALL -> "列表"
+        PlayMode.REPEAT_ONE -> "单曲"
+        PlayMode.SHUFFLE -> "随机"
+    }
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = accentColor.copy(alpha = 0.14f),
+        modifier = Modifier
+            .height(32.dp)
+            .softCardClickable(shape = RoundedCornerShape(10.dp), onClick = onClick)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 9.dp)
+        ) {
+            Canvas(modifier = Modifier.size(16.dp)) {
+                val stroke = 1.65.dp.toPx()
+                val w = size.width
+                val h = size.height
+                when (playMode) {
+                    PlayMode.REPEAT_ALL, PlayMode.REPEAT_ONE -> {
+                        val topY = h * 0.28f
+                        val botY = h * 0.72f
+                        val leftX = w * 0.14f
+                        val rightX = w * 0.86f
+                        val path = Path().apply {
+                            moveTo(leftX, h * 0.45f)
+                            lineTo(leftX, topY)
+                            lineTo(rightX - w * 0.12f, topY)
+                            moveTo(rightX - w * 0.24f, topY - h * 0.13f)
+                            lineTo(rightX - w * 0.08f, topY)
+                            lineTo(rightX - w * 0.24f, topY + h * 0.13f)
+
+                            moveTo(rightX, h * 0.55f)
+                            lineTo(rightX, botY)
+                            lineTo(leftX + w * 0.12f, botY)
+                            moveTo(leftX + w * 0.24f, botY - h * 0.13f)
+                            lineTo(leftX + w * 0.08f, botY)
+                            lineTo(leftX + w * 0.24f, botY + h * 0.13f)
+                        }
+                        drawPath(
+                            path = path,
+                            color = accentColor,
+                            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+                        if (playMode == PlayMode.REPEAT_ONE) {
+                            drawLine(
+                                color = accentColor,
+                                start = Offset(w * 0.5f, h * 0.39f),
+                                end = Offset(w * 0.5f, h * 0.61f),
+                                strokeWidth = stroke * 0.95f,
+                                cap = StrokeCap.Round
+                            )
+                        }
+                    }
+                    PlayMode.SHUFFLE -> {
+                        val leftX = w * 0.14f
+                        val rightX = w * 0.86f
+                        val topY = h * 0.28f
+                        val botY = h * 0.72f
+                        val path = Path().apply {
+                            moveTo(leftX, botY)
+                            cubicTo(w * 0.45f, botY, w * 0.55f, topY, rightX - w * 0.08f, topY)
+                            moveTo(rightX - w * 0.22f, topY - h * 0.12f)
+                            lineTo(rightX - w * 0.06f, topY)
+                            lineTo(rightX - w * 0.22f, topY + h * 0.12f)
+
+                            moveTo(leftX, topY)
+                            cubicTo(w * 0.45f, topY, w * 0.55f, botY, rightX - w * 0.08f, botY)
+                            moveTo(rightX - w * 0.22f, botY - h * 0.12f)
+                            lineTo(rightX - w * 0.06f, botY)
+                            lineTo(rightX - w * 0.22f, botY + h * 0.12f)
+                        }
+                        drawPath(
+                            path = path,
+                            color = accentColor,
+                            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = label,
+                color = accentColor,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+    }
+}
+
+/**
+ * 3D 错位重叠卡片队列挑选页面 (RecentQueuesStaggeredDeckPage)：
+ * 支持最多 5 个最近播放队列，采用透视景深、Y/Z 轴倾角、错位叠放与左右手势滑动切换，立体感十足。
+ */
+@Composable
+private fun RecentQueuesStaggeredDeckPage(
+    recentQueues: List<SavedPlayQueue>,
+    activeQueueId: String,
+    accentColor: Color,
+    secondaryAccentColor: Color,
+    cardBg: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    isLandscape: Boolean,
+    onSelectQueue: (String) -> Unit,
+    onDeleteQueue: (String) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current.density
+
+    if (recentQueues.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(240.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("暂无最近播放队列记录", color = textSecondary, fontSize = 13.sp)
+        }
+        return
+    }
+
+    val initialIdx = remember(recentQueues, activeQueueId) {
+        recentQueues.indexOfFirst { it.id == activeQueueId }.takeIf { it >= 0 } ?: 0
+    }
+    val animatedFocusIndex = remember { Animatable(initialIdx.toFloat()) }
+
+    LaunchedEffect(recentQueues.size) {
+        val clamped = animatedFocusIndex.value.coerceIn(0f, (recentQueues.size - 1).coerceAtLeast(0).toFloat())
+        animatedFocusIndex.snapTo(clamped)
+    }
+
+    val activeFocusInt = animatedFocusIndex.value.roundToInt().coerceIn(0, recentQueues.lastIndex)
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "左右滑动错位卡片挑选历史队列（上限 5 个）",
+            color = textSecondary,
+            fontSize = 11.5.sp,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        // 3D 错位重叠卡片舞台
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (isLandscape) 235.dp else 320.dp)
+                .pointerInput(recentQueues.size) {
+                    var dragTotal = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragTotal = 0f },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            dragTotal += dragAmount
+                            val deltaIdx = -dragAmount / 240f
+                            val nextVal = (animatedFocusIndex.value + deltaIdx)
+                                .coerceIn(0f, (recentQueues.size - 1).coerceAtLeast(0).toFloat())
+                            scope.launch { animatedFocusIndex.snapTo(nextVal) }
+                        },
+                        onDragEnd = {
+                            val target = animatedFocusIndex.value.roundToInt()
+                                .coerceIn(0, recentQueues.lastIndex)
+                            scope.launch {
+                                animatedFocusIndex.animateTo(
+                                    targetValue = target.toFloat(),
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioLowBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
+                                    )
+                                )
+                            }
+                        },
+                        onDragCancel = {
+                            val target = animatedFocusIndex.value.roundToInt()
+                                .coerceIn(0, recentQueues.lastIndex)
+                            scope.launch { animatedFocusIndex.animateTo(target.toFloat()) }
+                        }
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            recentQueues.forEachIndexed { idx, savedQueue ->
+                val relativeOffset = idx - animatedFocusIndex.value
+                val absOffset = abs(relativeOffset)
+                val isFocused = idx == activeFocusInt
+                val isCurrentPlayingQueue = savedQueue.id == activeQueueId || (activeQueueId.isBlank() && idx == 0)
+                val coverSong = savedQueue.songs.getOrNull(savedQueue.currentIndex) ?: savedQueue.songs.firstOrNull()
+
+                // 错位立体几何变换参数
+                val cardScale = (1f - absOffset * 0.11f).coerceIn(0.72f, 1f)
+                val cardAlpha = (1f - absOffset * 0.24f).coerceIn(0.35f, 1f)
+                val transX = relativeOffset * 58f * density
+                val transY = absOffset * 13f * density
+                val rotY = (-relativeOffset * 12f).coerceIn(-28f, 28f)
+                val rotZ = (relativeOffset * 2.4f).coerceIn(-7f, 7f)
+
+                Surface(
+                    shape = RoundedCornerShape(22.dp),
+                    color = cardBg,
+                    modifier = Modifier
+                        .zIndex(10f - absOffset)
+                        .width(if (isLandscape) 320.dp else 286.dp)
+                        .fillMaxHeight(0.94f)
+                        .graphicsLayer {
+                            cameraDistance = 16f * density
+                            translationX = transX
+                            translationY = transY
+                            scaleX = cardScale
+                            scaleY = cardScale
+                            rotationY = rotY
+                            rotationZ = rotZ
+                            alpha = cardAlpha
+                        }
+                        .shadow(
+                            elevation = (20f - absOffset * 5f).coerceAtLeast(4f).dp,
+                            shape = RoundedCornerShape(22.dp)
+                        )
+                        .border(
+                            width = if (isFocused) 1.5.dp else 0.8.dp,
+                            brush = Brush.linearGradient(
+                                colors = if (isFocused) {
+                                    listOf(accentColor, secondaryAccentColor.copy(alpha = 0.6f))
+                                } else {
+                                    listOf(textPrimary.copy(alpha = 0.14f), Color.Transparent)
+                                }
+                            ),
+                            shape = RoundedCornerShape(22.dp)
+                        )
+                        .softCardClickable(shape = RoundedCornerShape(22.dp)) {
+                            if (!isFocused) {
+                                scope.launch {
+                                    animatedFocusIndex.animateTo(
+                                        idx.toFloat(),
+                                        spring(stiffness = Spring.StiffnessMediumLow)
+                                    )
+                                }
+                            } else {
+                                onSelectQueue(savedQueue.id)
+                            }
+                        }
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        accentColor.copy(alpha = if (isFocused) 0.22f else 0.08f),
+                                        cardBg
+                                    )
+                                )
+                            )
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        // 卡片头部：队列封面 + 标题 + 删除按钮
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(accentColor.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (coverSong != null && coverSong.coverUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = coverSong.coverUrl,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = accentColor)
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Surface(
+                                        shape = RoundedCornerShape(5.dp),
+                                        color = if (isCurrentPlayingQueue) accentColor else textPrimary.copy(alpha = 0.1f)
+                                    ) {
+                                        Text(
+                                            text = if (isCurrentPlayingQueue) "当前队列" else "队列 #${idx + 1}",
+                                            color = if (isCurrentPlayingQueue) Color.White else textSecondary,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "共 ${savedQueue.songs.size} 首",
+                                        color = textSecondary,
+                                        fontSize = 10.5.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = savedQueue.title,
+                                    color = textPrimary,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            IconButton(
+                                onClick = { onDeleteQueue(savedQueue.id) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "删除此队列",
+                                    tint = textSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+
+                        // 卡片中部：预览前 4 首曲目
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .padding(vertical = 6.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            val maxPreview = if (isLandscape) 3 else 4
+                            savedQueue.songs.take(maxPreview).forEachIndexed { sIdx, s ->
+                                val isCurSong = sIdx == savedQueue.currentIndex
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isCurSong) accentColor.copy(alpha = 0.12f) else Color.Transparent)
+                                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = (sIdx + 1).toString().padStart(2, '0'),
+                                        color = if (isCurSong) accentColor else textSecondary.copy(alpha = 0.6f),
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.width(20.dp)
+                                    )
+                                    Text(
+                                        text = s.title,
+                                        color = if (isCurSong) accentColor else textPrimary,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isCurSong) FontWeight.Bold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = s.artist,
+                                        color = textSecondary,
+                                        fontSize = 10.5.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.widthIn(max = 72.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        // 卡片底部：一键载入此队列按钮
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isCurrentPlayingQueue) accentColor.copy(alpha = 0.18f) else accentColor,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .softCardClickable(shape = RoundedCornerShape(12.dp)) {
+                                    onSelectQueue(savedQueue.id)
+                                }
+                        ) {
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            ) {
+                                Text(
+                                    text = if (isCurrentPlayingQueue) "正在播放该队列 · 点击返回" else "切换并播放此队列",
+                                    color = if (isCurrentPlayingQueue) accentColor else Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // 底部卡片位置指示点（支持点击快速跳切）
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            recentQueues.forEachIndexed { idx, _ ->
+                val selected = idx == activeFocusInt
+                Box(
+                    modifier = Modifier
+                        .height(6.dp)
+                        .width(if (selected) 20.dp else 6.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) accentColor else textSecondary.copy(alpha = 0.3f))
+                        .softClickable {
+                            scope.launch {
+                                animatedFocusIndex.animateTo(
+                                    idx.toFloat(),
+                                    spring(stiffness = Spring.StiffnessMediumLow)
+                                )
+                            }
+                        }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 封面播放页「更多功能控制台 (PlayerMoreControlSheet)」深度重构：
+ * 1. 新增「歌手主页」与「专辑详情」双快捷直达入口胶囊卡片；
+ * 2. 整合曲目名片与「音频参数详情」快捷按钮；
+ * 3. 将封面样式、智能动态取色与 5 款播放页背景效果整合为统一高定视觉面板，布局紧凑优雅。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1110,6 +1851,8 @@ internal fun PlayerMoreControlSheet(
     onOpenSleepTimer: () -> Unit,
     onOpenQualitySelect: () -> Unit,
     onOpenSongDetail: () -> Unit,
+    onOpenArtist: () -> Unit = {},
+    onOpenAlbum: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1125,228 +1868,222 @@ internal fun PlayerMoreControlSheet(
         containerColor = sheetBg,
         contentColor = textPrimary,
         windowInsets = WindowInsets(0, 0, 0, 0),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        dragHandle = {
+            Surface(
+                modifier = Modifier
+                    .padding(top = 10.dp, bottom = 4.dp)
+                    .width(38.dp)
+                    .height(4.dp),
+                shape = CircleShape,
+                color = textSecondary.copy(alpha = 0.28f)
+            ) {}
+        }
     ) {
         CompositionLocalProvider(LocalContentColor provides textPrimary) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .conceptSheetSpringEntrance()
-                    .padding(horizontal = 18.dp, vertical = 6.dp)
+                    .padding(horizontal = 18.dp, vertical = 4.dp)
                     .navigationBarsPadding()
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // 1. 顶部当前曲目名片
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                // 1. 顶部一体化曲目名片 + 「歌手主页」「专辑详情」双快捷入口
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = tileBg,
+                    contentColor = textPrimary,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(50.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(accentColor.copy(alpha = 0.12f)),
-                        contentAlignment = Alignment.Center
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        if (song.coverUrl.isNotBlank()) {
-                            AsyncImage(
-                                model = song.coverUrl,
-                                contentDescription = song.title,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = accentColor)
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = song.title,
-                            color = textPrimary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.5.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "${song.artist} · ${song.album.ifBlank { "单曲" }}",
-                            color = textSecondary,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                // 2. 双封面样式选择 + 封面动态取色开关（无边框色块选中设计）
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "封面样式与智能取色",
-                        color = textSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        CoverStyle.entries.forEach { style ->
-                            val selected = coverStyle == style
-                            val icon = when (style) {
-                                CoverStyle.VINYL -> Icons.Rounded.Album
-                                CoverStyle.SQUARE -> Icons.Rounded.CropSquare
-                            }
-                            val desc = when (style) {
-                                CoverStyle.VINYL -> "拟真唱盘旋转"
-                                CoverStyle.SQUARE -> "静态圆角方图"
-                            }
-                            Surface(
-                                shape = RoundedCornerShape(18.dp),
-                                color = if (selected) accentColor.copy(alpha = 0.20f) else tileBg,
-                                contentColor = textPrimary,
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .softCardClickable(shape = RoundedCornerShape(18.dp)) {
-                                        onSelectCoverStyle(style)
-                                    }
+                                    .size(48.dp)
+                                    .clip(RoundedCornerShape(13.dp))
+                                    .background(accentColor.copy(alpha = 0.14f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (song.coverUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = song.coverUrl,
+                                        contentDescription = song.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = accentColor)
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = song.title,
+                                    color = textPrimary,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 15.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "${song.artist} · ${song.album.ifBlank { "单曲发行" }}",
+                                    color = textSecondary,
+                                    fontSize = 11.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            // 右侧快捷查看歌曲技术参数胶囊
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = accentColor.copy(alpha = 0.14f),
+                                modifier = Modifier.softCardClickable(
+                                    shape = RoundedCornerShape(10.dp),
+                                    onClick = onOpenSongDetail
+                                )
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(vertical = 12.dp, horizontal = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Info,
+                                        contentDescription = "音频参数",
+                                        tint = accentColor,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "音频详情",
+                                        color = accentColor,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+
+                        // 歌手主页 & 专辑详情 双快捷入口卡片
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = sheetBg,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .softCardClickable(
+                                        shape = RoundedCornerShape(14.dp),
+                                        onClick = onOpenArtist
+                                    )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 11.dp, vertical = 9.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Surface(
                                         shape = CircleShape,
-                                        color = if (selected) accentColor.copy(alpha = 0.24f) else textPrimary.copy(alpha = 0.06f),
-                                        modifier = Modifier.size(36.dp)
+                                        color = accentColor.copy(alpha = 0.18f),
+                                        modifier = Modifier.size(30.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
-                                                imageVector = icon,
-                                                contentDescription = style.label,
-                                                tint = if (selected) accentColor else textSecondary,
-                                                modifier = Modifier.size(20.dp)
+                                                imageVector = Icons.Rounded.PersonSearch,
+                                                contentDescription = "歌手主页",
+                                                tint = accentColor,
+                                                modifier = Modifier.size(16.dp)
                                             )
                                         }
                                     }
-                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = style.label,
-                                            color = if (selected) accentColor else textPrimary,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            maxLines = 1
+                                            text = "歌手主页",
+                                            color = accentColor,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = desc,
-                                            color = if (selected) accentColor.copy(alpha = 0.8f) else textSecondary,
-                                            fontSize = 10.5.sp,
-                                            maxLines = 1
+                                            text = song.artist.ifBlank { "未知歌手" },
+                                            color = textPrimary,
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
+                                    Icon(
+                                        imageVector = Icons.Rounded.ChevronRight,
+                                        contentDescription = null,
+                                        tint = textSecondary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
                                 }
                             }
-                        }
-                    }
 
-                    // 封面智能动态取色开关
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = tileBg,
-                        contentColor = textPrimary,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Palette,
-                                contentDescription = null,
-                                tint = accentColor,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "封面智能动态取色",
-                                    color = textPrimary,
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "提取封面主色渲染播放键与进度条",
-                                    color = textSecondary,
-                                    fontSize = 11.sp
-                                )
-                            }
-                            Switch(
-                                checked = dynamicCoverAccentEnabled,
-                                onCheckedChange = onSetDynamicCoverAccentEnabled,
-                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = accentColor)
-                            )
-                        }
-                    }
-                }
-
-                // 3. 播放页背景显示效果（无边框现代卡片，文案精简不截断）
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "播放页背景效果",
-                        color = textSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        PlayerBackgroundStyle.entries.forEach { bgStyle ->
-                            val selected = playerBackgroundStyle == bgStyle
                             Surface(
-                                shape = RoundedCornerShape(16.dp),
-                                color = if (selected) accentColor.copy(alpha = 0.20f) else tileBg,
-                                contentColor = textPrimary,
+                                shape = RoundedCornerShape(14.dp),
+                                color = sheetBg,
                                 modifier = Modifier
-                                    .width(114.dp)
-                                    .softCardClickable(shape = RoundedCornerShape(16.dp)) {
-                                        onSelectPlayerBackgroundStyle(bgStyle)
-                                    }
+                                    .weight(1f)
+                                    .softCardClickable(
+                                        shape = RoundedCornerShape(14.dp),
+                                        onClick = onOpenAlbum
+                                    )
                             ) {
-                                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 11.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = accentColor.copy(alpha = 0.18f),
+                                        modifier = Modifier.size(30.dp)
                                     ) {
-                                        Text(
-                                            text = bgStyle.label,
-                                            color = if (selected) accentColor else textPrimary,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            maxLines = 1
-                                        )
-                                        if (selected) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(6.dp)
-                                                    .clip(CircleShape)
-                                                    .background(accentColor)
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Album,
+                                                contentDescription = "专辑详情",
+                                                tint = accentColor,
+                                                modifier = Modifier.size(16.dp)
                                             )
                                         }
                                     }
-                                    Spacer(modifier = Modifier.height(3.dp))
-                                    Text(
-                                        text = bgStyle.subtitle,
-                                        color = if (selected) accentColor.copy(alpha = 0.82f) else textSecondary,
-                                        fontSize = 10.5.sp,
-                                        maxLines = 1
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "所属专辑",
+                                            color = accentColor,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = song.album.ifBlank { song.title },
+                                            color = textPrimary,
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Rounded.ChevronRight,
+                                        contentDescription = null,
+                                        tint = textSecondary,
+                                        modifier = Modifier.size(16.dp)
                                     )
                                 }
                             }
@@ -1354,12 +2091,12 @@ internal fun PlayerMoreControlSheet(
                     }
                 }
 
-                // 4. 播放工具
+                // 2. 播放控制与声学工具矩阵（置顶高频操作）
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "播放工具",
+                        text = "声学与播放工具",
                         color = textSecondary,
-                        fontSize = 12.sp,
+                        fontSize = 11.5.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Row(
@@ -1382,6 +2119,15 @@ internal fun PlayerMoreControlSheet(
                             active = accompanyModeEnabled,
                             activeColor = accentColor,
                             onClick = onToggleAccompanyMode,
+                            modifier = Modifier.weight(1f)
+                        )
+                        BentoControlTile(
+                            icon = Icons.Rounded.HighQuality,
+                            title = "音质规格",
+                            subtitle = currentQualityLabel,
+                            active = true,
+                            activeColor = accentColor,
+                            onClick = onOpenQualitySelect,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -1414,44 +2160,189 @@ internal fun PlayerMoreControlSheet(
                             onClick = onOpenSleepTimer,
                             modifier = Modifier.weight(1f)
                         )
-                        BentoControlTile(
-                            icon = Icons.Rounded.HighQuality,
-                            title = "音质规格",
-                            subtitle = currentQualityLabel,
-                            active = true,
-                            activeColor = accentColor,
-                            onClick = onOpenQualitySelect,
-                            modifier = Modifier.weight(1f)
-                        )
                     }
                 }
 
-                // 5. 底部音频参数入口
+                // 3. 整合式视觉舞台控制台（封面样式 + 智能取色 + 5款背景效果）
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(20.dp),
                     color = tileBg,
                     contentColor = textPrimary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .softCardClickable(shape = RoundedCornerShape(16.dp), onClick = onOpenSongDetail)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.Info, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text("歌曲详情与音频参数", color = textPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Palette,
+                                    contentDescription = null,
+                                    tint = accentColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "封面样式与智能取色",
+                                    color = textPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+
+                            // 紧凑型智能取色开关胶囊
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (dynamicCoverAccentEnabled) accentColor.copy(alpha = 0.20f) else sheetBg,
+                                modifier = Modifier.softCardClickable(shape = RoundedCornerShape(10.dp)) {
+                                    onSetDynamicCoverAccentEnabled(!dynamicCoverAccentEnabled)
+                                }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(7.dp)
+                                            .clip(CircleShape)
+                                            .background(if (dynamicCoverAccentEnabled) accentColor else textSecondary)
+                                    )
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Text(
+                                        text = if (dynamicCoverAccentEnabled) "智能取色 · 已开启" else "智能取色 · 已关闭",
+                                        color = if (dynamicCoverAccentEnabled) accentColor else textSecondary,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
-                        Icon(Icons.Rounded.ChevronRight, contentDescription = null, tint = textSecondary, modifier = Modifier.size(18.dp))
+
+                        // 双封面样式切换
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CoverStyle.entries.forEach { style ->
+                                val selected = coverStyle == style
+                                val icon = when (style) {
+                                    CoverStyle.VINYL -> Icons.Rounded.Album
+                                    CoverStyle.SQUARE -> Icons.Rounded.CropSquare
+                                }
+                                val desc = when (style) {
+                                    CoverStyle.VINYL -> "拟真唱盘旋转"
+                                    CoverStyle.SQUARE -> "静态圆角方图"
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (selected) accentColor.copy(alpha = 0.20f) else sheetBg,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .softCardClickable(shape = RoundedCornerShape(14.dp)) {
+                                            onSelectCoverStyle(style)
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(vertical = 9.dp, horizontal = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = icon,
+                                            contentDescription = style.label,
+                                            tint = if (selected) accentColor else textSecondary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = style.label,
+                                                color = if (selected) accentColor else textPrimary,
+                                                fontSize = 12.5.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                maxLines = 1
+                                            )
+                                            Text(
+                                                text = desc,
+                                                color = if (selected) accentColor.copy(alpha = 0.8f) else textSecondary,
+                                                fontSize = 10.sp,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(color = textPrimary.copy(alpha = 0.06f))
+
+                        Text(
+                            text = "播放页背景动效",
+                            color = textSecondary,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            PlayerBackgroundStyle.entries.forEach { bgStyle ->
+                                val selected = playerBackgroundStyle == bgStyle
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (selected) accentColor.copy(alpha = 0.20f) else sheetBg,
+                                    modifier = Modifier
+                                        .width(106.dp)
+                                        .softCardClickable(shape = RoundedCornerShape(14.dp)) {
+                                            onSelectPlayerBackgroundStyle(bgStyle)
+                                        }
+                                ) {
+                                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = bgStyle.label,
+                                                color = if (selected) accentColor else textPrimary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                maxLines = 1
+                                            )
+                                            if (selected) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(6.dp)
+                                                        .clip(CircleShape)
+                                                        .background(accentColor)
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = bgStyle.subtitle,
+                                            color = if (selected) accentColor.copy(alpha = 0.82f) else textSecondary,
+                                            fontSize = 9.5.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
             }
         }
     }
@@ -1472,21 +2363,21 @@ internal fun BentoControlTile(
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
 
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(16.dp),
         color = if (active) activeColor.copy(alpha = 0.18f) else tileBg,
         contentColor = textPrimary,
-        modifier = modifier.softCardClickable(shape = RoundedCornerShape(18.dp), onClick = onClick)
+        modifier = modifier.softCardClickable(shape = RoundedCornerShape(16.dp), onClick = onClick)
     ) {
         Column(
-            modifier = Modifier.padding(vertical = 12.dp, horizontal = 8.dp),
+            modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = title,
                 tint = if (active) activeColor else textPrimary.copy(alpha = 0.82f),
-                modifier = Modifier.size(21.dp)
+                modifier = Modifier.size(20.dp)
             )
             Text(
                 text = title,
@@ -1498,7 +2389,7 @@ internal fun BentoControlTile(
             Text(
                 text = subtitle,
                 color = if (active) activeColor.copy(alpha = 0.85f) else textSecondary,
-                fontSize = 10.5.sp,
+                fontSize = 10.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )

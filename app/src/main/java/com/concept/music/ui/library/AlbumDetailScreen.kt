@@ -33,6 +33,7 @@ import com.concept.music.data.model.AlbumItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
 import com.concept.music.ui.theme.ConceptPrimary
@@ -177,9 +178,10 @@ fun AlbumDetailScreen(
             }
         ) { innerPadding ->
             val listState = rememberLazyListState()
-            val showScrollToTop by remember {
+            val showScrollToTop by remember(filteredSongs.size) {
                 derivedStateOf {
-                    filteredSongs.size > 30 && listState.firstVisibleItemIndex > 4
+                    listState.firstVisibleItemIndex > 2 ||
+                        (listState.firstVisibleItemIndex == 2 && listState.firstVisibleItemScrollOffset > 100)
                 }
             }
             Box(
@@ -409,7 +411,7 @@ fun AlbumDetailScreen(
                 }
 
                 // 4. 歌曲列表
-                itemsIndexed(filteredSongs, key = { idx, s -> "${s.id}_${s.hash}_$idx" }) { index, song ->
+                itemsIndexed(filteredSongs, key = { idx, s -> "${s.id}_${s.hash}_$idx" }, contentType = { _, _ -> "song_row" }) { index, song ->
                     SongItemRow(
                         song = song,
                         orderIndex = index + 1,
@@ -425,7 +427,7 @@ fun AlbumDetailScreen(
                 accentColor = ConceptAmberAccent,
                 onClick = {
                     coroutineScope.launch {
-                        listState.animateScrollToItem(0)
+                        listState.smoothFastScrollToItem(0)
                     }
                 },
                 modifier = Modifier

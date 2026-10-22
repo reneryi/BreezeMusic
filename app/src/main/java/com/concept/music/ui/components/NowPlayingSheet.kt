@@ -7,10 +7,16 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.view.OrientationEventListener
 import android.graphics.drawable.BitmapDrawable
+import android.Manifest
+import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.view.WindowManager
+import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -202,6 +208,33 @@ internal fun shouldShowPhoneticButton(song: Song, lyricData: LyricData): Boolean
     return lyricData.hasPhonetic || lines.any { !it.phonetic.isNullOrBlank() }
 }
 
+/**
+ * 检查手机系统「自动旋转 (Auto-Rotate)」开关是否开启
+ */
+internal fun isSystemAutoRotateEnabled(context: Context): Boolean {
+    return runCatching {
+        Settings.System.getInt(context.contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1
+    }.getOrDefault(false)
+}
+
+/**
+ * 检查用户是否授予 App「设备动作与方向」相关权限（含应用内权限开关与 Android 10+ 动作传感器运行时权限）
+ */
+internal fun hasDeviceMotionOrientationPermission(context: Context, appToggleEnabled: Boolean): Boolean {
+    if (!appToggleEnabled) return false
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACTIVITY_RECOGNITION
+        ) == PackageManager.PERMISSION_GRANTED
+        // 若用户在应用设置中开启了“设备动作与方向”授权或系统已授予 ACTIVITY_RECOGNITION 则允许
+        granted || context.getSharedPreferences("concept_player_prefs", Context.MODE_PRIVATE)
+            .getBoolean("motion_orientation_sensor_enabled", true)
+    } else {
+        true
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NowPlayingSheet(
@@ -223,8 +256,9 @@ fun NowPlayingSheet(
     dynamicCoverAccentEnabled: Boolean = true,
     showTranslation: Boolean = false,
     showPhonetic: Boolean = false,
-    lyricFontSize: Float = 22f,
-    lyricTranslationScale: Float = 0.82f,
+    lyricFontSize: Float = 24f,
+    lyricTranslationScale: Float = 0.84f,
+    motionOrientationPermissionEnabled: Boolean = true,
     lyricAlignment: LyricAlignment = LyricAlignment.LEFT,
     lyricWordByWord: Boolean = true,
     lyricBlurEnabled: Boolean = true,
@@ -287,6 +321,8 @@ fun NowPlayingSheet(
     onMoveQueueItem: (Int, Int) -> Unit = { _, _ -> },
     onSwitchRecentQueue: (String) -> Unit = {},
     onDeleteRecentQueue: (String) -> Unit = {},
+    onOpenArtist: (Song) -> Unit = {},
+    onOpenAlbum: (Song) -> Unit = {},
     onPlayQueueSong: (Song) -> Unit,
     onRemoveFromQueue: (Song) -> Unit,
     onClearQueue: () -> Unit
@@ -316,9 +352,11 @@ fun NowPlayingSheet(
     val systemLyricState by SystemLyricBridge.state.collectAsState()
 
     val enterLandscape: (Boolean) -> Unit = { fromSensor ->
-        isLandscapeMode = true
-        enteredLandscapeViaSensor = fromSensor
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        if (!showLyricView) {
+            isLandscapeMode = true
+            enteredLandscapeViaSensor = fromSensor
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
     }
     val exitLandscape: () -> Unit = {
         isLandscapeMode = false
@@ -326,17 +364,45 @@ fun NowPlayingSheet(
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
     }
 
-    // 监听手机重力方向传感器：将手机横放时自动进入横屏播放页，竖回时恢复竖屏
-    DisposableEffect(context, autoRotateSensorEnabled) {
+    // 严格限制横屏自动触发范围：
+    // 1. 仅在封面播放页 (!showLyricView) 且未打开其它弹窗时才允许通过横放手机进入横屏；
+    // 2. 必须同时满足：已开启「设备动作与方向」权限 + 手机系统「自动旋转」开关处于打开状态。
+    val canSensorTriggerLandscape = !showLyricView &&
+        !showQueueSheet &&
+        !showMoreControlSheet &&
+        !showLyricSettingsDialog &&
+        !showLyricPosterDialog &&
+        autoRotateSensorEnabled &&
+        motionOrientationPermissionEnabled
+
+    DisposableEffect(context, canSensorTriggerLandscape, isLandscapeMode, enteredLandscapeViaSensor) {
+        var consecutiveHorizontalSamples = 0
+        var consecutiveVerticalSamples = 0
         val orientationListener = object : OrientationEventListener(context) {
             override fun onOrientationChanged(orientation: Int) {
-                if (!autoRotateSensorEnabled || orientation == ORIENTATION_UNKNOWN) return
-                val isHorizontalHold = orientation in 68..112 || orientation in 248..292
-                val isVerticalHold = orientation in 0..22 || orientation in 338..360
-                if (isHorizontalHold && !isLandscapeMode) {
-                    enterLandscape(true)
-                } else if (isVerticalHold && isLandscapeMode && enteredLandscapeViaSensor) {
-                    exitLandscape()
+                if (orientation == ORIENTATION_UNKNOWN) return
+                val isHorizontalHold = orientation in 70..110 || orientation in 250..290
+                val isVerticalHold = orientation in 0..20 || orientation in 340..360
+
+                if (isHorizontalHold) {
+                    consecutiveHorizontalSamples++
+                    consecutiveVerticalSamples = 0
+                    if (consecutiveHorizontalSamples >= 2 && !isLandscapeMode && canSensorTriggerLandscape) {
+                        if (isSystemAutoRotateEnabled(context) &&
+                            hasDeviceMotionOrientationPermission(context, motionOrientationPermissionEnabled)
+                        ) {
+                            enterLandscape(true)
+                        }
+                    }
+                } else if (isVerticalHold) {
+                    consecutiveVerticalSamples++
+                    consecutiveHorizontalSamples = 0
+                    if (consecutiveVerticalSamples >= 2 && isLandscapeMode && enteredLandscapeViaSensor) {
+                        exitLandscape()
+                    }
+                } else {
+                    consecutiveHorizontalSamples = 0
+                    consecutiveVerticalSamples = 0
                 }
             }
         }
@@ -345,11 +411,37 @@ fun NowPlayingSheet(
         }
         onDispose {
             orientationListener.disable()
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
 
-    val effectiveLandscape = isLandscapeMode || configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    // 退出播放页时强制恢复竖屏与系统状态栏显示
+    DisposableEffect(activity) {
+        onDispose {
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            activity?.window?.let { win ->
+                WindowCompat.getInsetsController(win, view).show(
+                    WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars()
+                )
+            }
+        }
+    }
+
+    val effectiveLandscape = !showLyricView && (isLandscapeMode || configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
+
+    // 横屏模式下隐藏手机顶部状态栏与底部导航栏，实现纯粹全屏幕沉浸显示
+    DisposableEffect(effectiveLandscape, activity) {
+        val window = activity?.window
+        if (window != null) {
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            if (effectiveLandscape) {
+                controller.hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+            } else {
+                controller.show(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+            }
+        }
+        onDispose {}
+    }
 
     // 歌词页与横屏页屏幕常亮控制
     DisposableEffect(showLyricView, effectiveLandscape, lyricKeepScreenOn, isPlaying) {
@@ -486,60 +578,73 @@ fun NowPlayingSheet(
             accentSecondary = activeSecondaryAccent
         )
 
-        if (effectiveLandscape) {
-            LandscapePlayerPage(
-                song = song,
-                isPlaying = isPlaying,
-                currentPositionMs = effectiveLyricPositionMs,
-                rawPositionMs = currentPositionMs,
-                durationMs = durationMs,
-                playMode = playMode,
-                qualityLabel = currentQualityLabel,
-                lyricData = lyricData,
-                currentLyricIndex = currentLyricIndex,
-                isFavorite = isFavorite,
-                commentCount = commentCount,
-                showTranslation = showTranslation,
-                showTranslationButton = showTranslationBtn,
-                showPhonetic = showPhonetic,
-                showPhoneticButton = showPhoneticBtn,
-                lyricFontSize = lyricFontSize,
-                lyricTranslationScale = lyricTranslationScale,
-                lyricWordByWord = lyricWordByWord,
-                lyricBlurEnabled = lyricBlurEnabled,
-                lyricBlurIntensity = lyricBlurIntensity,
-                lyricLineSpacing = lyricLineSpacing,
-                lyricHighlightTheme = lyricHighlightTheme,
-                climaxStartMs = song.effectiveClimaxStartMs,
-                climaxEndMs = song.effectiveClimaxEndMs,
-                highlightClimaxRange = climaxModeEnabled && !climaxUnlockedForCurrentSong,
-                accentPrimary = activeAccentColor,
-                accentSecondary = activeSecondaryAccent,
-                onExitLandscape = exitLandscape,
-                onTogglePlay = onTogglePlay,
-                onPrevious = onPrevious,
-                onNext = onNext,
-                onSeekTo = onSeekTo,
-                onSeekToLyricLine = onSeekToLyricLine,
-                onToggleFavorite = onToggleFavorite,
-                onCyclePlayMode = onCyclePlayMode,
-                onOpenQueue = { showQueueSheet = true },
-                onOpenComments = onOpenComments,
-                onToggleTranslation = onToggleTranslation,
-                onTogglePhonetic = onTogglePhonetic,
-                onOpenLyricSettings = { showLyricSettingsDialog = true },
-                onQualityClick = { showQualityDialog = true }
-            )
-        } else {
-            // 2. 竖屏主体内容区：顶部状态栏留白适度上移，底部控件整体下移，使中部舞台与歌词预览更开阔
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .padding(start = 22.dp, end = 22.dp, top = 2.dp, bottom = 10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
+        AnimatedContent(
+            targetState = effectiveLandscape,
+            transitionSpec = {
+                (fadeIn(tween(320, easing = FastOutSlowInEasing)) +
+                    scaleIn(initialScale = 0.94f, animationSpec = tween(320, easing = FastOutSlowInEasing)))
+                    .togetherWith(
+                        fadeOut(tween(220, easing = FastOutSlowInEasing)) +
+                            scaleOut(targetScale = 0.94f, animationSpec = tween(220, easing = FastOutSlowInEasing))
+                    )
+            },
+            modifier = Modifier.fillMaxSize(),
+            label = "PortraitLandscapeTransition"
+        ) { isLandscapeStage ->
+            if (isLandscapeStage) {
+                LandscapePlayerPage(
+                    song = song,
+                    isPlaying = isPlaying,
+                    currentPositionMs = effectiveLyricPositionMs,
+                    rawPositionMs = currentPositionMs,
+                    durationMs = durationMs,
+                    playMode = playMode,
+                    coverStyle = coverStyle,
+                    rotationProvider = { rotationAnim.value % 360f },
+                    playerBackgroundStyle = playerBackgroundStyle,
+                    lyricData = lyricData,
+                    currentLyricIndex = currentLyricIndex,
+                    isFavorite = isFavorite,
+                    showTranslation = showTranslation,
+                    showTranslationButton = showTranslationBtn,
+                    showPhonetic = showPhonetic,
+                    showPhoneticButton = showPhoneticBtn,
+                    lyricFontSize = lyricFontSize,
+                    lyricTranslationScale = lyricTranslationScale,
+                    lyricWordByWord = lyricWordByWord,
+                    lyricBlurEnabled = lyricBlurEnabled,
+                    lyricBlurIntensity = lyricBlurIntensity,
+                    lyricLineSpacing = lyricLineSpacing,
+                    lyricHighlightTheme = lyricHighlightTheme,
+                    climaxStartMs = song.effectiveClimaxStartMs,
+                    climaxEndMs = song.effectiveClimaxEndMs,
+                    highlightClimaxRange = climaxModeEnabled && !climaxUnlockedForCurrentSong,
+                    accentPrimary = activeAccentColor,
+                    accentSecondary = activeSecondaryAccent,
+                    onExitLandscape = exitLandscape,
+                    onTogglePlay = onTogglePlay,
+                    onPrevious = onPrevious,
+                    onNext = onNext,
+                    onSeekTo = onSeekTo,
+                    onSeekToLyricLine = onSeekToLyricLine,
+                    onToggleFavorite = onToggleFavorite,
+                    onCyclePlayMode = onCyclePlayMode,
+                    onOpenQueue = { showQueueSheet = true },
+                    onToggleTranslation = onToggleTranslation,
+                    onTogglePhonetic = onTogglePhonetic,
+                    onOpenLyricSettings = { showLyricSettingsDialog = true },
+                    onSelectPlayerBackgroundStyle = onSelectPlayerBackgroundStyle
+                )
+            } else {
+                // 2. 竖屏主体内容区：顶部返回按钮与歌名区域适度上移，使视觉重心更紧凑自然
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .padding(start = 22.dp, end = 22.dp, top = 0.dp, bottom = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -692,7 +797,7 @@ fun NowPlayingSheet(
         }
     }
 
-    // 播放队列弹窗
+    // 播放队列弹窗（融合封面动态取色）
     if (showQueueSheet) {
         QueueBottomSheet(
             queue = queue,
@@ -701,6 +806,8 @@ fun NowPlayingSheet(
             activeQueueId = activeQueueId,
             playMode = playMode,
             climaxModeEnabled = climaxModeEnabled,
+            accentColor = activeAccentColor,
+            secondaryAccentColor = activeSecondaryAccent,
             onToggleClimaxMode = onToggleClimaxMode,
             onCyclePlayMode = onCyclePlayMode,
             onSwitchRecentQueue = onSwitchRecentQueue,
@@ -717,7 +824,7 @@ fun NowPlayingSheet(
         )
     }
 
-    // 更多设置抽屉（无边框现代卡片设计）
+    // 更多设置抽屉（含歌手主页、所属专辑直达入口）
     if (showMoreControlSheet) {
         PlayerMoreControlSheet(
             song = song,
@@ -752,6 +859,14 @@ fun NowPlayingSheet(
             onOpenSongDetail = {
                 showMoreControlSheet = false
                 showDetailSheet = true
+            },
+            onOpenArtist = {
+                showMoreControlSheet = false
+                onOpenArtist(song)
+            },
+            onOpenAlbum = {
+                showMoreControlSheet = false
+                onOpenAlbum(song)
             },
             onDismiss = { showMoreControlSheet = false }
         )
@@ -1145,13 +1260,15 @@ private fun RedesignedTopHeaderBar(
     val isGoldQuality = qualityLabel.startsWith("Hi-Res", ignoreCase = true)
 
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .offset(y = (-6).dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(36.dp),
+                .height(32.dp),
             contentAlignment = Alignment.Center
         ) {
             IconButton(
@@ -1204,7 +1321,7 @@ private fun RedesignedTopHeaderBar(
             exit = fadeOut(tween(150))
         ) {
             Row(
-                modifier = Modifier.padding(top = 4.dp),
+                modifier = Modifier.padding(top = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
@@ -1627,63 +1744,69 @@ private fun RedesignedCommentCountButton(
     Box(
         modifier = Modifier
             .height(44.dp)
-            .widthIn(min = 44.dp)
-            .clip(RoundedCornerShape(22.dp))
+            .widthIn(min = 52.dp)
             .softClickable(
                 pressScale = 0.86f,
                 pressAlpha = 0.78f,
                 onClick = onClick
             )
-            .padding(horizontal = 6.dp),
-        contentAlignment = Alignment.Center
+            .padding(horizontal = 4.dp),
+        contentAlignment = Alignment.CenterStart
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Canvas(modifier = Modifier.size(24.dp)) {
-                val w = size.width
-                val h = size.height
-                val stroke = 2.2.dp.toPx()
-                val c = Color.White.copy(alpha = 0.88f)
-                val bubblePath = Path().apply {
-                    moveTo(w * 0.20f, h * 0.20f)
-                    lineTo(w * 0.80f, h * 0.20f)
-                    quadraticBezierTo(w * 0.90f, h * 0.20f, w * 0.90f, h * 0.34f)
-                    lineTo(w * 0.90f, h * 0.64f)
-                    quadraticBezierTo(w * 0.90f, h * 0.76f, w * 0.78f, h * 0.76f)
-                    lineTo(w * 0.44f, h * 0.76f)
-                    lineTo(w * 0.24f, h * 0.90f)
-                    lineTo(w * 0.26f, h * 0.76f)
-                    lineTo(w * 0.20f, h * 0.76f)
-                    quadraticBezierTo(w * 0.10f, h * 0.76f, w * 0.10f, h * 0.64f)
-                    lineTo(w * 0.10f, h * 0.34f)
-                    quadraticBezierTo(w * 0.10f, h * 0.20f, w * 0.20f, h * 0.20f)
-                    close()
-                }
-                drawPath(
-                    path = bubblePath,
-                    color = c,
-                    style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                )
-                drawCircle(accentColor, radius = 1.6.dp.toPx(), center = Offset(w * 0.36f, h * 0.48f))
-                drawCircle(c, radius = 1.6.dp.toPx(), center = Offset(w * 0.50f, h * 0.48f))
-                drawCircle(c, radius = 1.6.dp.toPx(), center = Offset(w * 0.64f, h * 0.48f))
+        // 气泡主图标偏左下放置，为右上角数字角标留出独立无遮挡空间
+        Canvas(
+            modifier = Modifier
+                .size(23.dp)
+                .align(if (countText.isNotEmpty()) Alignment.CenterStart else Alignment.Center)
+                .offset(y = if (countText.isNotEmpty()) 2.dp else 0.dp)
+        ) {
+            val w = size.width
+            val h = size.height
+            val stroke = 2.1.dp.toPx()
+            val c = Color.White.copy(alpha = 0.90f)
+            val bubblePath = Path().apply {
+                moveTo(w * 0.20f, h * 0.22f)
+                lineTo(w * 0.80f, h * 0.22f)
+                quadraticBezierTo(w * 0.90f, h * 0.22f, w * 0.90f, h * 0.36f)
+                lineTo(w * 0.90f, h * 0.65f)
+                quadraticBezierTo(w * 0.90f, h * 0.77f, w * 0.78f, h * 0.77f)
+                lineTo(w * 0.44f, h * 0.77f)
+                lineTo(w * 0.24f, h * 0.91f)
+                lineTo(w * 0.26f, h * 0.77f)
+                lineTo(w * 0.20f, h * 0.77f)
+                quadraticBezierTo(w * 0.10f, h * 0.77f, w * 0.10f, h * 0.65f)
+                lineTo(w * 0.10f, h * 0.36f)
+                quadraticBezierTo(w * 0.10f, h * 0.22f, w * 0.20f, h * 0.22f)
+                close()
             }
+            drawPath(
+                path = bubblePath,
+                color = c,
+                style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            )
+            drawCircle(accentColor, radius = 1.5.dp.toPx(), center = Offset(w * 0.36f, h * 0.49f))
+            drawCircle(c, radius = 1.5.dp.toPx(), center = Offset(w * 0.50f, h * 0.49f))
+            drawCircle(c, radius = 1.5.dp.toPx(), center = Offset(w * 0.64f, h * 0.49f))
+        }
 
-            if (countText.isNotEmpty()) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF121A2B).copy(alpha = 0.92f),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .offset(x = 12.dp, y = (-6).dp)
-                ) {
-                    Text(
-                        text = countText,
-                        color = Color.White.copy(alpha = 0.92f),
-                        fontSize = 9.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        modifier = Modifier.padding(horizontal = 4.5.dp, vertical = 1.dp)
-                    )
-                }
+        // 右上角悬浮无遮挡角标（不遮盖评论气泡主体，也不被父容器裁切）
+        if (countText.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(7.dp),
+                color = accentColor.copy(alpha = 0.24f),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 17.dp, top = 2.dp)
+            ) {
+                Text(
+                    text = countText,
+                    color = Color.White,
+                    fontSize = 9.sp,
+                    lineHeight = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 4.5.dp, vertical = 1.5.dp)
+                )
             }
         }
     }
@@ -2141,11 +2264,12 @@ private fun FullWidthLyricPreviewSection(
         Text(
             text = subText.ifBlank { "♪ • • •" },
             style = MaterialTheme.typography.bodySmall.copy(
-                color = Color.White.copy(alpha = 0.56f),
+                color = Color.White.copy(alpha = 0.62f),
                 fontSize = 13.5.sp,
+                lineHeight = 18.5.sp,
                 fontWeight = FontWeight.Medium
             ),
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth()
         )
@@ -2790,7 +2914,7 @@ private fun PlumpMoreDotsCanvasIcon(
  * 重绘控件 1：圆润饱满播放模式切换按钮
  */
 @Composable
-private fun AnimatedPlayModeButton(
+internal fun AnimatedPlayModeButton(
     playMode: PlayMode,
     accentColor: Color = ConceptCyanAccent,
     onClick: () -> Unit
@@ -2938,7 +3062,7 @@ private fun AnimatedPlayModeButton(
  * 重绘控件 2 & 4：圆润饱满上一首 / 下一首按钮（饱满大圆角三角 + 圆润胶囊竖柱）
  */
 @Composable
-private fun RedrawnSkipButton(
+internal fun RedrawnSkipButton(
     isNext: Boolean,
     onClick: () -> Unit
 ) {
@@ -3012,7 +3136,7 @@ private fun RedrawnSkipButton(
  * - 采用圆润饱满的胖三角与胖胶囊暂停柱。
  */
 @Composable
-private fun AnimatedPlayPauseCenterButton(
+internal fun AnimatedPlayPauseCenterButton(
     isPlaying: Boolean,
     accentPrimary: Color = ConceptPrimary,
     accentSecondary: Color = ConceptCyanAccent,
@@ -3143,7 +3267,7 @@ private fun AnimatedPlayPauseCenterButton(
  * 重绘控件 5：圆润饱满播放列表/队列按钮
  */
 @Composable
-private fun RedrawnQueueButton(
+internal fun RedrawnQueueButton(
     accentColor: Color = ConceptCyanAccent,
     onClick: () -> Unit
 ) {
@@ -3385,6 +3509,10 @@ private fun RedesignedDedicatedLyricPage(
                                         Modifier.blur(depthBlurVal.dp)
                                     } else Modifier
                                 )
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    if (isScrubTarget) activePrimaryColor.copy(alpha = 0.10f) else Color.Transparent
+                                )
                                 .softClickable(
                                     pressScale = 0.98f,
                                     onClick = {
@@ -3392,7 +3520,7 @@ private fun RedesignedDedicatedLyricPage(
                                         onLineClick(index)
                                     }
                                 )
-                                .padding(vertical = lyricLineSpacing.dp, horizontal = 4.dp)
+                                .padding(vertical = lyricLineSpacing.dp, horizontal = 8.dp)
                         ) {
                             Column(
                                 horizontalAlignment = horizontalAlignment,
@@ -3400,18 +3528,20 @@ private fun RedesignedDedicatedLyricPage(
                             ) {
                                 val phoneticText = line.phonetic
                                 if (showPhonetic && showPhoneticButton && !phoneticText.isNullOrBlank()) {
+                                    val phoneticFontSize = (lyricFontSize * lyricTranslationScale * 0.86f).coerceAtLeast(11.5f)
                                     Text(
                                         text = phoneticText,
                                         style = MaterialTheme.typography.labelSmall.copy(
-                                            color = if (isCurrent) activePrimaryColor.copy(alpha = 0.90f) else Color.White.copy(alpha = 0.36f),
-                                            fontSize = (lyricFontSize * lyricTranslationScale * 0.86f).coerceAtLeast(11f).sp,
+                                            color = if (isCurrent) activePrimaryColor.copy(alpha = 0.90f) else Color.White.copy(alpha = 0.38f),
+                                            fontSize = phoneticFontSize.sp,
+                                            lineHeight = (phoneticFontSize * 1.38f).sp,
                                             fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
                                             textAlign = textAlign,
                                             letterSpacing = 0.4.sp
                                         ),
                                         modifier = Modifier.fillMaxWidth()
                                     )
-                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Spacer(modifier = Modifier.height(4.dp))
                                 }
 
                                 if (isCurrent && line.hasWordTiming && lyricWordByWord) {
@@ -3519,17 +3649,19 @@ private fun RedesignedDedicatedLyricPage(
 
                                 val trans = line.translation
                                 if (showTranslation && showTranslationButton && !trans.isNullOrBlank()) {
-                                    Spacer(modifier = Modifier.height(5.dp))
+                                    val transFontSize = (lyricFontSize * lyricTranslationScale).coerceAtLeast(13f)
+                                    Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = trans,
                                         style = MaterialTheme.typography.bodyMedium.copy(
                                             color = when {
-                                                isCurrent -> activePrimaryColor.copy(alpha = 0.88f)
-                                                isScrubTarget -> Color.White.copy(alpha = 0.72f)
-                                                distance == 1 -> Color.White.copy(alpha = 0.44f)
-                                                else -> Color.White.copy(alpha = 0.22f)
+                                                isCurrent -> activePrimaryColor.copy(alpha = 0.90f)
+                                                isScrubTarget -> Color.White.copy(alpha = 0.78f)
+                                                distance == 1 -> Color.White.copy(alpha = 0.48f)
+                                                else -> Color.White.copy(alpha = 0.24f)
                                             },
-                                            fontSize = (lyricFontSize * lyricTranslationScale).coerceAtLeast(12f).sp,
+                                            fontSize = transFontSize.sp,
+                                            lineHeight = (transFontSize * 1.42f).sp,
                                             fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
                                             textAlign = textAlign
                                         ),
@@ -3541,7 +3673,8 @@ private fun RedesignedDedicatedLyricPage(
                     }
                 }
 
-                // 手动滑动歌词时的交互跳转时间尺
+                // 手动滑动歌词时的「双翼渐隐中空导引线 (Split-Wing Hollow Timeline)」：
+                // 左右对称全宽对齐，中央歌词区域 100% 留空不遮挡文字，仅在两侧翼展示渐隐光束与时间/播放胶囊
                 androidx.compose.animation.AnimatedVisibility(
                     visible = isUserScrubbing && scrubLineIndex in lyricData.lines.indices,
                     enter = fadeIn(tween(160)),
@@ -3549,58 +3682,98 @@ private fun RedesignedDedicatedLyricPage(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .fillMaxWidth()
-                        .padding(end = 52.dp)
                 ) {
                     val targetTimeMs = lyricData.lines.getOrNull(scrubLineIndex)?.startTimeMs ?: 0L
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color(0xD9101726),
-                            contentColor = Color.White
-                        ) {
-                            Text(
-                                text = formatDuration(targetTimeMs),
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        // 左翼：磨砂时间胶囊 + 向内渐隐短光束
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(9.dp),
+                                color = Color(0xD90E1624),
+                                contentColor = Color.White,
+                                modifier = Modifier.border(
+                                    width = 0.8.dp,
+                                    color = activePrimaryColor.copy(alpha = 0.45f),
+                                    shape = RoundedCornerShape(9.dp)
+                                )
+                            ) {
+                                Text(
+                                    text = formatDuration(targetTimeMs),
+                                    color = activePrimaryColor,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .width(26.dp)
+                                    .height(1.5.dp)
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            listOf(
+                                                activePrimaryColor.copy(alpha = 0.68f),
+                                                Color.Transparent
+                                            )
+                                        )
+                                    )
                             )
                         }
-                        HorizontalDivider(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 8.dp),
-                            thickness = 0.8.dp,
-                            color = activePrimaryColor.copy(alpha = 0.45f)
-                        )
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = activePrimaryColor,
-                            modifier = Modifier.softCardClickable {
-                                isUserScrubbing = false
-                                onLineClick(scrubLineIndex)
-                            }
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+
+                        // 中央完全留空，绝不穿过或遮挡任何歌词文字
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        // 右翼：向内渐隐短光束 + 灵动跳转播放胶囊
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .width(26.dp)
+                                    .height(1.5.dp)
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            listOf(
+                                                Color.Transparent,
+                                                activePrimaryColor.copy(alpha = 0.68f)
+                                            )
+                                        )
+                                    )
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(11.dp),
+                                color = activePrimaryColor.copy(alpha = 0.24f),
+                                modifier = Modifier
+                                    .border(
+                                        width = 0.9.dp,
+                                        color = activePrimaryColor.copy(alpha = 0.65f),
+                                        shape = RoundedCornerShape(11.dp)
+                                    )
+                                    .softCardClickable(shape = RoundedCornerShape(11.dp)) {
+                                        isUserScrubbing = false
+                                        onLineClick(scrubLineIndex)
+                                    }
                             ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.PlayArrow,
-                                    contentDescription = "跳转播放",
-                                    tint = Color(0xFF081018),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(2.dp))
-                                Text(
-                                    text = "播放",
-                                    color = Color(0xFF081018),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.PlayArrow,
+                                        contentDescription = "跳转播放",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Text(
+                                        text = "播放",
+                                        color = Color.White,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
                             }
                         }
                     }

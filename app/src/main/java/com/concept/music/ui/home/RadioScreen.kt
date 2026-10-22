@@ -52,6 +52,7 @@ import com.concept.music.data.model.FmChannel
 import com.concept.music.data.model.Song
 import com.concept.music.ui.components.PlayingAudioWaveIndicator
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptCoralAccent
 import com.concept.music.ui.theme.ConceptCyanAccent
@@ -254,9 +255,10 @@ fun RadioScreen(
         ) { innerPadding ->
             val currentCatIdx = categories.indexOf(selectedCategory).coerceAtLeast(0)
             val radioListState = rememberLazyListState()
-            val showRadioScrollTop by remember {
+            val showRadioScrollTop by remember(stationSongs.size) {
                 derivedStateOf {
-                    stationSongs.size > 30 && radioListState.firstVisibleItemIndex > 4
+                    radioListState.firstVisibleItemIndex > 2 ||
+                        (radioListState.firstVisibleItemIndex == 2 && radioListState.firstVisibleItemScrollOffset > 100)
                 }
             }
             Box(
@@ -664,7 +666,7 @@ fun RadioScreen(
                         }
                     }
                 } else {
-                    itemsIndexed(stationSongs, key = { idx, s -> "fm_song_${s.id}_$idx" }) { index, song ->
+                    itemsIndexed(stationSongs, key = { idx, s -> "fm_song_${s.id}_$idx" }, contentType = { _, _ -> "song_row" }) { index, song ->
                         SongItemRow(
                             song = song,
                             orderIndex = index + 1,
@@ -681,7 +683,7 @@ fun RadioScreen(
                 accentColor = currentCategoryAccent,
                 onClick = {
                     scope.launch {
-                        radioListState.animateScrollToItem(0)
+                        radioListState.smoothFastScrollToItem(0)
                     }
                 },
                 modifier = Modifier
