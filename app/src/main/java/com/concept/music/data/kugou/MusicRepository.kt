@@ -1199,7 +1199,7 @@ class MusicApiRepository(
             val bestKbps = when {
                 hasHiRes && resKbps > 0 -> resKbps
                 hasFlac && sqKbps > 0 -> sqKbps
-                has320 -> 320
+                has320 -> hqKbps.takeIf { it > 0 } ?: 320
                 stdKbps > 0 -> stdKbps
                 effectiveDurMs >= 15_000L && bestSize > 0L -> ((bestSize * 8L) / effectiveDurMs).toInt()
                 else -> s.bitrateKbps
@@ -2517,7 +2517,7 @@ class MusicApiRepository(
                         } else baseOrig
                     }
                 }
-                if (searchIntent == SearchIntent.ALBUM && primaryArtistItem != null) listOf(primaryArtistItem!!) else emptyList()
+                if (searchIntent == SearchIntent.ALBUM && primaryArtistItem != null) listOf(primaryArtistItem) else emptyList()
             }
             else -> emptyList()
         }
@@ -4009,9 +4009,11 @@ class MusicApiRepository(
         }
 
         // 严格排序：1. 发行时间降序（最新日期在前） 2. 相同发行时间按歌名首字母升序 (A -> Z)
-        finalVerifiedSongs
+        val sorted = finalVerifiedSongs
             .distinctBy { it.hash.ifBlank { it.id }.lowercase() }
             .sortedWith(newSongExpressComparator)
+        val pageOffset = ((page - 1).coerceAtLeast(0) * 10).takeIf { it < sorted.size } ?: 0
+        sorted.drop(pageOffset).take(size.coerceAtLeast(1))
     }
 
     // =========================================================================
@@ -5246,6 +5248,8 @@ class MusicApiRepository(
                     "userid" to (session.userId.toLongOrNull() ?: session.userId),
                     "type" to 0,
                     "id_type" to 0,
+                    "page" to page.coerceAtLeast(1),
+                    "pagesize" to pageSize.coerceAtLeast(20),
                     "p" to pEncrypted
                 ),
                 headers = mapOf("x-router" to "relationuser.kugou.com"),
@@ -6767,7 +6771,10 @@ class MusicApiRepository(
                 put(AudioQuality.HI_RES, SongStreamSpec(resHash, resSize, resK, "flac"))
             }
         }
-        val resolvedSongId = audioId.takeIf { it > 0 }?.toString() ?: primaryHash
+        val resolvedSongId = audioId.takeIf { it > 0 }?.toString()
+            ?: primaryHash.takeIf { it.isNotBlank() }
+            ?: albumAudioId.takeIf { it > 0 }?.toString()
+            ?: "${title}_${artist}".hashCode().toUInt().toString()
         cacheSongTechMeta(
             keys = listOf(resolvedSongId, primaryHash, stdHash, hqHash, sqHash, resHash),
             meta = SongTechMeta(
@@ -6822,7 +6829,8 @@ class MusicApiRepository(
             ?: session?.userId?.let { "乐迷_$it" }
             ?: "概念版乐迷"
         val userAvatar = profile?.avatarUrl ?: ""
-        val commentId = "c_${song.id.ifBlank { "song" }}_${System.currentTimeMillis()}"
+        var commentId = "c_${song.id.ifBlank { "song" }}_${System.currentTimeMillis()}"
+        var resolvedIpLocation = ""
 
         if (session != null && !session.token.isNullOrBlank()) {
             runCatching {
@@ -6831,18 +6839,29 @@ class MusicApiRepository(
                 val params = mutableMapOf(
                     "mixsongid" to mixSongId.toString(),
                     "content" to content,
+                    "code" to "fc4be23b4e972707f36b8a828a93ba8a",
+                    "extdata" to song.hash.trim().lowercase().ifBlank { "0" },
                     "token" to session.token,
                     "userid" to session.userId
                 )
                 if (replyToCommentId != null) {
                     params["cmtid"] = replyToCommentId
                 }
-                transport.call(
+                val resp = transport.call(
                     path = path,
                     method = "POST",
                     query = params,
                     session = session
                 )
+                val d = resp.data.obj("data") ?: resp.data
+                val serverId = d.text("cmtid") ?: d.text("reply_id") ?: d.text("id")
+                if (!serverId.isNullOrBlank()) {
+                    commentId = serverId
+                }
+                val serverLoc = extractCommentIpLocation(d, null)
+                if (serverLoc.isNotBlank()) {
+                    resolvedIpLocation = serverLoc
+                }
             }
         }
 
@@ -6856,7 +6875,7 @@ class MusicApiRepository(
             likeCount = 0,
             isHot = false,
             vipLevel = if (!session?.vipToken.isNullOrBlank()) 6 else 1,
-            ipLocation = "广东",
+            ipLocation = resolvedIpLocation,
             parentId = replyToCommentId,
             rootId = replyToCommentId,
             replyUserName = replyToUserName,

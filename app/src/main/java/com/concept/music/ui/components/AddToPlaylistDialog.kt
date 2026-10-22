@@ -6,7 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
@@ -199,7 +199,7 @@ fun AddToPlaylistDialog(
                             .fillMaxWidth()
                             .weight(1f)
                     ) {
-                        items(customPlaylists, key = { it.id }) { pl ->
+                        itemsIndexed(customPlaylists, key = { idx, pl -> "add_pl_${pl.id}_${pl.listId}_$idx" }) { _, pl ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()

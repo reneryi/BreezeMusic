@@ -10,7 +10,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -220,9 +219,14 @@ fun CommentsScreen(
                                     }
                                     Spacer(modifier = Modifier.width(10.dp))
                                 }
+                                val displayTotal = maxOf(totalCount, comments.size)
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = song?.title ?: "歌曲评论",
+                                        text = if (song != null) {
+                                            if (displayTotal > 0) "${song.title} (${formatCommentLikeCount(displayTotal)})" else song.title
+                                        } else {
+                                            if (displayTotal > 0) "歌曲评论 (${formatCommentLikeCount(displayTotal)})" else "歌曲评论"
+                                        },
                                         style = MaterialTheme.typography.titleMedium.copy(
                                             fontWeight = FontWeight.Bold,
                                             color = primaryText,
@@ -410,11 +414,11 @@ fun CommentsScreen(
                                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                items(
+                                itemsIndexed(
                                     items = comments,
-                                    key = { it.id },
-                                    contentType = { "root_comment_card" }
-                                ) { comment ->
+                                    key = { idx, c -> "cmt_${c.id}_$idx" },
+                                    contentType = { _, _ -> "root_comment_card" }
+                                ) { _, comment ->
                                     // 若有子评论但尚未拉取，自动静默拉取前3条平级回复用于展示
                                     LaunchedEffect(comment.id, comment.replyCount, comment.replies.size) {
                                         if (comment.replyCount > 0 && comment.replies.isEmpty()) {
@@ -732,7 +736,7 @@ fun CommentFloorDetailScreen(
                 // 3. 带分支点连线的完整平级回复流
                 itemsIndexed(
                     items = floorReplies,
-                    key = { _, r -> r.id },
+                    key = { idx, r -> "reply_${r.id}_$idx" },
                     contentType = { _, _ -> "floor_reply_node" }
                 ) { index, reply ->
                     TreeBranchReplyNode(

@@ -155,13 +155,13 @@ class PlaylistManagementTest {
             fileId = 998877L
         )
 
-        // 1. 添加单曲到歌单
+        // 1. 添加单曲到歌单（对齐 KuGou 云歌单标准「歌手 - 歌名」格式）
         val addSuccess = repo.addSongToPlaylist(1001L, song)
         assertTrue(addSuccess)
         assertNotNull(addSongBody)
         assertEquals(1001L, addSongBody?.get("listid")?.asLong)
         val songItemInAdd = addSongBody?.getAsJsonArray("data")?.get(0)?.asJsonObject
-        assertEquals("晴天", songItemInAdd?.get("name")?.asString)
+        assertEquals("周杰伦 - 晴天", songItemInAdd?.get("name")?.asString)
         assertEquals(song.hash, songItemInAdd?.get("hash")?.asString)
         assertEquals(12345678L, songItemInAdd?.get("mixsongid")?.asLong)
 

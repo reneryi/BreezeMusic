@@ -244,7 +244,6 @@ internal fun LyricSettingsDialog(
                                 themeAccent = themeAccent,
                                 cardBg = cardBg,
                                 textPrimary = textPrimary,
-                                textSecondary = textSecondary,
                                 onSetFontSize = onSetFontSize,
                                 onSetTranslationScale = onSetTranslationScale,
                                 onSetLineSpacing = onSetLineSpacing,
@@ -293,7 +292,6 @@ internal fun LyricSettingsDialog(
                         themeAccent = themeAccent,
                         cardBg = cardBg,
                         textPrimary = textPrimary,
-                        textSecondary = textSecondary,
                         onSetFontSize = onSetFontSize,
                         onSetTranslationScale = onSetTranslationScale,
                         onSetLineSpacing = onSetLineSpacing,
@@ -489,7 +487,6 @@ private fun LyricSlidersCompactCard(
     themeAccent: Color,
     cardBg: Color,
     textPrimary: Color,
-    textSecondary: Color,
     onSetFontSize: (Float) -> Unit,
     onSetTranslationScale: (Float) -> Unit,
     onSetLineSpacing: (Float) -> Unit,
@@ -906,8 +903,6 @@ fun QueueBottomSheet(
                             active = showRecentDeckPage,
                             count = recentQueues.size.coerceAtMost(5),
                             accentColor = accentColor,
-                            textPrimary = textPrimary,
-                            cardBg = cardBg,
                             onClick = { showRecentDeckPage = !showRecentDeckPage }
                         )
 
@@ -915,7 +910,6 @@ fun QueueBottomSheet(
                         QueueUnifiedPlayModeSmallButton(
                             playMode = playMode,
                             accentColor = accentColor,
-                            cardBg = cardBg,
                             onClick = {
                                 onCyclePlayMode()
                                 val nextLabel = when (playMode) {
@@ -1103,13 +1097,20 @@ fun QueueBottomSheet(
                                     }
                                 }
                             } else {
+                                val queueItemKeys = remember(queue) {
+                                    val seen = HashSet<String>(queue.size)
+                                    queue.mapIndexed { idx, s ->
+                                        val base = "q_${s.id}_${s.hash}"
+                                        if (seen.add(base)) base else "${base}_dup_$idx"
+                                    }
+                                }
                                 LazyColumn(
                                     state = listState,
                                     modifier = Modifier.heightIn(max = if (isLandscape) 250.dp else 420.dp)
                                 ) {
                                     itemsIndexed(
                                         items = queue,
-                                        key = { _, item -> item.id },
+                                        key = { idx, item -> queueItemKeys.getOrElse(idx) { "q_${item.id}_$idx" } },
                                         contentType = { _, _ -> "queue_song_row" }
                                     ) { index, item ->
                                         val isPlayingThis = index == currentIndex
@@ -1324,8 +1325,6 @@ private fun QueueRecentStackIconButton(
     active: Boolean,
     count: Int,
     accentColor: Color,
-    textPrimary: Color,
-    cardBg: Color,
     onClick: () -> Unit
 ) {
     Surface(
@@ -1385,7 +1384,6 @@ private fun QueueRecentStackIconButton(
 private fun QueueUnifiedPlayModeSmallButton(
     playMode: PlayMode,
     accentColor: Color,
-    cardBg: Color,
     onClick: () -> Unit
 ) {
     val label = when (playMode) {

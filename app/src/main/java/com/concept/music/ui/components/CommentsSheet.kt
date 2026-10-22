@@ -2,12 +2,12 @@ package com.concept.music.ui.components
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Comment
+import androidx.compose.material.icons.automirrored.rounded.Comment
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.*
@@ -97,7 +97,7 @@ fun CommentsSheet(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        imageVector = Icons.Rounded.Comment,
+                        imageVector = Icons.AutoMirrored.Rounded.Comment,
                         contentDescription = null,
                         tint = ConceptPrimary,
                         modifier = Modifier.size(22.dp)
@@ -187,7 +187,7 @@ fun CommentsSheet(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
-                    items(comments, key = { it.id }, contentType = { "comment_sheet_card" }) { comment ->
+                    itemsIndexed(comments, key = { idx, c -> "sheet_cmt_${c.id}_$idx" }, contentType = { _, _ -> "comment_sheet_card" }) { _, comment ->
                         CommentCard(comment = comment)
                     }
 

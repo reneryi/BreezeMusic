@@ -394,6 +394,7 @@ data class AudioEffectState(
     val channelBalance: Float = 0f,          // -1f (左) ~ +1f (右) 声像平衡
     val antiClippingEnabled: Boolean = true, // 硬件级防破音数字限幅保护
     val equalLoudnessCompensation: Boolean = false, // 夜间小音量等响度听感曲线补偿 (Fletcher-Munson)
+    val volumeNormalizationEnabled: Boolean = true, // 跨曲目智能响度均衡
     val reverbMode: ReverbMode = ReverbMode.NONE,
     val bandLevels: List<Int> = listOf(0, 0, 0, 0, 0),
     val tenBandLevels: List<Int> = List(10) { 0 },
@@ -792,6 +793,11 @@ object AudioEffectManager {
         saveToPrefs()
     }
 
+    fun setVolumeNormalizationEnabled(enabled: Boolean) {
+        _state.value = _state.value.copy(volumeNormalizationEnabled = enabled)
+        saveToPrefs()
+    }
+
     fun setReverbMode(mode: ReverbMode) {
         _state.value = _state.value.copy(
             isEnabled = true,
@@ -931,6 +937,7 @@ object AudioEffectManager {
         val balance = p.getFloat("channel_balance_v2", 0f)
         val antiClip = p.getBoolean("anti_clip_v2", true)
         val eqLoudness = p.getBoolean("eq_loudness_comp_v2", false)
+        val volNorm = p.getBoolean("vol_norm_v2", true)
         val reverbName = p.getString("reverb_v2", defaultProf.reverb.name) ?: defaultProf.reverb.name
         val reverb = runCatching { ReverbMode.valueOf(reverbName) }.getOrDefault(ReverbMode.NONE)
         val bandsRaw = p.getString("bands_v2", null)
@@ -957,6 +964,7 @@ object AudioEffectManager {
             channelBalance = balance,
             antiClippingEnabled = antiClip,
             equalLoudnessCompensation = eqLoudness,
+            volumeNormalizationEnabled = volNorm,
             reverbMode = reverb,
             bandLevels = bands,
             tenBandLevels = restoredTenBands
@@ -983,6 +991,7 @@ object AudioEffectManager {
             .putFloat("channel_balance_v2", s.channelBalance)
             .putBoolean("anti_clip_v2", s.antiClippingEnabled)
             .putBoolean("eq_loudness_comp_v2", s.equalLoudnessCompensation)
+            .putBoolean("vol_norm_v2", s.volumeNormalizationEnabled)
             .putString("reverb_v2", s.reverbMode.name)
             .putString("bands_v2", serializeBands(s.bandLevels))
             .putString("ten_bands_v2", tenBandsSerialized)

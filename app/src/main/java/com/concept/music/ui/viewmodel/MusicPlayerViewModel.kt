@@ -135,6 +135,7 @@ data class PlayerUiState(
     val wifiOnlyLossless: Boolean = false,
     val pauseOnHeadsetDisconnect: Boolean = true,
     val autoPlayOnStartup: Boolean = false,
+    val commentTargetSong: Song? = null,
     val comments: List<SongComment> = emptyList(),
     val commentsLoading: Boolean = false,
     val commentsPage: Int = 1,
@@ -169,6 +170,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private var sleepTimerJob: Job? = null
     private var persistStateJob: Job? = null
     private var climaxFadeInJob: Job? = null
+    private var playPauseFadeJob: Job? = null
     private var lastClimaxSkipSongId: String = ""
     private var lastErrorRetrySongId: String = ""
     private var hasTriggeredStartupAutoPlay: Boolean = false
@@ -198,14 +200,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
-            when (playbackState) {
-                Player.STATE_BUFFERING -> {
-                    activePlayer?.volume = 0f
-                }
-                Player.STATE_READY -> {
-                    if (climaxFadeInJob?.isActive != true) {
-                        activePlayer?.volume = 1f
-                    }
+            if (playbackState == Player.STATE_READY) {
+                val st = mutableState.value
+                val inSleepFade = !st.sleepStopAfterCurrentSong && st.sleepTimerRemainingSec in 1L..5L
+                if (climaxFadeInJob?.isActive != true && playPauseFadeJob?.isActive != true && !inSleepFade) {
+                    activePlayer?.volume = 1f
                 }
             }
             syncPlayer()
@@ -242,7 +241,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-            currentSong?.let { ListeningGradeManager.onSongCompleted(it) }
+            currentSong?.let {
+                val playedMs = (System.currentTimeMillis() - songPlaybackStartTimestamp).coerceAtLeast(0L)
+                KugouCsccReporter.onSongEnd(it, playedMs)
+                ListeningGradeManager.onSongCompleted(it)
+            }
             if (mutableState.value.sleepPendingStopAtTrackEnd && mutableState.value.sleepTimerRemainingSec <= 0L) {
                 activePlayer?.pause()
                 activePlayer?.volume = 1f
@@ -271,6 +274,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             actualPlayQuality = playQuality,
             availableQualities = transitionedSong.effectiveQualities
         )
+        val updatedQueue = q.map { if (it.id == resolvedSong.id) resolvedSong else it }
         val transQualityLabel = when (playQuality) {
             AudioQuality.HI_RES -> "Hi-Res" + (if (transitionedSong.bitrateKbps > 0) " ${transitionedSong.bitrateKbps}k" else "")
             AudioQuality.LOSSLESS -> "SQ 无损" + (if (transitionedSong.bitrateKbps > 0) " ${transitionedSong.bitrateKbps}k" else "")
@@ -286,10 +290,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             activePlayer?.volume = 1f
         }
 
-        val updatedRecent = syncActiveQueueInRecent(q, newIdx, mutableState.value.activeQueueId, mutableState.value.recentQueues)
+        val updatedRecent = syncActiveQueueInRecent(updatedQueue, newIdx, mutableState.value.activeQueueId, mutableState.value.recentQueues)
         commentsJob?.cancel()
         mutableState.value = mutableState.value.copy(
             currentSong = resolvedSong,
+            playlistQueue = updatedQueue,
             currentQualityLabel = transQualityLabel,
             currentIndex = newIdx,
             recentQueues = updatedRecent.first,
@@ -298,6 +303,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             durationMs = resolvedSong.durationMs,
             climaxUnlockedForCurrentSong = false,
             songDetail = VipManager.music.songDetail(resolvedSong),
+            commentTargetSong = null,
             comments = emptyList(),
             commentCount = 0,
             commentsPage = 1,
@@ -307,7 +313,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         persistPlaybackStateAsync()
         loadLyric(resolvedSong)
         loadComments(isRefresh = true)
-        prefetchNextSong(q, newIdx)
+        prefetchNextSong(updatedQueue, newIdx)
     }
 
     init {
@@ -498,6 +504,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val savedClimaxMode = prefs.getBoolean("climax_mode_enabled", false)
         val savedCrossfade = prefs.getInt("crossfade_seconds", 2).coerceIn(0, 8)
         val savedVolNorm = prefs.getBoolean("volume_normalization", true)
+        com.concept.music.service.AudioEffectManager.setVolumeNormalizationEnabled(savedVolNorm)
         val savedWifiOnly = prefs.getBoolean("wifi_only_lossless", false)
         val savedPauseHeadset = prefs.getBoolean("pause_on_headset_disconnect", true)
         val savedAutoPlay = prefs.getBoolean("auto_play_on_startup", false)
@@ -707,6 +714,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             currentQualityLabel = initialQualityLabel,
             climaxUnlockedForCurrentSong = false,
             songDetail = VipManager.music.songDetail(song),
+            commentTargetSong = null,
             comments = emptyList(),
             commentCount = 0
         )
@@ -864,12 +872,45 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             playSong(state.currentSong, state.playlistQueue, seekToPositionMs = state.currentPositionMs)
             return
         }
+        playPauseFadeJob?.cancel()
+        val useSmoothFade = state.smoothPlayPauseFade && playerOverride == null
         if (player.isPlaying) {
-            player.pause()
-            persistPlaybackStateAsync()
+            if (useSmoothFade) {
+                playPauseFadeJob = viewModelScope.launch {
+                    val startVol = player.volume.coerceIn(0.15f, 1.0f)
+                    val steps = 4
+                    for (step in 1..steps) {
+                        activePlayer?.volume = (startVol * (1f - step * 0.22f)).coerceIn(0.06f, 1.0f)
+                        delay(28L)
+                    }
+                    activePlayer?.pause()
+                    activePlayer?.volume = 1f
+                    persistPlaybackStateAsync()
+                }
+            } else {
+                player.pause()
+                player.volume = 1f
+                persistPlaybackStateAsync()
+            }
         } else {
-            player.volume = 1f
-            player.play()
+            if (player.playbackState == Player.STATE_ENDED) {
+                player.seekTo(0)
+            }
+            if (useSmoothFade && climaxFadeInJob?.isActive != true) {
+                player.volume = 0.22f
+                player.play()
+                playPauseFadeJob = viewModelScope.launch {
+                    val steps = 5
+                    for (step in 1..steps) {
+                        delay(32L)
+                        activePlayer?.volume = (0.22f + 0.78f * (step.toFloat() / steps)).coerceIn(0.22f, 1.0f)
+                    }
+                    activePlayer?.volume = 1.0f
+                }
+            } else {
+                player.volume = 1f
+                player.play()
+            }
         }
     }
 
@@ -964,6 +1005,27 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val expectedPrevSong = queue.getOrNull(prevIndex) ?: return
 
         playSong(expectedPrevSong, queue)
+    }
+
+    /**
+     * 在保留当前播放队列的前提下立即播放指定歌曲（若不在队列中则插入到当前歌曲之后并立即播放，不清空原有队列）
+     */
+    fun playSongInCurrentQueue(song: Song) {
+        val state = mutableState.value
+        val currentQueue = state.playlistQueue
+        if (currentQueue.isEmpty()) {
+            playSong(song, listOf(song))
+            return
+        }
+        val existingIdx = currentQueue.indexOfFirst { it.id == song.id }
+        if (existingIdx != -1) {
+            playSong(song, currentQueue)
+        } else {
+            val mutableQueue = currentQueue.toMutableList()
+            val insertIdx = (state.currentIndex + 1).coerceIn(0, mutableQueue.size)
+            mutableQueue.add(insertIdx, song)
+            playSong(song, mutableQueue)
+        }
     }
 
     fun playNext(song: Song) {
@@ -1289,6 +1351,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     fun setVolumeNormalization(enabled: Boolean) {
         mutableState.value = mutableState.value.copy(volumeNormalization = enabled)
+        com.concept.music.service.AudioEffectManager.setVolumeNormalizationEnabled(enabled)
         persistPlaybackStateAsync()
     }
 
@@ -1353,6 +1416,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         prefs.edit().putBoolean("sleep_stop_after_song_pref", enabled).apply()
     }
 
+    private fun trimPrefetchedMediaItems() {
+        prefetchJob?.cancel()
+        activePlayer?.let { player ->
+            while (player.mediaItemCount > player.currentMediaItemIndex + 1) {
+                player.removeMediaItem(player.mediaItemCount - 1)
+            }
+        }
+    }
+
     fun setSleepTimer(minutes: Int, stopAfterCurrentSong: Boolean = mutableState.value.sleepStopAfterCurrentSong) {
         sleepTimerJob?.cancel()
         activePlayer?.volume = 1f
@@ -1364,10 +1436,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 sleepTimerRemainingSec = 0L,
                 sleepPendingStopAtTrackEnd = false
             )
+            prefetchNextSong(mutableState.value.playlistQueue, mutableState.value.currentIndex)
             return
         }
 
         if (minutes <= 0 && stopAfterCurrentSong) {
+            trimPrefetchedMediaItems()
             mutableState.value = mutableState.value.copy(
                 sleepTimerRemainingSec = 0L,
                 sleepStopAfterCurrentSong = true,
@@ -1403,6 +1477,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     sleepPendingStopAtTrackEnd = false
                 )
             } else {
+                trimPrefetchedMediaItems()
                 mutableState.value = mutableState.value.copy(
                     sleepTimerRemainingSec = 0L,
                     sleepPendingStopAtTrackEnd = true
@@ -1418,6 +1493,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             sleepTimerRemainingSec = 0L,
             sleepPendingStopAtTrackEnd = false
         )
+        prefetchNextSong(mutableState.value.playlistQueue, mutableState.value.currentIndex)
     }
 
     fun toggleClimaxMode() {
@@ -1479,6 +1555,39 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    /**
+     * 打开任意歌曲的评论页（不打断当前正在播放的歌曲，也不破坏当前播放队列）
+     */
+    fun openCommentsForSong(targetSong: Song?) {
+        val song = targetSong ?: mutableState.value.currentSong ?: return
+        val currentTarget = mutableState.value.commentTargetSong ?: mutableState.value.currentSong
+        val isSameTarget = currentTarget != null && (currentTarget.id == song.id || (song.hash.isNotBlank() && currentTarget.hash == song.hash))
+        mutableState.value = mutableState.value.copy(
+            commentTargetSong = if (song.id == mutableState.value.currentSong?.id) null else song,
+            comments = if (isSameTarget) mutableState.value.comments else emptyList(),
+            commentCount = if (isSameTarget) mutableState.value.commentCount else 0,
+            commentsPage = 1,
+            commentsHasMore = true
+        )
+        loadComments(isRefresh = true)
+    }
+
+    fun closeCommentsForTargetSong() {
+        if (mutableState.value.commentTargetSong != null) {
+            commentsJob?.cancel()
+            mutableState.value = mutableState.value.copy(
+                commentTargetSong = null,
+                comments = emptyList(),
+                commentCount = 0,
+                commentsPage = 1,
+                commentsHasMore = true
+            )
+            if (mutableState.value.currentSong != null) {
+                loadComments(isRefresh = true)
+            }
+        }
+    }
+
     fun setCommentType(type: String) {
         if (mutableState.value.commentType == type) return
         mutableState.value = mutableState.value.copy(
@@ -1491,7 +1600,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun loadComments(isRefresh: Boolean = false) {
-        val song = mutableState.value.currentSong ?: return
+        val song = mutableState.value.commentTargetSong ?: mutableState.value.currentSong ?: return
         if (!isRefresh && (mutableState.value.commentsLoading || !mutableState.value.commentsHasMore)) return
         if (isRefresh) {
             commentsJob?.cancel()
@@ -1508,7 +1617,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             )
             runCatching {
                 val list = VipManager.music.songComments(song, type = type, page = page, pageSize = 30)
-                val activeSong = mutableState.value.currentSong
+                val activeSong = mutableState.value.commentTargetSong ?: mutableState.value.currentSong
                 if (activeSong == null || (activeSong.id != targetSongId && activeSong.hash != targetSongHash)) {
                     return@launch
                 }
@@ -1537,7 +1646,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun loadCommentReplies(commentId: String) {
-        val song = mutableState.value.currentSong ?: return
+        val song = mutableState.value.commentTargetSong ?: mutableState.value.currentSong ?: return
         if (commentId.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
@@ -1564,7 +1673,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         replyToUserName: String? = null,
         onComplete: (Boolean) -> Unit = {}
     ) {
-        val song = mutableState.value.currentSong ?: return
+        val song = mutableState.value.commentTargetSong ?: mutableState.value.currentSong ?: return
         if (content.isBlank()) return
 
         viewModelScope.launch {
@@ -1629,7 +1738,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
         mutableState.value = mutableState.value.copy(comments = currentList)
-        val song = mutableState.value.currentSong
+        val song = mutableState.value.commentTargetSong ?: mutableState.value.currentSong
         val liked = targetNewLikeState
         if (song != null && liked != null) {
             viewModelScope.launch(Dispatchers.IO) {
@@ -1641,24 +1750,40 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private fun prefetchNextSong(queue: List<Song>, currentIndex: Int) {
         prefetchJob?.cancel()
         if (queue.isEmpty()) return
+        if (mutableState.value.sleepPendingStopAtTrackEnd && mutableState.value.sleepTimerRemainingSec <= 0L) return
         val nextIndex = getNextIndex(queue, currentIndex)
         if (nextIndex in queue.indices && nextIndex != currentIndex) {
             val nextSong = queue[nextIndex]
             prefetchJob = viewModelScope.launch(Dispatchers.IO) {
                 runCatching {
-                    val nextQuality = if (mutableState.value.preferredQuality in nextSong.effectiveQualities) {
-                        mutableState.value.preferredQuality
+                    val prefQuality = resolveNetworkAwarePreferredQuality(mutableState.value.preferredQuality)
+                    val useAccompany = mutableState.value.accompanyModeEnabled
+                    val nextQuality = if (prefQuality in nextSong.effectiveQualities) {
+                        prefQuality
                     } else nextSong.highestQuality
-                    val nextResult = VipManager.music.resolvePlayback(nextSong, nextQuality)
+                    val nextResult = VipManager.music.resolvePlayback(
+                        nextSong,
+                        nextQuality,
+                        useAccompaniment = useAccompany
+                    )
                     VipManager.lyric.getLyric(nextSong)
 
                     withContext(Dispatchers.Main) {
                         val player = activePlayer ?: return@withContext
-                        if (nextResult.url.isNotBlank() && mutableState.value.playMode != PlayMode.REPEAT_ONE) {
+                        val stNow = mutableState.value
+                        if (nextResult.url.isNotBlank() &&
+                            stNow.playMode != PlayMode.REPEAT_ONE &&
+                            !(stNow.sleepPendingStopAtTrackEnd && stNow.sleepTimerRemainingSec <= 0L)
+                        ) {
                             val nextMediaId = mediaId(nextSong)
+                            val resolvedQuality = nextResult.actualQuality
+                            val isTrulyHiRes = resolvedQuality == AudioQuality.HI_RES ||
+                                (nextSong.isHiRes && nextSong.hashHiRes.isNotBlank() && !nextSong.hashHiRes.equals(nextSong.hash320, ignoreCase = true))
                             val resolvedNextSong = nextSong.copy(
                                 playUrl = nextResult.url,
-                                actualPlayQuality = nextResult.actualQuality,
+                                actualPlayQuality = resolvedQuality,
+                                isLossless = nextSong.isLossless || resolvedQuality >= AudioQuality.LOSSLESS,
+                                isHiRes = isTrulyHiRes,
                                 bitrateKbps = nextResult.bitrateKbps,
                                 fileSizeByte = nextResult.fileSizeByte,
                                 climaxStartMs = nextResult.climaxStartMs.takeIf { it > 0L } ?: nextSong.climaxStartMs,
@@ -1890,9 +2015,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         activePlayingSong = null
         resolveJob?.cancel()
         lyricJob?.cancel()
+        commentsJob?.cancel()
         progressJob?.cancel()
         prefetchJob?.cancel()
         sleepTimerJob?.cancel()
+        climaxFadeInJob?.cancel()
+        playPauseFadeJob?.cancel()
         activePlayer?.removeListener(listener)
         controllerFuture?.let(MediaController::releaseFuture)
         super.onCleared()

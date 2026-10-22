@@ -174,7 +174,7 @@ internal fun formatPlayerCommentCount(count: Int): String {
  */
 internal fun shouldShowTranslationButton(song: Song, lyricData: LyricData): Boolean {
     val lines = lyricData.lines
-    if (lines.isEmpty()) return false
+    if (lines.isEmpty() || (song.id.isEmpty() && song.title.isEmpty())) return false
     val hasAnyTranslation = lyricData.hasTranslation || lines.any { !it.translation.isNullOrBlank() }
     if (!hasAnyTranslation) return false
 
@@ -204,7 +204,7 @@ internal fun shouldShowTranslationButton(song: Song, lyricData: LyricData): Bool
  */
 internal fun shouldShowPhoneticButton(song: Song, lyricData: LyricData): Boolean {
     val lines = lyricData.lines
-    if (lines.isEmpty()) return false
+    if (lines.isEmpty() || (song.id.isEmpty() && song.title.isEmpty())) return false
     return lyricData.hasPhonetic || lines.any { !it.phonetic.isNullOrBlank() }
 }
 
@@ -1257,7 +1257,22 @@ private fun RedesignedTopHeaderBar(
     onOpenSleepTimer: () -> Unit
 ) {
     val context = LocalContext.current
-    val outputRouteLabel = remember { detectAudioOutputRouteLabel(context) }
+    var outputRouteLabel by remember { mutableStateOf(detectAudioOutputRouteLabel(context)) }
+    DisposableEffect(context) {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        val callback = object : android.media.AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+                outputRouteLabel = detectAudioOutputRouteLabel(context)
+            }
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+                outputRouteLabel = detectAudioOutputRouteLabel(context)
+            }
+        }
+        am?.registerAudioDeviceCallback(callback, null)
+        onDispose {
+            am?.unregisterAudioDeviceCallback(callback)
+        }
+    }
     val isGoldQuality = qualityLabel.startsWith("Hi-Res", ignoreCase = true)
 
     Column(
@@ -1646,8 +1661,7 @@ private fun CoverPlayerPageContent(
             )
 
             PlayerActionIconButton(
-                onClick = onOpenAudioEffect,
-                contentDescription = "蝰蛇音效"
+                onClick = onOpenAudioEffect
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PlumpAudioWaveCanvasIcon(
@@ -1668,8 +1682,7 @@ private fun CoverPlayerPageContent(
             }
 
             PlayerActionIconButton(
-                onClick = onToggleDesktopLyric,
-                contentDescription = "桌面歌词"
+                onClick = onToggleDesktopLyric
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PlumpDesktopLyricCanvasIcon(
@@ -1691,8 +1704,7 @@ private fun CoverPlayerPageContent(
             }
 
             PlayerActionIconButton(
-                onClick = onEnterLandscape,
-                contentDescription = "横屏播放"
+                onClick = onEnterLandscape
             ) {
                 PlumpLandscapeModeCanvasIcon(
                     color = Color.White.copy(alpha = 0.88f),
@@ -1701,8 +1713,7 @@ private fun CoverPlayerPageContent(
             }
 
             PlayerActionIconButton(
-                onClick = onOpenMoreSheet,
-                contentDescription = "更多设置"
+                onClick = onOpenMoreSheet
             ) {
                 PlumpMoreDotsCanvasIcon(
                     color = Color.White.copy(alpha = 0.88f)
@@ -1842,7 +1853,6 @@ private fun PlumpLandscapeModeCanvasIcon(
 @Composable
 private fun PlayerActionIconButton(
     onClick: () -> Unit,
-    contentDescription: String,
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(

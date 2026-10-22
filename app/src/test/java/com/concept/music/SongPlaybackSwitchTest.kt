@@ -343,6 +343,39 @@ class SongPlaybackSwitchTest {
         assertEquals("song_1", fakePlayerHolder.currentMediaItem?.mediaId)
     }
 
+    @Test
+    fun testPlaySongInCurrentQueue_PreservesExistingQueueAndInsertsSong() = runTest(testDispatcher) {
+        val queue = listOf(song1, song2)
+        viewModel.playSong(song1, queue)
+        testScheduler.advanceUntilIdle()
+
+        // 在保持原队列 [song1, song2] 的情况下立即播放队列外的 song3
+        viewModel.playSongInCurrentQueue(song3)
+        testScheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("第三首歌", state.currentSong?.title)
+        assertEquals(3, state.playlistQueue.size)
+        assertEquals(listOf("song_1", "song_3", "song_2"), state.playlistQueue.map { it.id })
+        assertEquals(1, state.currentIndex)
+    }
+
+    @Test
+    fun testOpenCommentsForSong_DoesNotInterruptCurrentPlaybackOrWipeQueue() = runTest(testDispatcher) {
+        val queue = listOf(song1, song2)
+        viewModel.playSong(song1, queue)
+        testScheduler.advanceUntilIdle()
+
+        // 查看 song3 的评论，不应打断 song1 的播放或清空队列
+        viewModel.openCommentsForSong(song3)
+        testScheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("第一首歌", state.currentSong?.title)
+        assertEquals(2, state.playlistQueue.size)
+        assertEquals("song_3", state.commentTargetSong?.id)
+    }
+
     private class TestSessionStore : SessionStore {
         var rows = listOf(SavedAccount("user_1"))
         var activeKey: String? = "user_1"

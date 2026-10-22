@@ -28,11 +28,13 @@ import kotlin.math.sin
  * 在 Media3 解码管线中直接对 16-bit 立体声 PCM 采样帧执行：
  * 1. 左右声道声像平衡 (Stereo Channel Balance)
  * 2. M/S 立体声场宽度扩展与 3D 环绕声像微旋补偿
- * 3. 智能响度均衡与硬件级软削波限幅保护 (Soft-Knee Anti-Clipping Limiter)
+ * 3. 智能跨曲目响度均衡 (Volume Normalization) 与硬件级软削波限幅保护 (Soft-Knee Anti-Clipping Limiter)
  */
 @OptIn(UnstableApi::class)
 class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
     private var rotationPhase = 0.0
+    private var smoothedEnvelope = 0.22f
+    private var currentNormGain = 1.0f
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         return if (inputAudioFormat.encoding == C.ENCODING_PCM_16BIT && inputAudioFormat.channelCount == 2) {
@@ -40,6 +42,11 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         } else {
             AudioProcessor.AudioFormat.NOT_SET
         }
+    }
+
+    override fun onFlush() {
+        smoothedEnvelope = 0.22f
+        currentNormGain = 1.0f
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
@@ -53,10 +60,11 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         val rotSpeed = if (dspActive) state.surroundRotationSpeed else 0
         val warmthFactor = if (dspActive) (state.analogWarmthStrength / 1000f) * 0.14f else 0f
         val eqLoudnessComp = state.equalLoudnessCompensation
+        val volNorm = state.volumeNormalizationEnabled
         val antiClip = state.antiClippingEnabled
 
         // 若所有母带与声道平衡均为默认直通态，直接零拷贝透传以节省 CPU
-        if (abs(balance) < 0.01f && !dspActive && !eqLoudnessComp) {
+        if (abs(balance) < 0.01f && !dspActive && !eqLoudnessComp && !volNorm) {
             val out = replaceOutputBuffer(remaining)
             out.put(inputBuffer)
             out.flip()
@@ -73,9 +81,22 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             val rawL = inputBuffer.short.toFloat() / 32768f
             val rawR = inputBuffer.short.toFloat() / 32768f
 
+            // 0. 跨曲目智能响度均衡包络跟踪（慢速 AGC，仅在有效信号区间平滑补偿响度差异）
+            val normGain = if (volNorm) {
+                val frameEnergy = (abs(rawL) + abs(rawR)) * 0.5f
+                if (frameEnergy > 0.015f) {
+                    val alpha = if (frameEnergy > smoothedEnvelope) 0.0005f else 0.00015f
+                    smoothedEnvelope += alpha * (frameEnergy - smoothedEnvelope)
+                    val targetEnv = 0.24f
+                    val desiredGain = (targetEnv / smoothedEnvelope.coerceAtLeast(0.06f)).coerceIn(0.82f, 1.22f)
+                    currentNormGain += 0.0004f * (desiredGain - currentNormGain)
+                }
+                currentNormGain
+            } else 1.0f
+
             // 1. Mid-Side 立体声宽度扩展
-            val mid = (rawL + rawR) * 0.5f
-            val side = (rawL - rawR) * 0.5f * (1f + widthFactor)
+            val mid = (rawL + rawR) * 0.5f * normGain
+            val side = (rawL - rawR) * 0.5f * (1f + widthFactor) * normGain
             var outL = mid + side
             var outR = mid - side
 
@@ -99,7 +120,7 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             outR *= rightBalGain * loudnessCompGain
 
             // 5. 软膝防破音数字限幅器 (Soft-Knee Limiter)
-            if (antiClip) {
+            if (antiClip || volNorm) {
                 outL = softLimit(outL)
                 outR = softLimit(outR)
             } else {
@@ -144,7 +165,7 @@ class PlaybackService : MediaSessionService() {
             activeServiceInstance?.player?.setHandleAudioBecomingNoisy(enabled)
         }
 
-        fun updateAudioFocusDucking(context: Context, pauseOnDisconnect: Boolean) {
+        fun updateAudioFocusDucking(pauseOnDisconnect: Boolean) {
             activeServiceInstance?.player?.setHandleAudioBecomingNoisy(pauseOnDisconnect)
         }
     }

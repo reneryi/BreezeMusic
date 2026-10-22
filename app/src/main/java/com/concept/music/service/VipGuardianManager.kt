@@ -32,7 +32,7 @@ data class VipGuardianState(
 /**
  * 概念版 VIP 自动领取守护管理器：
  * 严格遵循「VIP 领取只负责将 VIP 权益正确领取，绝不伪造听歌记录或影响听歌时长与其他设置」的原则，
- * 彻底移除刷歌打卡、播放历史上传与听歌时长触发逻辑。
+ * 彻底移除刷歌打卡、播放历史上传与听歌时长触发逻辑，并与账号级 autoClaim 开关保持双向同步。
  */
 object VipGuardianManager {
     private const val JOB_ID_VIP_GUARDIAN = 311601
@@ -47,7 +47,11 @@ object VipGuardianManager {
         val appCtx = context.applicationContext
         val p = appCtx.getSharedPreferences("concept_vip_guardian", Context.MODE_PRIVATE)
         prefs = p
-        val enabled = p.getBoolean("guardian_enabled", true)
+        val accountAutoClaim = runCatching { VipManager.accounts.state.value.current?.autoClaim }.getOrNull()
+        val enabled = accountAutoClaim ?: p.getBoolean("guardian_enabled", true)
+        if (accountAutoClaim != null) {
+            p.edit().putBoolean("guardian_enabled", accountAutoClaim).apply()
+        }
         val lastDay = p.getString("last_run_day", "") ?: ""
         val lastTime = p.getString("last_run_time", "尚未执行") ?: "尚未执行"
         val lastSummary = p.getString("last_summary", "待触发每日自动领 VIP") ?: "待触发每日自动领 VIP"
@@ -63,17 +67,25 @@ object VipGuardianManager {
 
         if (enabled) {
             schedulePeriodicJob(appCtx)
-            val currentDay = today()
-            if (lastDay != currentDay) {
-                triggerGuardianNow(appCtx, isManual = false)
-            }
+        } else {
+            val scheduler = appCtx.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler
+            scheduler?.cancel(JOB_ID_VIP_GUARDIAN)
         }
+    }
+
+    /**
+     * 与 VIP 权益中心「打开应用时自动领取」开关同步，无需显式传入 Context
+     */
+    fun syncAutoClaimPreference(enabled: Boolean) {
+        _state.value = _state.value.copy(enabled = enabled)
+        prefs?.edit()?.putBoolean("guardian_enabled", enabled)?.apply()
     }
 
     fun setEnabled(context: Context, enabled: Boolean) {
         val appCtx = context.applicationContext
         _state.value = _state.value.copy(enabled = enabled)
         prefs?.edit()?.putBoolean("guardian_enabled", enabled)?.apply()
+        runCatching { VipManager.accounts.setAuto(enabled) }
         if (enabled) {
             schedulePeriodicJob(appCtx)
             triggerGuardianNow(appCtx, isManual = false)
@@ -122,6 +134,10 @@ object VipGuardianManager {
                 val accountCtx = VipManager.accounts.context()
                 if (accountCtx == null) {
                     "未登录账号"
+                } else if (!isManual && !(VipManager.accounts.state.value.current?.autoClaim ?: _state.value.enabled)) {
+                    "自动领取已关闭"
+                } else if (VipManager.vip.state.value.busy) {
+                    "正在同步 VIP 权益"
                 } else {
                     // 仅执行纯净的概念版 VIP 权益领取，不触发任何刷歌或听歌时长修改
                     val claimRes = VipManager.vip.claim(accountCtx, automatic = !isManual)

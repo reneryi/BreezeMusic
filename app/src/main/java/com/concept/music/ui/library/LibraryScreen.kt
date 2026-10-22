@@ -8,7 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -150,7 +150,6 @@ fun LibraryScreen(
 
     val profile = account.profile
     val isLoggedIn = account.auth == AuthState.READY
-    val cardColor = conceptFloatingCardColor()
     val elevatedColor = conceptElevatedSurfaceColor()
 
     ConceptStageBackground(
@@ -469,7 +468,7 @@ fun LibraryScreen(
                             }
                         }
                     } else if (!isGridView) {
-                        items(currentDisplayPlaylists, key = { it.id }) { pl ->
+                        itemsIndexed(currentDisplayPlaylists, key = { idx, pl -> "pl_list_${pl.id}_${pl.listId}_$idx" }) { _, pl ->
                             val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
                             Box(modifier = tabAnimMod) {
                                 PlaylistListItem(
@@ -480,7 +479,7 @@ fun LibraryScreen(
                         }
                     } else {
                         val chunked = currentDisplayPlaylists.chunked(2)
-                        items(chunked, key = { it.first().id }) { rowItems ->
+                        itemsIndexed(chunked, key = { idx, row -> "pl_grid_${row.first().id}_$idx" }) { _, rowItems ->
                             val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
                             Row(
                                 modifier = Modifier
@@ -539,7 +538,7 @@ fun LibraryScreen(
                             }
                         }
                     } else {
-                        items(followedArtists, key = { "artist_${it.id}_${it.name}" }) { artist ->
+                        itemsIndexed(followedArtists, key = { idx, a -> "artist_${a.id}_${a.name}_$idx" }) { _, artist ->
                             val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
                             Column(
                                 modifier = Modifier
@@ -668,7 +667,7 @@ fun LibraryScreen(
                                     )
                                 }
                             }
-                            items(purchasedAlbums, key = { "album_${it.albumId}" }) { album ->
+                            itemsIndexed(purchasedAlbums, key = { idx, a -> "album_${a.albumId}_$idx" }) { _, album ->
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -749,7 +748,7 @@ fun LibraryScreen(
                                 }
                             }
                             val allPurchasedSongs = purchasedSongs.mapNotNull { it.song }
-                            items(purchasedSongs, key = { "song_${it.songId}_${it.songName}" }) { item ->
+                            itemsIndexed(purchasedSongs, key = { idx, s -> "song_${s.songId}_${s.songName}_$idx" }) { _, item ->
                                 val s = item.song
                                 Column(
                                     modifier = Modifier

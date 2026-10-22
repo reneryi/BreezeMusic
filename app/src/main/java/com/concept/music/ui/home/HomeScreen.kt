@@ -109,7 +109,6 @@ private val NEW_SONG_PERIOD_TABS = listOf(
 fun HomeScreen(
     viewModel: HomeViewModel,
     onSongClick: (Song, List<Song>) -> Unit,
-    onLogin: () -> Unit,
     onSearchClick: () -> Unit = {},
     onOpenDailyRecommend: () -> Unit = {},
     onOpenNewSongExpress: () -> Unit = {},
@@ -206,11 +205,6 @@ fun HomeScreen(
     val rankCategories = remember(ranks) {
         listOf("全部") + ranks.map { it.category.ifBlank { "热门" } }.distinct()
     }
-    val displayedRanks = remember(ranks, selectedRankCategory) {
-        if (selectedRankCategory == "全部") ranks
-        else ranks.filter { (it.category.ifBlank { "热门" }) == selectedRankCategory }
-    }
-
     ConceptStageBackground(
         modifier = modifier
             .fillMaxSize()
@@ -268,10 +262,8 @@ fun HomeScreen(
                 val isFmPlayingNow = isCurrentInFm && isPlaying
 
                 PersonalFmPlayerCard(
-                    songs = fmPool,
                     activeSong = activeFmSong,
                     nextSong = nextFmSong,
-                    currentIndex = safeIdx,
                     isPlaying = isFmPlayingNow,
                     isRefreshing = personalFmRefreshing,
                     onOpenList = { showPersonalFmSheet = true },
@@ -326,8 +318,7 @@ fun HomeScreen(
                     },
                     onPlaySong = { song ->
                         onSongClick(song, currentNewSongs)
-                    },
-                    onSongMoreClick = onSongMoreClick
+                    }
                 )
             }
 
@@ -423,7 +414,7 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                items(currentRanksForCat, key = { it.rankId }) { rank ->
+                                itemsIndexed(currentRanksForCat, key = { idx, r -> "rank_card_${r.rankId}_$idx" }) { _, rank ->
                                     RankCardView(
                                         rank = rank,
                                         onCardClick = { onOpenRank(rank.rankId) },
@@ -494,7 +485,7 @@ fun HomeScreen(
                             horizontalArrangement = Arrangement.spacedBy(18.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            itemsIndexed(fmChannels, key = { _, it -> it.id }) { idx, channel ->
+                            itemsIndexed(fmChannels, key = { idx, it -> "fm_ch_${it.id}_$idx" }) { idx, channel ->
                                 val fallbackCover = coverPool.getOrNull((idx + 2) % coverPool.size.coerceAtLeast(1)).orEmpty()
                                 FmChannelCardView(
                                     channel = channel,
@@ -931,7 +922,6 @@ fun HomeScreen(
 private fun DiscoverTopHeader(
     onSearchClick: () -> Unit
 ) {
-    val isDark = LocalIsDarkTheme.current
     val timeGreeting = remember {
         val now = runCatching { LocalTime.now(DISCOVER_CHINA_ZONE) }.getOrElse { LocalTime.now() }
         val minutes = now.hour * 60 + now.minute
@@ -1021,10 +1011,8 @@ private fun DiscoverTopHeader(
  */
 @Composable
 private fun PersonalFmPlayerCard(
-    songs: List<Song>,
     activeSong: Song?,
     nextSong: Song?,
-    currentIndex: Int,
     isPlaying: Boolean,
     isRefreshing: Boolean,
     onOpenList: () -> Unit,
@@ -1254,8 +1242,7 @@ private fun NewSongExpressSectionCard(
     onRefreshPeriod: () -> Unit,
     onOpenFullScreen: () -> Unit,
     onPlayAll: () -> Unit,
-    onPlaySong: (Song) -> Unit,
-    onSongMoreClick: (Song) -> Unit
+    onPlaySong: (Song) -> Unit
 ) {
     val isDark = LocalIsDarkTheme.current
     val violetAccent = if (isDark) Color(0xFF9688FF) else ConceptVioletAccent
@@ -1264,12 +1251,6 @@ private fun NewSongExpressSectionCard(
         val start = end.minusDays(6)
         String.format("%02d.%02d - %02d.%02d", start.monthValue, start.dayOfMonth, end.monthValue, end.dayOfMonth)
     }
-
-    val refreshRotation by animateFloatAsState(
-        targetValue = if (loading) 360f else 0f,
-        animationSpec = tween(durationMillis = 700),
-        label = "newSongRefreshRot"
-    )
 
     Column(modifier = Modifier.fillMaxWidth()) {
         // 1. 开放式标题栏（无任何胶囊框包裹）

@@ -7,6 +7,7 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.concept.music.data.vip.VipManager
 import com.concept.music.service.AmbientSoundManager
+import com.concept.music.service.FocusPodManager
 import com.concept.music.service.SystemLyricBridge
 import com.concept.music.service.VipGuardianManager
 import okhttp3.Dispatcher
@@ -23,6 +24,7 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
         super.onCreate()
         VipManager.initialize(this)
         AmbientSoundManager.init(this)
+        FocusPodManager.init(this)
         SystemLyricBridge.init(this)
         VipGuardianManager.init(this)
     }

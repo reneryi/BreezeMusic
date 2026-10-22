@@ -378,7 +378,6 @@ fun MainContent(
                 composable(Screen.Discover.route) {
                     HomeScreen(
                         viewModel = homeViewModel,
-                        onLogin = openLogin,
                         onSongClick = { song, list ->
                             musicPlayerViewModel.playSong(song, list)
                         },
@@ -644,14 +643,17 @@ fun MainContent(
                     val fullState by musicPlayerViewModel.uiState.collectAsState()
                     val userAvatar = VipManager.accounts.state.value.profile?.avatarUrl ?: ""
                     CommentsScreen(
-                        song = fullState.currentSong,
+                        song = fullState.commentTargetSong ?: fullState.currentSong,
                         comments = fullState.comments,
                         totalCount = fullState.commentCount,
                         loading = fullState.commentsLoading,
                         currentType = fullState.commentType,
                         hasMore = fullState.commentsHasMore,
                         currentUserAvatar = userAvatar,
-                        onBack = { navController.popBackStack() },
+                        onBack = {
+                            musicPlayerViewModel.closeCommentsForTargetSong()
+                            navController.popBackStack()
+                        },
                         onTabSelected = { musicPlayerViewModel.setCommentType(it) },
                         onLoadMore = { musicPlayerViewModel.loadComments(isRefresh = false) },
                         onRefresh = { musicPlayerViewModel.loadComments(isRefresh = true) },
@@ -799,7 +801,7 @@ fun MainContent(
                 onDismiss = { showNowPlaying = false },
                 onAddToPlaylist = { songToAddToPlaylist = it },
                 onOpenComments = {
-                    musicPlayerViewModel.loadComments(isRefresh = true)
+                    musicPlayerViewModel.openCommentsForSong(currentSong)
                     showCommentsScreen = true
                 },
                 onOpenViperEffectPage = {
@@ -828,7 +830,7 @@ fun MainContent(
         }
 
         AnimatedVisibility(
-            visible = showCommentsScreen && currentSong != null,
+            visible = showCommentsScreen,
             enter = slideInVertically(
                 initialOffsetY = { it },
                 animationSpec = tween(250, easing = FluidPageEasing)
@@ -841,7 +843,7 @@ fun MainContent(
             val playerUiState by musicPlayerViewModel.uiState.collectAsState()
             val userAvatar = VipManager.accounts.state.value.profile?.avatarUrl ?: ""
             CommentsScreen(
-                song = playerUiState.currentSong,
+                song = playerUiState.commentTargetSong ?: playerUiState.currentSong,
                 comments = playerUiState.comments,
                 totalCount = playerUiState.commentCount,
                 loading = playerUiState.commentsLoading,
@@ -850,6 +852,7 @@ fun MainContent(
                 currentUserAvatar = userAvatar,
                 onBack = {
                     showCommentsScreen = false
+                    musicPlayerViewModel.closeCommentsForTargetSong()
                 },
                 onTabSelected = { musicPlayerViewModel.setCommentType(it) },
                 onLoadMore = { musicPlayerViewModel.loadComments(isRefresh = false) },
@@ -873,7 +876,7 @@ fun MainContent(
                     actionSheetRemoveCallback = null
                 },
                 onPlayNow = {
-                    musicPlayerViewModel.playSong(targetSong, listOf(targetSong))
+                    musicPlayerViewModel.playSongInCurrentQueue(targetSong)
                 },
                 onPlayNext = {
                     musicPlayerViewModel.playNext(targetSong)
@@ -888,11 +891,7 @@ fun MainContent(
                     songToAddToPlaylist = targetSong
                 },
                 onOpenComments = {
-                    if (currentSong?.id != targetSong.id) {
-                        musicPlayerViewModel.playSong(targetSong, listOf(targetSong))
-                    } else {
-                        musicPlayerViewModel.loadComments(isRefresh = true)
-                    }
+                    musicPlayerViewModel.openCommentsForSong(targetSong)
                     showCommentsScreen = true
                 },
                 onOpenArtist = if (targetSong.artist.isNotBlank()) {
