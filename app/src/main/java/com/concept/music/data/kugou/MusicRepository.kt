@@ -4904,13 +4904,13 @@ class MusicApiRepository(
             suspend fun callV2Grade(includeTokenInQueryP: Boolean): JsonObject? = runCatching {
                 val p = if (isReport) {
                     val md5 = KugouSigner.md5("${dSec}${diffSec}00")
-                    val reportJson = "{"token":"${session.token}","md5":"$md5"}"
+                    val reportJson = "{\"token\":\"${session.token}\",\"md5\":\"$md5\"}"
                     KugouSigner.rsa(reportJson).uppercase()
                 } else if (includeTokenInQueryP) {
-                    val innerJson = "{"clienttime":$clientTime,"token":"${session.token}","userid":$userIdNum}"
+                    val innerJson = "{\"clienttime\":$clientTime,\"token\":\"${session.token}\",\"userid\":$userIdNum}"
                     KugouSigner.rsa(innerJson).uppercase()
                 } else {
-                    val innerJson = "{"clienttime":$clientTime,"userid":$userIdNum}"
+                    val innerJson = "{\"clienttime\":$clientTime,\"userid\":$userIdNum}"
                     KugouSigner.rsa(innerJson).uppercase()
                 }
 
