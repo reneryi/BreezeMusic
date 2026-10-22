@@ -184,6 +184,11 @@ fun MainContent(
     var showCommentsScreen by remember { mutableStateOf(false) }
     var showViperEffectOverlay by remember { mutableStateOf(false) }
 
+    // 记录从全屏播放页跳转到子页面（如歌手主页/专辑详情）前的底层回退栈 Entry ID，
+    // 当用户在子页面点击左上角返回或触发系统手势返回到该 Entry 时，自动恢复打开全屏播放页
+    var reopenNowPlayingAtBackStackId by remember { mutableStateOf<String?>(null) }
+    var reopenNowPlayingOnSameRouteBack by remember { mutableStateOf(false) }
+
     var actionSheetSong by remember { mutableStateOf<Song?>(null) }
     var actionSheetRemoveCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
     var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
@@ -191,11 +196,65 @@ fun MainContent(
     var detailSheetSong by remember { mutableStateOf<Song?>(null) }
     val mainScope = rememberCoroutineScope()
 
+    val openSubRouteFromContext: (String) -> Unit = { targetRoute ->
+        val wasInPlayer = showNowPlaying
+        val currentEntry = navController.currentBackStackEntry
+        val curRoutePattern = currentEntry?.destination?.route.orEmpty()
+        val isSameArtist = targetRoute.startsWith("artist_detail/") &&
+            curRoutePattern == "artist_detail/{artistId}" &&
+            currentEntry?.arguments?.getString("artistId") == targetRoute.substringAfter("artist_detail/")
+        val isSameAlbum = targetRoute.startsWith("album_detail/") &&
+            curRoutePattern == "album_detail/{albumId}" &&
+            currentEntry?.arguments?.getString("albumId") == targetRoute.substringAfter("album_detail/")
+
+        if (isSameArtist || isSameAlbum) {
+            if (wasInPlayer) {
+                reopenNowPlayingOnSameRouteBack = true
+                showNowPlaying = false
+            }
+        } else {
+            if (wasInPlayer) {
+                reopenNowPlayingAtBackStackId = currentEntry?.id
+                reopenNowPlayingOnSameRouteBack = false
+                showNowPlaying = false
+            }
+            navController.navigate(targetRoute) { launchSingleTop = true }
+        }
+    }
+
+    val handleSubPageBack: () -> Unit = {
+        if (reopenNowPlayingOnSameRouteBack) {
+            reopenNowPlayingOnSameRouteBack = false
+            showNowPlaying = true
+        } else {
+            val prevId = navController.previousBackStackEntry?.id
+            val shouldReopenPlayer = reopenNowPlayingAtBackStackId != null && prevId == reopenNowPlayingAtBackStackId
+            navController.popBackStack()
+            if (shouldReopenPlayer) {
+                reopenNowPlayingAtBackStackId = null
+                showNowPlaying = true
+            }
+        }
+    }
+
+    // 监听系统侧滑返回：当回退栈退回到从播放页出发前的 Entry 时，自动恢复打开播放页
+    LaunchedEffect(navBackStackEntry?.id) {
+        val currentId = navBackStackEntry?.id
+        if (reopenNowPlayingAtBackStackId != null && currentId == reopenNowPlayingAtBackStackId) {
+            reopenNowPlayingAtBackStackId = null
+            showNowPlaying = true
+        }
+    }
+
+    androidx.activity.compose.BackHandler(enabled = reopenNowPlayingOnSameRouteBack && !showNowPlaying) {
+        reopenNowPlayingOnSameRouteBack = false
+        showNowPlaying = true
+    }
+
     val navigateToSongArtist: (Song) -> Unit = { targetSong ->
-        showNowPlaying = false
         val directId = targetSong.artistId.trim()
         if (directId.isNotBlank() && directId != "0") {
-            navController.navigate("artist_detail/$directId") { launchSingleTop = true }
+            openSubRouteFromContext("artist_detail/$directId")
         } else {
             val cleanArtist = targetSong.artist
                 .split("、", "/", "&", "feat.", "Feat.", ",")
@@ -215,7 +274,7 @@ fun MainContent(
                         }.getOrNull()
                     }
                     if (!resolvedId.isNullOrBlank()) {
-                        navController.navigate("artist_detail/$resolvedId") { launchSingleTop = true }
+                        openSubRouteFromContext("artist_detail/$resolvedId")
                     } else {
                         Toast.makeText(context, "未找到「$cleanArtist」的歌手主页", Toast.LENGTH_SHORT).show()
                     }
@@ -225,10 +284,9 @@ fun MainContent(
     }
 
     val navigateToSongAlbum: (Song) -> Unit = { targetSong ->
-        showNowPlaying = false
         val directAlbumId = targetSong.albumId.trim()
         if (directAlbumId.isNotBlank() && directAlbumId != "0") {
-            navController.navigate("album_detail/$directAlbumId") { launchSingleTop = true }
+            openSubRouteFromContext("album_detail/$directAlbumId")
         } else {
             val kw = "${targetSong.album.ifBlank { targetSong.title }} ${targetSong.artist}".trim()
             Toast.makeText(context, "正在定位所属专辑...", Toast.LENGTH_SHORT).show()
@@ -250,7 +308,7 @@ fun MainContent(
                     }.getOrNull()
                 }
                 if (!resolvedAlbumId.isNullOrBlank()) {
-                    navController.navigate("album_detail/$resolvedAlbumId") { launchSingleTop = true }
+                    openSubRouteFromContext("album_detail/$resolvedAlbumId")
                 } else {
                     Toast.makeText(context, "该曲目暂无关联专辑详情", Toast.LENGTH_SHORT).show()
                 }
@@ -565,7 +623,7 @@ fun MainContent(
                     val albumId = backStackEntry.arguments?.getString("albumId") ?: ""
                     AlbumDetailScreen(
                         albumId = albumId,
-                        onBack = { navController.popBackStack() },
+                        onBack = handleSubPageBack,
                         onSongClick = { song, list ->
                             musicPlayerViewModel.playSong(song, list)
                         },
@@ -583,7 +641,7 @@ fun MainContent(
                     val isArtistFollowed = libraryViewModel.isArtistFollowed(artistId, followedArtists)
                     ArtistDetailScreen(
                         artistId = artistId,
-                        onBack = { navController.popBackStack() },
+                        onBack = handleSubPageBack,
                         onSongClick = { song, list ->
                             musicPlayerViewModel.playSong(song, list)
                         },
@@ -658,6 +716,9 @@ fun MainContent(
                         onLoadMore = { musicPlayerViewModel.loadComments(isRefresh = false) },
                         onRefresh = { musicPlayerViewModel.loadComments(isRefresh = true) },
                         onLoadReplies = { musicPlayerViewModel.loadCommentReplies(it) },
+                        onSyncReplyCount = { cid, cnt, replies ->
+                            musicPlayerViewModel.syncCommentReplyCount(cid, cnt, replies)
+                        },
                         onPostComment = { content, replyId, replyUser ->
                             musicPlayerViewModel.postComment(content, replyId, replyUser)
                         },
@@ -798,7 +859,11 @@ fun MainContent(
                 musicPlayerViewModel = musicPlayerViewModel,
                 libraryViewModel = libraryViewModel,
                 likedSongs = likedSongs,
-                onDismiss = { showNowPlaying = false },
+                onDismiss = {
+                    showNowPlaying = false
+                    reopenNowPlayingAtBackStackId = null
+                    reopenNowPlayingOnSameRouteBack = false
+                },
                 onAddToPlaylist = { songToAddToPlaylist = it },
                 onOpenComments = {
                     musicPlayerViewModel.openCommentsForSong(currentSong)
@@ -858,6 +923,9 @@ fun MainContent(
                 onLoadMore = { musicPlayerViewModel.loadComments(isRefresh = false) },
                 onRefresh = { musicPlayerViewModel.loadComments(isRefresh = true) },
                 onLoadReplies = { musicPlayerViewModel.loadCommentReplies(it) },
+                        onSyncReplyCount = { cid, cnt, replies ->
+                            musicPlayerViewModel.syncCommentReplyCount(cid, cnt, replies)
+                        },
                 onPostComment = { content, replyId, replyUser ->
                     musicPlayerViewModel.postComment(content, replyId, replyUser)
                 },

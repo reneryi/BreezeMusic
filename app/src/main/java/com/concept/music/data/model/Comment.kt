@@ -3,6 +3,12 @@ package com.concept.music.data.model
 import androidx.compose.runtime.Immutable
 
 @Immutable
+data class QuotedReplyHop(
+    val userName: String,
+    val content: String
+)
+
+@Immutable
 data class SongComment(
     val id: String,
     val userId: String,
@@ -18,6 +24,9 @@ data class SongComment(
     val parentId: String? = null,
     val rootId: String? = null,
     val replyUserName: String? = null,
+    val replyTargetCommentId: String? = null,
+    val replyQuotedContent: String? = null,
+    val replyChainHops: List<QuotedReplyHop> = emptyList(),
     val specialChildId: String = "",
     val replyCount: Int = 0,
     val replies: List<SongComment> = emptyList(),
@@ -39,8 +48,16 @@ data class SongDetailInfo(
     val fileHash: String = ""
 )
 
+data class ParsedWeiboReplyContent(
+    val cleanContent: String,
+    val targetUserName: String? = null,
+    val quotedContent: String? = null,
+    val chainHops: List<QuotedReplyHop> = emptyList()
+)
+
 /**
- * 酷狗评论内置表情编码 ([em]eXXXXX[/em] 及中文方括号表情标签) 转原生 Emoji 映射工具
+ * 酷狗评论内置表情编码 ([em]eXXXXX[/em] 及中文方括号表情标签) 转原生 Emoji 映射工具，
+ * 同时提供酷狗微博式串联回复 ("回复内容//@用户名:被回复原评论") 的结构化剥离解析。
  */
 object KugouCommentEmojiParser {
     private val codeToEmoji = mapOf(
@@ -86,15 +103,67 @@ object KugouCommentEmojiParser {
         "[吃瓜]" to "🍉", "[加油]" to "💪", "[汗]" to "😅", "[天啊]" to "😱",
         "[Emm]" to "🤔", "[社会社会]" to "😎", "[旺柴]" to "🐶", "[好的]" to "👌",
         "[打call]" to "📣", "[666]" to "🤙", "[翻白眼]" to "🙄", "[比心]" to "🫰",
-        "[裂开]" to "🫠", "[苦涩]" to "🥹", "[叹气]" to "😮‍💨", "[让我看看]" to "👀"
+        "[裂开]" to "🫠", "[苦涩]" to "🥹", "[叹气]" to "😮‍💨", "[让我看看]" to "👀",
+        "[呦呦呦]" to "😏", "[吐舌头]" to "😛", "[飞吻]" to "😘", "[流鼻血]" to "🤤",
+        "[笑脸]" to "😊", "[点赞]" to "👍", "[狗头]" to "🐶", "[哭笑不得]" to "😂"
     )
 
     private val emTagRegex = Regex("""\[em\]([a-zA-Z0-9_]+)\[/em\]""", RegexOption.IGNORE_CASE)
+    private val weiboSplitRegex = Regex("""\s*//\s*@""")
+    private val replyPrefixRegex = Regex("""^(?:回复\s*)?@([^\s:：]+)\s*[:：]\s*(.*)$""", RegexOption.DOTALL)
     private val fallbackEmojiPool = listOf("😊", "😂", "😭", "😍", "🥺", "👍", "❤️", "🌹", "🎧", "🎵", "✨", "🔥")
 
     fun parseEmojiContent(raw: String): String = formatContent(raw)
 
-    fun formatContent(raw: String): String {
+    /**
+     * 剥离酷狗楼中楼评论中的微博式后缀（如 `我的回复内容//@用户名:被回复的原评论//@更早用户:更早评论`），
+     * 返回纯净的当前回复正文以及被回复的目标用户名与原评引用链。
+     */
+    fun parseWeiboReplyChain(raw: String): ParsedWeiboReplyContent {
+        val emojiFormatted = formatEmojiOnly(raw)
+        if (emojiFormatted.isBlank()) return ParsedWeiboReplyContent("")
+
+        if (emojiFormatted.contains("//@") || emojiFormatted.contains("// @")) {
+            val segments = emojiFormatted.split(weiboSplitRegex)
+            val mainBody = segments.firstOrNull()?.trim().orEmpty()
+            val hops = segments.drop(1).mapNotNull { seg ->
+                val trimmed = seg.trim()
+                val colonIdx = trimmed.indexOfFirst { it == ':' || it == '：' }
+                if (colonIdx > 0) {
+                    val uName = trimmed.substring(0, colonIdx).trim().removePrefix("@").trim()
+                    val qText = trimmed.substring(colonIdx + 1).trim()
+                    if (uName.isNotBlank()) QuotedReplyHop(uName, qText) else null
+                } else if (trimmed.isNotBlank()) {
+                    QuotedReplyHop(trimmed.removePrefix("@").trim(), "")
+                } else null
+            }
+            val firstHop = hops.firstOrNull()
+            return ParsedWeiboReplyContent(
+                cleanContent = mainBody.ifBlank { emojiFormatted },
+                targetUserName = firstHop?.userName,
+                quotedContent = firstHop?.content?.takeIf { it.isNotBlank() },
+                chainHops = hops
+            )
+        }
+
+        val prefixMatch = replyPrefixRegex.find(emojiFormatted)
+        if (prefixMatch != null) {
+            val targetUser = prefixMatch.groupValues[1].trim()
+            val body = prefixMatch.groupValues[2].trim()
+            if (targetUser.isNotBlank() && body.isNotBlank()) {
+                return ParsedWeiboReplyContent(
+                    cleanContent = body,
+                    targetUserName = targetUser,
+                    quotedContent = null,
+                    chainHops = listOf(QuotedReplyHop(targetUser, ""))
+                )
+            }
+        }
+
+        return ParsedWeiboReplyContent(cleanContent = emojiFormatted)
+    }
+
+    private fun formatEmojiOnly(raw: String): String {
         if (raw.isBlank()) return ""
         var text = emTagRegex.replace(raw) { match ->
             val code = match.groupValues[1].lowercase()
@@ -106,5 +175,9 @@ object KugouCommentEmojiParser {
             }
         }
         return text.trim()
+    }
+
+    fun formatContent(raw: String): String {
+        return parseWeiboReplyChain(raw).cleanContent
     }
 }

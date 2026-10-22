@@ -1655,7 +1655,8 @@ private fun CoverPlayerPageContent(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // 3. 进度条上方功能栏：「带计数评论按钮、蝰蛇音效、桌面歌词、横屏播放、更多」
+        // 3. 进度条上方功能栏：「横屏播放、桌面歌词、蝰蛇音效、带计数评论按钮、更多」
+        // （已按需求将【音效与桌面歌词互换位置】、【评论与横屏播放互换位置】）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1663,31 +1664,13 @@ private fun CoverPlayerPageContent(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            RedesignedCommentCountButton(
-                commentCount = commentCount,
-                accentColor = accentPrimary,
-                onClick = onOpenComments
-            )
-
             PlayerActionIconButton(
-                onClick = onOpenAudioEffect
+                onClick = onEnterLandscape
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    PlumpAudioWaveCanvasIcon(
-                        color = if (viperEnabled) accentPrimary else Color.White.copy(alpha = 0.88f),
-                        accentColor = if (viperEnabled) accentSecondary else accentPrimary
-                    )
-                    if (viperEnabled) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .offset(x = 4.dp, y = (-2).dp)
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(accentSecondary)
-                        )
-                    }
-                }
+                PlumpLandscapeModeCanvasIcon(
+                    color = Color.White.copy(alpha = 0.88f),
+                    accentColor = accentPrimary
+                )
             }
 
             PlayerActionIconButton(
@@ -1713,13 +1696,31 @@ private fun CoverPlayerPageContent(
             }
 
             PlayerActionIconButton(
-                onClick = onEnterLandscape
+                onClick = onOpenAudioEffect
             ) {
-                PlumpLandscapeModeCanvasIcon(
-                    color = Color.White.copy(alpha = 0.88f),
-                    accentColor = accentPrimary
-                )
+                Box(contentAlignment = Alignment.Center) {
+                    PlumpAudioWaveCanvasIcon(
+                        color = if (viperEnabled) accentPrimary else Color.White.copy(alpha = 0.88f),
+                        accentColor = if (viperEnabled) accentSecondary else accentPrimary
+                    )
+                    if (viperEnabled) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 4.dp, y = (-2).dp)
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(accentSecondary)
+                        )
+                    }
+                }
             }
+
+            RedesignedCommentCountButton(
+                commentCount = commentCount,
+                accentColor = accentPrimary,
+                onClick = onOpenComments
+            )
 
             PlayerActionIconButton(
                 onClick = onOpenMoreSheet

@@ -492,4 +492,80 @@ class UiAlignmentRegressionTest {
         assertEquals("回音听众", replies.first().userName)
         assertEquals("致敬先辈，山河无恙！", replies.first().content)
     }
+
+    @Test
+    fun testWeiboStyleReplyChainStrippingAnd4LevelClusterTree() {
+        val rawWeibo = "因为有个作家叫夏目漱石，我一开始以为是写给夏目漱石的哈哈哈。//@Stephanie月月:我跟你一样，而且你还更过分一点，人家是日不是目哈哈哈哈哈哈//@dlarng:我以为这首歌叫橘子海，是夏目漱石写的。。。。。。"
+        val parsed = KugouCommentEmojiParser.parseWeiboReplyChain(rawWeibo)
+        assertEquals("因为有个作家叫夏目漱石，我一开始以为是写给夏目漱石的哈哈哈。", parsed.cleanContent)
+        assertEquals("Stephanie月月", parsed.targetUserName)
+        assertEquals("我跟你一样，而且你还更过分一点，人家是日不是目哈哈哈哈哈哈", parsed.quotedContent)
+        assertEquals(2, parsed.chainHops.size)
+
+        val root = SongComment(
+            id = "root_1",
+            userId = "u0",
+            userName = "dlarng",
+            userAvatar = "",
+            content = "我以为这首歌叫橘子海，是夏目漱石写的。。。。。。",
+            timeFormatted = "2021-07-25"
+        )
+        val lv1 = SongComment(
+            id = "r1",
+            userId = "u1",
+            userName = "齐天洋洋",
+            userAvatar = "",
+            content = "我跟你一样，而且你还更过分一点，人家是日不是目哈哈哈哈哈哈",
+            timeFormatted = "2022-05-05"
+        )
+        val lv2 = SongComment(
+            id = "r2",
+            userId = "u2",
+            userName = "x",
+            userAvatar = "",
+            content = parsed.cleanContent,
+            timeFormatted = "2022-05-21",
+            replyUserName = parsed.targetUserName,
+            replyQuotedContent = parsed.quotedContent
+        )
+        val lv3 = SongComment(
+            id = "r3",
+            userId = "u3",
+            userName = "三级用户",
+            userAvatar = "",
+            content = "三级回复内容",
+            timeFormatted = "2022-05-22",
+            replyTargetCommentId = "r2",
+            replyUserName = "x"
+        )
+        val lv4 = SongComment(
+            id = "r4",
+            userId = "u4",
+            userName = "四级用户",
+            userAvatar = "",
+            content = "四级回复内容",
+            timeFormatted = "2022-05-23",
+            replyTargetCommentId = "r3",
+            replyUserName = "三级用户"
+        )
+        val lv5 = SongComment(
+            id = "r5",
+            userId = "u5",
+            userName = "五级用户",
+            userAvatar = "",
+            content = "五级深层回复内容",
+            timeFormatted = "2022-05-24",
+            replyTargetCommentId = "r4",
+            replyUserName = "四级用户"
+        )
+
+        val treeResult = com.concept.music.ui.comment.buildFloorClusterTree(
+            rootComment = root,
+            rawReplies = listOf(lv1, lv2, lv3, lv4, lv5)
+        )
+        assertEquals(5, treeResult.totalReplyCountInTree)
+        // 4 cluster comment rows (lv1..lv4) + 1 ViewDeepDialogueBadgeRow for lv5
+        assertEquals(5, treeResult.visualItems.size)
+        assertTrue(treeResult.visualItems.last() is com.concept.music.ui.comment.FloorTreeVisualItem.ViewDeepDialogueBadgeRow)
+    }
 }

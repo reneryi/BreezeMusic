@@ -63,9 +63,9 @@ object ListeningGradeManager {
         }
         val sp = prefs ?: return
         // 使用 v4 键名隔离旧版本因 /v3/get_my_info 缺少 visit_time/usertype 导致回退到较低 grade_info 时长的旧缓存
-        syncedOfficialListenSec = sp.getLong("official_listen_sec_v4_$userId", 0L)
-        syncedRawServerDsec = sp.getLong("raw_server_dsec_v4_$userId", syncedOfficialListenSec)
-        pendingDiffSec = sp.getLong("pending_diff_v4_$userId", 0L).coerceIn(0L, 600L)
+        syncedOfficialListenSec = sp.getLong("official_listen_sec_v5_$userId", 0L)
+        syncedRawServerDsec = sp.getLong("raw_server_dsec_v5_$userId", syncedOfficialListenSec)
+        pendingDiffSec = sp.getLong("pending_diff_v5_$userId", 0L).coerceIn(0L, 600L)
         if (syncedOfficialListenSec > 0L) {
             _gradeInfo.value = _gradeInfo.value.withUpdatedSeconds(syncedOfficialListenSec + pendingDiffSec)
         }
@@ -79,9 +79,9 @@ object ListeningGradeManager {
         val diffSnapshot = pendingDiffSec
         if (immediate) {
             sp.edit()
-                .putLong("official_listen_sec_v4_$userId", officialSnapshot)
-                .putLong("raw_server_dsec_v4_$userId", rawDsecSnapshot)
-                .putLong("pending_diff_v4_$userId", diffSnapshot)
+                .putLong("official_listen_sec_v5_$userId", officialSnapshot)
+                .putLong("raw_server_dsec_v5_$userId", rawDsecSnapshot)
+                .putLong("pending_diff_v5_$userId", diffSnapshot)
                 .apply()
             return
         }
@@ -89,9 +89,9 @@ object ListeningGradeManager {
         saveJob = scope.launch {
             delay(3_000L)
             sp.edit()
-                .putLong("official_listen_sec_v4_$userId", officialSnapshot)
-                .putLong("raw_server_dsec_v4_$userId", rawDsecSnapshot)
-                .putLong("pending_diff_v4_$userId", diffSnapshot)
+                .putLong("official_listen_sec_v5_$userId", officialSnapshot)
+                .putLong("raw_server_dsec_v5_$userId", rawDsecSnapshot)
+                .putLong("pending_diff_v5_$userId", diffSnapshot)
                 .apply()
         }
     }

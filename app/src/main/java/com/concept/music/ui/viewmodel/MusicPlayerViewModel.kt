@@ -1674,6 +1674,24 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    fun syncCommentReplyCount(commentId: String, actualCount: Int, latestReplies: List<SongComment>? = null) {
+        if (commentId.isBlank() || actualCount < 0) return
+        val updatedList = mutableState.value.comments.map { cmt ->
+            if (cmt.id == commentId) {
+                val mergedReplies = if (!latestReplies.isNullOrEmpty()) {
+                    (cmt.replies + latestReplies).distinctBy { it.id }
+                } else {
+                    cmt.replies
+                }
+                cmt.copy(
+                    replyCount = actualCount,
+                    replies = mergedReplies
+                )
+            } else cmt
+        }
+        mutableState.value = mutableState.value.copy(comments = updatedList)
+    }
+
     fun postComment(
         content: String,
         replyToCommentId: String? = null,
@@ -1693,11 +1711,22 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 )
                 val currentList = mutableState.value.comments.toMutableList()
                 if (replyToCommentId != null) {
-                    val parentIndex = currentList.indexOfFirst { it.id == replyToCommentId }
-                    if (parentIndex != -1) {
-                        val parent = currentList[parentIndex]
-                        val updatedReplies = parent.replies + newComment
-                        currentList[parentIndex] = parent.copy(
+                    val directRootIdx = currentList.indexOfFirst { it.id == replyToCommentId }
+                    val subRootIdx = if (directRootIdx != -1) {
+                        directRootIdx
+                    } else {
+                        currentList.indexOfFirst { root -> root.replies.any { it.id == replyToCommentId } }
+                    }
+                    if (subRootIdx != -1) {
+                        val parent = currentList[subRootIdx]
+                        val targetReplyId = if (replyToCommentId != parent.id) replyToCommentId else null
+                        val enrichedNew = newComment.copy(
+                            parentId = replyToCommentId,
+                            rootId = parent.id,
+                            replyTargetCommentId = targetReplyId
+                        )
+                        val updatedReplies = parent.replies + enrichedNew
+                        currentList[subRootIdx] = parent.copy(
                             replyCount = parent.replyCount + 1,
                             replies = updatedReplies
                         )

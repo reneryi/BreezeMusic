@@ -4749,7 +4749,10 @@ class MusicApiRepository(
     var lastServerRawDsec: Long = 0L
         private set
 
-    // 听歌等级与时长统计（严格对齐 MakcRe/KuGouMusicApi module/user_detail.js /v3/get_my_info、module/user_info.js /v1/get_my_userinfo 与 module/user_grade_info.js /v2/get_grade_info）
+    // 听歌等级与时长统计（严格对齐 MakcRe/KuGouMusicApi:
+    // 1. module/user_grade_info.js: /v2/get_grade_info (lite) 与 /v4/get_grade_info (standard, PR #233 bb8fefa1)
+    // 2. module/user_detail.js: /v3/get_my_info
+    // 3. module/user_info.js: /v1/get_my_userinfo）
     suspend fun userGradeInfo(dSec: Long? = null, diffSec: Long? = null): UserGradeInfo = coroutineScope {
         val session = accounts.context()?.session
             ?: return@coroutineScope UserGradeInfo(level = 0, score = 0, totalListenMinutes = 0, todayListenMinutes = 0, nextLevelScore = 100, progressPercent = 0f, totalListenSeconds = 0L)
@@ -4761,9 +4764,7 @@ class MusicApiRepository(
             val isReport = dSec != null && diffSec != null && dSec > 0L && diffSec > 0L
             val d = device()
 
-            // 1. 严格对齐 MakcRe/KuGouMusicApi module/user_detail.js:
-            // POST /v3/get_my_info (x-router: usercenter.kugou.com, params: plat=1, body: visit_time, usertype=1, p, userid)
-            // 获取官方 App「个人信息」卡片展示的权威听歌时长 (r_duration / duration 分钟，如 220904 分钟)
+            // 1. 并发查询 /v3/get_my_info (module/user_detail.js)
             val myInfoDef = async {
                 runCatching {
                     val pkPayload = KugouSigner.gson.toJson(json("token" to session.token, "clienttime" to clientTime))
@@ -4785,27 +4786,36 @@ class MusicApiRepository(
                 }.getOrNull()
             }
 
-            // 2. 并发辅助查询 module/user_info.js (/v1/get_my_userinfo) 作为用户中心时长双保险
+            // 2. 并发查询 /v1/get_my_userinfo (module/user_info.js，获取 r_duration 实时累计听歌时长)
             val relationUserInfoDef = async {
                 runCatching {
                     val pkMsPayload = KugouSigner.gson.toJson(json("clienttime" to clientTimeMs, "token" to session.token))
                     val pkMsRsa = KugouSigner.rsa(pkMsPayload).uppercase()
-                    val resp = transport.callAdvanced(
+                    val bodyObj = json(
+                        "p" to pkMsRsa,
+                        "appid" to KugouSigner.APP_ID,
+                        "mid" to d.mid,
+                        "clientver" to KugouSigner.CLIENT_VERSION,
+                        "source" to 0,
+                        "clienttime" to clientTimeMs,
+                        "uuid" to "-",
+                        "userid" to userIdNum,
+                        "key" to KugouSigner.paramsKey(clientTimeMs)
+                    )
+                    val resp = runCatching {
+                        transport.call(
+                            path = "/v1/get_my_userinfo",
+                            session = session,
+                            method = "POST",
+                            body = bodyObj,
+                            headers = mapOf("x-router" to "relation.user.kugou.com")
+                        )
+                    }.getOrNull()?.takeIf { (it.data.number("status") ?: it.status) == 1 } ?: transport.callAdvanced(
                         path = "/v1/get_my_userinfo",
                         host = "http://relation.user.kugou.com",
                         method = "POST",
                         session = session,
-                        body = json(
-                            "p" to pkMsRsa,
-                            "appid" to KugouSigner.APP_ID,
-                            "mid" to d.mid,
-                            "clientver" to KugouSigner.CLIENT_VERSION,
-                            "source" to 0,
-                            "clienttime" to clientTimeMs,
-                            "uuid" to "-",
-                            "userid" to userIdNum,
-                            "key" to KugouSigner.paramsKey(clientTimeMs)
-                        ),
+                        body = bodyObj,
                         headers = mapOf("Host" to "relation.user.kugou.com"),
                         sign = true,
                         includeDefaultParams = true
@@ -4814,50 +4824,126 @@ class MusicApiRepository(
                 }.getOrNull()
             }
 
-            // 3. 严格对齐 MakcRe/KuGouMusicApi module/user_grade_info.js:
-            // 查询模式 p 明文为 {"clienttime":...,"userid":...}；上报模式 p 明文为 {"token":...,"md5":...}
-            val p = if (isReport) {
-                val md5 = KugouSigner.md5("${dSec}${diffSec}00")
-                val reportJson = "{\"token\":\"${session.token}\",\"md5\":\"$md5\"}"
-                KugouSigner.rsa(reportJson).uppercase()
-            } else {
-                val innerJson = "{\"clienttime\":$clientTime,\"userid\":$userIdNum}"
-                KugouSigner.rsa(innerJson).uppercase()
+            // 3. 并发查询标准版 v4 协议: https://userinfoservice.kugou.com/v4/get_grade_info (对齐 MakcRe/KuGouMusicApi PR #233 buildV4)
+            // 官方 App 个人资料卡的听歌时长 (如 220904 分钟) 由 userinfoservice 服务端真实播放统计维护
+            val v4GradeDef = async {
+                if (isReport) return@async null
+                suspend fun callV4Grade(useStandardCfg: Boolean): JsonObject? = runCatching {
+                    val v4AppId = if (useStandardCfg) "1005" else "3116"
+                    val v4ClientVer = if (useStandardCfg) "11489" else "11440"
+                    val v4AppKey = if (useStandardCfg) "OIlwieks28dk2k092lksi2UIkp" else "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
+                    val md5Val = KugouSigner.md5("0000")
+                    val aesSeed = (1..16).map { "0123456789abcdef".random() }.joinToString("")
+                    val seedMd5 = KugouSigner.md5(aesSeed)
+                    val paramsPlain = KugouSigner.gson.toJson(
+                        json(
+                            "userid" to session.userId,
+                            "token" to session.token,
+                            "md5" to md5Val
+                        )
+                    )
+                    val paramsEnc = KugouSigner.aes(paramsPlain, seedMd5.substring(0, 32), seedMd5.substring(16, 32))
+                    val pkPlain = KugouSigner.gson.toJson(json("clienttime_ms" to clientTimeMs, "key" to aesSeed))
+                    val pk = KugouSigner.rsa(pkPlain, useStandardKey = useStandardCfg).lowercase()
+                    val v4Body = json(
+                        "plat" to 1,
+                        "userid" to session.userId,
+                        "clienttime_ms" to clientTimeMs,
+                        "type" to 0,
+                        "d_sec" to 0,
+                        "diff_sec" to 0,
+                        "y_type" to 0,
+                        "m_type" to 0,
+                        "pk" to pk,
+                        "params" to paramsEnc,
+                        "medal" to 0
+                    )
+                    val v4BodyStr = KugouSigner.gson.toJson(v4Body)
+                    val signParams = sortedMapOf(
+                        "appid" to v4AppId,
+                        "clienttime" to clientTime.toString(),
+                        "clientver" to v4ClientVer,
+                        "dfid" to d.dfid.ifBlank { "-" },
+                        "mid" to d.mid,
+                        "uuid" to "-"
+                    )
+                    val signStr = signParams.entries.joinToString("") { "${it.key}=${it.value}" }
+                    val signature = KugouSigner.md5("$v4AppKey$signStr$v4BodyStr$v4AppKey")
+                    val queryMap = LinkedHashMap(signParams).apply { put("signature", signature) }
+                    val resp = transport.callAdvanced(
+                        path = "/v4/get_grade_info",
+                        host = "https://userinfoservice.kugou.com",
+                        method = "POST",
+                        session = session,
+                        query = queryMap,
+                        body = v4Body,
+                        headers = mapOf(
+                            "Content-Type" to "application/json; charset=UTF-8",
+                            "User-Agent" to "Android15-1070-$v4ClientVer-201-0-get_user_grade_info-wifi",
+                            "KG-DEVID" to d.mid,
+                            "KG-CLIENTTIMEMS" to clientTimeMs.toString()
+                        ),
+                        sign = false,
+                        includeDefaultParams = false
+                    )
+                    val st = resp.data.number("status") ?: resp.status
+                    val ec = resp.data.number("error_code") ?: resp.code
+                    if (st == 1 && (ec == null || ec == 0)) {
+                        resp.data.obj("data") ?: resp.data
+                    } else null
+                }.getOrNull()
+
+                callV4Grade(useStandardCfg = true) ?: callV4Grade(useStandardCfg = false)
             }
+
+            // 4. 查询或上报概念版 /v2/get_grade_info (module/user_grade_info.js)
+            // 优先附带 token 确保鉴权通过，若未命中则自动回退无 token 明文结构
             val clientVer = 10597
             val key = KugouSigner.md5("${KugouSigner.APP_ID}LnT6xpN3khm36zse0QzvmgTZ3waWdRSA${clientVer}$clientTime")
 
-            val requestBody = if (isReport) {
-                json(
-                    "mid" to d.mid,
-                    "type" to 1,
-                    "uuid" to "-",
-                    "userid" to userIdNum,
-                    "d_sec" to dSec!!,
-                    "diff_sec" to diffSec!!,
-                    "y_type" to 0,
-                    "m_type" to 0,
-                    "p" to p,
-                    "appid" to 3116,
-                    "clientver" to clientVer,
-                    "clienttime" to clientTime,
-                    "key" to key
-                )
-            } else {
-                json(
-                    "mid" to d.mid,
-                    "type" to 1,
-                    "uuid" to "-",
-                    "userid" to userIdNum,
-                    "p" to p,
-                    "appid" to 3116,
-                    "clientver" to clientVer,
-                    "clienttime" to clientTime,
-                    "key" to key
-                )
-            }
+            suspend fun callV2Grade(includeTokenInQueryP: Boolean): JsonObject? = runCatching {
+                val p = if (isReport) {
+                    val md5 = KugouSigner.md5("${dSec}${diffSec}00")
+                    val reportJson = "{"token":"${session.token}","md5":"$md5"}"
+                    KugouSigner.rsa(reportJson).uppercase()
+                } else if (includeTokenInQueryP) {
+                    val innerJson = "{"clienttime":$clientTime,"token":"${session.token}","userid":$userIdNum}"
+                    KugouSigner.rsa(innerJson).uppercase()
+                } else {
+                    val innerJson = "{"clienttime":$clientTime,"userid":$userIdNum}"
+                    KugouSigner.rsa(innerJson).uppercase()
+                }
 
-            val gradeData = runCatching {
+                val requestBody = if (isReport) {
+                    json(
+                        "mid" to d.mid,
+                        "type" to 1,
+                        "uuid" to "-",
+                        "userid" to userIdNum,
+                        "d_sec" to dSec!!,
+                        "diff_sec" to diffSec!!,
+                        "y_type" to 0,
+                        "m_type" to 0,
+                        "p" to p,
+                        "appid" to 3116,
+                        "clientver" to clientVer,
+                        "clienttime" to clientTime,
+                        "key" to key
+                    )
+                } else {
+                    json(
+                        "mid" to d.mid,
+                        "type" to 1,
+                        "uuid" to "-",
+                        "userid" to userIdNum,
+                        "p" to p,
+                        "appid" to 3116,
+                        "clientver" to clientVer,
+                        "clienttime" to clientTime,
+                        "key" to key
+                    )
+                }
+
                 val response = transport.callAdvanced(
                     path = "/v2/get_grade_info",
                     host = "http://userinfo.user.kugou.com",
@@ -4877,101 +4963,104 @@ class MusicApiRepository(
                 )
                 val status = response.data.number("status") ?: response.status
                 val errorCode = response.data.number("error_code") ?: response.code
-                if (status == 1 && errorCode == 0) {
+                if (status == 1 && (errorCode == null || errorCode == 0)) {
                     response.data.obj("data") ?: response.data
                 } else null
             }.getOrNull()
 
+            val gradeData = callV2Grade(includeTokenInQueryP = true)
+                ?: if (!isReport) callV2Grade(includeTokenInQueryP = false) else null
+            val v4GradeData = v4GradeDef.await()
             val myInfoData = myInfoDef.await()
             val relationInfoData = relationUserInfoDef.await()
-            if (gradeData == null && myInfoData == null && relationInfoData == null) {
+
+            if (gradeData == null && v4GradeData == null && myInfoData == null && relationInfoData == null) {
                 throw IllegalStateException("All user grade and my_info endpoints failed")
             }
 
-            val level = listOfNotNull(
-                gradeData?.number("p_grade"),
-                gradeData?.number("pGrade"),
-                gradeData?.number("grade"),
-                gradeData?.number("level"),
-                myInfoData?.number("user_grade"),
-                myInfoData?.number("p_grade"),
-                myInfoData?.number("grade"),
-                relationInfoData?.number("user_grade"),
-                relationInfoData?.number("p_grade")
-            ).maxOrNull() ?: 0
+            val allSources = listOfNotNull(gradeData, v4GradeData, myInfoData, relationInfoData)
 
-            val score = listOfNotNull(
-                gradeData?.text("p_current_point")?.toLongOrNull(),
-                gradeData?.text("pCurrentPoint")?.toLongOrNull(),
-                gradeData?.text("score")?.toLongOrNull(),
-                myInfoData?.text("p_current_point")?.toLongOrNull(),
-                myInfoData?.text("user_score")?.toLongOrNull(),
-                relationInfoData?.text("user_score")?.toLongOrNull()
-            ).maxOrNull() ?: 0L
+            val level = allSources.flatMap { src ->
+                listOfNotNull(
+                    src.number("p_grade"),
+                    src.number("pGrade"),
+                    src.number("user_grade"),
+                    src.number("grade"),
+                    src.number("level")
+                )
+            }.maxOrNull() ?: 0
 
-            val nextScore = listOfNotNull(
-                gradeData?.text("p_next_grade_point")?.toLongOrNull(),
-                gradeData?.text("pNextGradePoint")?.toLongOrNull(),
-                gradeData?.text("next_score")?.toLongOrNull()
-            ).maxOrNull() ?: 0L
+            val score = allSources.flatMap { src ->
+                listOfNotNull(
+                    src.text("p_current_point")?.toLongOrNull(),
+                    src.text("pCurrentPoint")?.toLongOrNull(),
+                    src.text("score")?.toLongOrNull(),
+                    src.text("user_score")?.toLongOrNull()
+                )
+            }.maxOrNull() ?: 0L
 
-            val currentGradeBasePoint = listOfNotNull(
-                gradeData?.text("p_grade_point")?.toLongOrNull(),
-                gradeData?.text("pGradePoint")?.toLongOrNull()
-            ).maxOrNull() ?: 0L
+            val nextScore = allSources.flatMap { src ->
+                listOfNotNull(
+                    src.text("p_next_grade_point")?.toLongOrNull(),
+                    src.text("pNextGradePoint")?.toLongOrNull(),
+                    src.text("next_score")?.toLongOrNull()
+                )
+            }.maxOrNull() ?: 0L
 
-            val dSecField = listOfNotNull(
-                gradeData?.text("d_sec")?.toLongOrNull(),
-                gradeData?.text("dSec")?.toLongOrNull(),
-                gradeData?.text("listen_sec")?.toLongOrNull()
-            ).maxOrNull() ?: 0L
+            val currentGradeBasePoint = allSources.flatMap { src ->
+                listOfNotNull(
+                    src.text("p_grade_point")?.toLongOrNull(),
+                    src.text("pGradePoint")?.toLongOrNull()
+                )
+            }.maxOrNull() ?: 0L
 
-            // 关键修复：在 /v3/get_my_info 中同时存在 r_duration 与 duration 等字段，
-            // 不能使用 ?: 短路（否则当旧字段非空但偏小时会忽略 r_duration），必须取各权威字段的最大值（如官方 220904 分钟 = 3681小时44分）
-            val myInfoDurationMin = listOfNotNull(
-                myInfoData?.text("r_duration")?.toLongOrNull(),
-                myInfoData?.text("duration")?.toLongOrNull(),
-                myInfoData?.text("listen_duration")?.toLongOrNull(),
-                myInfoData?.text("user_duration")?.toLongOrNull(),
-                myInfoData?.text("total_duration")?.toLongOrNull(),
-                relationInfoData?.text("r_duration")?.toLongOrNull(),
-                relationInfoData?.text("duration")?.toLongOrNull(),
-                relationInfoData?.text("listen_duration")?.toLongOrNull(),
-                relationInfoData?.text("user_duration")?.toLongOrNull()
-            ).maxOrNull() ?: 0L
+            val dSecField = allSources.flatMap { src ->
+                listOfNotNull(
+                    src.text("d_sec")?.toLongOrNull(),
+                    src.text("dSec")?.toLongOrNull(),
+                    src.text("listen_sec")?.toLongOrNull()
+                )
+            }.maxOrNull() ?: 0L
 
-            val gradeDurationMin = listOfNotNull(
-                gradeData?.text("r_duration")?.toLongOrNull(),
-                gradeData?.text("duration")?.toLongOrNull(),
-                gradeData?.text("d_min")?.toLongOrNull(),
-                gradeData?.text("listen_time")?.toLongOrNull()
-            ).maxOrNull() ?: 0L
+            val durationMinField = allSources.flatMap { src ->
+                listOfNotNull(
+                    src.text("r_duration")?.toLongOrNull(),
+                    src.text("duration")?.toLongOrNull(),
+                    src.text("d_min")?.toLongOrNull(),
+                    src.text("listen_duration")?.toLongOrNull(),
+                    src.text("user_duration")?.toLongOrNull(),
+                    src.text("total_duration")?.toLongOrNull(),
+                    src.text("listen_time")?.toLongOrNull()
+                )
+            }.maxOrNull() ?: 0L
 
-            val durationMinField = maxOf(myInfoDurationMin, gradeDurationMin)
+            val minFieldInSec = if (durationMinField > 2_000_000L) durationMinField else durationMinField * 60L
 
             if (dSecField > 0L) {
                 lastServerRawDsec = dSecField
-            } else if (durationMinField > 0L && lastServerRawDsec <= 0L) {
-                lastServerRawDsec = if (durationMinField > 2_000_000L) durationMinField else durationMinField * 60L
+            } else if (minFieldInSec > 0L && lastServerRawDsec <= 0L) {
+                lastServerRawDsec = minFieldInSec
             }
 
-            // 严格对齐酷狗官方客户端「个人信息」展示的累计听歌分钟数 (220904 分钟 -> 3681 小时 44 分)
-            val totalSec = when {
-                durationMinField > 0L -> {
-                    val minSec = if (durationMinField > 2_000_000L) durationMinField else durationMinField * 60L
-                    if (dSecField > minSec && dSecField - minSec < 60L) dSecField else minSec
-                }
-                dSecField > 0L -> dSecField
-                else -> 0L
-            }
+            // 关键修复：此前代码因限制 `if (dSecField > minSec && dSecField - minSec < 60L) dSecField else minSec`，
+            // 当服务端 d_sec / v4 协议时长 (如官方 220904 分钟 = 13254240 秒 = 3681小时44分) 高于滞后的 duration 摘要字段
+            // (如 220631 分钟 = 3677小时11分，相差 273 分钟) 时，错误丢弃了最新的 d_sec！
+            // 现直接取 dSecField 与 minFieldInSec 的权威最大值，确保与官方 App 个人资料页分钟数完全一致。
+            val totalSec = maxOf(dSecField, minFieldInSec)
             val totalMin = totalSec / 60L
 
-            val remainSecFromServer = gradeData?.text("remain_d_sec")?.toLongOrNull()
-                ?: gradeData?.text("need_d_sec")?.toLongOrNull()
-                ?: gradeData?.text("upgrade_d_sec")?.toLongOrNull()
-                ?: gradeData?.text("next_d_sec")?.toLongOrNull()?.let { nextD ->
-                    if (nextD > totalSec) nextD - totalSec else 0L
-                } ?: 0L
+            val remainSecFromServer = allSources.firstNotNullOfOrNull { src ->
+                src.text("remain_d_sec")?.toLongOrNull()
+                    ?: src.text("need_d_sec")?.toLongOrNull()
+                    ?: src.text("upgrade_need_sec")?.toLongOrNull()
+                    ?: src.text("upgrade_d_sec")?.toLongOrNull()
+                    ?: src.text("next_grade_sec")?.toLongOrNull()?.let { nextD ->
+                        if (nextD > totalSec) nextD - totalSec else null
+                    }
+                    ?: src.text("next_d_sec")?.toLongOrNull()?.let { nextD ->
+                        if (nextD > totalSec) nextD - totalSec else null
+                    }
+            } ?: 0L
 
             val (progressPct, remainMins) = UserGradeInfo.computeLevelProgressAndRemain(
                 level = level,
@@ -5799,13 +5888,14 @@ class MusicApiRepository(
 
     /**
      * 严格对齐 MakcRe/KuGouMusicApi module/comment_floor.js:
-     * 主接口为 POST /mcomment/v1/hot_replylist，必传参数 childrenid (= 主评论的 special_child_id)、tid (= 评论 ID)、mixsongid、code
+     * 主接口为 POST /mcomment/v1/hot_replylist，同时并发融合 /mcomment/v1/replylist 与 /m.comment.service/v1/replylist 分页，
+     * 确保不仅能拉取前排高赞楼层回复，还能在「查看全部回复」时完整分页加载后续全部楼层评论。
      */
     suspend fun songCommentReplies(
         song: Song,
         commentId: String,
         page: Int = 1,
-        pageSize: Int = 20,
+        pageSize: Int = 30,
         resolvedMixSongId: Long = 0L,
         specialChildId: String = ""
     ): List<SongComment> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -5826,6 +5916,7 @@ class MusicApiRepository(
 
         fun buildFloorQuery(childrenIdVal: String): Map<String, String> = buildMap {
             put("childrenid", childrenIdVal)
+            put("special_id", childrenIdVal)
             put("need_show_image", "1")
             put("p", page.toString())
             put("pagesize", pageSize.toString())
@@ -5834,6 +5925,7 @@ class MusicApiRepository(
             put("code", "fc4be23b4e972707f36b8a828a93ba8a")
             put("tid", commentId)
             put("cmtid", commentId)
+            put("p_id", commentId)
             if (mixSongId > 0L) {
                 put("mixsongid", mixSongId.toString())
             }
@@ -5842,7 +5934,15 @@ class MusicApiRepository(
             }
         }
 
-        // 1. 主通道：严格对齐 MakcRe/KuGouMusicApi module/comment_floor.js -> POST /mcomment/v1/hot_replylist
+        val collected = LinkedHashMap<String, SongComment>()
+        fun mergeInto(items: List<SongComment>) {
+            for (item in items) {
+                val key = item.id.ifBlank { "${item.userName}_${item.timeFormatted}_${item.content}" }
+                collected.putIfAbsent(key, item)
+            }
+        }
+
+        // 1. 主通道：POST /mcomment/v1/hot_replylist (module/comment_floor.js)
         val hotReplyListPrimary = runCatching {
             val response = transport.call(
                 path = "/mcomment/v1/hot_replylist",
@@ -5852,36 +5952,9 @@ class MusicApiRepository(
             )
             parseReplyItems(response.data, parentCommentId = commentId)
         }.getOrDefault(emptyList())
+        mergeInto(hotReplyListPrimary)
 
-        if (hotReplyListPrimary.isNotEmpty()) return@withContext hotReplyListPrimary
-
-        // 2. 若 special_child_id 为空或未命中，尝试以 mixSongId 作为 childrenid 请求 /mcomment/v1/hot_replylist 与 /m.comment.service/v1/hot_replylist
-        if (mixSongId > 0L && effectiveChildrenId != mixSongId.toString()) {
-            val fallbackByMixId = runCatching {
-                val response = transport.call(
-                    path = "/mcomment/v1/hot_replylist",
-                    method = "POST",
-                    session = session,
-                    query = buildFloorQuery(mixSongId.toString())
-                )
-                parseReplyItems(response.data, parentCommentId = commentId)
-            }.getOrDefault(emptyList())
-            if (fallbackByMixId.isNotEmpty()) return@withContext fallbackByMixId
-        }
-
-        val serviceHotReplyList = runCatching {
-            val response = transport.call(
-                path = "/m.comment.service/v1/hot_replylist",
-                method = "POST",
-                session = session,
-                query = buildFloorQuery(effectiveChildrenId)
-            )
-            parseReplyItems(response.data, parentCommentId = commentId)
-        }.getOrDefault(emptyList())
-
-        if (serviceHotReplyList.isNotEmpty()) return@withContext serviceHotReplyList
-
-        // 3. 兼容回退通道：/mcomment/v1/replylist 与 /mcomment/v2/replylist
+        // 2. 分页全量通道：/mcomment/v1/replylist 与 /m.comment.service/v1/replylist（解决 hot_replylist 仅返回热评导致数量不一致的问题）
         val v1Replies = runCatching {
             val response = transport.call(
                 path = "/mcomment/v1/replylist",
@@ -5891,18 +5964,46 @@ class MusicApiRepository(
             )
             parseReplyItems(response.data, parentCommentId = commentId)
         }.getOrDefault(emptyList())
+        mergeInto(v1Replies)
 
-        if (v1Replies.isNotEmpty()) return@withContext v1Replies
+        if (collected.isEmpty() && mixSongId > 0L && effectiveChildrenId != mixSongId.toString()) {
+            val fallbackByMixId = runCatching {
+                val response = transport.call(
+                    path = "/mcomment/v1/hot_replylist",
+                    method = "POST",
+                    session = session,
+                    query = buildFloorQuery(mixSongId.toString())
+                )
+                parseReplyItems(response.data, parentCommentId = commentId)
+            }.getOrDefault(emptyList())
+            mergeInto(fallbackByMixId)
+        }
 
-        runCatching {
-            val response = transport.call(
-                path = "/mcomment/v2/replylist",
-                method = "GET",
-                session = session,
-                query = buildFloorQuery(effectiveChildrenId) + mapOf("ver" to "6")
-            )
-            parseReplyItems(response.data, parentCommentId = commentId)
-        }.getOrDefault(emptyList())
+        if (collected.size < pageSize / 2) {
+            val serviceHotReplyList = runCatching {
+                val response = transport.call(
+                    path = "/m.comment.service/v1/hot_replylist",
+                    method = "POST",
+                    session = session,
+                    query = buildFloorQuery(effectiveChildrenId)
+                )
+                parseReplyItems(response.data, parentCommentId = commentId)
+            }.getOrDefault(emptyList())
+            mergeInto(serviceHotReplyList)
+
+            val v2Replies = runCatching {
+                val response = transport.call(
+                    path = "/mcomment/v2/replylist",
+                    method = "GET",
+                    session = session,
+                    query = buildFloorQuery(effectiveChildrenId) + mapOf("ver" to "6")
+                )
+                parseReplyItems(response.data, parentCommentId = commentId)
+            }.getOrDefault(emptyList())
+            mergeInto(v2Replies)
+        }
+
+        collected.values.toList()
     }
 
     suspend fun likeSongComment(song: Song, commentId: String, like: Boolean): Boolean {
@@ -6053,13 +6154,14 @@ class MusicApiRepository(
         return replyObjects.mapNotNull { r ->
             val rId = r.text("id") ?: r.text("reply_id") ?: r.text("cmtid") ?: r.text("comment_id") ?: ""
             val rawContent = (r.text("content") ?: r.text("text") ?: r.text("reply_content") ?: "").trim()
-            val formattedContent = KugouCommentEmojiParser.formatContent(rawContent)
+            val parsedWeibo = com.concept.music.data.model.KugouCommentEmojiParser.parseWeiboReplyChain(rawContent)
+            val cleanText = parsedWeibo.cleanContent
             val rImages = extractCommentImages(r)
-            if (formattedContent.isBlank() && rImages.isEmpty()) return@mapNotNull null
+            if (cleanText.isBlank() && rImages.isEmpty()) return@mapNotNull null
 
             val rUdetail = r.obj("udetail") ?: r.obj("user")
             val rUId = r.text("user_id") ?: rUdetail?.text("user_id") ?: r.text("userid") ?: ""
-            val rUName = r.text("user_name") ?: r.text("nick_name") ?: r.text("nickname")
+            val rUName = r.text("user_name") ?: r.text("nick_name") ?: r.text("nickname") ?: r.text("uname")
                 ?: rUdetail?.text("user_name") ?: rUdetail?.text("nickname") ?: "酷狗乐迷"
             val rAvatar = imageUrl(
                 r.text("user_pic") ?: r.text("avatar") ?: r.text("pic")
@@ -6075,26 +6177,50 @@ class MusicApiRepository(
                 r.text("childrenid"),
                 r.text("special_id")
             ).firstOrNull { it.isNotBlank() && it != "0" && it != "null" }.orEmpty()
-            val rReplyUser = r.text("reply_user_name") ?: r.text("reply_username")
-                ?: r.obj("reply_user")?.text("user_name")
-                ?: r.obj("puser")?.text("user_name")
-                ?: r.obj("pcontent")?.text("user_name")
-                ?: r.obj("pcomment")?.text("user_name")
-                ?: defaultReplyUserName
+
+            val explicitTargetCommentId = listOfNotNull(
+                r.text("p_id"),
+                r.text("pid"),
+                r.text("reply_to_id"),
+                r.obj("pcomment")?.text("id"),
+                r.obj("pcontent")?.text("id")
+            ).firstOrNull { it.isNotBlank() && it != "0" && it != "null" && it != parentCommentId }
+
+            val explicitReplyUser = listOfNotNull(
+                parsedWeibo.targetUserName,
+                r.text("reply_user_name"),
+                r.text("reply_username"),
+                r.obj("reply_user")?.text("user_name"),
+                r.obj("puser")?.text("user_name"),
+                r.obj("pcontent")?.text("user_name"),
+                r.obj("pcomment")?.text("user_name"),
+                r.text("puser")?.takeIf { !it.startsWith("{") }
+            ).firstOrNull { it.isNotBlank() && it != "null" }
+
+            val explicitQuotedText = listOfNotNull(
+                parsedWeibo.quotedContent,
+                r.obj("pcomment")?.text("content"),
+                r.obj("pcontent")?.text("content"),
+                r.text("pcontent")?.takeIf { !it.startsWith("{") && it != explicitReplyUser }
+            ).firstOrNull { it.isNotBlank() && it != "null" }
+                ?.let { com.concept.music.data.model.KugouCommentEmojiParser.formatContent(it) }
 
             SongComment(
-                id = rId.ifBlank { "${parentCommentId}_${rTime}_${formattedContent.hashCode()}" },
+                id = rId.ifBlank { "${parentCommentId}_${rTime}_${cleanText.hashCode()}" },
                 userId = rUId,
                 userName = rUName,
                 userAvatar = rAvatar,
-                content = formattedContent.ifBlank { "[图片评论]" },
+                content = cleanText.ifBlank { "[图片评论]" },
                 timeFormatted = rTime,
                 likeCount = rLikes,
                 isLiked = rIsLiked,
                 ipLocation = rIp,
-                parentId = parentCommentId,
+                parentId = explicitTargetCommentId ?: parentCommentId,
                 rootId = parentCommentId,
-                replyUserName = rReplyUser,
+                replyUserName = explicitReplyUser ?: defaultReplyUserName,
+                replyTargetCommentId = explicitTargetCommentId,
+                replyQuotedContent = explicitQuotedText,
+                replyChainHops = parsedWeibo.chainHops,
                 specialChildId = rSpecialChildId,
                 images = rImages,
                 timestampMs = rTs

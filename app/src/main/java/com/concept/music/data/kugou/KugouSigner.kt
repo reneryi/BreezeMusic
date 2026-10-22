@@ -19,6 +19,7 @@ object KugouSigner {
     private const val ANDROID_SALT = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
     private const val WEB_SALT = "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt"
     private const val PUBLIC_KEY = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDECi0Np2UR87scwrvTr72L6oO01rBbbBPriSDFPxr3Z5syug0O24QyQO8bg27+0+4kBzTBTBOZ/WWU0WryL1JSXRTXLgFVxtzIY41Pe7lPOgsfTCn5kZcvKhYKJesKnnJDNr5/abvTGf+rHG3YRwsCHcQ08/q6ifSioBszvb3QiwIDAQAB"
+    private const val PUBLIC_KEY_STANDARD = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7Q0ELSYoIJvTFJhMpe1s/gbjDX51HBNnE15HXqTW6lQ7LC8jr9fWZTwusknp+sVGzwd40MwP6U5yDE27M/X1+UR4tvOGOqp94TJtQ1EPnWGXngpeIW5GxoQgao1rmYWAu6oi1z9XkChrsUdC6DJE5E221wf/4WLFxwAtRQIDAQAB"
     val gson = GsonBuilder().disableHtmlEscaping().create()
     fun md5(text: String): String = hex(MessageDigest.getInstance("MD5").digest(text.toByteArray(Charsets.UTF_8)))
     fun mid(guid: String): String = BigInteger(md5(guid), 16).toString()
@@ -50,8 +51,9 @@ object KugouSigner {
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key.toByteArray(Charsets.UTF_8), "AES"), IvParameterSpec(key.takeLast(16).toByteArray(Charsets.UTF_8)))
         return cipher.doFinal(hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()).toString(Charsets.UTF_8)
     }
-    fun rsa(text: String): String {
-        val key = KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(Base64.getDecoder().decode(PUBLIC_KEY))) as RSAPublicKey
+    fun rsa(text: String, useStandardKey: Boolean = false): String {
+        val pubKeyB64 = if (useStandardKey) PUBLIC_KEY_STANDARD else PUBLIC_KEY
+        val key = KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(Base64.getDecoder().decode(pubKeyB64))) as RSAPublicKey
         val size = (key.modulus.bitLength() + 7) / 8
         val bytes = text.toByteArray(Charsets.UTF_8)
         require(bytes.size <= size) { "登录加密数据长度超限" }

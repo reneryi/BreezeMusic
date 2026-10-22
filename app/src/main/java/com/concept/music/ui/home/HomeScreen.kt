@@ -318,7 +318,8 @@ fun HomeScreen(
                     },
                     onPlaySong = { song ->
                         onSongClick(song, currentNewSongs)
-                    }
+                    },
+                    onSongMoreClick = onSongMoreClick
                 )
             }
 
@@ -1242,7 +1243,8 @@ private fun NewSongExpressSectionCard(
     onRefreshPeriod: () -> Unit,
     onOpenFullScreen: () -> Unit,
     onPlayAll: () -> Unit,
-    onPlaySong: (Song) -> Unit
+    onPlaySong: (Song) -> Unit,
+    onSongMoreClick: (Song) -> Unit = {}
 ) {
     val isDark = LocalIsDarkTheme.current
     val violetAccent = if (isDark) Color(0xFF9688FF) else ConceptVioletAccent
@@ -1461,7 +1463,21 @@ private fun NewSongExpressSectionCard(
                                         )
                                     }
 
-                                    if (shortDate.isNotBlank()) {
+                                    if (isThisPlaying) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(Color.Black.copy(alpha = 0.36f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.GraphicEq,
+                                                contentDescription = "正在播放",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    } else if (shortDate.isNotBlank()) {
                                         Box(
                                             modifier = Modifier
                                                 .align(Alignment.BottomStart)
@@ -1517,14 +1533,23 @@ private fun NewSongExpressSectionCard(
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
 
-                                Icon(
-                                    imageVector = if (isThisPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
-                                    contentDescription = "播放",
-                                    tint = if (isThisPlaying) violetAccent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                // 右侧改为独立可交互的「更多操作」按钮（点击行即播放，点击右侧按钮弹出歌曲操作面板）
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .softClickable { onSongMoreClick(song) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.MoreVert,
+                                        contentDescription = "更多操作",
+                                        tint = if (isThisPlaying) violetAccent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
 
                             if (rowIdx < group.lastIndex) {
