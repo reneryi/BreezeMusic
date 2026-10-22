@@ -409,4 +409,87 @@ class UiAlignmentRegressionTest {
         assertTrue(parsed.contains("❤️"))
         assertTrue(parsed.contains("👍"))
     }
+
+    @Test
+    fun testOfficialListeningDuration220904MinutesAndGradeRemainMinutes() {
+        val officialMinutes = 220904L
+        val officialSeconds = officialMinutes * 60L
+        val gradeInfo = UserGradeInfo(
+            level = 11,
+            listenDurationMinutes = officialMinutes,
+            listenDurationSeconds = officialSeconds,
+            nextLevelProgress = 0.99f,
+            nextLevelRemainMinutes = 1096L,
+            currentBaseScore = 176000L,
+            nextLevelMinMinutes = 222000L
+        )
+        assertEquals("3681 小时 44 分", gradeInfo.formattedDuration)
+
+        val updated = gradeInfo.withUpdatedSeconds(officialSeconds)
+        assertEquals(11, updated.level)
+        assertEquals(220904L, updated.listenDurationMinutes)
+        assertEquals("3681 小时 44 分", updated.formattedDuration)
+        assertEquals(176000L, updated.currentBaseScore)
+        // 222000 - 220904 = 1096 minutes (~18.2 hours)
+        assertEquals(1096L, updated.nextLevelRemainMinutes)
+        assertTrue(updated.nextLevelProgress in 0.97f..0.99f)
+    }
+
+    @Test
+    fun testCommentSpecialChildIdAndHotReplyListRouting() = kotlinx.coroutines.runBlocking {
+        val store = MemoryStore()
+        var capturedReplyPath = ""
+        var capturedChildrenId = ""
+        var capturedTid = ""
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse {
+                if (path == "/mcomment/v1/hot_replylist") {
+                    capturedReplyPath = path
+                    capturedChildrenId = query["childrenid"].orEmpty()
+                    capturedTid = query["tid"].orEmpty()
+                    val json = com.google.gson.JsonParser.parseString(
+                        """
+                        {
+                            "status": 1,
+                            "err_code": 0,
+                            "list": [
+                                {
+                                    "id": "rep_101",
+                                    "user_id": "8801",
+                                    "uname": "回音听众",
+                                    "content": "致敬先辈，山河无恙！",
+                                    "addtime": "2026-10-22 10:12:00",
+                                    "pcontent": "MG"
+                                }
+                            ]
+                        }
+                        """
+                    ).asJsonObject
+                    return ApiResponse(json)
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+
+        val song = Song(id = "song_1", title = "共赴", artist = "黄霄雲", mixSongId = "987654321")
+        val replies = repo.songCommentReplies(
+            song = song,
+            commentId = "tid_555",
+            specialChildId = "scid_999",
+            page = 1,
+            pageSize = 20
+        )
+        assertEquals("/mcomment/v1/hot_replylist", capturedReplyPath)
+        assertEquals("scid_999", capturedChildrenId)
+        assertEquals("tid_555", capturedTid)
+        assertEquals(1, replies.size)
+        assertEquals("回音听众", replies.first().userName)
+        assertEquals("致敬先辈，山河无恙！", replies.first().content)
+    }
 }

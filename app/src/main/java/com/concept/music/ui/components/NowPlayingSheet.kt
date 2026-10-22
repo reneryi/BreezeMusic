@@ -452,9 +452,11 @@ fun NowPlayingSheet(
         }
     }
 
-    // 系统返回键：若正处于横屏播放页则先退回竖屏，若处于歌词页则退回封面，否则收起播放页
+    // 系统返回键：优先关闭已打开的子面板（队列/歌词设置），若正处于横屏播放页则退回竖屏，若处于歌词页则退回封面，否则收起播放页
     BackHandler {
         when {
+            showQueueSheet -> showQueueSheet = false
+            showLyricSettingsDialog -> showLyricSettingsDialog = false
             effectiveLandscape -> exitLandscape()
             showLyricView -> showLyricView = false
             else -> onDismiss()
@@ -722,6 +724,8 @@ fun NowPlayingSheet(
                             showTranslationButton = showTranslationBtn,
                             showPhonetic = showPhonetic,
                             showPhoneticButton = showPhoneticBtn,
+                            lyricWordByWord = lyricWordByWord,
+                            lyricHighlightTheme = lyricHighlightTheme,
                             isFavorite = isFavorite,
                             playMode = playMode,
                             commentCount = commentCount,
@@ -796,9 +800,8 @@ fun NowPlayingSheet(
             }
             }
         }
-    }
 
-    // 播放队列弹窗（融合封面动态取色）
+        // 播放队列弹窗（融合封面动态取色，置于根全屏 Box 内以完整覆盖横竖屏全窗口）
     if (showQueueSheet) {
         QueueBottomSheet(
             queue = queue,
@@ -964,12 +967,13 @@ fun NowPlayingSheet(
         )
     }
 
-    // 歌曲技术参数详情弹窗
-    if (showDetailSheet && songDetail != null) {
-        SongDetailSheet(
-            detail = songDetail,
-            onDismiss = { showDetailSheet = false }
-        )
+        // 歌曲技术参数详情弹窗
+        if (showDetailSheet && songDetail != null) {
+            SongDetailSheet(
+                detail = songDetail,
+                onDismiss = { showDetailSheet = false }
+            )
+        }
     }
 }
 
@@ -1455,6 +1459,8 @@ private fun CoverPlayerPageContent(
     showTranslationButton: Boolean,
     showPhonetic: Boolean,
     showPhoneticButton: Boolean = false,
+    lyricWordByWord: Boolean = true,
+    lyricHighlightTheme: LyricHighlightTheme = LyricHighlightTheme.ICE_BLUE,
     isFavorite: Boolean,
     playMode: PlayMode,
     commentCount: Int,
@@ -1568,13 +1574,13 @@ private fun CoverPlayerPageContent(
                 }
             }
 
-            // 右侧三按钮整体上移至歌词预览上方右侧（第1：收藏，第2：添加到歌单，第3：歌词海报）
+            // 右侧三按钮整体再往上移动，与下方增高后的预览歌词区拉开舒适呼吸空间（第1：收藏，第2：添加到歌单，第3：歌词海报）
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(bottom = 2.dp),
+                    .padding(bottom = 22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Box(
                     modifier = Modifier
@@ -1633,14 +1639,17 @@ private fun CoverPlayerPageContent(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // 2. 全宽沉浸式歌词预览区（右侧无遮挡，点击任意区域均可进入歌词页面）
+        // 2. 全宽沉浸式歌词预览区（增大字号、加高显示区域，且逐字流光效果与歌词页完全统一）
         FullWidthLyricPreviewSection(
             lyricData = lyricData,
             currentLyricIndex = currentLyricIndex,
             currentPositionMs = currentPositionMs,
             showTranslation = showTranslation && showTranslationButton,
             showPhonetic = showPhonetic && showPhoneticButton,
-            accentColor = accentPrimary,
+            lyricWordByWord = lyricWordByWord,
+            lyricHighlightTheme = lyricHighlightTheme,
+            accentPrimary = accentPrimary,
+            accentSecondary = accentSecondary,
             onLyricClick = onOpenLyricView
         )
 
@@ -2178,6 +2187,7 @@ private fun StaticRoundedSquareCoverView(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FullWidthLyricPreviewSection(
     lyricData: LyricData,
@@ -2185,9 +2195,23 @@ private fun FullWidthLyricPreviewSection(
     currentPositionMs: Long,
     showTranslation: Boolean,
     showPhonetic: Boolean,
-    accentColor: Color,
+    lyricWordByWord: Boolean = true,
+    lyricHighlightTheme: LyricHighlightTheme = LyricHighlightTheme.ICE_BLUE,
+    accentPrimary: Color,
+    accentSecondary: Color = ConceptCyanAccent,
     onLyricClick: () -> Unit
 ) {
+    val activePrimaryColor = if (lyricHighlightTheme == LyricHighlightTheme.DYNAMIC_COVER) {
+        lerp(accentPrimary, Color.White, 0.16f)
+    } else {
+        Color(lyricHighlightTheme.primaryHex)
+    }
+    val activeSecondaryColor = if (lyricHighlightTheme == LyricHighlightTheme.DYNAMIC_COVER) {
+        accentSecondary
+    } else {
+        Color(lyricHighlightTheme.secondaryHex)
+    }
+
     val currentLineObj = lyricData.lines.getOrNull(currentLyricIndex)
     val mainText = currentLineObj?.text?.takeIf { it.isNotBlank() } ?: "轻触展开全屏歌词"
     val phoneticText = if (showPhonetic) currentLineObj?.phonetic?.takeIf { it.isNotBlank() } else null
@@ -2200,69 +2224,109 @@ private fun FullWidthLyricPreviewSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 82.dp)
             .clip(RoundedCornerShape(14.dp))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onLyricClick
             )
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        horizontalAlignment = Alignment.Start
+            .padding(horizontal = 6.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.Start,
+        verticalArrangement = Arrangement.Center
     ) {
         if (!phoneticText.isNullOrBlank()) {
             Text(
                 text = phoneticText,
                 style = MaterialTheme.typography.labelSmall.copy(
-                    color = accentColor.copy(alpha = 0.85f),
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Medium
+                    color = activePrimaryColor.copy(alpha = 0.88f),
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    fontWeight = FontWeight.SemiBold
                 ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(3.dp))
         }
 
-        if (currentLineObj != null && currentLineObj.hasWordTiming && currentLineObj.words.isNotEmpty()) {
-            val annotated = buildAnnotatedString {
+        if (currentLineObj != null && currentLineObj.hasWordTiming && currentLineObj.words.isNotEmpty() && lyricWordByWord) {
+            FlowRow(
+                horizontalArrangement = Arrangement.Start,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxWidth()
+            ) {
                 currentLineObj.words.forEach { word ->
-                    val wordEnd = word.startTimeMs + word.durationMs
-                    when {
-                        currentPositionMs >= wordEnd -> {
-                            withStyle(SpanStyle(color = Color.White, fontWeight = FontWeight.ExtraBold)) {
+                    val wordProgress = when {
+                        word.durationMs > 0L -> ((currentPositionMs - word.startTimeMs).toFloat() / word.durationMs.toFloat()).coerceIn(0f, 1f)
+                        currentPositionMs >= word.startTimeMs -> 1f
+                        else -> 0f
+                    }
+                    val isSinging = wordProgress in 0.01f..0.99f
+                    val dimColor = Color.White.copy(alpha = 0.44f)
+
+                    val annotatedWord = buildAnnotatedString {
+                        if (wordProgress <= 0f) {
+                            withStyle(SpanStyle(color = dimColor)) {
                                 append(word.text)
                             }
-                        }
-                        currentPositionMs > word.startTimeMs -> {
-                            withStyle(SpanStyle(color = accentColor, fontWeight = FontWeight.ExtraBold)) {
+                        } else if (wordProgress >= 1f) {
+                            withStyle(SpanStyle(color = activePrimaryColor)) {
                                 append(word.text)
                             }
-                        }
-                        else -> {
-                            withStyle(SpanStyle(color = Color.White.copy(alpha = 0.56f), fontWeight = FontWeight.SemiBold)) {
+                        } else {
+                            val leftStop = (wordProgress - 0.14f).coerceAtLeast(0f)
+                            val rightStop = (wordProgress + 0.14f).coerceAtMost(1f)
+                            withStyle(
+                                SpanStyle(
+                                    brush = Brush.horizontalGradient(
+                                        0.0f to activePrimaryColor,
+                                        leftStop to activeSecondaryColor,
+                                        rightStop to dimColor,
+                                        1.0f to dimColor
+                                    )
+                                )
+                            ) {
                                 append(word.text)
                             }
                         }
                     }
+
+                    val wave = if (isSinging) sin(wordProgress * PI.toFloat()) else 0f
+                    val isLongNote = word.durationMs >= 750L && isSinging
+
+                    Text(
+                        text = annotatedWord,
+                        style = MaterialTheme.typography.headlineSmall.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 19.5.sp,
+                            lineHeight = 26.5.sp,
+                            shadow = if (isLongNote) {
+                                Shadow(
+                                    color = activePrimaryColor.copy(alpha = (0.80f * wave).coerceIn(0f, 1f)),
+                                    offset = Offset.Zero,
+                                    blurRadius = (18f * wave + 5f).coerceAtLeast(1f)
+                                )
+                            } else null
+                        ),
+                        modifier = Modifier.graphicsLayer {
+                            translationY = -2.8f * wave
+                            val s = 1f + 0.032f * wave
+                            scaleX = s
+                            scaleY = s
+                        }
+                    )
                 }
             }
-            Text(
-                text = annotated,
-                fontSize = 16.5.sp,
-                lineHeight = 22.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth()
-            )
         } else {
             Text(
                 text = mainText,
                 style = MaterialTheme.typography.bodyLarge.copy(
-                    color = Color.White,
+                    color = if (currentLineObj != null) activePrimaryColor else Color.White,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 16.5.sp,
-                    lineHeight = 22.sp
+                    fontSize = 19.5.sp,
+                    lineHeight = 26.5.sp
                 ),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -2270,14 +2334,14 @@ private fun FullWidthLyricPreviewSection(
             )
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
         Text(
             text = subText.ifBlank { "♪ • • •" },
             style = MaterialTheme.typography.bodySmall.copy(
-                color = Color.White.copy(alpha = 0.62f),
-                fontSize = 13.5.sp,
-                lineHeight = 18.5.sp,
+                color = Color.White.copy(alpha = 0.64f),
+                fontSize = 15.sp,
+                lineHeight = 21.sp,
                 fontWeight = FontWeight.Medium
             ),
             maxLines = 2,
@@ -2440,12 +2504,17 @@ internal fun CometTailProgressBar(
     highlightClimaxRange: Boolean,
     accentPrimary: Color = ConceptPrimary,
     accentSecondary: Color = ConceptCyanAccent,
+    compact: Boolean = false,
     onDragStart: (Float) -> Unit,
     onDrag: (Float) -> Unit,
     onDragEnd: () -> Unit
 ) {
     val trackHeightDp by animateDpAsState(
-        targetValue = if (isInteracting) 8.0.dp else 4.8.dp,
+        targetValue = if (compact) {
+            if (isInteracting) 5.8.dp else 3.4.dp
+        } else {
+            if (isInteracting) 8.0.dp else 4.8.dp
+        },
         animationSpec = spring(
             dampingRatio = 0.68f,
             stiffness = Spring.StiffnessMedium
@@ -2484,7 +2553,7 @@ internal fun CometTailProgressBar(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(40.dp)
+            .height(if (compact) 22.dp else 40.dp)
             .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = { offset ->
@@ -2541,7 +2610,7 @@ internal fun CometTailProgressBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 4.dp)
-                .height(32.dp)
+                .height(if (compact) 18.dp else 32.dp)
         ) {
             val w = size.width
             val h = size.height
@@ -2579,7 +2648,7 @@ internal fun CometTailProgressBar(
 
             val headX = (w * fraction.coerceIn(0f, 1f)).coerceIn(0f, w)
             val headCenter = Offset(headX, centerY)
-            val thumbRadius = 5.0.dp.toPx() * thumbScale
+            val thumbRadius = (if (compact) 3.8.dp else 5.0.dp).toPx() * thumbScale
             val pulseFactor = (if (isPlaying) cometPulse else 1f).coerceIn(0.88f, 1.16f)
 
             if (headX > 1f) {
@@ -2704,7 +2773,7 @@ internal fun CometTailProgressBar(
             }
 
             // 彗星晶核头部：多层同心柔光晕 + 融合炽白核心
-            val haloRadius = 13.5.dp.toPx() * thumbScale * pulseFactor
+            val haloRadius = (if (compact) 9.5.dp else 13.5.dp).toPx() * thumbScale * pulseFactor
             drawCircle(
                 brush = Brush.radialGradient(
                     colorStops = arrayOf(

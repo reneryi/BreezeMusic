@@ -1,5 +1,6 @@
 package com.concept.music.data.kugou
 
+import com.concept.music.data.vip.ListeningGradeManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -100,6 +101,22 @@ class AccountRepository(private val store: SessionStore, private val auth: AuthR
             val profile = AccountProfile(context.session.userId, data.text("nickname") ?: state.value.profile?.nickname ?: "酷狗用户", imageUrl(data.text("pic")))
             updateCurrent { it.copy(nickname = profile.nickname, avatarUrl = profile.avatarUrl, needsLogin = false) }
             mutable.value = state.value.copy(profile = profile, auth = AuthState.READY, profileFresh = true, message = null)
+
+            // 同步 /v3/get_my_info (module/user_detail.js) 中的官方个人资料权威听歌时长（分钟）与等级
+            val officialMinutes = listOfNotNull(
+                data.text("r_duration")?.toLongOrNull(),
+                data.text("duration")?.toLongOrNull(),
+                data.text("listen_duration")?.toLongOrNull(),
+                data.text("user_duration")?.toLongOrNull()
+            ).maxOrNull() ?: 0L
+            val officialLevel = listOfNotNull(
+                data.number("user_grade"),
+                data.number("p_grade"),
+                data.number("grade")
+            ).maxOrNull() ?: 0
+            if (officialMinutes > 0L || officialLevel > 0) {
+                ListeningGradeManager.onOfficialProfileSynced(context.session.userId, officialMinutes, officialLevel)
+            }
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) { ensureCurrent(context); mutable.value = state.value.copy(profileFresh = false, message = "资料尚未刷新：${e.message}") }
     }

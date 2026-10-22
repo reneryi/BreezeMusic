@@ -18,6 +18,7 @@ data class SongComment(
     val parentId: String? = null,
     val rootId: String? = null,
     val replyUserName: String? = null,
+    val specialChildId: String = "",
     val replyCount: Int = 0,
     val replies: List<SongComment> = emptyList(),
     val images: List<String> = emptyList(),

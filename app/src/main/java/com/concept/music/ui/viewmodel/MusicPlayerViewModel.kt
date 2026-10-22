@@ -1648,9 +1648,16 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun loadCommentReplies(commentId: String) {
         val song = mutableState.value.commentTargetSong ?: mutableState.value.currentSong ?: return
         if (commentId.isBlank()) return
+        val existingSpecialChildId = mutableState.value.comments.find { it.id == commentId }?.specialChildId.orEmpty()
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
-                val replies = VipManager.music.songCommentReplies(song, commentId, page = 1, pageSize = 30)
+                val replies = VipManager.music.songCommentReplies(
+                    song = song,
+                    commentId = commentId,
+                    page = 1,
+                    pageSize = 30,
+                    specialChildId = existingSpecialChildId
+                )
                 if (replies.isNotEmpty()) {
                     val updatedList = mutableState.value.comments.map { cmt ->
                         if (cmt.id == commentId) {

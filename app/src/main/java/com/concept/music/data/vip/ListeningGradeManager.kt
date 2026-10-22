@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * 听歌时长与等级同步管理器：
  * 1. 严格仅在实际播放音乐过程中累计有效播放秒数并更新 UI；
- * 2. 以官方 /v3/get_my_info 与 /v2/get_grade_info 返回的真实听歌时长（duration 分钟）为显示权威基准，完全与 VIP 领取解耦；
+ * 2. 以官方 /v3/get_my_info (module/user_detail.js) 与 /v2/get_grade_info (module/user_grade_info.js) 返回的真实听歌时长（r_duration / duration 分钟）为显示权威基准，完全与 VIP 领取解耦；
  * 3. 达到阈值或切歌时将实际播放增量上报云端，并同步上报云端播放历史，支持手动“同步云端”刷新。
  */
 object ListeningGradeManager {
@@ -20,7 +20,7 @@ object ListeningGradeManager {
     private var prefs: SharedPreferences? = null
 
     private var currentUserId: String? = null
-    // 官方 App 展示的真实听歌秒数基准（严格取自官方账号 duration * 60 + 真实播放增量）
+    // 官方 App 展示的真实听歌秒数基准（严格取自官方账号 r_duration/duration * 60 + 真实播放增量）
     private var syncedOfficialListenSec: Long = 0L
     // 接口底层用于校验上报的 d_sec 基准
     private var syncedRawServerDsec: Long = 0L
@@ -62,10 +62,10 @@ object ListeningGradeManager {
             return
         }
         val sp = prefs ?: return
-        // 使用 v3 键名彻底隔离历史版本曾被 d_sec 虚增污染的旧缓存
-        syncedOfficialListenSec = sp.getLong("official_listen_sec_v3_$userId", 0L)
-        syncedRawServerDsec = sp.getLong("raw_server_dsec_v3_$userId", syncedOfficialListenSec)
-        pendingDiffSec = sp.getLong("pending_diff_v3_$userId", 0L).coerceIn(0L, 600L)
+        // 使用 v4 键名隔离旧版本因 /v3/get_my_info 缺少 visit_time/usertype 导致回退到较低 grade_info 时长的旧缓存
+        syncedOfficialListenSec = sp.getLong("official_listen_sec_v4_$userId", 0L)
+        syncedRawServerDsec = sp.getLong("raw_server_dsec_v4_$userId", syncedOfficialListenSec)
+        pendingDiffSec = sp.getLong("pending_diff_v4_$userId", 0L).coerceIn(0L, 600L)
         if (syncedOfficialListenSec > 0L) {
             _gradeInfo.value = _gradeInfo.value.withUpdatedSeconds(syncedOfficialListenSec + pendingDiffSec)
         }
@@ -79,9 +79,9 @@ object ListeningGradeManager {
         val diffSnapshot = pendingDiffSec
         if (immediate) {
             sp.edit()
-                .putLong("official_listen_sec_v3_$userId", officialSnapshot)
-                .putLong("raw_server_dsec_v3_$userId", rawDsecSnapshot)
-                .putLong("pending_diff_v3_$userId", diffSnapshot)
+                .putLong("official_listen_sec_v4_$userId", officialSnapshot)
+                .putLong("raw_server_dsec_v4_$userId", rawDsecSnapshot)
+                .putLong("pending_diff_v4_$userId", diffSnapshot)
                 .apply()
             return
         }
@@ -89,11 +89,36 @@ object ListeningGradeManager {
         saveJob = scope.launch {
             delay(3_000L)
             sp.edit()
-                .putLong("official_listen_sec_v3_$userId", officialSnapshot)
-                .putLong("raw_server_dsec_v3_$userId", rawDsecSnapshot)
-                .putLong("pending_diff_v3_$userId", diffSnapshot)
+                .putLong("official_listen_sec_v4_$userId", officialSnapshot)
+                .putLong("raw_server_dsec_v4_$userId", rawDsecSnapshot)
+                .putLong("pending_diff_v4_$userId", diffSnapshot)
                 .apply()
         }
+    }
+
+    /**
+     * 当 AccountRepository.refreshProfile() 从 /v3/get_my_info 获取到官方个人资料卡的听歌时长（分钟）时，
+     * 立即校准本地权威听歌时长基准，消除与官方 App 个人资料页的分钟数偏差。
+     */
+    fun onOfficialProfileSynced(userId: String, officialDurationMinutes: Long, officialLevel: Int = 0) {
+        if (userId.isBlank() || officialDurationMinutes <= 0L) return
+        if (currentUserId == null) {
+            currentUserId = userId
+        }
+        if (currentUserId != userId) return
+        val profileSec = if (officialDurationMinutes > 2_000_000L) officialDurationMinutes else officialDurationMinutes * 60L
+        val remainderSec = if (syncedOfficialListenSec > 0L && syncedOfficialListenSec / 60L == profileSec / 60L) {
+            syncedOfficialListenSec % 60L
+        } else 0L
+        val newOfficialSec = maxOf(syncedOfficialListenSec, profileSec + remainderSec)
+        syncedOfficialListenSec = newOfficialSec
+        if (syncedRawServerDsec <= 0L) {
+            syncedRawServerDsec = newOfficialSec
+        }
+        saveUserData(immediate = true)
+        val cur = _gradeInfo.value
+        val updatedLevel = if (officialLevel > 0) maxOf(cur.level, officialLevel) else cur.level
+        _gradeInfo.value = cur.copy(level = updatedLevel).withUpdatedSeconds(newOfficialSec + pendingDiffSec)
     }
 
     private var consecutiveReportFailures: Int = 0
@@ -141,7 +166,7 @@ object ListeningGradeManager {
     }
 
     /**
-     * 同步或查询云端听歌等级与数据（严格以官方账号实际 duration 分钟数为准，完全不受 VIP 领取任务影响）
+     * 同步或查询云端听歌等级与数据（严格以官方账号实际 r_duration / duration 分钟数为准，完全不受 VIP 领取任务影响）
      */
     suspend fun syncGrade(forceRefresh: Boolean = false): Result<UserGradeInfo> = withContext(Dispatchers.IO) {
         if (currentUserId.isNullOrEmpty()) return@withContext Result.failure(Exception("请先登录"))
@@ -151,16 +176,21 @@ object ListeningGradeManager {
 
         _isSyncing.value = true
         try {
-            // 1. 从云端拉取权威时长（内部同时融合 /v3/get_my_info 与 /v2/get_grade_info 的官方 duration 字段）
+            // 1. 从云端拉取权威时长（内部同时融合 /v3/get_my_info、/v1/get_my_userinfo 与 /v2/get_grade_info 的官方 r_duration / duration 字段）
             val serverQuery = runCatching { VipManager.music.userGradeInfo() }.getOrNull()
             if (serverQuery != null && (serverQuery.level > 0 || serverQuery.totalListenSeconds > 0L)) {
-                // 若是强制刷新或服务端返回了更高/权威的官方秒数，以服务端权威 duration 为准（保留分钟内的余数秒）
                 val remainderSec = if (syncedOfficialListenSec > 0L &&
                     syncedOfficialListenSec / 60L == serverQuery.totalListenSeconds / 60L
                 ) {
                     syncedOfficialListenSec % 60L
                 } else 0L
-                syncedOfficialListenSec = serverQuery.totalListenSeconds + remainderSec
+                val candidateSec = serverQuery.totalListenSeconds + remainderSec
+                // 若此前已从 /v3/get_my_info 获取到更高的官方个人资料卡分钟数（如 220904 分钟），防止因单次请求波动回退到较低的 grade_info 时长（如 220630 分钟）
+                syncedOfficialListenSec = if (syncedOfficialListenSec > candidateSec && syncedOfficialListenSec - candidateSec <= 36_000L) {
+                    syncedOfficialListenSec
+                } else {
+                    candidateSec
+                }
                 syncedRawServerDsec = VipManager.music.lastServerRawDsec.takeIf { it > 0L } ?: syncedOfficialListenSec
                 saveUserData(immediate = true)
                 val optimisticSec = syncedOfficialListenSec + pendingDiffSec
@@ -176,15 +206,9 @@ object ListeningGradeManager {
                 if (reportResult.level > 0 || reportResult.totalListenSeconds > 0L) {
                     consecutiveReportFailures = 0
                     syncedRawServerDsec = VipManager.music.lastServerRawDsec.takeIf { it >= toReportDsec } ?: toReportDsec
-                    // 仅将本次实际播放的秒数增量累加至权威时长，绝不使用可能包含 VIP 任务积分的 d_sec 覆盖
+                    // 仅将本次实际播放的秒数增量累加至权威时长，或采纳更高的官方返回时长
                     val advancedOfficialSec = syncedOfficialListenSec + toReportDiff
-                    syncedOfficialListenSec = if (reportResult.totalListenSeconds > advancedOfficialSec &&
-                        reportResult.totalListenSeconds - advancedOfficialSec <= 120L
-                    ) {
-                        reportResult.totalListenSeconds
-                    } else {
-                        advancedOfficialSec
-                    }
+                    syncedOfficialListenSec = maxOf(advancedOfficialSec, reportResult.totalListenSeconds)
                     pendingDiffSec = (pendingDiffSec - toReportDiff).coerceAtLeast(0L)
                     saveUserData(immediate = true)
 
@@ -197,7 +221,7 @@ object ListeningGradeManager {
                         pendingDiffSec = 0L
                         saveUserData(immediate = true)
                         if (serverQuery != null && serverQuery.totalListenSeconds > 0L) {
-                            _gradeInfo.value = serverQuery
+                            _gradeInfo.value = serverQuery.withUpdatedSeconds(syncedOfficialListenSec)
                         }
                     }
                 }

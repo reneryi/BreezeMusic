@@ -352,7 +352,7 @@ fun CommentsScreen(
                                     },
                                     label = {
                                         Text(
-                                            text = "最新评论 · 时间序",
+                                            text = "最新评论",
                                             fontSize = 12.5.sp,
                                             fontWeight = if (currentType == "new") FontWeight.ExtraBold else FontWeight.Medium
                                         )
@@ -560,7 +560,13 @@ fun CommentFloorDetailScreen(
         floorLoading = true
         scope.launch {
             val fetched = runCatching {
-                VipManager.music.songCommentReplies(song, rootComment.id, page = page, pageSize = 25)
+                VipManager.music.songCommentReplies(
+                    song = song,
+                    commentId = rootComment.id,
+                    page = page,
+                    pageSize = 30,
+                    specialChildId = rootComment.specialChildId
+                )
             }.getOrDefault(emptyList())
             val merged = (if (page == 1) rootComment.replies + fetched else floorReplies + fetched).distinctBy { it.id }
             val added = merged.size > floorReplies.size || page == 1
@@ -572,7 +578,7 @@ fun CommentFloorDetailScreen(
     }
 
     LaunchedEffect(rootComment.id) {
-        if (floorReplies.size < minOf(rootComment.replyCount, 20)) {
+        if (floorReplies.isEmpty() || floorReplies.size < rootComment.replyCount) {
             fetchFloorReplies(1)
         }
     }
@@ -715,20 +721,13 @@ fun CommentFloorDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 4.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = "全部平级回复 ($totalCount)",
                             color = primaryText,
                             fontSize = 13.5.sp,
                             fontWeight = FontWeight.ExtraBold
-                        )
-                        Text(
-                            text = "分支节点连线视图",
-                            color = ConceptPrimary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }

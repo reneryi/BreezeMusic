@@ -2,19 +2,24 @@ package com.concept.music.ui.components
 
 import android.os.Build
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -71,6 +76,7 @@ import com.concept.music.ui.viewmodel.LyricHighlightTheme
 import com.concept.music.ui.viewmodel.PlayMode
 import com.concept.music.ui.viewmodel.PlayerBackgroundStyle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -78,14 +84,10 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * 深度重构版全屏横屏播放页面 (LandscapePlayerPage)：
- * 1. 隐藏手机状态栏，全屏幕沉浸显示；
- * 2. 左上角改为极简返回图标按钮（移除原“竖屏”胶囊按钮）；
- * 3. 隐藏音质标签与评论按钮，保持界面纯粹聚焦；
- * 4. 封面区域与歌词区域严格五五分 (weight 0.50f : 0.50f)；
- * 5. 封面搭载多层 3D 立体交错光晕环绕效果 (Volumetric 3D Orbital Halo)；
- * 6. 底部五大播放控件与竖屏封面播放页完全统一 (AnimatedPlayModeButton / RedrawnSkipButton / AnimatedPlayPauseCenterButton / RedrawnQueueButton)；
- * 7. 右上角新增自研「流光棱镜背景切换」图标按钮，支持一键唤出背景动效面板或实时切换背景风格。
+ * 现代沉浸式全屏横屏播放页面 (LandscapePlayerPage)：
+ * 1. 界面绝对视觉重心聚焦于「大画幅 3D 专辑封面」与「全高 KRC 逐字流光歌词」；
+ * 2. 左上角返回、右上角背景切换、右下角译/音/歌词设置全部采用「无框沉浸式图标」，彻底去除外层按钮框；
+ * 3. 大幅压缩底部进度条与播放控件占用高度，整合为紧凑精巧的低重心控播坞，释放封面纵向空间。
  */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -148,8 +150,8 @@ internal fun LandscapePlayerPage(
 
     val infiniteTransition = rememberInfiniteTransition(label = "landscape3dHalo")
     val haloBreath by infiniteTransition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = if (isPlaying) 1.16f else 0.97f,
+        initialValue = 0.94f,
+        targetValue = if (isPlaying) 1.12f else 0.98f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 2200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
@@ -169,64 +171,41 @@ internal fun LandscapePlayerPage(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 26.dp, vertical = 14.dp)
+            .padding(horizontal = 24.dp, vertical = 10.dp)
     ) {
-        // 主体严格五五分：左侧封面与控播台 (0.50f) : 右侧沉浸式歌词 (0.50f)
+        // 主体黄金比例双栏：左区大画幅封面与紧凑控播坞 (0.45f) : 右区全高沉浸式流光歌词 (0.55f)
         Row(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // =========================================================================
-            // 左半区 (weight 0.50f)：左上角返回按钮 + 3D 立体光晕封面 + 统一控播台
+            // 左区 (weight 0.45f)：大尺寸主角封面 + 极简紧凑一体化控播坞
             // =========================================================================
             Column(
                 modifier = Modifier
-                    .weight(0.50f)
+                    .weight(0.45f)
                     .fillMaxHeight()
-                    .padding(end = 20.dp),
+                    .padding(end = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // 左上角：纯图标返回按钮（不再显示“竖屏”文字胶囊，也不显示音质按钮）
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Start,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color.White.copy(alpha = 0.11f),
-                        modifier = Modifier
-                            .size(38.dp)
-                            .softClickable(pressScale = 0.85f, onClick = onExitLandscape)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                                contentDescription = "返回",
-                                tint = Color.White.copy(alpha = 0.92f),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
-                }
-
-                // 中部：封面 + 3D 立体星环光晕 (Volumetric 3D Halo)
+                // 上部大舞台：放大封面占比，使其成为左侧核心视觉焦点
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .padding(top = 6.dp, bottom = 2.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     BoxWithConstraints(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        val coverSide = minOf(maxWidth * 0.64f, maxHeight * 0.84f).coerceIn(132.dp, 216.dp)
+                        val coverSide = minOf(maxWidth * 0.78f, maxHeight * 0.90f).coerceIn(168.dp, 264.dp)
 
                         // 多层 3D 立体光晕与交错倾斜星环绘制
                         Canvas(
-                            modifier = Modifier.size(coverSide * 1.56f)
+                            modifier = Modifier.size(coverSide * 1.42f)
                         ) {
                             val center = Offset(size.width / 2f, size.height / 2f)
                             val baseR = (size.minDimension / 2f) * 0.88f * haloBreath
@@ -236,90 +215,90 @@ internal fun LandscapePlayerPage(
                             drawCircle(
                                 brush = Brush.radialGradient(
                                     colorStops = arrayOf(
-                                        0.00f to accentPrimary.copy(alpha = 0.62f),
-                                        0.42f to accentSecondary.copy(alpha = 0.36f),
-                                        0.76f to accentPrimary.copy(alpha = 0.15f),
+                                        0.00f to accentPrimary.copy(alpha = 0.56f),
+                                        0.42f to accentSecondary.copy(alpha = 0.32f),
+                                        0.76f to accentPrimary.copy(alpha = 0.12f),
                                         1.00f to Color.Transparent
                                     ),
                                     center = Offset(
-                                        center.x + 12f * cos(radPhase),
-                                        center.y + 10f * sin(radPhase)
+                                        center.x + 10f * cos(radPhase),
+                                        center.y + 8f * sin(radPhase)
                                     ),
-                                    radius = baseR * 1.12f
+                                    radius = baseR * 1.10f
                                 ),
-                                radius = baseR * 1.12f,
+                                radius = baseR * 1.10f,
                                 center = center
                             )
 
                             // 2. 第一层 3D 倾斜透视星环光带 (-22度倾角)
                             rotate(degrees = -22f + haloPhase * 0.15f, pivot = center) {
-                                val ovalW = baseR * 1.92f
-                                val ovalH = baseR * 0.86f
+                                val ovalW = baseR * 1.86f
+                                val ovalH = baseR * 0.84f
                                 drawOval(
                                     brush = Brush.sweepGradient(
-                                        0.00f to accentPrimary.copy(alpha = 0.05f),
-                                        0.25f to accentSecondary.copy(alpha = 0.52f),
-                                        0.50f to Color.White.copy(alpha = 0.38f),
-                                        0.75f to accentPrimary.copy(alpha = 0.45f),
-                                        1.00f to accentPrimary.copy(alpha = 0.05f),
+                                        0.00f to accentPrimary.copy(alpha = 0.04f),
+                                        0.25f to accentSecondary.copy(alpha = 0.46f),
+                                        0.50f to Color.White.copy(alpha = 0.34f),
+                                        0.75f to accentPrimary.copy(alpha = 0.40f),
+                                        1.00f to accentPrimary.copy(alpha = 0.04f),
                                         center = center
                                     ),
                                     topLeft = Offset(center.x - ovalW / 2f, center.y - ovalH / 2f),
                                     size = Size(ovalW, ovalH),
-                                    style = Stroke(width = 3.2.dp.toPx(), cap = StrokeCap.Round)
+                                    style = Stroke(width = 2.6.dp.toPx(), cap = StrokeCap.Round)
                                 )
                             }
 
                             // 3. 第二层反向交错 3D 立体光环 (+28度倾角)
                             rotate(degrees = 28f - haloPhase * 0.22f, pivot = center) {
-                                val ovalW = baseR * 1.78f
-                                val ovalH = baseR * 0.94f
+                                val ovalW = baseR * 1.72f
+                                val ovalH = baseR * 0.90f
                                 drawOval(
                                     brush = Brush.sweepGradient(
                                         0.00f to accentSecondary.copy(alpha = 0.04f),
-                                        0.35f to accentPrimary.copy(alpha = 0.46f),
-                                        0.70f to accentSecondary.copy(alpha = 0.32f),
+                                        0.35f to accentPrimary.copy(alpha = 0.40f),
+                                        0.70f to accentSecondary.copy(alpha = 0.28f),
                                         1.00f to accentSecondary.copy(alpha = 0.04f),
                                         center = center
                                     ),
                                     topLeft = Offset(center.x - ovalW / 2f, center.y - ovalH / 2f),
                                     size = Size(ovalW, ovalH),
-                                    style = Stroke(width = 2.0.dp.toPx(), cap = StrokeCap.Round)
+                                    style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
                                 )
                             }
 
                             // 4. 环绕漂浮高光星点
                             for (i in 0 until 4) {
                                 val angle = radPhase + i * (PI.toFloat() / 2f)
-                                val orbitRx = baseR * 0.92f
-                                val orbitRy = baseR * 0.58f
+                                val orbitRx = baseR * 0.90f
+                                val orbitRy = baseR * 0.56f
                                 val px = center.x + orbitRx * cos(angle)
                                 val py = center.y + orbitRy * sin(angle)
                                 drawCircle(
-                                    color = Color.White.copy(alpha = 0.72f),
-                                    radius = 2.6.dp.toPx(),
+                                    color = Color.White.copy(alpha = 0.68f),
+                                    radius = 2.2.dp.toPx(),
                                     center = Offset(px, py)
                                 )
                                 drawCircle(
-                                    color = accentSecondary.copy(alpha = 0.28f),
-                                    radius = 6.5.dp.toPx(),
+                                    color = accentSecondary.copy(alpha = 0.24f),
+                                    radius = 5.5.dp.toPx(),
                                     center = Offset(px, py)
                                 )
                             }
                         }
 
-                        // 封面本体（立体浮雕阴影 + 内发光高光描边）
+                        // 封面本体（大尺寸立体浮雕阴影 + 细腻高光描边）
                         Box(
                             modifier = Modifier
                                 .size(coverSide)
                                 .graphicsLayer {
-                                    val tilt = sin((haloPhase * PI / 180.0).toFloat()) * 2.2f
+                                    val tilt = sin((haloPhase * PI / 180.0).toFloat()) * 2.0f
                                     rotationY = tilt
-                                    rotationX = -tilt * 0.6f
+                                    rotationX = -tilt * 0.55f
                                     cameraDistance = 14f * density
                                 }
                                 .shadow(
-                                    elevation = 32.dp,
+                                    elevation = 30.dp,
                                     shape = RoundedCornerShape(28.dp),
                                     spotColor = accentPrimary,
                                     ambientColor = accentSecondary
@@ -327,12 +306,12 @@ internal fun LandscapePlayerPage(
                                 .clip(RoundedCornerShape(28.dp))
                                 .background(Color(0xFF151A26))
                                 .border(
-                                    width = 1.2.dp,
+                                    width = 1.1.dp,
                                     brush = Brush.linearGradient(
                                         colors = listOf(
-                                            Color.White.copy(alpha = 0.42f),
-                                            accentPrimary.copy(alpha = 0.35f),
-                                            accentSecondary.copy(alpha = 0.25f)
+                                            Color.White.copy(alpha = 0.40f),
+                                            accentPrimary.copy(alpha = 0.32f),
+                                            accentSecondary.copy(alpha = 0.22f)
                                         )
                                     ),
                                     shape = RoundedCornerShape(28.dp)
@@ -351,67 +330,86 @@ internal fun LandscapePlayerPage(
                                     imageVector = Icons.Rounded.MusicNote,
                                     contentDescription = null,
                                     tint = Color.White.copy(alpha = 0.4f),
-                                    modifier = Modifier.size(48.dp)
+                                    modifier = Modifier.size(52.dp)
                                 )
                             }
                         }
                     }
                 }
 
-                // 底部：歌名歌手 + 红心收藏（无评论按钮）+ 彗星进度条 + 统一五大播放控件
+                // 底部紧凑一体化控播坞：大幅压缩进度条与按钮纵向高度，突出上方大封面
+                var isInteractingWithBar by remember { mutableStateOf(false) }
+                var dragFraction by remember { mutableFloatStateOf(0f) }
+                val currentFraction = if (durationMs > 0) {
+                    (rawPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                } else 0f
+                val effectiveFraction = if (isInteractingWithBar) dragFraction else currentFraction
+                val displayCurrentMs = if (isInteractingWithBar) (dragFraction * durationMs).toLong() else rawPositionMs
+
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .widthIn(max = 316.dp)
+                        .fillMaxWidth(0.94f),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    // 第 1 行：歌名 + 歌手 + 内联时间显示 + 无框沉浸式红心
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
                                 text = song.title,
                                 color = Color.White,
-                                fontSize = 16.5.sp,
+                                fontSize = 14.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 maxLines = 1,
-                                modifier = Modifier.basicMarquee()
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .basicMarquee()
                             )
                             Text(
-                                text = song.artist.ifBlank { "未知歌手" },
-                                color = Color.White.copy(alpha = 0.68f),
-                                fontSize = 12.sp,
+                                text = "  ·  ${song.artist.ifBlank { "未知歌手" }}",
+                                color = Color.White.copy(alpha = 0.64f),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
 
-                        // 仅保留红心收藏按钮（评论按钮在横屏下不显示）
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .softClickable(pressScale = 0.84f, onClick = onToggleFavorite),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            PlumpHeartCanvasIcon(
-                                isFavorite = isFavorite,
-                                color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.88f),
-                                modifier = Modifier.size(21.dp)
+                            Text(
+                                text = "${formatPlayerDuration(displayCurrentMs)} / ${formatPlayerDuration(durationMs)}",
+                                color = if (isInteractingWithBar) accentPrimary else Color.White.copy(alpha = 0.52f),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .softClickable(pressScale = 0.82f, onClick = onToggleFavorite),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                PlumpHeartCanvasIcon(
+                                    isFavorite = isFavorite,
+                                    color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.82f),
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    var isInteractingWithBar by remember { mutableStateOf(false) }
-                    var dragFraction by remember { mutableFloatStateOf(0f) }
-                    val currentFraction = if (durationMs > 0) {
-                        (rawPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-                    } else 0f
-                    val effectiveFraction = if (isInteractingWithBar) dragFraction else currentFraction
-                    val displayCurrentMs = if (isInteractingWithBar) (dragFraction * durationMs).toLong() else rawPositionMs
-
+                    // 第 2 行：紧凑纤细光学彗星进度条 (compact = true，高度仅 20.dp)
                     CometTailProgressBar(
                         fraction = effectiveFraction,
                         isPlaying = isPlaying,
@@ -427,6 +425,7 @@ internal fun LandscapePlayerPage(
                         highlightClimaxRange = highlightClimaxRange,
                         accentPrimary = accentPrimary,
                         accentSecondary = accentSecondary,
+                        compact = true,
                         onDragStart = {
                             isInteractingWithBar = true
                             dragFraction = it
@@ -438,61 +437,37 @@ internal fun LandscapePlayerPage(
                         }
                     )
 
-                    // 与封面播放页完全统一的五大圆润饱满矢量控件
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AnimatedPlayModeButton(
-                            playMode = playMode,
-                            accentColor = accentPrimary,
-                            onClick = {
-                                onCyclePlayMode()
-                                val nextDesc = when (playMode) {
-                                    PlayMode.REPEAT_ALL -> "已切换为单曲循环"
-                                    PlayMode.REPEAT_ONE -> "已切换为随机播放"
-                                    PlayMode.SHUFFLE -> "已切换为列表循环"
-                                }
-                                Toast.makeText(context, nextDesc, Toast.LENGTH_SHORT).show()
+                    // 第 3 行：精致紧凑型五大播放控制按钮（总高仅 38.dp，告别巨型播放键抢占封面空间）
+                    LandscapeCompactControlRow(
+                        playMode = playMode,
+                        isPlaying = isPlaying,
+                        accentPrimary = accentPrimary,
+                        accentSecondary = accentSecondary,
+                        onCyclePlayMode = {
+                            onCyclePlayMode()
+                            val nextDesc = when (playMode) {
+                                PlayMode.REPEAT_ALL -> "已切换为单曲循环"
+                                PlayMode.REPEAT_ONE -> "已切换为随机播放"
+                                PlayMode.SHUFFLE -> "已切换为列表循环"
                             }
-                        )
-
-                        RedrawnSkipButton(
-                            isNext = false,
-                            onClick = onPrevious
-                        )
-
-                        AnimatedPlayPauseCenterButton(
-                            isPlaying = isPlaying,
-                            accentPrimary = accentPrimary,
-                            accentSecondary = accentSecondary,
-                            onClick = onTogglePlay
-                        )
-
-                        RedrawnSkipButton(
-                            isNext = true,
-                            onClick = onNext
-                        )
-
-                        RedrawnQueueButton(
-                            accentColor = accentPrimary,
-                            onClick = onOpenQueue
-                        )
-                    }
+                            Toast.makeText(context, nextDesc, Toast.LENGTH_SHORT).show()
+                        },
+                        onPrevious = onPrevious,
+                        onTogglePlay = onTogglePlay,
+                        onNext = onNext,
+                        onOpenQueue = onOpenQueue
+                    )
                 }
             }
 
             // =========================================================================
-            // 右半区 (weight 0.50f，与左侧严格五五分)：全画幅逐字流光歌词 + 右上角背景切换按钮
+            // 右区 (weight 0.55f)：全高沉浸式 KRC 逐字流光歌词
             // =========================================================================
             Box(
                 modifier = Modifier
-                    .weight(0.50f)
+                    .weight(0.55f)
                     .fillMaxHeight()
-                    .padding(start = 12.dp)
+                    .padding(start = 10.dp)
             ) {
                 if (lyricData.lines.isEmpty()) {
                     Box(
@@ -524,7 +499,7 @@ internal fun LandscapePlayerPage(
                         if (!isUserScrubbing && currentLyricIndex in lyricData.lines.indices) {
                             listState.animateScrollToItem(
                                 index = currentLyricIndex,
-                                scrollOffset = -110
+                                scrollOffset = -115
                             )
                         }
                     }
@@ -550,8 +525,8 @@ internal fun LandscapePlayerPage(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(end = 46.dp),
-                        contentPadding = PaddingValues(vertical = 110.dp),
+                            .padding(end = 36.dp),
+                        contentPadding = PaddingValues(vertical = 120.dp),
                         horizontalAlignment = Alignment.Start
                     ) {
                         itemsIndexed(lyricData.lines, key = { idx, item -> "land_${idx}_${item.startTimeMs}" }) { index, line ->
@@ -653,15 +628,26 @@ internal fun LandscapePlayerPage(
                                                     }
                                                 }
                                                 val wave = if (isSinging) sin(wordProgress * PI.toFloat()) else 0f
+                                                val isLongNote = word.durationMs >= 750L && isSinging
                                                 Text(
                                                     text = annotatedWord,
                                                     style = MaterialTheme.typography.headlineSmall.copy(
                                                         fontWeight = FontWeight.ExtraBold,
                                                         fontSize = (lyricFontSize + 2.5f).sp,
-                                                        lineHeight = (lyricFontSize + 9f).sp
+                                                        lineHeight = (lyricFontSize + 9.5f).sp,
+                                                        shadow = if (isLongNote) {
+                                                            Shadow(
+                                                                color = activePrimaryColor.copy(alpha = (0.80f * wave).coerceIn(0f, 1f)),
+                                                                offset = Offset.Zero,
+                                                                blurRadius = (20f * wave + 6f).coerceAtLeast(1f)
+                                                            )
+                                                        } else null
                                                     ),
                                                     modifier = Modifier.graphicsLayer {
-                                                        translationY = -2.5f * wave
+                                                        translationY = -2.8f * wave
+                                                        val s = 1f + 0.032f * wave
+                                                        scaleX = s
+                                                        scaleY = s
                                                     }
                                                 )
                                             }
@@ -712,7 +698,7 @@ internal fun LandscapePlayerPage(
                         modifier = Modifier
                             .align(Alignment.Center)
                             .fillMaxWidth()
-                            .padding(end = 46.dp)
+                            .padding(end = 36.dp)
                     ) {
                         val targetTimeMs = lyricData.lines.getOrNull(scrubLineIndex)?.startTimeMs ?: 0L
                         Row(
@@ -771,140 +757,172 @@ internal fun LandscapePlayerPage(
                         }
                     }
                 }
+            }
+        }
 
-                // 右上角：新增自研「修改背景界面」图标按钮 + 弹出式背景切换胶囊条
-                Column(
-                    modifier = Modifier.align(Alignment.TopEnd),
-                    horizontalAlignment = Alignment.End
+        // =========================================================================
+        // 悬浮无框沉浸式四角按钮层（彻底去除按钮框，不占用主布局高度）
+        // =========================================================================
+
+        // 1. 左上角：无框沉浸式返回按钮
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .size(34.dp)
+                .softClickable(pressScale = 0.82f, onClick = onExitLandscape),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                contentDescription = "返回",
+                tint = Color.White.copy(alpha = 0.86f),
+                modifier = Modifier.size(22.dp)
+            )
+        }
+
+        // 2. 右上角：无框沉浸式背景修改按钮 + 弹出式背景切换菜单
+        Column(
+            modifier = Modifier.align(Alignment.TopEnd),
+            horizontalAlignment = Alignment.End
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .softClickable(
+                        pressScale = 0.82f,
+                        onClick = { showBgPickerMenu = !showBgPickerMenu }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                LandscapeBackgroundPrismCanvasIcon(
+                    accentColor = if (showBgPickerMenu) accentPrimary else Color.White.copy(alpha = 0.86f),
+                    secondaryColor = accentSecondary
+                )
+            }
+
+            AnimatedVisibility(
+                visible = showBgPickerMenu,
+                enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.90f),
+                exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.90f)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color(0xEB0E1524),
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .border(0.8.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(16.dp))
                 ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = if (showBgPickerMenu) accentPrimary.copy(alpha = 0.30f) else Color.White.copy(alpha = 0.11f),
-                        modifier = Modifier
-                            .size(38.dp)
-                            .softClickable(
-                                pressScale = 0.85f,
-                                onClick = { showBgPickerMenu = !showBgPickerMenu }
-                            )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            LandscapeBackgroundPrismCanvasIcon(
-                                accentColor = accentPrimary,
-                                secondaryColor = accentSecondary
-                            )
-                        }
-                    }
-
-                    AnimatedVisibility(
-                        visible = showBgPickerMenu,
-                        enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.90f),
-                        exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.90f)
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = Color(0xEB0E1524),
-                            modifier = Modifier
-                                .padding(top = 8.dp)
-                                .border(0.8.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(16.dp))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                PlayerBackgroundStyle.entries.forEach { bgStyle ->
-                                    val selected = playerBackgroundStyle == bgStyle
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = if (selected) accentPrimary.copy(alpha = 0.26f) else Color.White.copy(alpha = 0.06f),
-                                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(10.dp)) {
-                                            onSelectPlayerBackgroundStyle(bgStyle)
-                                        }
-                                    ) {
-                                        Text(
-                                            text = bgStyle.label,
-                                            color = if (selected) accentPrimary else Color.White.copy(alpha = 0.82f),
-                                            fontSize = 11.sp,
-                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
-                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
-                                        )
-                                    }
+                        PlayerBackgroundStyle.entries.forEach { bgStyle ->
+                            val selected = playerBackgroundStyle == bgStyle
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (selected) accentPrimary.copy(alpha = 0.26f) else Color.White.copy(alpha = 0.05f),
+                                modifier = Modifier.softCardClickable(shape = RoundedCornerShape(10.dp)) {
+                                    onSelectPlayerBackgroundStyle(bgStyle)
                                 }
+                            ) {
+                                Text(
+                                    text = bgStyle.label,
+                                    color = if (selected) accentPrimary else Color.White.copy(alpha = 0.82f),
+                                    fontSize = 11.sp,
+                                    fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                )
                             }
                         }
                     }
                 }
+            }
+        }
 
-                // 右下角：译 / 音 / 歌词设置
-                Column(
+        // 3. 右下角：无框沉浸式「译 / 音 / 歌词设置」按钮组
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 2.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            AnimatedVisibility(
+                visible = showTranslationButton,
+                enter = scaleIn() + fadeIn(),
+                exit = scaleOut() + fadeOut()
+            ) {
+                Box(
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                        .size(32.dp)
+                        .softClickable(pressScale = 0.82f, onClick = onToggleTranslation),
+                    contentAlignment = Alignment.Center
                 ) {
-                    AnimatedVisibility(
-                        visible = showTranslationButton,
-                        enter = scaleIn() + fadeIn(),
-                        exit = scaleOut() + fadeOut()
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = if (showTranslation) activePrimaryColor.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.10f),
+                    Text(
+                        text = "译",
+                        color = if (showTranslation) activePrimaryColor else Color.White.copy(alpha = 0.72f),
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    if (showTranslation) {
+                        Box(
                             modifier = Modifier
-                                .size(38.dp)
-                                .softClickable(onClick = onToggleTranslation)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = "译",
-                                    color = if (showTranslation) Color.White else Color.White.copy(alpha = 0.72f),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                            }
-                        }
+                                .align(Alignment.BottomCenter)
+                                .size(width = 10.dp, height = 2.dp)
+                                .clip(CircleShape)
+                                .background(activePrimaryColor)
+                        )
                     }
+                }
+            }
 
-                    AnimatedVisibility(
-                        visible = showPhoneticButton,
-                        enter = scaleIn() + fadeIn(),
-                        exit = scaleOut() + fadeOut()
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = if (showPhonetic) activePrimaryColor.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.10f),
+            AnimatedVisibility(
+                visible = showPhoneticButton,
+                enter = scaleIn() + fadeIn(),
+                exit = scaleOut() + fadeOut()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .softClickable(pressScale = 0.82f, onClick = onTogglePhonetic),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "音",
+                        color = if (showPhonetic) activePrimaryColor else Color.White.copy(alpha = 0.72f),
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    if (showPhonetic) {
+                        Box(
                             modifier = Modifier
-                                .size(38.dp)
-                                .softClickable(onClick = onTogglePhonetic)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = "音",
-                                    color = if (showPhonetic) Color.White else Color.White.copy(alpha = 0.72f),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                            }
-                        }
+                                .align(Alignment.BottomCenter)
+                                .size(width = 10.dp, height = 2.dp)
+                                .clip(CircleShape)
+                                .background(activePrimaryColor)
+                        )
                     }
+                }
+            }
 
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = Color.White.copy(alpha = 0.10f),
-                        modifier = Modifier
-                            .size(38.dp)
-                            .softClickable(onClick = onOpenLyricSettings)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Rounded.Tune,
-                                contentDescription = "歌词设置",
-                                tint = Color.White.copy(alpha = 0.85f),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
+            // 无框沉浸式歌词设置图标按钮
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .softClickable(pressScale = 0.82f, onClick = onOpenLyricSettings),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.size(19.dp)) {
+                    val w = size.width
+                    val h = size.height
+                    val stroke = 2.0.dp.toPx()
+                    val c = Color.White.copy(alpha = 0.86f)
+                    drawLine(c, Offset(w * 0.12f, h * 0.32f), Offset(w * 0.88f, h * 0.32f), stroke, StrokeCap.Round)
+                    drawCircle(activePrimaryColor, radius = 2.8.dp.toPx(), center = Offset(w * 0.65f, h * 0.32f))
+
+                    drawLine(c, Offset(w * 0.12f, h * 0.68f), Offset(w * 0.88f, h * 0.68f), stroke, StrokeCap.Round)
+                    drawCircle(c, radius = 2.8.dp.toPx(), center = Offset(w * 0.35f, h * 0.68f))
                 }
             }
         }
@@ -912,7 +930,226 @@ internal fun LandscapePlayerPage(
 }
 
 /**
- * 自研横屏右上角「流光棱镜背景切换」矢量图标
+ * 横屏专属紧凑低重心播放控制栏（总高 38.dp，释放左侧封面空间）
+ */
+@Composable
+private fun LandscapeCompactControlRow(
+    playMode: PlayMode,
+    isPlaying: Boolean,
+    accentPrimary: Color,
+    accentSecondary: Color,
+    onCyclePlayMode: () -> Unit,
+    onPrevious: () -> Unit,
+    onTogglePlay: () -> Unit,
+    onNext: () -> Unit,
+    onOpenQueue: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val prevNudge = remember { Animatable(0f) }
+    val nextNudge = remember { Animatable(0f) }
+    val morphProgress by animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMediumLow),
+        label = "landPlayMorph"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(38.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 1. 播放模式
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .softClickable(pressScale = 0.84f, onClick = onCyclePlayMode),
+            contentAlignment = Alignment.Center
+        ) {
+            AnimatedContent(
+                targetState = playMode,
+                transitionSpec = {
+                    (scaleIn(initialScale = 0.7f) + fadeIn(tween(140))) togetherWith
+                        (scaleOut(targetScale = 0.7f) + fadeOut(tween(110)))
+                },
+                label = "landPlayModeMorph"
+            ) { mode ->
+                Canvas(modifier = Modifier.size(19.dp)) {
+                    val w = size.width
+                    val h = size.height
+                    val stroke = 2.0.dp.toPx()
+                    val tint = Color.White.copy(alpha = 0.84f)
+                    when (mode) {
+                        PlayMode.REPEAT_ALL -> {
+                            val pad = w * 0.14f
+                            val rectSize = Size(w - pad * 2, h - pad * 2)
+                            drawArc(tint, -155f, 130f, false, Offset(pad, pad), rectSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                            drawArc(tint, 25f, 130f, false, Offset(pad, pad), rectSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                            val topTip = Offset(w * 0.78f, h * 0.26f)
+                            drawLine(tint, topTip, Offset(topTip.x - 3.4.dp.toPx(), topTip.y - 0.8.dp.toPx()), stroke, StrokeCap.Round)
+                            drawLine(tint, topTip, Offset(topTip.x - 0.8.dp.toPx(), topTip.y + 3.4.dp.toPx()), stroke, StrokeCap.Round)
+                            val botTip = Offset(w * 0.22f, h * 0.74f)
+                            drawLine(tint, botTip, Offset(botTip.x + 3.4.dp.toPx(), botTip.y + 0.8.dp.toPx()), stroke, StrokeCap.Round)
+                            drawLine(tint, botTip, Offset(botTip.x + 0.8.dp.toPx(), botTip.y - 3.4.dp.toPx()), stroke, StrokeCap.Round)
+                        }
+                        PlayMode.REPEAT_ONE -> {
+                            val pad = w * 0.14f
+                            val rectSize = Size(w - pad * 2, h - pad * 2)
+                            drawArc(accentPrimary, -155f, 130f, false, Offset(pad, pad), rectSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                            drawArc(accentPrimary, 25f, 130f, false, Offset(pad, pad), rectSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                            drawLine(Color.White, Offset(w * 0.50f, h * 0.34f), Offset(w * 0.50f, h * 0.66f), stroke, StrokeCap.Round)
+                        }
+                        PlayMode.SHUFFLE -> {
+                            val path1 = Path().apply {
+                                moveTo(w * 0.15f, h * 0.32f)
+                                cubicTo(w * 0.45f, h * 0.32f, w * 0.55f, h * 0.68f, w * 0.85f, h * 0.68f)
+                            }
+                            val path2 = Path().apply {
+                                moveTo(w * 0.15f, h * 0.68f)
+                                cubicTo(w * 0.45f, h * 0.68f, w * 0.55f, h * 0.32f, w * 0.85f, h * 0.32f)
+                            }
+                            drawPath(path1, tint, style = Stroke(stroke, cap = StrokeCap.Round))
+                            drawPath(path2, accentPrimary, style = Stroke(stroke, cap = StrokeCap.Round))
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. 上一首
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .graphicsLayer { translationX = prevNudge.value }
+                .softClickable(
+                    pressScale = 0.84f,
+                    onClick = {
+                        scope.launch {
+                            prevNudge.animateTo(-8f, tween(80))
+                            prevNudge.animateTo(0f, spring(dampingRatio = 0.55f))
+                        }
+                        onPrevious()
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.size(21.dp)) {
+                val w = size.width
+                val h = size.height
+                val barW = w * 0.145f
+                val barH = h * 0.60f
+                val barTop = (h - barH) / 2f
+                rotate(degrees = 180f, pivot = Offset(w / 2f, h / 2f)) {
+                    val triPath = createPlumpPlayTrianglePath(w * 0.40f, h * 0.50f, min(w, h) * 0.66f)
+                    drawPath(triPath, Color.White.copy(alpha = 0.92f))
+                    drawRoundRect(
+                        color = Color.White.copy(alpha = 0.92f),
+                        topLeft = Offset(w * 0.72f, barTop),
+                        size = Size(barW, barH),
+                        cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+                    )
+                }
+            }
+        }
+
+        // 3. 紧凑中心播放/暂停按钮 (38.dp 精致胶囊圆钮)
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            lerp(accentPrimary, Color.White, 0.12f),
+                            accentPrimary,
+                            lerp(accentPrimary, accentSecondary, 0.68f)
+                        )
+                    )
+                )
+                .softClickable(pressScale = 0.86f, onClick = onTogglePlay),
+            contentAlignment = Alignment.Center
+        ) {
+            val safeMorph = morphProgress.coerceIn(0f, 1f)
+            Canvas(modifier = Modifier.size(17.dp)) {
+                val w = size.width
+                val h = size.height
+                if (safeMorph > 0.5f) {
+                    val barW = w * 0.24f
+                    val barH = h * 0.72f
+                    val topY = (h - barH) / 2f
+                    val leftX = w * 0.18f
+                    val rightX = w - leftX - barW
+                    val r = CornerRadius(barW / 2f, barW / 2f)
+                    drawRoundRect(Color.White, Offset(leftX, topY), Size(barW, barH), r)
+                    drawRoundRect(Color.White, Offset(rightX, topY), Size(barW, barH), r)
+                } else {
+                    val triPath = createPlumpPlayTrianglePath(w * 0.54f, h * 0.50f, min(w, h) * 0.84f)
+                    drawPath(triPath, Color.White)
+                }
+            }
+        }
+
+        // 4. 下一首
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .graphicsLayer { translationX = nextNudge.value }
+                .softClickable(
+                    pressScale = 0.84f,
+                    onClick = {
+                        scope.launch {
+                            nextNudge.animateTo(8f, tween(80))
+                            nextNudge.animateTo(0f, spring(dampingRatio = 0.55f))
+                        }
+                        onNext()
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.size(21.dp)) {
+                val w = size.width
+                val h = size.height
+                val barW = w * 0.145f
+                val barH = h * 0.60f
+                val barTop = (h - barH) / 2f
+                val triPath = createPlumpPlayTrianglePath(w * 0.40f, h * 0.50f, min(w, h) * 0.66f)
+                drawPath(triPath, Color.White.copy(alpha = 0.92f))
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.92f),
+                    topLeft = Offset(w * 0.72f, barTop),
+                    size = Size(barW, barH),
+                    cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+                )
+            }
+        }
+
+        // 5. 播放队列
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .softClickable(pressScale = 0.84f, onClick = onOpenQueue),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.size(19.dp)) {
+                val w = size.width
+                val h = size.height
+                val stroke = 2.0.dp.toPx()
+                val tint = Color.White.copy(alpha = 0.84f)
+                drawLine(tint, Offset(w * 0.14f, h * 0.26f), Offset(w * 0.78f, h * 0.26f), stroke, StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.14f, h * 0.50f), Offset(w * 0.62f, h * 0.50f), stroke, StrokeCap.Round)
+                drawLine(tint, Offset(w * 0.14f, h * 0.74f), Offset(w * 0.48f, h * 0.74f), stroke, StrokeCap.Round)
+                val noteCenter = Offset(w * 0.72f, h * 0.74f)
+                drawCircle(accentPrimary, radius = 2.8.dp.toPx(), center = noteCenter)
+                drawLine(accentPrimary, Offset(noteCenter.x + 2.0.dp.toPx(), noteCenter.y), Offset(noteCenter.x + 2.0.dp.toPx(), h * 0.40f), stroke * 0.9f, StrokeCap.Round)
+                drawLine(accentPrimary, Offset(noteCenter.x + 2.0.dp.toPx(), h * 0.40f), Offset(w * 0.88f, h * 0.47f), stroke * 0.9f, StrokeCap.Round)
+            }
+        }
+    }
+}
+
+/**
+ * 自研横屏右上角「流光棱镜背景切换」无框矢量图标
  */
 @Composable
 private fun LandscapeBackgroundPrismCanvasIcon(
@@ -923,7 +1160,7 @@ private fun LandscapeBackgroundPrismCanvasIcon(
         val w = size.width
         val h = size.height
         val stroke = 1.8.dp.toPx()
-        val white = Color.White.copy(alpha = 0.90f)
+        val white = Color.White.copy(alpha = 0.88f)
 
         // 外框画布层
         drawRoundRect(

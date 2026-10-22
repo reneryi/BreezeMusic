@@ -9,6 +9,7 @@ data class UserGradeInfo(
     val totalListenMinutes: Long = 0L,
     val todayListenMinutes: Long = 0L,
     val nextLevelScore: Long = 100L,
+    val currentBaseScore: Long = 0L,
     val progressPercent: Float = 0f,
     val totalListenSeconds: Long = 0L,
     val nextLevelRemainMinutes: Long = 0L
@@ -41,7 +42,8 @@ data class UserGradeInfo(
                     totalMinutes = effectiveListenMinutes,
                     totalSeconds = totalListenSeconds,
                     score = score,
-                    nextScore = nextLevelScore
+                    nextScore = nextLevelScore,
+                    currentBaseScore = currentBaseScore
                 ).first / 100f
             }
             return raw.coerceIn(0.06f, 0.99f)
@@ -55,7 +57,8 @@ data class UserGradeInfo(
             totalMinutes = newMins,
             totalSeconds = safeSec,
             score = score,
-            nextScore = nextLevelScore
+            nextScore = nextLevelScore,
+            currentBaseScore = currentBaseScore
         )
         return copy(
             totalListenSeconds = safeSec,
@@ -112,14 +115,6 @@ data class UserGradeInfo(
                 return pct to remainMins
             }
 
-            if (score > 0L && nextScore > score && nextScore > currentBaseScore) {
-                val base = if (score >= currentBaseScore) currentBaseScore else 0L
-                val span = (nextScore - base).coerceAtLeast(1L)
-                val pct = (((score - base).toDouble() / span.toDouble()) * 100.0).toFloat().coerceIn(5f, 99f)
-                val remain = (nextScore - score).coerceAtLeast(0L)
-                return pct to remain
-            }
-
             val lvIdx = level.coerceIn(0, LEVEL_MIN_THRESHOLDS.lastIndex - 1)
             var lowerMin = LEVEL_MIN_THRESHOLDS[lvIdx]
             var upperMin = LEVEL_MIN_THRESHOLDS[(lvIdx + 1).coerceAtMost(LEVEL_MIN_THRESHOLDS.lastIndex)]
@@ -145,9 +140,17 @@ data class UserGradeInfo(
             val spanSec = ((upperMin - lowerMin) * 60L).coerceAtLeast(60L)
             val curSec = (if (totalSeconds > 0L) totalSeconds else safeMins * 60L).coerceAtLeast(lowerMin * 60L)
             val gainedSec = (curSec - lowerMin * 60L).coerceAtLeast(0L)
-            val pct = ((gainedSec.toDouble() / spanSec.toDouble()) * 100.0).toFloat().coerceIn(5f, 99f)
-            val remainMins = ((upperMin * 60L - curSec).coerceAtLeast(0L)) / 60L
-            return pct to remainMins
+            val durationPct = ((gainedSec.toDouble() / spanSec.toDouble()) * 100.0).toFloat().coerceIn(5f, 99f)
+            val durationRemainMins = ((upperMin * 60L - curSec).coerceAtLeast(0L)) / 60L
+
+            if (score > 0L && nextScore > score && currentBaseScore > 0L && score >= currentBaseScore) {
+                val span = (nextScore - currentBaseScore).coerceAtLeast(1L)
+                val scorePct = (((score - currentBaseScore).toDouble() / span.toDouble()) * 100.0).toFloat().coerceIn(5f, 99f)
+                val remain = if (durationRemainMins > 0L) durationRemainMins else (nextScore - score).coerceAtLeast(0L)
+                return scorePct to remain
+            }
+
+            return durationPct to durationRemainMins
         }
     }
 }
