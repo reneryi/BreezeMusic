@@ -110,7 +110,7 @@ object KugouCommentEmojiParser {
 
     private val emTagRegex = Regex("""\[em\]([a-zA-Z0-9_]+)\[/em\]""", RegexOption.IGNORE_CASE)
     private val weiboSplitRegex = Regex("""\s*//\s*@""")
-    private val replyPrefixRegex = Regex("""^(?:回复\s*)?@([^\s:：]+)\s*[:：]\s*(.*)$""", RegexOption.DOTALL)
+    private val replyPrefixRegex = Regex("""^(?:回复\s*)?@([^\s:：]+)\s*[:：]\s*(.*)$""", RegexOption.DOT_MATCHES_ALL)
     private val fallbackEmojiPool = listOf("😊", "😂", "😭", "😍", "🥺", "👍", "❤️", "🌹", "🎧", "🎵", "✨", "🔥")
 
     fun parseEmojiContent(raw: String): String = formatContent(raw)

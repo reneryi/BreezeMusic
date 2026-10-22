@@ -82,7 +82,7 @@ internal fun formatCommentLikeCount(count: Int): String {
  * 评论多级对话数据模型（用于超过四级评论后点击「查看对话」进入完整平铺对话界面）
  */
 @Immutable
-internal data class CommentConversationChain(
+data class CommentConversationChain(
     val id: String,
     val title: String,
     val rootClusterComment: SongComment,
