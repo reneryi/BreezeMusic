@@ -91,6 +91,8 @@ object KugouCommentEmojiParser {
     private val emTagRegex = Regex("""\[em\]([a-zA-Z0-9_]+)\[/em\]""", RegexOption.IGNORE_CASE)
     private val fallbackEmojiPool = listOf("😊", "😂", "😭", "😍", "🥺", "👍", "❤️", "🌹", "🎧", "🎵", "✨", "🔥")
 
+    fun parseEmojiContent(raw: String): String = formatContent(raw)
+
     fun formatContent(raw: String): String {
         if (raw.isBlank()) return ""
         var text = emTagRegex.replace(raw) { match ->

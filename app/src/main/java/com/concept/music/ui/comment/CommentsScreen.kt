@@ -77,6 +77,7 @@ internal fun formatCommentLikeCount(count: Int): String {
 fun CommentsScreen(
     song: Song?,
     comments: List<SongComment>,
+    totalCount: Int = 0,
     loading: Boolean,
     currentType: String = "hot",
     hasMore: Boolean = true,

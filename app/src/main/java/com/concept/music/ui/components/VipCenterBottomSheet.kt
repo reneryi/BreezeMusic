@@ -53,7 +53,7 @@ import java.time.YearMonth
 /**
  * 概念版 VIP 权益中心页面：
  * - 移除底部重复的「刷新状态」按钮，仅保留右上角刷新图标；
- * - 升级「设备标识与音源鉴权凭证」模块，支持自动激活 DFID、查看/复制完整设备指纹（DFID / MID / GUID）、强制重签设备凭证与多节点链路诊断。
+ * - 精简页面小字说明文案，使视觉层级更清爽自然。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -133,10 +133,10 @@ fun VipCenterScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .padding(horizontal = 20.dp)
-                    .navigationBarsPadding()
-                    .padding(bottom = 36.dp)
+                    .padding(horizontal = 16.dp)
                     .verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
+                    .padding(top = 6.dp, bottom = 80.dp)
             )
         }
     }
@@ -206,7 +206,7 @@ private fun VipCenterContentBody(
     var currentDevice by remember {
         mutableStateOf(
             runCatching { VipManager.device() }.getOrElse {
-                DeviceIdentity(dfid = "-", uuid = "-", mid = "-", guid = "-", serverDev = "-")
+                DeviceIdentity(guid = "-", mid = "-", dev = "-", dfid = "-")
             }
         )
     }
@@ -254,320 +254,263 @@ private fun VipCenterContentBody(
             shape = RoundedCornerShape(24.dp),
             color = Color.Transparent,
             shadowElevation = 0.dp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(24.dp))
-                .background(vipHeroBrush)
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .background(vipHeroBrush)
                     .padding(20.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Rounded.Verified,
-                                contentDescription = null,
-                                tint = goldAccent,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = state.vipLabel.ifBlank { "概念版畅听会员" },
-                                color = goldAccent,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 16.sp
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = if (!loggedIn) {
-                                "登录酷狗账号后可每日领取概念版 VIP 畅听权益"
-                            } else if (state.expireTime.isNotBlank()) {
-                                "有效期至：${state.expireTime}"
-                            } else {
-                                "支持每日签到领取 1 天概念版 VIP 畅听"
-                            },
-                            color = heroSubText,
-                            fontSize = 12.5.sp
-                        )
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = if (state.vipActive) {
-                            greenSuccess.copy(alpha = 0.22f)
-                        } else {
-                            goldAccent.copy(alpha = 0.20f)
-                        }
-                    ) {
-                        Text(
-                            text = if (state.vipActive) "生效中" else if (loggedIn) "待激活" else "未登录",
-                            color = if (state.vipActive) greenSuccess else goldAccent,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 今日签到状态行
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (isDark) Color.White.copy(alpha = 0.06f) else Color.Black.copy(alpha = 0.04f),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                            Text(
-                                text = "今日听歌签到 (+1天)",
-                                color = heroSubText,
-                                fontSize = 11.5.sp
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = if (state.dayClaimed) "今日已领取" else "待领取",
-                                color = if (state.dayClaimed) greenSuccess else heroPrimaryText,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 14.sp
-                            )
-                        }
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (isDark) Color.White.copy(alpha = 0.06f) else Color.Black.copy(alpha = 0.04f),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                            Text(
-                                text = "本月累计进度",
-                                color = heroSubText,
-                                fontSize = 11.5.sp
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "${state.monthDoneDays} / ${state.monthTargetDays.coerceAtLeast(8)} 天",
-                                color = goldAccent,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 14.sp
-                            )
-                        }
-                    }
-                }
-
-                if (state.statusMessage.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = state.statusMessage,
-                            color = heroPrimaryText,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                if (!loggedIn) {
-                    Button(
-                        onClick = onLogin,
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = VipGold,
-                            contentColor = Color(0xFF1F1600)
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Login,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "立即登录酷狗账号",
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 14.sp
-                        )
-                    }
-                } else {
-                    val allClaimedToday = state.dayClaimed && state.upgradeClaimed
-                    Button(
-                        onClick = onClaim,
-                        enabled = !state.busy && !allClaimedToday,
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (allClaimedToday) greenSuccess else VipGold,
-                            contentColor = if (allClaimedToday) Color.White else Color(0xFF1F1600),
-                            disabledContainerColor = if (allClaimedToday) greenSuccess.copy(alpha = 0.72f) else VipGold.copy(alpha = 0.45f),
-                            disabledContentColor = if (allClaimedToday) Color.White else Color(0xFF1F1600).copy(alpha = 0.6f)
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                    ) {
-                        if (state.busy) {
-                            CircularProgressIndicator(
-                                color = Color(0xFF1F1600),
-                                strokeWidth = 2.dp,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "正在同步权益...",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 14.sp
-                            )
-                        } else {
-                            Icon(
-                                imageVector = if (allClaimedToday) Icons.Rounded.CheckCircle else Icons.Rounded.CardGiftcard,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = when {
-                                    allClaimedToday -> "今日 VIP 权益已全部就绪"
-                                    state.dayClaimed -> "补领今日畅听升级权益"
-                                    else -> "一键签到领取今日 1 天 VIP"
-                                },
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 14.sp
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 2. 本月签到日历
-        if (loggedIn) {
-            val nowDate = remember { today() }
-            val currentYearMonth = remember(nowDate) { YearMonth.from(nowDate) }
-            val daysInMonth = remember(currentYearMonth) { currentYearMonth.lengthOfMonth() }
-            val firstDayOffset = remember(currentYearMonth) {
-                (currentYearMonth.atDay(1).dayOfWeek.value % 7)
-            }
-            val claimedDayNumbers = remember(state.claimedDays, currentYearMonth) {
-                val prefix = "%04d-%02d-".format(currentYearMonth.year, currentYearMonth.monthValue)
-                state.claimedDays.mapNotNull { dateStr ->
-                    if (dateStr.startsWith(prefix)) {
-                        dateStr.removePrefix(prefix).take(2).toIntOrNull()
-                    } else null
-                }.toSet()
-            }
-
-            Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = cardBgColor,
-                shadowElevation = 0.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "${currentYearMonth.year}年${currentYearMonth.monthValue}月 签到日历",
-                            style = MaterialTheme.typography.titleSmall.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.onSurface
+                            text = "概念版 VIP 会员",
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.Black,
+                                color = goldAccent,
+                                fontSize = 18.sp
                             )
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            LegendDot(color = greenSuccess, label = "已签")
-                            LegendDot(color = ConceptPrimary, label = "今日")
+
+                        if (loggedIn && state.snapshot.checked) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = goldAccent.copy(alpha = 0.16f)
+                            ) {
+                                Text(
+                                    text = if (state.fresh) "已同步" else "待刷新",
+                                    color = goldAccent,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp)
+                                )
+                            }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    val weekHeaders = listOf("日", "一", "二", "三", "四", "五", "六")
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        weekHeaders.forEach { w ->
-                            Text(
-                                text = w,
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.weight(1f)
+                    if (!loggedIn) {
+                        Text(
+                            text = "登录账号后，每日可免费领取 1 天 VIP 权益。",
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                color = heroSubText,
+                                lineHeight = 20.sp
                             )
+                        )
+                    } else {
+                        val todayRecord = state.records.find { it.day == today() }
+                        val recordDesc = when {
+                            todayRecord?.received != true -> if (state.fresh) "今日尚未领取" else "正在同步状态"
+                            todayRecord.type == "svip" -> "今日已领：概念版 VIP"
+                            else -> "今日已领：畅听 VIP"
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = recordDesc,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                color = heroPrimaryText,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        )
 
-                    val totalCells = firstDayOffset + daysInMonth
-                    val rows = (totalCells + 6) / 7
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (r in 0 until rows) {
-                            Row(modifier = Modifier.fillMaxWidth()) {
-                                for (c in 0 until 7) {
-                                    val cellIdx = r * 7 + c
-                                    val dayNum = cellIdx - firstDayOffset + 1
-                                    if (dayNum in 1..daysInMonth) {
-                                        val isClaimed = claimedDayNumbers.contains(dayNum) ||
-                                            (dayNum == nowDate.dayOfMonth && state.dayClaimed)
-                                        val isToday = dayNum == nowDate.dayOfMonth
-                                        Box(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .aspectRatio(1.15f)
-                                                .padding(2.dp)
-                                                .clip(RoundedCornerShape(10.dp))
-                                                .background(
-                                                    when {
-                                                        isClaimed -> greenSuccess.copy(alpha = 0.20f)
-                                                        isToday -> ConceptPrimary.copy(alpha = 0.16f)
-                                                        else -> elevatedColor.copy(alpha = 0.5f)
-                                                    }
-                                                ),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = dayNum.toString(),
-                                                fontSize = 12.sp,
-                                                fontWeight = if (isClaimed || isToday) FontWeight.ExtraBold else FontWeight.Medium,
-                                                color = when {
-                                                    isClaimed -> greenSuccess
-                                                    isToday -> ConceptPrimary
-                                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                                }
+                        if (state.snapshot.benefits.isNotEmpty()) {
+                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                state.snapshot.benefits.forEach { benefit ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.CheckCircle,
+                                            contentDescription = null,
+                                            tint = goldAccent,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                        Text(
+                                            text = benefit.display(),
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                color = heroSubText,
+                                                fontWeight = FontWeight.Medium
                                             )
-                                        }
-                                    } else {
-                                        Spacer(modifier = Modifier.weight(1f))
+                                        )
                                     }
                                 }
                             }
                         }
                     }
+
+                    if (state.busy) {
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .clip(CircleShape),
+                            color = goldAccent,
+                            trackColor = goldAccent.copy(alpha = 0.15f)
+                        )
+                    }
+
+                    state.result?.let {
+                        Text(
+                            text = it.message,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = greenSuccess,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                    }
+
+                    state.error?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        )
+                    }
+
+                    Button(
+                        onClick = { if (loggedIn) onClaim() else onLogin() },
+                        enabled = !state.busy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFFFCA28),
+                            contentColor = Color(0xFF281E0B),
+                            disabledContainerColor = Color(0xFFFFCA28).copy(alpha = 0.4f),
+                            disabledContentColor = Color(0xFF281E0B).copy(alpha = 0.4f)
+                        )
+                    ) {
+                        @Suppress("DEPRECATION")
+                        Icon(
+                            imageVector = if (loggedIn) Icons.Rounded.CardGiftcard else Icons.Rounded.Login,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (loggedIn) "一键领取今日 VIP" else "立即登录领取",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
                 }
             }
         }
 
-        // 3. 后台自动续期开关
+        // 2. 月度 VIP 打卡日历
+        val currentDate = remember { LocalDate.now(CHINA_ZONE) }
+        val currentYearMonth = remember(currentDate) { YearMonth.from(currentDate) }
+        val monthPrefix = remember(currentYearMonth) { currentYearMonth.toString() }
+        val claimedDaysMap = remember(state.records, monthPrefix) {
+            state.records
+                .filter { it.day.startsWith(monthPrefix) && it.received }
+                .associateBy({ it.day.takeLast(2).toIntOrNull() ?: 0 }, { it.type })
+        }
+        val claimedCountThisMonth = claimedDaysMap.size
+
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = cardBgColor,
+            shadowElevation = 0.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${currentYearMonth.year}年${currentYearMonth.monthValue}月 · 领取日历",
+                        style = MaterialTheme.typography.titleSmall.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    )
+                    Surface(
+                        color = ConceptPrimary.copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(
+                            text = "已领 $claimedCountThisMonth / ${currentYearMonth.lengthOfMonth()} 天",
+                            color = ConceptPrimary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+
+                val totalDays = currentYearMonth.lengthOfMonth()
+                val rows = (1..totalDays).chunked(7)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    rows.forEach { weekDays ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            for (i in 0 until 7) {
+                                val dayNum = weekDays.getOrNull(i)
+                                if (dayNum != null) {
+                                    val claimType = claimedDaysMap[dayNum]
+                                    val isToday = dayNum == currentDate.dayOfMonth
+                                    val cellBg = when {
+                                        claimType == "svip" -> VipGold.copy(alpha = if (isDark) 0.32f else 0.24f)
+                                        claimType != null -> ConceptPrimary.copy(alpha = if (isDark) 0.28f else 0.20f)
+                                        isToday -> ConceptCyanAccent.copy(alpha = if (isDark) 0.24f else 0.16f)
+                                        else -> elevatedColor
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(34.dp)
+                                            .clip(RoundedCornerShape(9.dp))
+                                            .background(cellBg),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = dayNum.toString(),
+                                            fontSize = 11.5.sp,
+                                            fontWeight = if (claimType != null || isToday) FontWeight.ExtraBold else FontWeight.Medium,
+                                            color = when {
+                                                claimType == "svip" -> goldAccent
+                                                claimType != null -> ConceptPrimary
+                                                isToday -> ConceptCyanAccent
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                                            },
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                } else {
+                                    Spacer(modifier = Modifier.weight(1f).height(34.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    LegendDot(color = goldAccent, label = "概念 VIP")
+                    LegendDot(color = ConceptPrimary, label = "畅听 VIP")
+                    LegendDot(color = ConceptCyanAccent, label = "今日")
+                }
+            }
+        }
+
+        // 3. 自动领取开关卡片（唯一入口，已移除设置页中的重复项与底部重复刷新按钮）
         if (loggedIn) {
             Surface(
                 shape = RoundedCornerShape(24.dp),
@@ -578,21 +521,22 @@ private fun VipCenterContentBody(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 18.dp, vertical = 16.dp),
+                        .padding(18.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                         Text(
-                            text = "每日自动签到续期",
-                            style = MaterialTheme.typography.titleSmall.copy(
+                            text = "打开应用时自动领取",
+                            style = MaterialTheme.typography.titleMedium.copy(
                                 fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 15.sp
                             )
                         )
                         Spacer(modifier = Modifier.height(3.dp))
                         Text(
-                            text = "启动时自动领取当日 1 天 VIP 权益（不影响账号真实听歌时长）",
+                            text = "启动时自动领取当日 1 天 VIP 权益",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -793,9 +737,9 @@ private fun VipCenterContentBody(
                             scope.launch {
                                 val t0 = System.currentTimeMillis()
                                 val diagResult = withContext(Dispatchers.IO) {
-                                    val ensuredDfid = runCatching {
+                                    val ensuredDfid: String = runCatching {
                                         VipManager.auth.registerDevice(forceRefresh = false)
-                                    }.getOrDefault(currentDevice.dfid)
+                                    }.getOrNull() ?: currentDevice.dfid
                                     val hotOk = runCatching { VipManager.music.searchHot().isNotEmpty() }.getOrDefault(false)
                                     val latestDev = runCatching { VipManager.device() }.getOrDefault(currentDevice)
                                     Triple(ensuredDfid, hotOk, latestDev)
@@ -803,7 +747,7 @@ private fun VipCenterContentBody(
                                 val latencyMs = (System.currentTimeMillis() - t0).coerceAtLeast(1L)
                                 currentDevice = diagResult.third
                                 diagnosing = false
-                                val dfidValid = diagResult.first.isNotBlank() && diagResult.first != "-"
+                                val dfidValid = !diagResult.first.isNullOrBlank() && diagResult.first != "-"
                                 diagnosticSummary = if (diagResult.second && dfidValid) {
                                     "概念版网关连通正常 · 延迟 ${latencyMs}ms · DFID 鉴权已就绪"
                                 } else if (dfidValid) {

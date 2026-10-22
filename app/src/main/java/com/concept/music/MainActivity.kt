@@ -2,6 +2,9 @@ package com.concept.music
 
 import android.os.Bundle
 import android.widget.Toast
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -236,7 +239,7 @@ fun MainContent(
                             "${targetSong.title} ${targetSong.artist}".trim(),
                             page = 1,
                             pageSize = 6
-                        ).firstOrNull { it.albumId.isNotBlank() && it.albumId != "0" }?.albumId
+                        ).songs.firstOrNull { it.albumId.isNotBlank() && it.albumId != "0" }?.albumId
                         if (!fromSearch.isNullOrBlank()) {
                             fromSearch
                         } else {

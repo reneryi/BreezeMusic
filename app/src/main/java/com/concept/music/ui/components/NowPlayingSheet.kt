@@ -794,6 +794,7 @@ fun NowPlayingSheet(
                     }
                 }
             }
+            }
         }
     }
 
