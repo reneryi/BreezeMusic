@@ -118,6 +118,8 @@ object KugouCsccReporter {
     suspend fun resolveMixSongId(song: Song): Long = withContext(Dispatchers.IO) {
         if (song.albumAudioId > 0L) return@withContext song.albumAudioId
         if (song.audioId > 0L) return@withContext song.audioId
+        val parsedMixId = song.mixSongId.toLongOrNull()
+        if (parsedMixId != null && parsedMixId > 0L) return@withContext parsedMixId
         val parsedId = song.id.toLongOrNull()
         if (parsedId != null && parsedId > 0L) return@withContext parsedId
 

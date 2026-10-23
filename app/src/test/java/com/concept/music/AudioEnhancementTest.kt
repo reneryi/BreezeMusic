@@ -476,4 +476,17 @@ class AudioEnhancementTest {
         assertEquals(16384.toShort(), output.short)
         assertEquals((-16384).toShort(), output.short)
     }
+
+    @Test
+    fun testLegacyGsonDeserializedSongCopyDoesNotCrash() {
+        val legacyJson = """[{"id":"1001","hash":"abcd","title":"旧版持久化歌曲","artist":"测试歌手","albumAudioId":888999}]"""
+        val type = object : com.google.gson.reflect.TypeToken<List<Song>>() {}.type
+        val songs: List<Song> = KugouSigner.gson.fromJson(legacyJson, type)
+        assertEquals(1, songs.size)
+        val copied = songs.first().copy(playUrl = "")
+        assertEquals("888999", copied.mixSongId)
+        assertEquals("", copied.publishDate)
+        assertEquals("", copied.accompanyHash)
+        assertNotNull(copied.availableQualities)
+    }
 }

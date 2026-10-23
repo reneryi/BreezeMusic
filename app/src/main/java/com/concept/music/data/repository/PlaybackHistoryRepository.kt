@@ -81,6 +81,7 @@ fun mergeTrackHigherQuality(preferredOrderSong: Song, otherSong: Song): Song {
         isHiRes = hasHiRes,
         albumAudioId = preferredOrderSong.albumAudioId.takeIf { it > 0L } ?: otherSong.albumAudioId,
         audioId = preferredOrderSong.audioId.takeIf { it > 0L } ?: otherSong.audioId,
+        mixSongId = preferredOrderSong.mixSongId.ifBlank { otherSong.mixSongId },
         quality = if (hasHiRes) "high" else if (hasFlac) "flac" else if (has320) "320" else "128",
         availableQualities = mergedQualities,
         bitrateKbps = maxOf(preferredOrderSong.bitrateKbps, otherSong.bitrateKbps),
@@ -170,7 +171,8 @@ class DiscoverLocalCache(context: Context? = null) {
     private val fmChannelListType = object : TypeToken<List<FmChannel>>() {}.type
     private val playlistListType = object : TypeToken<List<Playlist>>() {}.type
 
-    private fun sanitizeCachedSong(s: Song): Song {
+    private fun sanitizeCachedSong(rawSong: Song): Song {
+        val s = rawSong.sanitizeFromJson()
         if (!s.isHiRes) return s
         val isVerifiedHiRes = s.hashHiRes.isNotBlank() &&
             !s.hashHiRes.equals(s.hash320, ignoreCase = true) &&

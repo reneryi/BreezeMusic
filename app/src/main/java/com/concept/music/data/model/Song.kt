@@ -40,6 +40,7 @@ data class Song(
     val playUrl: String = "",
     val albumAudioId: Long = 0L,
     val audioId: Long = 0L,
+    val mixSongId: String = "",
     val quality: String = "320",
     val isHiRes: Boolean = false,
     val isFavorite: Boolean = false,
@@ -119,6 +120,48 @@ data class Song(
             val minutes = totalSeconds / 60
             val seconds = totalSeconds % 60
             return String.format(java.util.Locale.getDefault(), "%02d:%02d", minutes, seconds)
+        }
+
+    @Suppress("USELESS_ELVIS", "SENSELESS_COMPARISON")
+    fun sanitizeFromJson(): Song {
+        val rawMix = (mixSongId as String?)?.trim().orEmpty()
+        val resolvedMix = rawMix.ifBlank {
+            (albumAudioId.takeIf { it > 0L } ?: audioId.takeIf { it > 0L })?.toString().orEmpty()
+        }
+        return Song(
+            id = (id as String?) ?: "",
+            hash = (hash as String?) ?: "",
+            hash128 = (hash128 as String?) ?: "",
+            hash320 = (hash320 as String?) ?: "",
+            hashFlac = (hashFlac as String?) ?: "",
+            hashHiRes = (hashHiRes as String?) ?: "",
+            accompanyHash = (accompanyHash as String?) ?: "",
+            title = (title as String?) ?: "",
+            artist = (artist as String?) ?: "",
+            artistId = (artistId as String?) ?: "",
+            album = (album as String?) ?: "",
+            albumId = (albumId as String?) ?: "",
+            coverUrl = (coverUrl as String?) ?: "",
+            durationMs = durationMs,
+            isVip = isVip,
+            isFreePrivilege = isFreePrivilege,
+            isLossless = isLossless,
+            playUrl = (playUrl as String?) ?: "",
+            albumAudioId = albumAudioId,
+            audioId = audioId,
+            mixSongId = resolvedMix,
+            quality = (quality as String?) ?: "320",
+            isHiRes = isHiRes,
+            isFavorite = isFavorite,
+            fileId = fileId,
+            availableQualities = (availableQualities as List<AudioQuality?>?)?.filterNotNull() ?: emptyList(),
+            actualPlayQuality = actualPlayQuality,
+            bitrateKbps = bitrateKbps,
+            fileSizeByte = fileSizeByte,
+            climaxStartMs = climaxStartMs,
+            climaxEndMs = climaxEndMs,
+            publishDate = (publishDate as String?) ?: ""
+        )
         }
 }
 

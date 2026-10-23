@@ -217,6 +217,7 @@ internal fun isSystemAutoRotateEnabled(context: Context): Boolean {
 /**
  * 检查用户是否开启封面播放页横放自动进入横屏播放开关（OrientationEventListener 无需 ACTIVITY_RECOGNITION 权限）
  */
+@Suppress("UNUSED_PARAMETER")
 internal fun hasDeviceMotionOrientationPermission(context: Context, appToggleEnabled: Boolean): Boolean {
     return appToggleEnabled
 }

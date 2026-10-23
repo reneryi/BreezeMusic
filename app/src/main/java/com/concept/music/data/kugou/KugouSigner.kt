@@ -20,7 +20,33 @@ object KugouSigner {
     private const val WEB_SALT = "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt"
     private const val PUBLIC_KEY = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDECi0Np2UR87scwrvTr72L6oO01rBbbBPriSDFPxr3Z5syug0O24QyQO8bg27+0+4kBzTBTBOZ/WWU0WryL1JSXRTXLgFVxtzIY41Pe7lPOgsfTCn5kZcvKhYKJesKnnJDNr5/abvTGf+rHG3YRwsCHcQ08/q6ifSioBszvb3QiwIDAQAB"
     private const val PUBLIC_KEY_STANDARD = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7Q0ELSYoIJvTFJhMpe1s/gbjDX51HBNnE15HXqTW6lQ7LC8jr9fWZTwusknp+sVGzwd40MwP6U5yDE27M/X1+UR4tvOGOqp94TJtQ1EPnWGXngpeIW5GxoQgao1rmYWAu6oi1z9XkChrsUdC6DJE5E221wf/4WLFxwAtRQIDAQAB"
-    val gson = GsonBuilder().disableHtmlEscaping().create()
+    val gson = GsonBuilder()
+        .disableHtmlEscaping()
+        .registerTypeAdapterFactory(object : com.google.gson.TypeAdapterFactory {
+            override fun <T : Any?> create(gson: com.google.gson.Gson, type: com.google.gson.reflect.TypeToken<T>): com.google.gson.TypeAdapter<T>? {
+                val rawType = type.rawType
+                val isSong = rawType == com.concept.music.data.model.Song::class.java
+                val isPlaylist = rawType == com.concept.music.data.model.Playlist::class.java
+                if (!isSong && !isPlaylist) return null
+                val delegate = gson.getDelegateAdapter(this, type)
+                return object : com.google.gson.TypeAdapter<T>() {
+                    override fun write(out: com.google.gson.stream.JsonWriter, value: T?) {
+                        delegate.write(out, value)
+                    }
+
+                    @Suppress("UNCHECKED_CAST")
+                    override fun read(reader: com.google.gson.stream.JsonReader): T? {
+                        val parsed = delegate.read(reader) ?: return null
+                        return when (parsed) {
+                            is com.concept.music.data.model.Song -> parsed.sanitizeFromJson() as T
+                            is com.concept.music.data.model.Playlist -> parsed.sanitizeFromJson() as T
+                            else -> parsed
+                        }
+                    }
+                }
+            }
+        })
+        .create()
     fun md5(text: String): String = hex(MessageDigest.getInstance("MD5").digest(text.toByteArray(Charsets.UTF_8)))
     fun mid(guid: String): String = BigInteger(md5(guid), 16).toString()
     fun random(length: Int): String {

@@ -509,7 +509,7 @@ class MusicApiRepository(
         } else {
             song.title
         }
-        val mixId = song.albumAudioId.takeIf { it > 0L } ?: song.audioId.takeIf { it > 0L } ?: song.id.toLongOrNull() ?: 0L
+        val mixId = song.albumAudioId.takeIf { it > 0L } ?: song.audioId.takeIf { it > 0L } ?: song.mixSongId.toLongOrNull()?.takeIf { it > 0L } ?: song.id.toLongOrNull() ?: 0L
         val primaryHash = song.hash128.ifBlank { song.hash }.uppercase()
         val songItem = JsonObject().apply {
             addProperty("number", 1)
@@ -576,7 +576,7 @@ class MusicApiRepository(
             } else {
                 song.title
             }
-            val mixId = song.albumAudioId.takeIf { it > 0L } ?: song.audioId.takeIf { it > 0L } ?: song.id.toLongOrNull() ?: 0L
+            val mixId = song.albumAudioId.takeIf { it > 0L } ?: song.audioId.takeIf { it > 0L } ?: song.mixSongId.toLongOrNull()?.takeIf { it > 0L } ?: 0L.takeIf { it > 0L } ?: song.mixSongId.toLongOrNull()?.takeIf { it > 0L } ?: song.id.toLongOrNull() ?: 0L
             val primaryHash = song.hash128.ifBlank { song.hash }.uppercase()
             val songItem = JsonObject().apply {
                 addProperty("number", idx + 1)
@@ -659,7 +659,7 @@ class MusicApiRepository(
             if (song.hash.isNotBlank()) {
                 addProperty("hash", song.hash.uppercase())
             }
-            val mixId = song.albumAudioId.takeIf { it > 0L } ?: song.audioId
+            val mixId = song.albumAudioId.takeIf { it > 0L } ?: song.audioId.takeIf { it > 0L } ?: song.mixSongId.toLongOrNull()?.takeIf { it > 0L } ?: 0L
             if (mixId > 0L) {
                 addProperty("mixsongid", mixId)
             }
@@ -5210,6 +5210,7 @@ class MusicApiRepository(
         val session = accounts.context()?.session ?: return false
         var mxid = if (song.albumAudioId > 0L) song.albumAudioId
             else if (song.audioId > 0L) song.audioId
+            else if ((song.mixSongId.toLongOrNull() ?: 0L) > 0L) song.mixSongId.toLong()
             else song.id.toLongOrNull() ?: 0L
 
         if (mxid <= 0L && song.hash.isNotBlank()) {
@@ -5700,7 +5701,7 @@ class MusicApiRepository(
     private val songCommentCountCache = ConcurrentHashMap<String, Int>()
 
     private suspend fun resolveCommentMixSongId(song: Song): Long {
-        var mixSongId = song.albumAudioId.takeIf { it > 0 } ?: song.audioId.takeIf { it > 0 } ?: 0L
+        var mixSongId = song.albumAudioId.takeIf { it > 0 } ?: song.audioId.takeIf { it > 0 } ?: song.mixSongId.toLongOrNull()?.takeIf { it > 0L } ?: 0L
         val cleanHash = song.hash.trim().lowercase()
         if (mixSongId <= 0 && cleanHash.isNotBlank()) {
             runCatching {
@@ -5725,7 +5726,7 @@ class MusicApiRepository(
      * 对齐 MakcRe/KuGouMusicApi module/comment_count.js:
      * 针对当前播放曲目实时查询精确评论总数，避免不同歌曲之间残留上一首歌的评论数
      */
-    suspend fun fetchSongCommentCount(song: Song, resolvedMixId: Long = 0L): Int = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    suspend fun fetchSongCommentCount(song: Song, resolvedMixId: Long = 0L): Int = coroutineScope {
         val cacheKey = "${song.id}_${song.hash}".lowercase()
         val mixSongId = resolvedMixId.takeIf { it > 0L } ?: resolveCommentMixSongId(song)
         val cleanHash = song.hash.trim().lowercase()
@@ -5758,12 +5759,12 @@ class MusicApiRepository(
 
         if (countFromApi > 0) {
             songCommentCountCache[cacheKey] = countFromApi
-            return@withContext countFromApi
+            return@coroutineScope countFromApi
         }
         songCommentCountCache[cacheKey] ?: 0
     }
 
-    suspend fun songComments(song: Song, type: String = "hot", page: Int = 1, pageSize: Int = 30): List<SongComment> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    suspend fun songComments(song: Song, type: String = "hot", page: Int = 1, pageSize: Int = 30): List<SongComment> = coroutineScope {
         val songCacheKey = "${song.id}_${song.hash}".lowercase()
         if (page == 1) {
             // 切换歌曲或重新拉取第一页时必须立即重置上一首歌的评论计数缓存，杜绝评论数卡死不刷新
@@ -5773,7 +5774,7 @@ class MusicApiRepository(
         val cleanHash = song.hash.trim().lowercase()
         if (mixSongId <= 0 && cleanHash.isBlank()) {
             lastSongCommentCount = 0
-            return@withContext emptyList()
+            return@coroutineScope emptyList()
         }
         val extData = cleanHash.ifBlank { "0" }
         val isHotTab = type != "new"
@@ -5903,7 +5904,7 @@ class MusicApiRepository(
             .take(25)
 
         if (candidatesForReplyFetch.isEmpty()) {
-            return@withContext mergedRaw
+            return@coroutineScope mergedRaw
         }
 
         val repliesByParentId = coroutineScope {
@@ -5951,8 +5952,8 @@ class MusicApiRepository(
         pageSize: Int = 30,
         resolvedMixSongId: Long = 0L,
         specialChildId: String = ""
-    ): List<SongComment> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        if (commentId.isBlank()) return@withContext emptyList()
+    ): List<SongComment> = coroutineScope {
+        if (commentId.isBlank()) return@coroutineScope emptyList()
         val mixSongId = resolvedMixSongId.takeIf { it > 0L }
             ?: commentMixSongIdCache[commentId]?.takeIf { it > 0L }
             ?: resolveCommentMixSongId(song)
@@ -6062,7 +6063,7 @@ class MusicApiRepository(
     suspend fun likeSongComment(song: Song, commentId: String, like: Boolean): Boolean {
         val session = accounts.context()?.session ?: return false
         if (session.token.isBlank() || commentId.isBlank()) return false
-        val mixSongId = song.albumAudioId.takeIf { it > 0 } ?: song.audioId.takeIf { it > 0 } ?: song.id.toLongOrNull() ?: 0L
+        val mixSongId = song.albumAudioId.takeIf { it > 0 } ?: song.audioId.takeIf { it > 0 } ?: song.mixSongId.toLongOrNull()?.takeIf { it > 0L } ?: song.id.toLongOrNull() ?: 0L
         return runCatching {
             val response = transport.call(
                 path = "/mcomment/v1/cmt_like",
@@ -6517,7 +6518,7 @@ class MusicApiRepository(
         }
         // 对接 MakcRe/KuGouMusicApi module/krm_audio.js (/kmr/v2/audio, KG-TID: 238) 实时补全专辑、发行公司与发行时间
         val krmMetaDef = async {
-            val entityId = song.albumAudioId.takeIf { it > 0L } ?: song.audioId.takeIf { it > 0L } ?: 0L
+            val entityId = song.albumAudioId.takeIf { it > 0L } ?: song.audioId.takeIf { it > 0L } ?: song.mixSongId.toLongOrNull()?.takeIf { it > 0L } ?: 0L
             if (entityId > 0L) {
                 runCatching {
                     val dataArr = JsonArray().apply {
@@ -7145,6 +7146,7 @@ class MusicApiRepository(
             playUrl = o.text("url") ?: "",
             albumAudioId = albumAudioId,
             audioId = audioId,
+            mixSongId = (albumAudioId.takeIf { it > 0L } ?: audioId.takeIf { it > 0L })?.toString().orEmpty(),
             quality = if (hasHiRes) "high" else if (hasFlac) "flac" else if (has320) "320" else "128",
             fileId = fileId,
             availableQualities = qualities,

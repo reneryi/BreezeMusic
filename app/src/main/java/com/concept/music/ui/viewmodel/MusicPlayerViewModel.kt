@@ -152,7 +152,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private val mutableState = MutableStateFlow(PlayerUiState())
     val uiState = mutableState.asStateFlow()
 
-    private val gson = Gson()
+    private val gson = com.concept.music.data.kugou.KugouSigner.gson
     private val prefs by lazy {
         application.applicationContext.getSharedPreferences("concept_player_prefs", android.content.Context.MODE_PRIVATE)
     }
@@ -552,7 +552,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }.getOrDefault(emptyList())
         } else emptyList()
 
-        fun sanitizePersistedSong(s: Song): Song {
+        fun sanitizePersistedSong(rawSong: Song): Song {
+            val s = rawSong.sanitizeFromJson()
             if (!s.isHiRes) return s
             val realHiRes = s.hashHiRes.isNotBlank() &&
                 !s.hashHiRes.equals(s.hash320, ignoreCase = true) &&
@@ -581,7 +582,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             queue = sanitizedQueue,
             currentIndex = savedIndex,
             currentActiveId = savedActiveQueueId,
-            existingRecent = restoredRecentQueues.take(5)
+            existingRecent = restoredRecentQueues.take(5).map { rq -> rq.copy(id = (rq.id as String?) ?: "", title = (rq.title as String?) ?: "", songs = (rq.songs as List<Song?>?)?.filterNotNull()?.map { sanitizePersistedSong(it) }.orEmpty()) }
         )
 
         val effectiveRestoredQuality = if (restoredSong != null) {

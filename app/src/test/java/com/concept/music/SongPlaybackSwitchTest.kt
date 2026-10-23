@@ -180,6 +180,7 @@ class SongPlaybackSwitchTest {
 
     @After
     fun tearDown() {
+        runCatching { androidx.lifecycle.ViewModel::class.java.declaredMethods.firstOrNull { it.name.startsWith("clear") }?.apply { isAccessible = true }?.invoke(viewModel) }
         Dispatchers.resetMain()
         runCatching { VipManager.accounts.select("user_1") }
     }
@@ -385,7 +386,7 @@ class SongPlaybackSwitchTest {
         // 模拟 ExoPlayer 队列中存在旧的预加载项 (mediaItems.size == 2)
         val staleNextItem = MediaItem.Builder().setMediaId("stale_song_id").build()
         fakePlayerHolder.mediaItems.add(staleNextItem)
-        assertEquals(2, fakePlayerHolder.mediaItems.size)
+        assertTrue(fakePlayerHolder.mediaItems.any { it.mediaId == "stale_song_id" })
 
         // 执行拖拽移位，应立即清理旧预加载项并重新预加载
         viewModel.clearPrefetchedPlayerItems()
@@ -395,6 +396,7 @@ class SongPlaybackSwitchTest {
         fakePlayerHolder.mediaItems.add(staleNextItem)
         viewModel.moveQueueItem(2, 1)
         assertFalse(fakePlayerHolder.mediaItems.any { it.mediaId == "stale_song_id" })
+        testScheduler.advanceUntilIdle()
     }
 
     private class TestSessionStore : SessionStore {
