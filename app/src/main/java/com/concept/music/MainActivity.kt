@@ -20,6 +20,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -356,28 +357,14 @@ fun MainContent(
         currentRoute != "vip_center" &&
         currentRoute != "viper_effect"
 
-    // 当全屏浮层（播放器 / 音效页 / 评论页）展开时，为底层主界面容器施加纯 GPU 景深微缩联动（0 重组）
-    val anyFullScreenOverlayOpen = (showNowPlaying && currentSong != null) || showViperEffectOverlay || showCommentsScreen
-    val hostDepthProgressState = animateFloatAsState(
-        targetValue = if (anyFullScreenOverlayOpen) 1f else 0f,
-        animationSpec = ConceptMotion.spatialSheetSpring(),
-        label = "hostDepthProgress"
-    )
-
-    Box(modifier = Modifier.fillMaxSize()) {
+    // 根容器铺设主题背景色，且主界面保持 100% 满幅尺寸不内缩，彻底杜绝全屏浮层进出时四周露出窗口白边
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
         Scaffold(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    val depth = hostDepthProgressState.value.coerceIn(0f, 1f)
-                    if (depth > 0.001f) {
-                        val s = 1f - 0.045f * depth
-                        scaleX = s
-                        scaleY = s
-                        alpha = 1f - 0.18f * depth
-                        transformOrigin = TransformOrigin(0.5f, 0.45f)
-                    }
-                },
+            modifier = Modifier.fillMaxSize(),
             contentWindowInsets = WindowInsets(0, 0, 0, 0)
         ) { innerPadding ->
             NavHost(
@@ -392,29 +379,21 @@ fun MainContent(
                     val initTab = mainTabIndex(initial)
                     val tgtTab = mainTabIndex(target)
                     if (initTab >= 0 && tgtTab >= 0) {
-                        // 一级底部 Tab 切换：方向感微平移 (±6% 屏宽) + 柔和缩放 (0.97f -> 1f) + 强调型减速渐显
+                        // 一级底部 Tab 切换：柔和方向感微平移 (±5% 屏宽，380ms 舒展减速)
                         val dir = if (tgtTab >= initTab) 1 else -1
                         slideInHorizontally(
-                            initialOffsetX = { fullWidth -> dir * (fullWidth * 0.06f).toInt() },
-                            animationSpec = ConceptMotion.spatialPageSpring()
-                        ) + scaleIn(
-                            initialScale = 0.97f,
-                            transformOrigin = TransformOrigin(0.5f, 0.5f),
-                            animationSpec = ConceptMotion.spatialPageSpring()
+                            initialOffsetX = { fullWidth -> dir * (fullWidth * 0.05f).toInt() },
+                            animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
                         ) + fadeIn(
-                            animationSpec = tween(260, easing = ConceptMotion.EmphasizedDecelerate)
+                            animationSpec = tween(durationMillis = 340, easing = ConceptMotion.GentleSpatialEnterEasing)
                         )
                     } else {
-                        // 二级详情页推入：从右侧 28% 屏宽以 SpatialPageSpring 弹性推入 + 0.96f -> 1f 绽放
+                        // 独立二级页面推入：加长至 440ms 丝滑无抖动减速推入，保持 100% 满屏宽度不缩放以免露边
                         slideInHorizontally(
-                            initialOffsetX = { fullWidth -> (fullWidth * 0.28f).toInt() },
-                            animationSpec = ConceptMotion.spatialPageSpring()
-                        ) + scaleIn(
-                            initialScale = 0.96f,
-                            transformOrigin = TransformOrigin(0.5f, 0.5f),
-                            animationSpec = ConceptMotion.spatialPageSpring()
+                            initialOffsetX = { fullWidth -> (fullWidth * 0.30f).toInt() },
+                            animationSpec = tween(durationMillis = 440, easing = ConceptMotion.GentleSpatialEnterEasing)
                         ) + fadeIn(
-                            animationSpec = tween(240, easing = ConceptMotion.EmphasizedDecelerate)
+                            animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
                         )
                     }
                 },
@@ -426,53 +405,37 @@ fun MainContent(
                     if (initTab >= 0 && tgtTab >= 0) {
                         val dir = if (tgtTab >= initTab) 1 else -1
                         slideOutHorizontally(
-                            targetOffsetX = { fullWidth -> -dir * (fullWidth * 0.06f).toInt() },
-                            animationSpec = ConceptMotion.spatialPageSpring()
-                        ) + scaleOut(
-                            targetScale = 0.97f,
-                            transformOrigin = TransformOrigin(0.5f, 0.5f),
-                            animationSpec = ConceptMotion.spatialPageSpring()
+                            targetOffsetX = { fullWidth -> -dir * (fullWidth * 0.05f).toInt() },
+                            animationSpec = tween(durationMillis = 340, easing = ConceptMotion.GentleSpatialExitEasing)
                         ) + fadeOut(
-                            animationSpec = tween(210, easing = ConceptMotion.EmphasizedAccelerate)
+                            animationSpec = tween(durationMillis = 280, easing = ConceptMotion.GentleSpatialExitEasing)
                         )
                     } else {
-                        // 二级详情页推入时，底层旧页面同步执行 -8% 视差左移与 0.96f 景深微缩 (Parallax Depth)
+                        // 独立二级页面推入时，底层旧页面同步执行 440ms 柔和视差左移 (-9% 屏宽)
                         slideOutHorizontally(
-                            targetOffsetX = { fullWidth -> -(fullWidth * 0.08f).toInt() },
-                            animationSpec = ConceptMotion.spatialPageSpring()
-                        ) + scaleOut(
-                            targetScale = 0.96f,
-                            transformOrigin = TransformOrigin(0.5f, 0.5f),
-                            animationSpec = ConceptMotion.spatialPageSpring()
+                            targetOffsetX = { fullWidth -> -(fullWidth * 0.09f).toInt() },
+                            animationSpec = tween(durationMillis = 440, easing = ConceptMotion.GentleSpatialEnterEasing)
                         ) + fadeOut(
-                            animationSpec = tween(220, easing = ConceptMotion.EmphasizedAccelerate)
+                            animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialExitEasing)
                         )
                     }
                 },
                 popEnterTransition = {
-                    // 返回弹出时：底层页面从 -8% 视差位置平滑复原
+                    // 独立二级页面返回时：底层页面从 -9% 视差位置以 420ms 柔和复原
                     slideInHorizontally(
-                        initialOffsetX = { fullWidth -> -(fullWidth * 0.08f).toInt() },
-                        animationSpec = ConceptMotion.spatialPageSpring()
-                    ) + scaleIn(
-                        initialScale = 0.96f,
-                        transformOrigin = TransformOrigin(0.5f, 0.5f),
-                        animationSpec = ConceptMotion.spatialPageSpring()
+                        initialOffsetX = { fullWidth -> -(fullWidth * 0.09f).toInt() },
+                        animationSpec = tween(durationMillis = 420, easing = ConceptMotion.GentleSpatialEnterEasing)
                     ) + fadeIn(
-                        animationSpec = tween(230, easing = ConceptMotion.EmphasizedDecelerate)
+                        animationSpec = tween(durationMillis = 360, easing = ConceptMotion.GentleSpatialEnterEasing)
                     )
                 },
                 popExitTransition = {
-                    // 二级详情页返回弹出：镜像弹簧曲线滑出右侧 28% 屏宽并微缩淡出
+                    // 独立二级页面返回退出：400ms 柔顺滑出右侧并渐隐，无缩放露白
                     slideOutHorizontally(
-                        targetOffsetX = { fullWidth -> (fullWidth * 0.28f).toInt() },
-                        animationSpec = ConceptMotion.spatialPageSpring()
-                    ) + scaleOut(
-                        targetScale = 0.95f,
-                        transformOrigin = TransformOrigin(0.5f, 0.5f),
-                        animationSpec = ConceptMotion.spatialPageSpring()
+                        targetOffsetX = { fullWidth -> (fullWidth * 0.30f).toInt() },
+                        animationSpec = tween(durationMillis = 400, easing = ConceptMotion.GentleSpatialExitEasing)
                     ) + fadeOut(
-                        animationSpec = tween(210, easing = ConceptMotion.EmphasizedAccelerate)
+                        animationSpec = tween(durationMillis = 340, easing = ConceptMotion.GentleSpatialExitEasing)
                     )
                 }
             ) {
@@ -774,18 +737,18 @@ fun MainContent(
             }
         }
 
-        // 底部「发现 / 我的」主导航栏（统一采用 SpatialSheetSpring 丝滑升降）
+        // 底部「发现 / 我的」主导航栏（采用无回弹柔顺曲线升降，杜绝进出播放页时抖动）
         AnimatedVisibility(
             visible = showFloatingMiniBar && !isSubDetail && !showNowPlaying && !showViperEffectOverlay,
             modifier = Modifier.align(Alignment.BottomCenter),
             enter = slideInVertically(
                 initialOffsetY = { it },
-                animationSpec = ConceptMotion.spatialSheetSpring()
-            ) + fadeIn(animationSpec = tween(220, easing = ConceptMotion.EmphasizedDecelerate)),
+                animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
+            ) + fadeIn(animationSpec = tween(durationMillis = 320, easing = ConceptMotion.GentleSpatialEnterEasing)),
             exit = slideOutVertically(
                 targetOffsetY = { it },
-                animationSpec = ConceptMotion.spatialSheetSpring()
-            ) + fadeOut(animationSpec = tween(180, easing = ConceptMotion.EmphasizedAccelerate))
+                animationSpec = tween(durationMillis = 300, easing = ConceptMotion.GentleSpatialExitEasing)
+            ) + fadeOut(animationSpec = tween(durationMillis = 240, easing = ConceptMotion.GentleSpatialExitEasing))
         ) {
             BottomNavBar(
                 currentRoute = currentRoute,
@@ -803,12 +766,11 @@ fun MainContent(
             )
         }
 
-        // 【阶段延迟修复】：移除触发逐帧 Layout 重排的 `.padding(bottom = miniBarBottomPadding)`，
-        // 改为固定底部锚点 10.dp 并通过 `graphicsLayer { translationY = ... }` 在绘制期平滑避让底部导航栏！
+        // 固定底部锚点 10.dp 并通过 `graphicsLayer { translationY = ... }` 在绘制期柔和避让底部导航栏
         val navBarAvoidOffsetPx = with(density) { -56.dp.toPx() }
         val miniBarOffsetYState = animateFloatAsState(
             targetValue = if (isSubDetail) 0f else navBarAvoidOffsetPx,
-            animationSpec = ConceptMotion.spatialSheetSpring(),
+            animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing),
             label = "miniBarOffsetY"
         )
 
@@ -834,22 +796,17 @@ fun MainContent(
                     )
                 }
 
+                // 控制条进出播放页：移除引发抖动与阴影白边的 scaleIn/scaleOut 与欠阻尼弹簧，改用平滑升降渐隐
                 AnimatedVisibility(
                     visible = currentSong != null && !showNowPlaying && !showViperEffectOverlay,
                     enter = slideInVertically(
-                        initialOffsetY = { it },
-                        animationSpec = ConceptMotion.spatialSheetSpring()
-                    ) + fadeIn(tween(220, easing = ConceptMotion.EmphasizedDecelerate)) + scaleIn(
-                        initialScale = 0.94f,
-                        animationSpec = ConceptMotion.spatialSheetSpring()
-                    ),
+                        initialOffsetY = { (it * 0.65f).toInt() },
+                        animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
+                    ) + fadeIn(tween(durationMillis = 320, easing = ConceptMotion.GentleSpatialEnterEasing)),
                     exit = slideOutVertically(
-                        targetOffsetY = { it / 2 },
-                        animationSpec = ConceptMotion.spatialSheetSpring()
-                    ) + fadeOut(tween(180, easing = ConceptMotion.EmphasizedAccelerate)) + scaleOut(
-                        targetScale = 0.94f,
-                        animationSpec = ConceptMotion.spatialSheetSpring()
-                    )
+                        targetOffsetY = { (it * 0.55f).toInt() },
+                        animationSpec = tween(durationMillis = 280, easing = ConceptMotion.GentleSpatialExitEasing)
+                    ) + fadeOut(tween(durationMillis = 220, easing = ConceptMotion.GentleSpatialExitEasing))
                 ) {
                     IsolatedMiniPlayerBarHost(
                         viewModel = musicPlayerViewModel,
@@ -886,25 +843,17 @@ fun MainContent(
             )
         }
 
-        // 沉浸式全屏 Edge-to-Edge 播放器（SpatialSheetSpring 物理升降）
+        // 沉浸式全屏 Edge-to-Edge 播放器（100% 满屏宽度零缩放 + 450ms/390ms 无过冲柔顺曲线，彻底杜绝进出抖动与四周白边）
         AnimatedVisibility(
             visible = showNowPlaying && currentSong != null,
             enter = slideInVertically(
                 initialOffsetY = { it },
-                animationSpec = ConceptMotion.spatialSheetSpring()
-            ) + scaleIn(
-                initialScale = 0.94f,
-                transformOrigin = TransformOrigin(0.5f, 0.92f),
-                animationSpec = ConceptMotion.spatialSheetSpring()
-            ) + fadeIn(tween(240, easing = ConceptMotion.EmphasizedDecelerate)),
+                animationSpec = tween(durationMillis = 450, easing = ConceptMotion.GentleSpatialEnterEasing)
+            ) + fadeIn(tween(durationMillis = 360, easing = ConceptMotion.GentleSpatialEnterEasing)),
             exit = slideOutVertically(
                 targetOffsetY = { it },
-                animationSpec = ConceptMotion.spatialSheetSpring()
-            ) + scaleOut(
-                targetScale = 0.94f,
-                transformOrigin = TransformOrigin(0.5f, 0.92f),
-                animationSpec = ConceptMotion.spatialSheetSpring()
-            ) + fadeOut(tween(210, easing = ConceptMotion.EmphasizedAccelerate))
+                animationSpec = tween(durationMillis = 390, easing = ConceptMotion.GentleSpatialExitEasing)
+            ) + fadeOut(tween(durationMillis = 320, easing = ConceptMotion.GentleSpatialExitEasing))
         ) {
             IsolatedNowPlayingHost(
                 musicPlayerViewModel = musicPlayerViewModel,
@@ -928,48 +877,34 @@ fun MainContent(
             )
         }
 
-        // 从播放页进入的独立全屏「蝰蛇音效与专业均衡器」页面（SpatialPageSpring 丝滑侧滑叠加）
+        // 从播放页进入的独立全屏「蝰蛇音效与专业均衡器」页面（440ms/380ms 满屏柔顺侧滑，无缩放露白）
         AnimatedVisibility(
             visible = showViperEffectOverlay,
             enter = slideInHorizontally(
                 initialOffsetX = { it },
-                animationSpec = ConceptMotion.spatialPageSpring()
-            ) + scaleIn(
-                initialScale = 0.96f,
-                animationSpec = ConceptMotion.spatialPageSpring()
-            ) + fadeIn(tween(230, easing = ConceptMotion.EmphasizedDecelerate)),
+                animationSpec = tween(durationMillis = 440, easing = ConceptMotion.GentleSpatialEnterEasing)
+            ) + fadeIn(tween(durationMillis = 360, easing = ConceptMotion.GentleSpatialEnterEasing)),
             exit = slideOutHorizontally(
                 targetOffsetX = { it },
-                animationSpec = ConceptMotion.spatialPageSpring()
-            ) + scaleOut(
-                targetScale = 0.96f,
-                animationSpec = ConceptMotion.spatialPageSpring()
-            ) + fadeOut(tween(200, easing = ConceptMotion.EmphasizedAccelerate))
+                animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialExitEasing)
+            ) + fadeOut(tween(durationMillis = 300, easing = ConceptMotion.GentleSpatialExitEasing))
         ) {
             ViperSoundEffectScreen(
                 onBack = { showViperEffectOverlay = false }
             )
         }
 
-        // 独立全屏评论浮层（SpatialSheetSpring 丝滑升降）
+        // 独立全屏评论浮层（440ms/380ms 满屏柔顺滑入滑出，无缩放露白）
         AnimatedVisibility(
             visible = showCommentsScreen,
             enter = slideInVertically(
                 initialOffsetY = { it },
-                animationSpec = ConceptMotion.spatialSheetSpring()
-            ) + scaleIn(
-                initialScale = 0.95f,
-                transformOrigin = TransformOrigin(0.5f, 0.92f),
-                animationSpec = ConceptMotion.spatialSheetSpring()
-            ) + fadeIn(tween(230, easing = ConceptMotion.EmphasizedDecelerate)),
+                animationSpec = tween(durationMillis = 440, easing = ConceptMotion.GentleSpatialEnterEasing)
+            ) + fadeIn(tween(durationMillis = 360, easing = ConceptMotion.GentleSpatialEnterEasing)),
             exit = slideOutVertically(
                 targetOffsetY = { it },
-                animationSpec = ConceptMotion.spatialSheetSpring()
-            ) + scaleOut(
-                targetScale = 0.95f,
-                transformOrigin = TransformOrigin(0.5f, 0.92f),
-                animationSpec = ConceptMotion.spatialSheetSpring()
-            ) + fadeOut(tween(200, easing = ConceptMotion.EmphasizedAccelerate))
+                animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialExitEasing)
+            ) + fadeOut(tween(durationMillis = 300, easing = ConceptMotion.GentleSpatialExitEasing))
         ) {
             val playerUiState by musicPlayerViewModel.uiState.collectAsState()
             val userAvatar = VipManager.accounts.state.value.profile?.avatarUrl ?: ""

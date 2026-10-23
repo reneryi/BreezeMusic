@@ -6,6 +6,7 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.SpringSpec
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -37,68 +38,75 @@ import kotlinx.coroutines.launch
  * - 强调型缓动曲线 (Emphasized Easing)：用于非空间视觉属性（透明度、动态取色）平滑配速。
  */
 object ConceptMotion {
-    const val SPATIAL_PAGE_DAMPING = 0.86f
-    const val SPATIAL_PAGE_STIFFNESS = 360f
+    // 调低刚度 (Stiffness) 并提升阻尼比至临界柔顺区间：消除急促感与边缘回弹抖动，使页面与浮层过渡舒展丝滑 (~420-480ms)
+    const val SPATIAL_PAGE_DAMPING = 0.96f
+    const val SPATIAL_PAGE_STIFFNESS = 175f
 
-    const val SPATIAL_SHEET_DAMPING = 0.82f
-    const val SPATIAL_SHEET_STIFFNESS = 380f
+    const val SPATIAL_SHEET_DAMPING = 0.98f
+    const val SPATIAL_SHEET_STIFFNESS = 185f
 
-    const val EXPRESSIVE_MICRO_DAMPING = 0.64f
-    const val EXPRESSIVE_MICRO_STIFFNESS = 480f
+    const val EXPRESSIVE_MICRO_DAMPING = 0.78f
+    const val EXPRESSIVE_MICRO_STIFFNESS = 250f
 
-    const val GENTLE_BOUNCE_DAMPING = 0.74f
-    const val GENTLE_BOUNCE_STIFFNESS = 320f
+    const val GENTLE_BOUNCE_DAMPING = 0.86f
+    const val GENTLE_BOUNCE_STIFFNESS = 195f
 
-    /** 页面路由推入/返回与内部视图层级切换弹簧 */
+    /** 页面路由推入/返回与内部视图层级切换柔和弹簧（临界阻尼，无抖动过冲） */
     fun <T> spatialPageSpring(visibilityThreshold: T? = null): SpringSpec<T> = spring(
         dampingRatio = SPATIAL_PAGE_DAMPING,
         stiffness = SPATIAL_PAGE_STIFFNESS,
         visibilityThreshold = visibilityThreshold
     )
 
-    /** 全屏播放器与底部抽屉面板升降弹簧 */
+    /** 全屏播放器与底部抽屉面板升降柔顺弹簧（零过冲，彻底杜绝底边/侧边越界露白） */
     fun <T> spatialSheetSpring(visibilityThreshold: T? = null): SpringSpec<T> = spring(
         dampingRatio = SPATIAL_SHEET_DAMPING,
         stiffness = SPATIAL_SHEET_STIFFNESS,
         visibilityThreshold = visibilityThreshold
     )
 
-    /** 图标形变、胶囊滑块、红心收藏、封面呼吸缩放等清脆灵动微交互弹簧 */
+    /** 图标形变、胶囊滑块、红心收藏、封面呼吸缩放等温润微交互弹簧 */
     fun <T> expressiveSpring(visibilityThreshold: T? = null): SpringSpec<T> = spring(
         dampingRatio = EXPRESSIVE_MICRO_DAMPING,
         stiffness = EXPRESSIVE_MICRO_STIFFNESS,
         visibilityThreshold = visibilityThreshold
     )
 
-    /** 松手柔和回弹弹簧（用于卡片/按钮释放、手势阻尼回落） */
+    /** 松手柔和回落弹簧（用于卡片/按钮释放、手势阻尼恢复） */
     fun <T> gentleBounceSpring(visibilityThreshold: T? = null): SpringSpec<T> = spring(
         dampingRatio = GENTLE_BOUNCE_DAMPING,
         stiffness = GENTLE_BOUNCE_STIFFNESS,
         visibilityThreshold = visibilityThreshold
     )
 
-    /** 按下瞬间敏捷收敛弹簧 */
+    /** 按下瞬间柔和收敛弹簧 */
     fun <T> softPressSpring(visibilityThreshold: T? = null): SpringSpec<T> = spring(
         dampingRatio = Spring.DampingRatioNoBouncy,
-        stiffness = Spring.StiffnessMedium,
+        stiffness = 280f,
         visibilityThreshold = visibilityThreshold
     )
 
-    /** 松手轻盈微弹恢复弹簧 */
+    /** 松手温润恢复弹簧 */
     fun <T> softReleaseSpring(visibilityThreshold: T? = null): SpringSpec<T> = spring(
-        dampingRatio = 0.68f,
-        stiffness = 380f,
+        dampingRatio = 0.82f,
+        stiffness = 240f,
         visibilityThreshold = visibilityThreshold
     )
+
+    /** 丝滑入场减速曲线（舒展柔和、前快后慢无抖动） */
+    val GentleSpatialEnterEasing = CubicBezierEasing(0.18f, 0.92f, 0.26f, 1.0f)
+
+    /** 丝滑退场平滑曲线（自然收拢、不仓促） */
+    val GentleSpatialExitEasing = CubicBezierEasing(0.28f, 0.08f, 0.26f, 1.0f)
 
     /** M3 Emphasized Decelerate 曲线（入场透明度与色彩展开） */
-    val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1.0f)
+    val EmphasizedDecelerate = CubicBezierEasing(0.08f, 0.78f, 0.16f, 1.0f)
 
     /** M3 Emphasized Accelerate 曲线（退场收敛） */
-    val EmphasizedAccelerate = CubicBezierEasing(0.3f, 0.0f, 0.8f, 0.15f)
+    val EmphasizedAccelerate = CubicBezierEasing(0.30f, 0.0f, 0.72f, 0.22f)
 
     /** 120Hz 柔和滚动推进曲线（用于逐字歌词黄金焦点平滑滚动） */
-    val LyricSmoothScrollEasing = CubicBezierEasing(0.20f, 0.92f, 0.28f, 1.0f)
+    val LyricSmoothScrollEasing = CubicBezierEasing(0.22f, 0.90f, 0.28f, 1.0f)
 }
 
 /**
@@ -162,7 +170,7 @@ fun ConceptAnimatedOverlaySheet(
                 scope.launch {
                     progress.animateTo(
                         targetValue = 0f,
-                        animationSpec = ConceptMotion.spatialSheetSpring()
+                        animationSpec = tween(durationMillis = 360, easing = ConceptMotion.GentleSpatialExitEasing)
                     )
                     onDismiss()
                 }
@@ -174,13 +182,13 @@ fun ConceptAnimatedOverlaySheet(
         if (visible && !isDismissing) {
             progress.animateTo(
                 targetValue = 1f,
-                animationSpec = ConceptMotion.spatialSheetSpring()
+                animationSpec = tween(durationMillis = 420, easing = ConceptMotion.GentleSpatialEnterEasing)
             )
         } else if (!visible && !isDismissing) {
             isDismissing = true
             progress.animateTo(
                 targetValue = 0f,
-                animationSpec = ConceptMotion.spatialSheetSpring()
+                animationSpec = tween(durationMillis = 360, easing = ConceptMotion.GentleSpatialExitEasing)
             )
             onDismiss()
         }
@@ -273,7 +281,7 @@ fun ConceptAnimatedOverlaySheet(
         Box(
             contentAlignment = contentAlignment,
             modifier = Modifier.graphicsLayer {
-                val p = progress.value.coerceIn(0f, 1.15f)
+                val p = progress.value.coerceIn(0f, 1f)
                 val dragY = dragOffsetY.value.coerceAtLeast(0f)
                 if (isLandscape) {
                     val s = 0.90f + 0.10f * p

@@ -21,6 +21,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -79,6 +80,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -568,11 +570,7 @@ fun NowPlayingSheet(
         modifier = Modifier
             .fillMaxSize()
             .graphicsLayer {
-                val dragY = verticalDragAnim.value.coerceAtLeast(0f)
-                translationY = dragY
-                val dragScale = (1f - (dragY / 3600f)).coerceIn(0.94f, 1f)
-                scaleX = dragScale
-                scaleY = dragScale
+                translationY = verticalDragAnim.value.coerceAtLeast(0f)
             }
             .background(Color(0xFF080C14))
             .clickable(
@@ -599,11 +597,11 @@ fun NowPlayingSheet(
         AnimatedContent(
             targetState = effectiveLandscape,
             transitionSpec = {
-                (fadeIn(tween(280, easing = ConceptMotion.EmphasizedDecelerate)) +
-                    scaleIn(initialScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring()))
+                (fadeIn(tween(420, easing = ConceptMotion.GentleSpatialEnterEasing)) +
+                    scaleIn(initialScale = 0.96f, animationSpec = tween(420, easing = ConceptMotion.GentleSpatialEnterEasing)))
                     .togetherWith(
-                        fadeOut(tween(200, easing = ConceptMotion.EmphasizedAccelerate)) +
-                            scaleOut(targetScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring())
+                        fadeOut(tween(320, easing = ConceptMotion.GentleSpatialExitEasing)) +
+                            scaleOut(targetScale = 0.96f, animationSpec = tween(320, easing = ConceptMotion.GentleSpatialExitEasing))
                     )
             },
             modifier = Modifier.fillMaxSize(),
@@ -697,7 +695,7 @@ fun NowPlayingSheet(
                                         sheetDragScope.launch {
                                             verticalDragAnim.animateTo(
                                                 targetValue = dismissSlideTargetPx,
-                                                animationSpec = ConceptMotion.spatialSheetSpring()
+                                                animationSpec = tween(durationMillis = 340, easing = ConceptMotion.GentleSpatialExitEasing)
                                             )
                                             onDismiss()
                                             verticalDragAnim.snapTo(0f)
@@ -739,24 +737,24 @@ fun NowPlayingSheet(
                     )
                 }
 
-                // 页面主体：通过空间景深弹性转场切换「封面播放页」与「重构专属歌词页」
+                // 页面主体：通过 420ms/320ms 柔顺空间景深转场切换「封面播放页」与「重构专属歌词页」
                 AnimatedContent(
                     targetState = showLyricView,
                     transitionSpec = {
                         if (targetState) {
-                            (fadeIn(tween(280, easing = ConceptMotion.EmphasizedDecelerate)) +
-                                scaleIn(initialScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring()) +
-                                slideInVertically(animationSpec = ConceptMotion.spatialPageSpring()) { it / 14 }) togetherWith
-                                (fadeOut(tween(200, easing = ConceptMotion.EmphasizedAccelerate)) +
-                                    scaleOut(targetScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring()) +
-                                    slideOutVertically(animationSpec = ConceptMotion.spatialPageSpring()) { -it / 18 })
+                            (fadeIn(tween(420, easing = ConceptMotion.GentleSpatialEnterEasing)) +
+                                scaleIn(initialScale = 0.95f, animationSpec = tween(420, easing = ConceptMotion.GentleSpatialEnterEasing)) +
+                                slideInVertically(animationSpec = tween(420, easing = ConceptMotion.GentleSpatialEnterEasing)) { it / 16 }) togetherWith
+                                (fadeOut(tween(300, easing = ConceptMotion.GentleSpatialExitEasing)) +
+                                    scaleOut(targetScale = 0.95f, animationSpec = tween(320, easing = ConceptMotion.GentleSpatialExitEasing)) +
+                                    slideOutVertically(animationSpec = tween(320, easing = ConceptMotion.GentleSpatialExitEasing)) { -it / 20 })
                         } else {
-                            (fadeIn(tween(280, easing = ConceptMotion.EmphasizedDecelerate)) +
-                                scaleIn(initialScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring()) +
-                                slideInVertically(animationSpec = ConceptMotion.spatialPageSpring()) { -it / 18 }) togetherWith
-                                (fadeOut(tween(200, easing = ConceptMotion.EmphasizedAccelerate)) +
-                                    scaleOut(targetScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring()) +
-                                    slideOutVertically(animationSpec = ConceptMotion.spatialPageSpring()) { it / 14 })
+                            (fadeIn(tween(420, easing = ConceptMotion.GentleSpatialEnterEasing)) +
+                                scaleIn(initialScale = 0.95f, animationSpec = tween(420, easing = ConceptMotion.GentleSpatialEnterEasing)) +
+                                slideInVertically(animationSpec = tween(420, easing = ConceptMotion.GentleSpatialEnterEasing)) { -it / 20 }) togetherWith
+                                (fadeOut(tween(300, easing = ConceptMotion.GentleSpatialExitEasing)) +
+                                    scaleOut(targetScale = 0.95f, animationSpec = tween(320, easing = ConceptMotion.GentleSpatialExitEasing)) +
+                                    slideOutVertically(animationSpec = tween(320, easing = ConceptMotion.GentleSpatialExitEasing)) { it / 16 })
                         }
                     },
                     modifier = Modifier
@@ -1690,7 +1688,8 @@ private fun CoverPlayerPageContent(
                         StaticRoundedSquareCoverView(
                             coverUrl = song.coverUrl,
                             isPlaying = isPlaying,
-                            accentColor = accentPrimary
+                            accentColor = accentPrimary,
+                            secondaryAccentColor = accentSecondary
                         )
                     }
                 }
@@ -2024,19 +2023,32 @@ private fun MasterVinylTurntableView(
     accentColor: Color,
     rotationProvider: () -> Float
 ) {
+    // 液压阻尼唱臂动画（Hydraulic Damped Tonearm）：
+    // - 0f 为暂停态：唱臂垂直优雅停靠在右侧唱臂托架上，完全脱离黑胶盘面；
+    // - 24f 为播放态：唱臂顺时针平稳旋入黑胶黄金声轨区；
+    // - 采用 640ms 液压阻尼贝塞尔曲线，彻底告别弹簧晃动与盘面悬停尴尬。
+    val HydraulicTonearmEasing = remember { CubicBezierEasing(0.22f, 0.88f, 0.24f, 1.0f) }
     val armAngle by animateFloatAsState(
-        targetValue = if (isPlaying) 25f else 2f,
-        animationSpec = ConceptMotion.gentleBounceSpring(),
+        targetValue = if (isPlaying) 24f else 0f,
+        animationSpec = tween(durationMillis = 640, easing = HydraulicTonearmEasing),
         label = "masterTonearmAngle"
+    )
+    // 抬臂高度状态：暂停移开时先微幅抬起唱臂（投影拉远柔化），落针时贴合盘面
+    val stylusLift by animateFloatAsState(
+        targetValue = if (isPlaying) 0f else 1f,
+        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+        label = "masterStylusLift"
     )
 
     Box(
-        modifier = Modifier.size(width = 304.dp, height = 296.dp),
+        modifier = Modifier.size(width = 312.dp, height = 296.dp),
         contentAlignment = Alignment.Center
     ) {
+        // 黑胶主盘体略微左偏 (-8.dp)，为右侧精密液压唱臂与驻停托架留出黄金机械空间
         Box(
             modifier = Modifier
-                .size(282.dp)
+                .offset(x = (-8).dp)
+                .size(278.dp)
                 .shadow(
                     elevation = 28.dp,
                     shape = CircleShape,
@@ -2055,7 +2067,8 @@ private fun MasterVinylTurntableView(
 
         Box(
             modifier = Modifier
-                .size(270.dp)
+                .offset(x = (-8).dp)
+                .size(266.dp)
                 .clip(CircleShape)
                 .graphicsLayer { rotationZ = rotationProvider() },
             contentAlignment = Alignment.Center
@@ -2128,14 +2141,14 @@ private fun MasterVinylTurntableView(
 
             Box(
                 modifier = Modifier
-                    .size(166.dp)
+                    .size(164.dp)
                     .clip(CircleShape)
                     .background(Color(0xFF181C26)),
                 contentAlignment = Alignment.Center
             ) {
                 Crossfade(
                     targetState = coverUrl,
-                    animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
+                    animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
                     label = "vinylCoverArtworkCrossfade"
                 ) { activeCoverUrl ->
                     Box(
@@ -2177,22 +2190,39 @@ private fun MasterVinylTurntableView(
             }
         }
 
+        // 右上精密液压平衡唱臂组件（覆盖全高画布，确保暂停旋出盘面停靠在右侧托架时完全舒展无裁切）
         Canvas(
-            modifier = Modifier
-                .size(144.dp)
-                .align(Alignment.TopEnd)
+            modifier = Modifier.fillMaxSize()
         ) {
             if (size.minDimension <= 2f) return@Canvas
-            val pivot = Offset(size.width * 0.76f, size.height * 0.17f)
+            val pivot = Offset(size.width - 24.dp.toPx(), 34.dp.toPx())
 
+            // 1. 右侧唱臂驻停托架 (Tonearm Rest Cradle)：暂停时唱臂正好稳稳落在此托架中
+            val cradleCenter = Offset(pivot.x - 2.dp.toPx(), pivot.y + 72.dp.toPx())
             drawCircle(
-                color = Color(0xFF0B0E16).copy(alpha = 0.7f),
-                radius = 20.dp.toPx(),
+                color = Color(0xFF121722).copy(alpha = 0.85f),
+                radius = 7.5.dp.toPx(),
+                center = cradleCenter
+            )
+            drawArc(
+                color = Color(0xFF94A3B8).copy(alpha = 0.65f),
+                startAngle = 15f,
+                sweepAngle = 150f,
+                useCenter = false,
+                topLeft = Offset(cradleCenter.x - 5.5.dp.toPx(), cradleCenter.y - 5.5.dp.toPx()),
+                size = Size(11.dp.toPx(), 11.dp.toPx()),
+                style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
+            )
+
+            // 2. 唱臂金属轴承底座 (Gimbal Pivot Base)
+            drawCircle(
+                color = Color(0xFF080B12).copy(alpha = 0.72f),
+                radius = 21.dp.toPx(),
                 center = pivot
             )
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFF3A4252), Color(0xFF1B202B)),
+                    colors = listOf(Color(0xFF3E4759), Color(0xFF1A202C)),
                     center = pivot,
                     radius = 18.dp.toPx()
                 ),
@@ -2200,51 +2230,69 @@ private fun MasterVinylTurntableView(
                 center = pivot
             )
             drawCircle(
-                color = Color.White.copy(alpha = 0.22f),
+                color = Color.White.copy(alpha = 0.24f),
                 radius = 17.dp.toPx(),
                 center = pivot,
                 style = Stroke(width = 1.dp.toPx())
             )
 
+            // 3. 液压旋转唱臂主体（0° 为垂直停靠在右侧托架，+24° 为旋入唱片声轨）
             rotate(degrees = armAngle, pivot = pivot) {
-                val weightStart = Offset(pivot.x + 4.dp.toPx(), pivot.y - 14.dp.toPx())
-                val weightEnd = Offset(pivot.x + 8.dp.toPx(), pivot.y - 24.dp.toPx())
+                // 顶部精密配重锤 (Counterweight)
+                val weightStart = Offset(pivot.x + 1.dp.toPx(), pivot.y - 12.dp.toPx())
+                val weightEnd = Offset(pivot.x + 2.dp.toPx(), pivot.y - 23.dp.toPx())
                 drawLine(
-                    color = Color(0xFF6C7689),
+                    color = Color(0xFF78849B),
                     start = pivot,
                     end = weightEnd,
-                    strokeWidth = 6.dp.toPx(),
+                    strokeWidth = 5.5.dp.toPx(),
                     cap = StrokeCap.Round
                 )
-                drawLine(
-                    color = Color(0xFF282F3D),
-                    start = weightStart,
-                    end = weightEnd,
-                    strokeWidth = 10.dp.toPx(),
-                    cap = StrokeCap.Butt
+                drawRoundRect(
+                    brush = Brush.horizontalGradient(
+                        listOf(Color(0xFF222836), Color(0xFF475569), Color(0xFF1E2430))
+                    ),
+                    topLeft = Offset(pivot.x - 6.dp.toPx(), weightEnd.y),
+                    size = Size(14.dp.toPx(), 11.dp.toPx()),
+                    cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
                 )
 
-                val armEnd = Offset(pivot.x - 36.dp.toPx(), pivot.y + 88.dp.toPx())
+                // S 型流线金属臂管（在 0° 停靠态下沿右侧垂直舒展，绝不侵入唱片）
+                val armEnd = Offset(pivot.x - 4.dp.toPx(), pivot.y + 104.dp.toPx())
                 val sCurvePath = Path().apply {
                     moveTo(pivot.x, pivot.y)
                     cubicTo(
-                        pivot.x - 4.dp.toPx(), pivot.y + 30.dp.toPx(),
-                        pivot.x - 24.dp.toPx(), pivot.y + 56.dp.toPx(),
+                        pivot.x + 5.dp.toPx(), pivot.y + 34.dp.toPx(),
+                        pivot.x - 8.dp.toPx(), pivot.y + 68.dp.toPx(),
                         armEnd.x, armEnd.y
                     )
                 }
+
+                // 动态高度投影：暂停抬臂时阴影向右下轻微偏离并柔化，落针时收紧
+                val shadowDx = (-2.dp - 2.5.dp * stylusLift).toPx()
+                val shadowDy = (4.dp + 3.5.dp * stylusLift).toPx()
+                val shadowPath = Path().apply {
+                    moveTo(pivot.x + shadowDx * 0.3f, pivot.y + shadowDy * 0.3f)
+                    cubicTo(
+                        pivot.x + 5.dp.toPx() + shadowDx, pivot.y + 34.dp.toPx() + shadowDy,
+                        pivot.x - 8.dp.toPx() + shadowDx, pivot.y + 68.dp.toPx() + shadowDy,
+                        armEnd.x + shadowDx, armEnd.y + shadowDy
+                    )
+                }
                 drawPath(
-                    path = sCurvePath,
-                    color = Color.Black.copy(alpha = 0.45f),
-                    style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
+                    path = shadowPath,
+                    color = Color.Black.copy(alpha = 0.42f - 0.14f * stylusLift),
+                    style = Stroke(width = (5.8.dp + 1.5.dp * stylusLift).toPx(), cap = StrokeCap.Round)
                 )
+
+                // 钛银高光臂管本体
                 drawPath(
                     path = sCurvePath,
                     brush = Brush.linearGradient(
                         colors = listOf(
-                            Color(0xFFE2E8F0),
+                            Color(0xFFF1F5F9),
                             Color(0xFF94A3B8),
-                            Color(0xFFCBD5E1)
+                            Color(0xFFE2E8F0)
                         ),
                         start = pivot,
                         end = armEnd
@@ -2252,192 +2300,311 @@ private fun MasterVinylTurntableView(
                     style = Stroke(width = 3.8.dp.toPx(), cap = StrokeCap.Round)
                 )
 
-                val headTip = Offset(armEnd.x - 10.dp.toPx(), armEnd.y + 14.dp.toPx())
+                // 唱头壳 (Headshell) 与金线唱针
+                val headTip = Offset(armEnd.x - 8.dp.toPx(), armEnd.y + 16.dp.toPx())
                 drawLine(
                     color = Color(0xFF1E293B),
                     start = armEnd,
                     end = headTip,
-                    strokeWidth = 7.5.dp.toPx(),
+                    strokeWidth = 7.8.dp.toPx(),
                     cap = StrokeCap.Round
                 )
                 drawLine(
                     color = VipGold,
-                    start = Offset(armEnd.x - 2.dp.toPx(), armEnd.y + 3.dp.toPx()),
-                    end = Offset(headTip.x + 2.dp.toPx(), headTip.y - 2.dp.toPx()),
+                    start = Offset(armEnd.x - 1.5.dp.toPx(), armEnd.y + 3.dp.toPx()),
+                    end = Offset(headTip.x + 1.5.dp.toPx(), headTip.y - 2.5.dp.toPx()),
                     strokeWidth = 2.2.dp.toPx(),
                     cap = StrokeCap.Round
                 )
+                // 唱针宝石指示灯（落针播放时点亮灵动流光，抬针移开时柔和熄灭）
                 drawCircle(
-                    color = if (isPlaying) ConceptCyanAccent else Color.White.copy(alpha = 0.6f),
-                    radius = 2.5.dp.toPx(),
+                    color = lerp(ConceptCyanAccent, Color.White.copy(alpha = 0.45f), stylusLift),
+                    radius = (2.6.dp - 0.4.dp * stylusLift).toPx(),
                     center = headTip
                 )
             }
 
+            // 4. 轴承中心高光顶盖
             drawCircle(
                 brush = Brush.linearGradient(
-                    listOf(Color(0xFFE2E8F0), Color(0xFF64748B))
+                    listOf(Color(0xFFF1F5F9), Color(0xFF64748B))
                 ),
-                radius = 7.dp.toPx(),
+                radius = 7.2.dp.toPx(),
                 center = pivot
             )
         }
     }
 }
 
+/**
+ * 圆角封面多光谱棱镜边缘色散光晕绘制引擎 (Chromatic Dispersion Edge Halo):
+ * - 同时赋能竖屏与横屏圆角封面；
+ * - 将歌曲主题色分解为「青蓝短波 (Cyan-Blue)」「玫瑰品红长波 (Rose-Magenta)」「电光紫中波 (Electric-Violet)」三大色散通道；
+ * - 沿圆角矩形真实轮廓向外做相位错位叠加 (BlendMode.Plus) 与棱镜流光折射环，营造灵动边缘色散光晕。
+ */
+internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
+    cornerPx: Float,
+    accentPrimary: Color,
+    accentSecondary: Color,
+    dispersionPhase: Float,
+    haloPulse: Float,
+    isPlaying: Boolean
+) {
+    val w = size.width
+    val h = size.height
+    if (w <= 4f || h <= 4f) return
+
+    // 三原色棱镜色散光谱通道
+    val prismCyan = lerp(accentSecondary, Color(0xFF00F0FF), 0.56f)
+    val prismMagenta = lerp(accentPrimary, Color(0xFFFF3E8E), 0.50f)
+    val prismViolet = lerp(lerp(accentPrimary, accentSecondary, 0.5f), Color(0xFFA29BFE), 0.52f)
+    val prismGold = lerp(accentPrimary, Color(0xFFFFD166), 0.42f)
+    val deepShadowColor = lerp(accentPrimary, Color.Black, 0.68f)
+
+    // 1. 底部深邃悬浮立体暗影
+    val shadowCenter = Offset(w * 0.5f, h * 0.58f)
+    val shadowRadius = (w * 0.68f).coerceAtLeast(1f)
+    drawCircle(
+        brush = Brush.radialGradient(
+            colorStops = arrayOf(
+                0.00f to deepShadowColor.copy(alpha = if (isPlaying) 0.62f else 0.42f),
+                0.64f to deepShadowColor.copy(alpha = if (isPlaying) 0.28f else 0.16f),
+                1.00f to Color.Transparent
+            ),
+            center = shadowCenter,
+            radius = shadowRadius
+        ),
+        radius = shadowRadius,
+        center = shadowCenter
+    )
+
+    // 2. 沿圆角矩形边缘展开的三通道色散错位光场 (Chromatic Aberration Rounded-Rect Shells)
+    val dispAmp = (if (isPlaying) 6.5.dp else 3.8.dp).toPx() * haloPulse
+    val cyanShift = Offset(cos(dispersionPhase) * dispAmp, sin(dispersionPhase) * dispAmp)
+    val magentaShift = Offset(cos(dispersionPhase + 2.094f) * dispAmp, sin(dispersionPhase + 2.094f) * dispAmp)
+    val violetShift = Offset(cos(dispersionPhase + 4.188f) * dispAmp, sin(dispersionPhase + 4.188f) * dispAmp)
+
+    val maxSpreadPx = 28.dp.toPx() * haloPulse
+    val shellCount = 7
+    val activityBoost = if (isPlaying) 1.0f else 0.62f
+
+    for (i in shellCount downTo 1) {
+        val t = i.toFloat() / shellCount.toFloat()
+        val outset = maxSpreadPx * t
+        // 越靠近封面边缘色散能量越凝聚，向外呈二次方柔和衰减
+        val shellAlpha = ((1f - t * 0.78f) * (1f - t * 0.78f) * 0.115f * activityBoost).coerceIn(0.008f, 0.16f)
+        val shellSize = Size(w + outset * 2f, h + outset * 2f)
+        val shellCorner = CornerRadius(cornerPx + outset, cornerPx + outset)
+
+        // 短波青蓝色散壳
+        drawRoundRect(
+            color = prismCyan.copy(alpha = shellAlpha),
+            topLeft = Offset(-outset + cyanShift.x * t, -outset + cyanShift.y * t),
+            size = shellSize,
+            cornerRadius = shellCorner,
+            blendMode = BlendMode.Plus
+        )
+        // 长波品红色散壳
+        drawRoundRect(
+            color = prismMagenta.copy(alpha = shellAlpha * 0.94f),
+            topLeft = Offset(-outset + magentaShift.x * t, -outset + magentaShift.y * t),
+            size = shellSize,
+            cornerRadius = shellCorner,
+            blendMode = BlendMode.Plus
+        )
+        // 中波电光紫色散壳
+        drawRoundRect(
+            color = prismViolet.copy(alpha = shellAlpha * 0.90f),
+            topLeft = Offset(-outset + violetShift.x * t, -outset + violetShift.y * t),
+            size = shellSize,
+            cornerRadius = shellCorner,
+            blendMode = BlendMode.Plus
+        )
+    }
+
+    // 3. 贴合圆角边缘的旋转棱镜光谱色散流光环 (Prismatic Spectral Dispersion Edge Rings)
+    val center = Offset(w * 0.5f, h * 0.5f)
+    val deg = (dispersionPhase * 180f / PI.toFloat()) % 360f
+    rotate(degrees = deg, pivot = center) {
+        val sweepBrush = Brush.sweepGradient(
+            0.00f to prismCyan,
+            0.16f to accentPrimary,
+            0.33f to prismMagenta,
+            0.50f to prismGold,
+            0.66f to prismViolet,
+            0.83f to accentSecondary,
+            0.92f to Color.White.copy(alpha = 0.90f),
+            1.00f to prismCyan,
+            center = center
+        )
+        for (ring in 1..4) {
+            val ringOutset = (1.2f + ring * 2.1f).dp.toPx() * haloPulse
+            val ringAlpha = ((0.38f / ring) * activityBoost).coerceIn(0.04f, 0.42f)
+            val strokeW = ((5.2f - ring * 0.9f).coerceAtLeast(1.2f)).dp.toPx()
+            drawRoundRect(
+                brush = sweepBrush,
+                topLeft = Offset(-ringOutset, -ringOutset),
+                size = Size(w + ringOutset * 2f, h + ringOutset * 2f),
+                cornerRadius = CornerRadius(cornerPx + ringOutset, cornerPx + ringOutset),
+                alpha = ringAlpha,
+                style = Stroke(width = strokeW),
+                blendMode = BlendMode.Plus
+            )
+        }
+    }
+}
+
+/**
+ * 圆角封面表层 2.5D 棱镜色散折射倒角高光边 (Prismatic Chamfered Bevel Rim)
+ */
+internal fun DrawScope.drawRoundedCoverPrismaticRim(
+    cornerPx: Float,
+    accentPrimary: Color,
+    accentSecondary: Color,
+    dispersionPhase: Float,
+    isPlaying: Boolean
+) {
+    val w = size.width
+    val h = size.height
+    if (w <= 4f || h <= 4f) return
+
+    val prismCyan = lerp(accentSecondary, Color(0xFF00F0FF), 0.58f)
+    val prismMagenta = lerp(accentPrimary, Color(0xFFFF3E8E), 0.52f)
+    val prismViolet = lerp(accentPrimary, Color(0xFFA29BFE), 0.50f)
+
+    // 1. 表层微受光柔面与暗角
+    drawRect(
+        brush = Brush.linearGradient(
+            colors = listOf(
+                Color.White.copy(alpha = 0.13f),
+                Color.Transparent,
+                Color.Black.copy(alpha = 0.22f)
+            ),
+            start = Offset(0f, 0f),
+            end = Offset(w, h)
+        )
+    )
+
+    // 2. 外沿多光谱棱镜色散折射高光边框
+    val strokePx = 1.8.dp.toPx()
+    val halfStroke = strokePx / 2f
+    val phaseCos = cos(dispersionPhase)
+    val phaseSin = sin(dispersionPhase)
+    val gradStart = Offset(
+        w * (0.5f - 0.5f * phaseCos),
+        h * (0.5f - 0.5f * phaseSin)
+    )
+    val gradEnd = Offset(
+        w * (0.5f + 0.5f * phaseCos),
+        h * (0.5f + 0.5f * phaseSin)
+    )
+    drawRoundRect(
+        brush = Brush.linearGradient(
+            colors = listOf(
+                Color.White.copy(alpha = if (isPlaying) 0.72f else 0.48f),
+                prismCyan.copy(alpha = if (isPlaying) 0.68f else 0.42f),
+                prismMagenta.copy(alpha = if (isPlaying) 0.62f else 0.36f),
+                prismViolet.copy(alpha = if (isPlaying) 0.66f else 0.40f),
+                Color.White.copy(alpha = if (isPlaying) 0.54f else 0.32f)
+            ),
+            start = gradStart,
+            end = gradEnd
+        ),
+        topLeft = Offset(halfStroke, halfStroke),
+        size = Size(w - strokePx, h - strokePx),
+        cornerRadius = CornerRadius(cornerPx - halfStroke, cornerPx - halfStroke),
+        style = Stroke(width = strokePx)
+    )
+
+    // 3. 内侧晶莹次级折射细线
+    val innerInset = 2.4.dp.toPx()
+    drawRoundRect(
+        brush = Brush.linearGradient(
+            colors = listOf(
+                prismCyan.copy(alpha = 0.26f),
+                Color.White.copy(alpha = 0.16f),
+                prismMagenta.copy(alpha = 0.22f)
+            ),
+            start = Offset(0f, 0f),
+            end = Offset(w, h)
+        ),
+        topLeft = Offset(innerInset, innerInset),
+        size = Size(w - innerInset * 2f, h - innerInset * 2f),
+        cornerRadius = CornerRadius(cornerPx - innerInset, cornerPx - innerInset),
+        style = Stroke(width = 0.85.dp.toPx())
+    )
+}
+
 @Composable
 private fun StaticRoundedSquareCoverView(
     coverUrl: String,
     isPlaying: Boolean,
-    accentColor: Color
+    accentColor: Color,
+    secondaryAccentColor: Color = ConceptCyanAccent
 ) {
-    // 播放/暂停弹性呼吸缩放：播放态 1.0f 饱满悬浮，暂停态以 ExpressiveMicroSpring 优雅微缩至 0.90f
+    // 播放/暂停柔和呼吸缩放：播放态 1.0f 饱满悬浮，暂停态以温润弹簧微缩至 0.92f
     val coverScale by animateFloatAsState(
-        targetValue = if (isPlaying) 1.0f else 0.90f,
-        animationSpec = ConceptMotion.expressiveSpring(),
+        targetValue = if (isPlaying) 1.0f else 0.92f,
+        animationSpec = ConceptMotion.gentleBounceSpring(),
         label = "squareCoverScale"
     )
-    val haloPulse: Float = if (isPlaying) {
-        val infiniteTransition = rememberInfiniteTransition(label = "squareCoverHaloTransition")
+    val haloPulse: Float
+    val dispersionPhase: Float
+    if (isPlaying) {
+        val infiniteTransition = rememberInfiniteTransition(label = "squareCoverDispersionTransition")
         val pulse by infiniteTransition.animateFloat(
-            initialValue = 0.94f,
-            targetValue = 1.07f,
+            initialValue = 0.95f,
+            targetValue = 1.06f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
+                animation = tween(durationMillis = 3000, easing = FastOutSlowInEasing),
                 repeatMode = RepeatMode.Reverse
             ),
             label = "squareCoverHaloPulse"
         )
-        pulse
+        val phase by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2f * PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 10000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "squareCoverDispersionPhase"
+        )
+        haloPulse = pulse
+        dispersionPhase = phase
     } else {
-        0.92f
+        haloPulse = 0.94f
+        dispersionPhase = 0.78f
     }
-
-    val haloPrimary = lerp(accentColor, Color.White, 0.18f)
-    val deepShadowColor = lerp(accentColor, Color.Black, 0.66f)
 
     Box(
         modifier = Modifier
-            .size(278.dp)
+            .size(276.dp)
             .graphicsLayer {
                 scaleX = coverScale
                 scaleY = coverScale
                 clip = false
             }
             .drawBehind {
-                val w = size.width
-                val h = size.height
-                val cornerPx = 30.dp.toPx()
-                val pulse = haloPulse
-                val center = Offset(w * 0.5f, h * 0.5f)
-
-                // 1. 零 BlurMaskFilter 纯 GPU 径向漫射光晕 (Zero-Jank Radial Ambient Halo)
-                val ambientRadius = (w * 0.72f * pulse).coerceAtLeast(1f)
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colorStops = arrayOf(
-                            0.00f to haloPrimary.copy(alpha = if (isPlaying) 0.46f else 0.24f),
-                            0.58f to accentColor.copy(alpha = if (isPlaying) 0.26f else 0.12f),
-                            0.84f to accentColor.copy(alpha = if (isPlaying) 0.08f else 0.03f),
-                            1.00f to Color.Transparent
-                        ),
-                        center = center,
-                        radius = ambientRadius
-                    ),
-                    radius = ambientRadius,
-                    center = center
-                )
-
-                // 2. 底部立体景深悬浮投影 (GPU Radial Elevation Shadow)
-                val shadowCenter = Offset(w * 0.5f, h * 0.58f)
-                val shadowRadius = (w * 0.66f).coerceAtLeast(1f)
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colorStops = arrayOf(
-                            0.00f to deepShadowColor.copy(alpha = if (isPlaying) 0.68f else 0.44f),
-                            0.65f to deepShadowColor.copy(alpha = if (isPlaying) 0.34f else 0.20f),
-                            1.00f to Color.Transparent
-                        ),
-                        center = shadowCenter,
-                        radius = shadowRadius
-                    ),
-                    radius = shadowRadius,
-                    center = shadowCenter
-                )
-
-                // 3. 外环微光光圈 (Outer Luminous Aura Ring)
-                val ringOutset = 3.5.dp.toPx()
-                drawRoundRect(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = if (isPlaying) 0.26f else 0.16f),
-                            haloPrimary.copy(alpha = if (isPlaying) 0.42f else 0.24f),
-                            accentColor.copy(alpha = if (isPlaying) 0.18f else 0.10f)
-                        ),
-                        start = Offset(0f, 0f),
-                        end = Offset(w, h)
-                    ),
-                    topLeft = Offset(-ringOutset, -ringOutset),
-                    size = Size(w + ringOutset * 2f, h + ringOutset * 2f),
-                    cornerRadius = CornerRadius(cornerPx + ringOutset, cornerPx + ringOutset),
-                    style = Stroke(width = 1.5.dp.toPx())
+                drawRoundedCoverEdgeDispersionHalo(
+                    cornerPx = 30.dp.toPx(),
+                    accentPrimary = accentColor,
+                    accentSecondary = secondaryAccentColor,
+                    dispersionPhase = dispersionPhase,
+                    haloPulse = haloPulse,
+                    isPlaying = isPlaying
                 )
             }
             .clip(RoundedCornerShape(30.dp))
             .background(Color(0xFF151A26))
             .drawWithContent {
                 drawContent()
-                val w = size.width
-                val h = size.height
-                val cornerPx = 30.dp.toPx()
-
-                // 4. 封面表层左上受光柔面与右下立体暗角 (3D Surface Specular & Depth Vignette)
-                drawRect(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = 0.15f),
-                            Color.Transparent,
-                            Color.Black.copy(alpha = 0.24f)
-                        ),
-                        start = Offset(0f, 0f),
-                        end = Offset(w, h)
-                    )
-                )
-
-                // 5. 双层 3D 倒角高光内边框 (3D Chamfered Bevel Rim Light)
-                val strokePx = 1.6.dp.toPx()
-                val halfStroke = strokePx / 2f
-                drawRoundRect(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = 0.56f),
-                            haloPrimary.copy(alpha = 0.36f),
-                            Color.Black.copy(alpha = 0.48f)
-                        ),
-                        start = Offset(0f, 0f),
-                        end = Offset(w, h)
-                    ),
-                    topLeft = Offset(halfStroke, halfStroke),
-                    size = Size(w - strokePx, h - strokePx),
-                    cornerRadius = CornerRadius(cornerPx - halfStroke, cornerPx - halfStroke),
-                    style = Stroke(width = strokePx)
-                )
-
-                val innerInset = 2.2.dp.toPx()
-                drawRoundRect(
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color.White.copy(alpha = 0.18f),
-                            Color.Transparent,
-                            Color.White.copy(alpha = 0.06f)
-                        ),
-                        start = Offset(0f, 0f),
-                        end = Offset(w, h)
-                    ),
-                    topLeft = Offset(innerInset, innerInset),
-                    size = Size(w - innerInset * 2f, h - innerInset * 2f),
-                    cornerRadius = CornerRadius(cornerPx - innerInset, cornerPx - innerInset),
-                    style = Stroke(width = 0.8.dp.toPx())
+                drawRoundedCoverPrismaticRim(
+                    cornerPx = 30.dp.toPx(),
+                    accentPrimary = accentColor,
+                    accentSecondary = secondaryAccentColor,
+                    dispersionPhase = dispersionPhase,
+                    isPlaying = isPlaying
                 )
             },
         contentAlignment = Alignment.Center

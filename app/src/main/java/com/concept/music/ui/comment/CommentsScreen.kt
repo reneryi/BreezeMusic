@@ -498,15 +498,11 @@ fun CommentsScreen(
         derivedStateOf { listState.firstVisibleItemIndex > 4 }
     }
 
-    // 主评论层视差缩放与压暗动画（当打开「查看全部回复」时以 SpatialPageSpring 平滑后退，返回时丝滑复原）
-    val mainLayerScale by animateFloatAsState(
-        targetValue = if (activeFloorCommentId != null) 0.955f else 1f,
-        animationSpec = ConceptMotion.spatialPageSpring(),
-        label = "mainCommentLayerScale"
-    )
+    // 主评论层柔和视差压暗动画（保持 1.0f 满幅不内缩，杜绝边缘露白；加长至 400ms 柔顺过渡）
+    val mainLayerScale = 1f
     val mainLayerAlpha by animateFloatAsState(
-        targetValue = if (activeFloorCommentId != null) 0.55f else 1f,
-        animationSpec = tween(durationMillis = 260, easing = ConceptMotion.EmphasizedDecelerate),
+        targetValue = if (activeFloorCommentId != null) 0.48f else 1f,
+        animationSpec = tween(durationMillis = 400, easing = ConceptMotion.GentleSpatialEnterEasing),
         label = "mainCommentLayerAlpha"
     )
 
@@ -859,7 +855,7 @@ fun CommentsScreen(
             }
         }
 
-        // 第二层：独立楼中楼全部回复详情页（1~4 级树状集群分支视图，采用 SpatialPageSpring 物理弹簧右侧滑入/滑出过渡）
+        // 第二层：独立楼中楼全部回复详情页（430ms/370ms 柔和舒展右侧滑入/滑出过渡）
         AnimatedVisibility(
             visible = activeFloorCommentId != null,
             modifier = Modifier
@@ -867,12 +863,12 @@ fun CommentsScreen(
                 .zIndex(10f),
             enter = slideInHorizontally(
                 initialOffsetX = { fullWidth -> fullWidth },
-                animationSpec = ConceptMotion.spatialPageSpring()
-            ) + fadeIn(animationSpec = tween(durationMillis = 220, easing = ConceptMotion.EmphasizedDecelerate)),
+                animationSpec = tween(durationMillis = 430, easing = ConceptMotion.GentleSpatialEnterEasing)
+            ) + fadeIn(animationSpec = tween(durationMillis = 340, easing = ConceptMotion.GentleSpatialEnterEasing)),
             exit = slideOutHorizontally(
                 targetOffsetX = { fullWidth -> fullWidth },
-                animationSpec = ConceptMotion.spatialPageSpring()
-            ) + fadeOut(animationSpec = tween(durationMillis = 180, easing = ConceptMotion.EmphasizedAccelerate))
+                animationSpec = tween(durationMillis = 370, easing = ConceptMotion.GentleSpatialExitEasing)
+            ) + fadeOut(animationSpec = tween(durationMillis = 280, easing = ConceptMotion.GentleSpatialExitEasing))
         ) {
             val floorComment = activeFloorRootComment ?: lastOpenedFloorComment
             if (floorComment != null) {
@@ -894,7 +890,7 @@ fun CommentsScreen(
             }
         }
 
-        // 第三层：超过四级评论点击「查看对话」进入的完整多级评论对话界面（采用 SpatialPageSpring 物理弹簧滑入/滑出）
+        // 第三层：超过四级评论点击「查看对话」进入的完整多级评论对话界面（430ms/370ms 柔和滑入/滑出）
         AnimatedVisibility(
             visible = activeConversationChain != null,
             modifier = Modifier
@@ -902,12 +898,12 @@ fun CommentsScreen(
                 .zIndex(20f),
             enter = slideInHorizontally(
                 initialOffsetX = { fullWidth -> fullWidth },
-                animationSpec = ConceptMotion.spatialPageSpring()
-            ) + fadeIn(animationSpec = tween(durationMillis = 220, easing = ConceptMotion.EmphasizedDecelerate)),
+                animationSpec = tween(durationMillis = 430, easing = ConceptMotion.GentleSpatialEnterEasing)
+            ) + fadeIn(animationSpec = tween(durationMillis = 340, easing = ConceptMotion.GentleSpatialEnterEasing)),
             exit = slideOutHorizontally(
                 targetOffsetX = { fullWidth -> fullWidth },
-                animationSpec = ConceptMotion.spatialPageSpring()
-            ) + fadeOut(animationSpec = tween(durationMillis = 180, easing = ConceptMotion.EmphasizedAccelerate))
+                animationSpec = tween(durationMillis = 370, easing = ConceptMotion.GentleSpatialExitEasing)
+            ) + fadeOut(animationSpec = tween(durationMillis = 280, easing = ConceptMotion.GentleSpatialExitEasing))
         ) {
             val chain = activeConversationChain
             if (chain != null) {

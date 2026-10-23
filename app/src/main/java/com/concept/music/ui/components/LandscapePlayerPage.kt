@@ -43,6 +43,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -156,39 +158,39 @@ internal fun LandscapePlayerPage(
         Color(lyricHighlightTheme.secondaryHex)
     }
 
-    // 暂停态自动休眠 3D 星环无限动画，杜绝静态空转耗电
+    // 横屏圆角封面边缘色散光晕动画参数（暂停态自动静默休眠）
     val haloBreath: Float
-    val haloPhase: Float
+    val dispersionPhase: Float
     if (isPlaying) {
-        val infiniteTransition = rememberInfiniteTransition(label = "landscape3dHalo")
+        val infiniteTransition = rememberInfiniteTransition(label = "landscapeCoverDispersion")
         val animBreath by infiniteTransition.animateFloat(
-            initialValue = 0.94f,
-            targetValue = 1.12f,
+            initialValue = 0.95f,
+            targetValue = 1.06f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 2200, easing = FastOutSlowInEasing),
+                animation = tween(durationMillis = 3000, easing = FastOutSlowInEasing),
                 repeatMode = RepeatMode.Reverse
             ),
             label = "haloBreath"
         )
         val animPhase by infiniteTransition.animateFloat(
             initialValue = 0f,
-            targetValue = 360f,
+            targetValue = (2f * PI).toFloat(),
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 11000, easing = LinearEasing),
+                animation = tween(durationMillis = 10000, easing = LinearEasing),
                 repeatMode = RepeatMode.Restart
             ),
-            label = "haloPhase"
+            label = "dispersionPhase"
         )
         haloBreath = animBreath
-        haloPhase = animPhase
+        dispersionPhase = animPhase
     } else {
-        haloBreath = 0.96f
-        haloPhase = 24f
+        haloBreath = 0.94f
+        dispersionPhase = 0.78f
     }
 
     val coverPlayScale by animateFloatAsState(
-        targetValue = if (isPlaying) 1.0f else 0.91f,
-        animationSpec = ConceptMotion.expressiveSpring(),
+        targetValue = if (isPlaying) 1.0f else 0.92f,
+        animationSpec = ConceptMotion.gentleBounceSpring(),
         label = "landscapeCoverPlayScale"
     )
 
@@ -202,7 +204,7 @@ internal fun LandscapePlayerPage(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // =========================================================================
-            // 左区 (weight 0.45f)：大尺寸主角封面 + 极简紧凑一体化控播坞
+            // 左区 (weight 0.45f)：大尺寸主角圆角封面（搭载多光谱棱镜边缘光晕色散效果）+ 紧凑一体化控播坞
             // =========================================================================
             Column(
                 modifier = Modifier
@@ -223,117 +225,44 @@ internal fun LandscapePlayerPage(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        val coverSide = minOf(maxWidth * 0.78f, maxHeight * 0.90f).coerceIn(168.dp, 264.dp)
-
-                        Canvas(
-                            modifier = Modifier.size(coverSide * 1.42f)
-                        ) {
-                            val center = Offset(size.width / 2f, size.height / 2f)
-                            val baseR = (size.minDimension / 2f) * 0.88f * haloBreath
-                            val radPhase = (haloPhase * PI / 180.0).toFloat()
-
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colorStops = arrayOf(
-                                        0.00f to accentPrimary.copy(alpha = 0.56f),
-                                        0.42f to accentSecondary.copy(alpha = 0.32f),
-                                        0.76f to accentPrimary.copy(alpha = 0.12f),
-                                        1.00f to Color.Transparent
-                                    ),
-                                    center = Offset(
-                                        center.x + 10f * cos(radPhase),
-                                        center.y + 8f * sin(radPhase)
-                                    ),
-                                    radius = baseR * 1.10f
-                                ),
-                                radius = baseR * 1.10f,
-                                center = center
-                            )
-
-                            rotate(degrees = -22f + haloPhase * 0.15f, pivot = center) {
-                                val ovalW = baseR * 1.86f
-                                val ovalH = baseR * 0.84f
-                                drawOval(
-                                    brush = Brush.sweepGradient(
-                                        0.00f to accentPrimary.copy(alpha = 0.04f),
-                                        0.25f to accentSecondary.copy(alpha = 0.46f),
-                                        0.50f to Color.White.copy(alpha = 0.34f),
-                                        0.75f to accentPrimary.copy(alpha = 0.40f),
-                                        1.00f to accentPrimary.copy(alpha = 0.04f),
-                                        center = center
-                                    ),
-                                    topLeft = Offset(center.x - ovalW / 2f, center.y - ovalH / 2f),
-                                    size = Size(ovalW, ovalH),
-                                    style = Stroke(width = 2.6.dp.toPx(), cap = StrokeCap.Round)
-                                )
-                            }
-
-                            rotate(degrees = 28f - haloPhase * 0.22f, pivot = center) {
-                                val ovalW = baseR * 1.72f
-                                val ovalH = baseR * 0.90f
-                                drawOval(
-                                    brush = Brush.sweepGradient(
-                                        0.00f to accentSecondary.copy(alpha = 0.04f),
-                                        0.35f to accentPrimary.copy(alpha = 0.40f),
-                                        0.70f to accentSecondary.copy(alpha = 0.28f),
-                                        1.00f to accentSecondary.copy(alpha = 0.04f),
-                                        center = center
-                                    ),
-                                    topLeft = Offset(center.x - ovalW / 2f, center.y - ovalH / 2f),
-                                    size = Size(ovalW, ovalH),
-                                    style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
-                                )
-                            }
-
-                            for (i in 0 until 4) {
-                                val angle = radPhase + i * (PI.toFloat() / 2f)
-                                val orbitRx = baseR * 0.90f
-                                val orbitRy = baseR * 0.56f
-                                val px = center.x + orbitRx * cos(angle)
-                                val py = center.y + orbitRy * sin(angle)
-                                drawCircle(
-                                    color = Color.White.copy(alpha = 0.68f),
-                                    radius = 2.2.dp.toPx(),
-                                    center = Offset(px, py)
-                                )
-                                drawCircle(
-                                    color = accentSecondary.copy(alpha = 0.24f),
-                                    radius = 5.5.dp.toPx(),
-                                    center = Offset(px, py)
-                                )
-                            }
-                        }
+                        val coverSide = minOf(maxWidth * 0.76f, maxHeight * 0.86f).coerceIn(164.dp, 248.dp)
 
                         Box(
                             modifier = Modifier
                                 .size(coverSide)
                                 .graphicsLayer {
-                                    val tilt = sin((haloPhase * PI / 180.0).toFloat()) * 2.0f
+                                    val tilt = sin(dispersionPhase) * 1.6f
                                     rotationY = tilt
-                                    rotationX = -tilt * 0.55f
+                                    rotationX = -tilt * 0.50f
                                     scaleX = coverPlayScale
                                     scaleY = coverPlayScale
                                     cameraDistance = 14f * density
+                                    clip = false
                                 }
-                                .shadow(
-                                    elevation = 30.dp,
-                                    shape = RoundedCornerShape(28.dp),
-                                    spotColor = accentPrimary,
-                                    ambientColor = accentSecondary
-                                )
+                                .drawBehind {
+                                    // 横屏圆角封面边缘多光谱棱镜色散光晕 (Chromatic Dispersion Edge Halo)
+                                    drawRoundedCoverEdgeDispersionHalo(
+                                        cornerPx = 28.dp.toPx(),
+                                        accentPrimary = accentPrimary,
+                                        accentSecondary = accentSecondary,
+                                        dispersionPhase = dispersionPhase,
+                                        haloPulse = haloBreath,
+                                        isPlaying = isPlaying
+                                    )
+                                }
                                 .clip(RoundedCornerShape(28.dp))
                                 .background(Color(0xFF151A26))
-                                .border(
-                                    width = 1.1.dp,
-                                    brush = Brush.linearGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = 0.40f),
-                                            accentPrimary.copy(alpha = 0.32f),
-                                            accentSecondary.copy(alpha = 0.22f)
-                                        )
-                                    ),
-                                    shape = RoundedCornerShape(28.dp)
-                                ),
+                                .drawWithContent {
+                                    drawContent()
+                                    // 2.5D 棱镜折射色散倒角高光边框
+                                    drawRoundedCoverPrismaticRim(
+                                        cornerPx = 28.dp.toPx(),
+                                        accentPrimary = accentPrimary,
+                                        accentSecondary = accentSecondary,
+                                        dispersionPhase = dispersionPhase,
+                                        isPlaying = isPlaying
+                                    )
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Crossfade(

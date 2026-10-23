@@ -158,7 +158,7 @@ fun MiniPlayerBar(
     ) {
         Surface(
             shape = capsuleShape,
-            color = Color.Transparent,
+            color = if (isDark) Color(0xFF141E30) else Color(0xFFF7FAFF),
             shadowElevation = if (isDark) 14.dp else 7.dp,
             modifier = Modifier
                 .fillMaxWidth()
