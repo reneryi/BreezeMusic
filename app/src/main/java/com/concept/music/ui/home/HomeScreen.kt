@@ -79,7 +79,6 @@ import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.ConceptCategoryTabItem
 import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.conceptCategoryContentTransition
-import com.concept.music.ui.theme.conceptSheetSpringEntrance
 import com.concept.music.ui.theme.horizontalCategorySwipe
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.softClickable
@@ -2577,7 +2576,6 @@ private fun RankGridPickerSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .conceptSheetSpringEntrance()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .navigationBarsPadding()
         ) {

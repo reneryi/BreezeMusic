@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.concept.music.ui.theme.ConceptCyanAccent
+import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.softClickable
@@ -63,10 +64,7 @@ fun BottomNavBar(
     val selectedIndex = if (currentRoute == Screen.Library.route) 1 else 0
     val slideProgress by animateFloatAsState(
         targetValue = selectedIndex.toFloat(),
-        animationSpec = spring(
-            dampingRatio = 0.76f,
-            stiffness = Spring.StiffnessMediumLow
-        ),
+        animationSpec = ConceptMotion.expressiveSpring(),
         label = "bottomNavSlideProgress"
     )
 
@@ -132,11 +130,19 @@ fun BottomNavBar(
                     val pillH = 40.dp.toPx()
                     val leftX = pillOffsetX.toPx().coerceIn(0f, (size.width - pillW).coerceAtLeast(0f))
                     val topY = (size.height - pillH) / 2f
+                    val radius = CornerRadius(pillH / 2f, pillH / 2f)
                     drawRoundRect(
                         brush = pillBrush,
                         topLeft = Offset(leftX, topY),
                         size = Size(pillW, pillH),
-                        cornerRadius = CornerRadius(pillH / 2f, pillH / 2f)
+                        cornerRadius = radius
+                    )
+                    drawRoundRect(
+                        color = pillBorderColor,
+                        topLeft = Offset(leftX, topY),
+                        size = Size(pillW, pillH),
+                        cornerRadius = radius,
+                        style = Stroke(width = 1.dp.toPx())
                     )
                 }
 
@@ -149,10 +155,7 @@ fun BottomNavBar(
                         val isSelected = selectedIndex == index
                         val morphProgress by animateFloatAsState(
                             targetValue = if (isSelected) 1f else 0f,
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness = Spring.StiffnessMediumLow
-                            ),
+                            animationSpec = ConceptMotion.expressiveSpring(),
                             label = "iconMorph_$index"
                         )
                         val textColor by animateColorAsState(
@@ -181,9 +184,10 @@ fun BottomNavBar(
                                 horizontalArrangement = Arrangement.Center,
                                 modifier = Modifier
                                     .graphicsLayer {
-                                        val s = 1f + 0.06f * morphProgress
+                                        val s = 1f + 0.10f * morphProgress
                                         scaleX = s
                                         scaleY = s
+                                        translationY = -2.dp.toPx() * morphProgress
                                     }
                             ) {
                                 if (screen.route == Screen.Discover.route) {

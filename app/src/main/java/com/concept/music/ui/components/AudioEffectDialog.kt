@@ -655,6 +655,7 @@ private fun AcousticMetricMiniBar(
         animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
         label = "metric_$label"
     )
+    val trackBgColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f)
     Column(modifier = modifier) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -664,20 +665,28 @@ private fun AcousticMetricMiniBar(
             Text(text = "$percent%", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = color)
         }
         Spacer(modifier = Modifier.height(4.dp))
-        Box(
+        // 使用 Canvas 在 Draw 阶段直接按比例绘制圆角能量条，彻底消除 .fillMaxWidth(animatedFrac) 每帧引发的 Layout 测量重排
+        Canvas(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(4.5.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f))
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(animatedFrac.coerceIn(0f, 1f))
-                    .fillMaxHeight()
-                    .clip(CircleShape)
-                    .background(color)
+            val w = size.width
+            val h = size.height
+            val r = CornerRadius(h / 2f, h / 2f)
+            drawRoundRect(
+                color = trackBgColor,
+                size = Size(w, h),
+                cornerRadius = r
             )
+            val fillW = (w * animatedFrac.coerceIn(0f, 1f)).coerceIn(0f, w)
+            if (fillW > 0.5f) {
+                drawRoundRect(
+                    color = color,
+                    size = Size(fillW, h),
+                    cornerRadius = r
+                )
+            }
         }
     }
 }

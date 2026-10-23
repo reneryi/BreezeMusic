@@ -10,11 +10,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -38,12 +34,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -82,14 +78,18 @@ import com.concept.music.ui.navigation.BottomNavBar
 import com.concept.music.ui.navigation.Screen
 import com.concept.music.ui.search.SearchScreen
 import com.concept.music.ui.settings.SettingsScreen
+import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptMusicTheme
 import com.concept.music.ui.viewmodel.HomeViewModel
 import com.concept.music.ui.viewmodel.LibraryViewModel
 import com.concept.music.ui.viewmodel.MusicPlayerViewModel
 import com.concept.music.ui.viewmodel.SearchViewModel
 
-// 高帧率 120Hz 丝滑五次方减速曲线（消除长尾弹簧导致的双页面同时驻留重绘掉帧，起速灵敏、落点轻盈）
-private val FluidPageEasing = CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f)
+private fun mainTabIndex(route: String): Int = when (route) {
+    Screen.Discover.route -> 0
+    Screen.Library.route -> 1
+    else -> -1
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -151,6 +151,7 @@ fun MainContent(
     searchViewModel: SearchViewModel = viewModel()
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route ?: Screen.Discover.route
@@ -162,8 +163,8 @@ fun MainContent(
         }
     }
 
-    // 关键性能优化：通过 derivedStateOf 在根组件 MainContent 层仅订阅低频状态（当前曲目、播放状态、错误提示），
-    // 既保证点击播放瞬间状态 0ms 同步，又彻底隔离每 120ms 变化的 currentPositionMs，杜绝引发 NavHost 重绘卡顿
+    // 关键性能优化：在根组件 MainContent 层仅订阅低频状态（当前曲目、播放状态、错误提示），
+    // 高频播放进度由 playbackPositionFlow 与 currentSmoothPositionMs() 按需在叶节点绘制期读取
     val playerStateHolder = musicPlayerViewModel.uiState.collectAsState()
     val currentSong by remember(playerStateHolder) {
         derivedStateOf { playerStateHolder.value.currentSong }
@@ -266,7 +267,7 @@ fun MainContent(
             } else {
                 Toast.makeText(context, "正在进入「$cleanArtist」主页...", Toast.LENGTH_SHORT).show()
                 mainScope.launch {
-                    val resolvedId = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val resolvedId = withContext(Dispatchers.IO) {
                         runCatching {
                             VipManager.music.searchArtists(cleanArtist, page = 1, pageSize = 5)
                                 .firstOrNull { it.id.isNotBlank() && it.id != "0" }
@@ -291,7 +292,7 @@ fun MainContent(
             val kw = "${targetSong.album.ifBlank { targetSong.title }} ${targetSong.artist}".trim()
             Toast.makeText(context, "正在定位所属专辑...", Toast.LENGTH_SHORT).show()
             mainScope.launch {
-                val resolvedAlbumId = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val resolvedAlbumId = withContext(Dispatchers.IO) {
                     runCatching {
                         val fromSearch = VipManager.music.searchSongs(
                             "${targetSong.title} ${targetSong.artist}".trim(),
@@ -355,9 +356,28 @@ fun MainContent(
         currentRoute != "vip_center" &&
         currentRoute != "viper_effect"
 
+    // 当全屏浮层（播放器 / 音效页 / 评论页）展开时，为底层主界面容器施加纯 GPU 景深微缩联动（0 重组）
+    val anyFullScreenOverlayOpen = (showNowPlaying && currentSong != null) || showViperEffectOverlay || showCommentsScreen
+    val hostDepthProgressState = animateFloatAsState(
+        targetValue = if (anyFullScreenOverlayOpen) 1f else 0f,
+        animationSpec = ConceptMotion.spatialSheetSpring(),
+        label = "hostDepthProgress"
+    )
+
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val depth = hostDepthProgressState.value.coerceIn(0f, 1f)
+                    if (depth > 0.001f) {
+                        val s = 1f - 0.045f * depth
+                        scaleX = s
+                        scaleY = s
+                        alpha = 1f - 0.18f * depth
+                        transformOrigin = TransformOrigin(0.5f, 0.45f)
+                    }
+                },
             contentWindowInsets = WindowInsets(0, 0, 0, 0)
         ) { innerPadding ->
             NavHost(
@@ -369,67 +389,91 @@ fun MainContent(
                 enterTransition = {
                     val initial = initialState.destination.route.orEmpty()
                     val target = targetState.destination.route.orEmpty()
-                    val bothMainTabs = (initial == Screen.Discover.route || initial == Screen.Library.route) &&
-                        (target == Screen.Discover.route || target == Screen.Library.route)
-                    if (bothMainTabs) {
-                        val dir = if (target == Screen.Library.route) 1 else -1
+                    val initTab = mainTabIndex(initial)
+                    val tgtTab = mainTabIndex(target)
+                    if (initTab >= 0 && tgtTab >= 0) {
+                        // 一级底部 Tab 切换：方向感微平移 (±6% 屏宽) + 柔和缩放 (0.97f -> 1f) + 强调型减速渐显
+                        val dir = if (tgtTab >= initTab) 1 else -1
                         slideInHorizontally(
-                            initialOffsetX = { fullWidth -> dir * (fullWidth / 8) },
-                            animationSpec = tween(220, easing = FluidPageEasing)
-                        ) + fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing))
+                            initialOffsetX = { fullWidth -> dir * (fullWidth * 0.06f).toInt() },
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + scaleIn(
+                            initialScale = 0.97f,
+                            transformOrigin = TransformOrigin(0.5f, 0.5f),
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + fadeIn(
+                            animationSpec = tween(260, easing = ConceptMotion.EmphasizedDecelerate)
+                        )
                     } else {
-                        // 120Hz 高帧率丝滑入场：精简为 GPU 友好的水平流体推进 + 微缩放渐显，消除重度复合弹簧引起的过渡掉帧
+                        // 二级详情页推入：从右侧 28% 屏宽以 SpatialPageSpring 弹性推入 + 0.96f -> 1f 绽放
                         slideInHorizontally(
-                            initialOffsetX = { fullWidth -> (fullWidth * 0.20f).toInt() },
-                            animationSpec = tween(250, easing = FluidPageEasing)
+                            initialOffsetX = { fullWidth -> (fullWidth * 0.28f).toInt() },
+                            animationSpec = ConceptMotion.spatialPageSpring()
                         ) + scaleIn(
                             initialScale = 0.96f,
                             transformOrigin = TransformOrigin(0.5f, 0.5f),
-                            animationSpec = tween(250, easing = FluidPageEasing)
-                        ) + fadeIn(animationSpec = tween(190, easing = FastOutSlowInEasing))
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + fadeIn(
+                            animationSpec = tween(240, easing = ConceptMotion.EmphasizedDecelerate)
+                        )
                     }
                 },
                 exitTransition = {
                     val initial = initialState.destination.route.orEmpty()
                     val target = targetState.destination.route.orEmpty()
-                    val bothMainTabs = (initial == Screen.Discover.route || initial == Screen.Library.route) &&
-                        (target == Screen.Discover.route || target == Screen.Library.route)
-                    if (bothMainTabs) {
-                        val dir = if (target == Screen.Library.route) 1 else -1
+                    val initTab = mainTabIndex(initial)
+                    val tgtTab = mainTabIndex(target)
+                    if (initTab >= 0 && tgtTab >= 0) {
+                        val dir = if (tgtTab >= initTab) 1 else -1
                         slideOutHorizontally(
-                            targetOffsetX = { fullWidth -> -dir * (fullWidth / 10) },
-                            animationSpec = tween(180, easing = FluidPageEasing)
-                        ) + fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing))
+                            targetOffsetX = { fullWidth -> -dir * (fullWidth * 0.06f).toInt() },
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + scaleOut(
+                            targetScale = 0.97f,
+                            transformOrigin = TransformOrigin(0.5f, 0.5f),
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + fadeOut(
+                            animationSpec = tween(210, easing = ConceptMotion.EmphasizedAccelerate)
+                        )
                     } else {
+                        // 二级详情页推入时，底层旧页面同步执行 -8% 视差左移与 0.96f 景深微缩 (Parallax Depth)
                         slideOutHorizontally(
-                            targetOffsetX = { fullWidth -> -(fullWidth * 0.07f).toInt() },
-                            animationSpec = tween(240, easing = FluidPageEasing)
+                            targetOffsetX = { fullWidth -> -(fullWidth * 0.08f).toInt() },
+                            animationSpec = ConceptMotion.spatialPageSpring()
                         ) + scaleOut(
                             targetScale = 0.96f,
                             transformOrigin = TransformOrigin(0.5f, 0.5f),
-                            animationSpec = tween(240, easing = FluidPageEasing)
-                        ) + fadeOut(animationSpec = tween(180, easing = FastOutSlowInEasing))
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + fadeOut(
+                            animationSpec = tween(220, easing = ConceptMotion.EmphasizedAccelerate)
+                        )
                     }
                 },
                 popEnterTransition = {
+                    // 返回弹出时：底层页面从 -8% 视差位置平滑复原
                     slideInHorizontally(
-                        initialOffsetX = { fullWidth -> -(fullWidth * 0.07f).toInt() },
-                        animationSpec = tween(240, easing = FluidPageEasing)
+                        initialOffsetX = { fullWidth -> -(fullWidth * 0.08f).toInt() },
+                        animationSpec = ConceptMotion.spatialPageSpring()
                     ) + scaleIn(
                         initialScale = 0.96f,
                         transformOrigin = TransformOrigin(0.5f, 0.5f),
-                        animationSpec = tween(240, easing = FluidPageEasing)
-                    ) + fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing))
+                        animationSpec = ConceptMotion.spatialPageSpring()
+                    ) + fadeIn(
+                        animationSpec = tween(230, easing = ConceptMotion.EmphasizedDecelerate)
+                    )
                 },
                 popExitTransition = {
+                    // 二级详情页返回弹出：镜像弹簧曲线滑出右侧 28% 屏宽并微缩淡出
                     slideOutHorizontally(
-                        targetOffsetX = { fullWidth -> (fullWidth * 0.22f).toInt() },
-                        animationSpec = tween(230, easing = FluidPageEasing)
+                        targetOffsetX = { fullWidth -> (fullWidth * 0.28f).toInt() },
+                        animationSpec = ConceptMotion.spatialPageSpring()
                     ) + scaleOut(
                         targetScale = 0.95f,
                         transformOrigin = TransformOrigin(0.5f, 0.5f),
-                        animationSpec = tween(230, easing = FluidPageEasing)
-                    ) + fadeOut(animationSpec = tween(170, easing = FastOutSlowInEasing))
+                        animationSpec = ConceptMotion.spatialPageSpring()
+                    ) + fadeOut(
+                        animationSpec = tween(210, easing = ConceptMotion.EmphasizedAccelerate)
+                    )
                 }
             ) {
                 // 发现页
@@ -528,6 +572,7 @@ fun MainContent(
                             musicPlayerViewModel.playSong(song, list)
                         },
                         currentSong = currentSong,
+                        isPlaying = isPlaying,
                         onSongMoreClick = { song ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = null
@@ -729,18 +774,18 @@ fun MainContent(
             }
         }
 
-        // 底部「发现 / 我的」主导航栏
+        // 底部「发现 / 我的」主导航栏（统一采用 SpatialSheetSpring 丝滑升降）
         AnimatedVisibility(
             visible = showFloatingMiniBar && !isSubDetail && !showNowPlaying && !showViperEffectOverlay,
             modifier = Modifier.align(Alignment.BottomCenter),
             enter = slideInVertically(
                 initialOffsetY = { it },
-                animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
-            ) + fadeIn(animationSpec = tween(180, easing = FastOutSlowInEasing)),
+                animationSpec = ConceptMotion.spatialSheetSpring()
+            ) + fadeIn(animationSpec = tween(220, easing = ConceptMotion.EmphasizedDecelerate)),
             exit = slideOutVertically(
                 targetOffsetY = { it },
-                animationSpec = tween(180, easing = FluidPageEasing)
-            ) + fadeOut(animationSpec = tween(150, easing = FastOutSlowInEasing))
+                animationSpec = ConceptMotion.spatialSheetSpring()
+            ) + fadeOut(animationSpec = tween(180, easing = ConceptMotion.EmphasizedAccelerate))
         ) {
             BottomNavBar(
                 currentRoute = currentRoute,
@@ -758,14 +803,13 @@ fun MainContent(
             )
         }
 
-        // 独立圆角长条形悬浮控制条（隔离高频进度状态订阅，仅重绘胶囊自身）
-        val miniBarBottomPadding by animateDpAsState(
-            targetValue = if (isSubDetail) 10.dp else 66.dp,
-            animationSpec = spring(
-                dampingRatio = 0.80f,
-                stiffness = Spring.StiffnessMediumLow
-            ),
-            label = "miniBarBottomPadding"
+        // 【阶段延迟修复】：移除触发逐帧 Layout 重排的 `.padding(bottom = miniBarBottomPadding)`，
+        // 改为固定底部锚点 10.dp 并通过 `graphicsLayer { translationY = ... }` 在绘制期平滑避让底部导航栏！
+        val navBarAvoidOffsetPx = with(density) { -56.dp.toPx() }
+        val miniBarOffsetYState = animateFloatAsState(
+            targetValue = if (isSubDetail) 0f else navBarAvoidOffsetPx,
+            animationSpec = ConceptMotion.spatialSheetSpring(),
+            label = "miniBarOffsetY"
         )
 
         if (showFloatingMiniBar) {
@@ -774,7 +818,10 @@ fun MainContent(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(bottom = miniBarBottomPadding)
+                    .padding(bottom = 10.dp)
+                    .graphicsLayer {
+                        translationY = miniBarOffsetYState.value
+                    }
             ) {
                 playerError?.let { error ->
                     Text(
@@ -791,15 +838,18 @@ fun MainContent(
                     visible = currentSong != null && !showNowPlaying && !showViperEffectOverlay,
                     enter = slideInVertically(
                         initialOffsetY = { it },
-                        animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
-                    ) + fadeIn(tween(200)) + scaleIn(
+                        animationSpec = ConceptMotion.spatialSheetSpring()
+                    ) + fadeIn(tween(220, easing = ConceptMotion.EmphasizedDecelerate)) + scaleIn(
                         initialScale = 0.94f,
-                        animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
+                        animationSpec = ConceptMotion.spatialSheetSpring()
                     ),
                     exit = slideOutVertically(
                         targetOffsetY = { it / 2 },
-                        animationSpec = tween(170)
-                    ) + fadeOut(tween(150)) + scaleOut(targetScale = 0.95f, animationSpec = tween(170))
+                        animationSpec = ConceptMotion.spatialSheetSpring()
+                    ) + fadeOut(tween(180, easing = ConceptMotion.EmphasizedAccelerate)) + scaleOut(
+                        targetScale = 0.94f,
+                        animationSpec = ConceptMotion.spatialSheetSpring()
+                    )
                 ) {
                     IsolatedMiniPlayerBarHost(
                         viewModel = musicPlayerViewModel,
@@ -836,25 +886,25 @@ fun MainContent(
             )
         }
 
-        // 沉浸式全屏 Edge-to-Edge 播放器
+        // 沉浸式全屏 Edge-to-Edge 播放器（SpatialSheetSpring 物理升降）
         AnimatedVisibility(
             visible = showNowPlaying && currentSong != null,
             enter = slideInVertically(
                 initialOffsetY = { it },
-                animationSpec = tween(270, easing = FluidPageEasing)
+                animationSpec = ConceptMotion.spatialSheetSpring()
             ) + scaleIn(
                 initialScale = 0.94f,
                 transformOrigin = TransformOrigin(0.5f, 0.92f),
-                animationSpec = tween(270, easing = FluidPageEasing)
-            ) + fadeIn(tween(200, easing = FastOutSlowInEasing)),
+                animationSpec = ConceptMotion.spatialSheetSpring()
+            ) + fadeIn(tween(240, easing = ConceptMotion.EmphasizedDecelerate)),
             exit = slideOutVertically(
                 targetOffsetY = { it },
-                animationSpec = tween(240, easing = FluidPageEasing)
+                animationSpec = ConceptMotion.spatialSheetSpring()
             ) + scaleOut(
                 targetScale = 0.94f,
                 transformOrigin = TransformOrigin(0.5f, 0.92f),
-                animationSpec = tween(240, easing = FluidPageEasing)
-            ) + fadeOut(tween(180, easing = FastOutSlowInEasing))
+                animationSpec = ConceptMotion.spatialSheetSpring()
+            ) + fadeOut(tween(210, easing = ConceptMotion.EmphasizedAccelerate))
         ) {
             IsolatedNowPlayingHost(
                 musicPlayerViewModel = musicPlayerViewModel,
@@ -878,33 +928,48 @@ fun MainContent(
             )
         }
 
-        // 从播放页进入的独立全屏「蝰蛇音效与专业均衡器」页面（丝滑侧滑叠加于播放页之上，返回直达播放页）
+        // 从播放页进入的独立全屏「蝰蛇音效与专业均衡器」页面（SpatialPageSpring 丝滑侧滑叠加）
         AnimatedVisibility(
             visible = showViperEffectOverlay,
             enter = slideInHorizontally(
                 initialOffsetX = { it },
-                animationSpec = tween(250, easing = FluidPageEasing)
-            ) + fadeIn(tween(190)),
+                animationSpec = ConceptMotion.spatialPageSpring()
+            ) + scaleIn(
+                initialScale = 0.96f,
+                animationSpec = ConceptMotion.spatialPageSpring()
+            ) + fadeIn(tween(230, easing = ConceptMotion.EmphasizedDecelerate)),
             exit = slideOutHorizontally(
                 targetOffsetX = { it },
-                animationSpec = tween(230, easing = FluidPageEasing)
-            ) + fadeOut(tween(170))
+                animationSpec = ConceptMotion.spatialPageSpring()
+            ) + scaleOut(
+                targetScale = 0.96f,
+                animationSpec = ConceptMotion.spatialPageSpring()
+            ) + fadeOut(tween(200, easing = ConceptMotion.EmphasizedAccelerate))
         ) {
             ViperSoundEffectScreen(
                 onBack = { showViperEffectOverlay = false }
             )
         }
 
+        // 独立全屏评论浮层（SpatialSheetSpring 丝滑升降）
         AnimatedVisibility(
             visible = showCommentsScreen,
             enter = slideInVertically(
                 initialOffsetY = { it },
-                animationSpec = tween(250, easing = FluidPageEasing)
-            ) + fadeIn(tween(180)),
+                animationSpec = ConceptMotion.spatialSheetSpring()
+            ) + scaleIn(
+                initialScale = 0.95f,
+                transformOrigin = TransformOrigin(0.5f, 0.92f),
+                animationSpec = ConceptMotion.spatialSheetSpring()
+            ) + fadeIn(tween(230, easing = ConceptMotion.EmphasizedDecelerate)),
             exit = slideOutVertically(
                 targetOffsetY = { it },
-                animationSpec = tween(220, easing = FluidPageEasing)
-            ) + fadeOut(tween(160))
+                animationSpec = ConceptMotion.spatialSheetSpring()
+            ) + scaleOut(
+                targetScale = 0.95f,
+                transformOrigin = TransformOrigin(0.5f, 0.92f),
+                animationSpec = ConceptMotion.spatialSheetSpring()
+            ) + fadeOut(tween(200, easing = ConceptMotion.EmphasizedAccelerate))
         ) {
             val playerUiState by musicPlayerViewModel.uiState.collectAsState()
             val userAvatar = VipManager.accounts.state.value.profile?.avatarUrl ?: ""
@@ -924,9 +989,9 @@ fun MainContent(
                 onLoadMore = { musicPlayerViewModel.loadComments(isRefresh = false) },
                 onRefresh = { musicPlayerViewModel.loadComments(isRefresh = true) },
                 onLoadReplies = { musicPlayerViewModel.loadCommentReplies(it) },
-                        onSyncReplyCount = { cid, cnt, replies ->
-                            musicPlayerViewModel.syncCommentReplyCount(cid, cnt, replies)
-                        },
+                onSyncReplyCount = { cid, cnt, replies ->
+                    musicPlayerViewModel.syncCommentReplyCount(cid, cnt, replies)
+                },
                 onPostComment = { content, replyId, replyUser, onResult ->
                     musicPlayerViewModel.postComment(content, replyId, replyUser, onResult)
                 },
@@ -1032,11 +1097,13 @@ private fun IsolatedMiniPlayerBarHost(
     onQueueClick: () -> Unit
 ) {
     val playerUiState by viewModel.uiState.collectAsState()
+    val positionProvider = remember(viewModel) { { viewModel.currentSmoothPositionMs() } }
     MiniPlayerBar(
         currentSong = playerUiState.currentSong,
         isPlaying = playerUiState.isPlaying,
         currentPositionMs = playerUiState.currentPositionMs,
         durationMs = playerUiState.durationMs,
+        positionProvider = positionProvider,
         onTogglePlay = { viewModel.togglePlayPause() },
         onNextClick = { viewModel.skipToNext() },
         onPreviousClick = { viewModel.skipToPrevious() },
@@ -1061,12 +1128,14 @@ private fun IsolatedNowPlayingHost(
     val playerUiState by musicPlayerViewModel.uiState.collectAsState()
     val currentSong = playerUiState.currentSong ?: return
     val isCurrentSongLiked = libraryViewModel.isSongLiked(currentSong, likedSongs)
+    val positionProvider = remember(musicPlayerViewModel) { { musicPlayerViewModel.currentSmoothPositionMs() } }
 
     NowPlayingSheet(
         song = currentSong,
         isPlaying = playerUiState.isPlaying,
         currentPositionMs = playerUiState.currentPositionMs,
         durationMs = playerUiState.durationMs,
+        positionProvider = positionProvider,
         playMode = playerUiState.playMode,
         currentQualityLabel = playerUiState.currentQualityLabel,
         lyricData = playerUiState.currentLyric,
@@ -1168,12 +1237,17 @@ private fun IsolatedDesktopLyricHost(
 ) {
     if (!visible) return
     val playerUiState by viewModel.uiState.collectAsState()
-    val adjustedPos = (playerUiState.currentPositionMs + playerUiState.lyricOffsetMs).coerceAtLeast(0L)
+    val lyricOffsetMs = playerUiState.lyricOffsetMs
+    val positionProvider = remember(viewModel, lyricOffsetMs) {
+        { (viewModel.currentSmoothPositionMs() + lyricOffsetMs).coerceAtLeast(0L) }
+    }
+    val adjustedPos = (playerUiState.currentPositionMs + lyricOffsetMs).coerceAtLeast(0L)
     FloatingLyricOverlay(
         song = playerUiState.currentSong,
         lyricData = playerUiState.currentLyric,
         currentLyricIndex = playerUiState.currentLyricIndex,
         currentPositionMs = adjustedPos,
+        positionProvider = positionProvider,
         isPlaying = playerUiState.isPlaying,
         onTogglePlay = { viewModel.togglePlayPause() },
         onPrevious = { viewModel.skipToPrevious() },

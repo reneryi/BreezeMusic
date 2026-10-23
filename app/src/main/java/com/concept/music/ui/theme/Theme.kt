@@ -20,12 +20,14 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -59,7 +61,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -82,19 +83,28 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.node.LayoutModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.platform.InspectorInfo
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -233,38 +243,169 @@ fun conceptSheetContainerColor(): Color {
 }
 
 /**
- * 柔和唯美无框点击反馈修饰符
+ * 基于轻量级 `Modifier.Node` 的零重组按压微回弹修饰节点：
+ * - 按下瞬间采用 `ConceptMotion.softPressSpring()` 敏捷收敛；
+ * - 松手恢复采用 `ConceptMotion.softReleaseSpring()` 赋予灵动微回弹生命力；
+ * - 缩放与透明度变换通过 `placeWithLayer` 100% 在 GPU 图层阶段完成，彻底避免长列表挂载 `animateFloatAsState` 的开销。
+ */
+private data class SoftBounceTouchElement(
+    val interactionSource: InteractionSource,
+    val enabled: Boolean,
+    val pressScale: Float,
+    val pressAlpha: Float
+) : ModifierNodeElement<SoftBounceTouchNode>() {
+    override fun create(): SoftBounceTouchNode = SoftBounceTouchNode(
+        interactionSource = interactionSource,
+        enabled = enabled,
+        pressScale = pressScale,
+        pressAlpha = pressAlpha
+    )
+
+    override fun update(node: SoftBounceTouchNode) {
+        node.updateParams(
+            newSource = interactionSource,
+            newEnabled = enabled,
+            newPressScale = pressScale,
+            newPressAlpha = pressAlpha
+        )
+    }
+
+    override fun InspectorInfo.inspectableProperties() {
+        name = "softBounceTouch"
+        properties["enabled"] = enabled
+        properties["pressScale"] = pressScale
+        properties["pressAlpha"] = pressAlpha
+    }
+}
+
+private class SoftBounceTouchNode(
+    var interactionSource: InteractionSource,
+    var enabled: Boolean,
+    var pressScale: Float,
+    var pressAlpha: Float
+) : Modifier.Node(), LayoutModifierNode {
+    private val scaleAnim = Animatable(1f)
+    private val alphaAnim = Animatable(1f)
+    private var interactionJob: Job? = null
+
+    override val shouldAutoInvalidate: Boolean get() = false
+
+    override fun onAttach() {
+        super.onAttach()
+        observeInteractions()
+    }
+
+    override fun onDetach() {
+        interactionJob?.cancel()
+        interactionJob = null
+        super.onDetach()
+    }
+
+    fun updateParams(
+        newSource: InteractionSource,
+        newEnabled: Boolean,
+        newPressScale: Float,
+        newPressAlpha: Float
+    ) {
+        val sourceChanged = interactionSource !== newSource
+        val enabledChanged = enabled != newEnabled
+        interactionSource = newSource
+        enabled = newEnabled
+        pressScale = newPressScale
+        pressAlpha = newPressAlpha
+        if (!newEnabled && isAttached) {
+            coroutineScope.launch {
+                scaleAnim.snapTo(1f)
+                alphaAnim.snapTo(1f)
+            }
+        }
+        if ((sourceChanged || enabledChanged) && isAttached) {
+            observeInteractions()
+        }
+    }
+
+    private fun observeInteractions() {
+        interactionJob?.cancel()
+        if (!isAttached) return
+        val source = interactionSource
+        interactionJob = coroutineScope.launch {
+            var pressCount = 0
+            source.interactions.collect { interaction ->
+                when (interaction) {
+                    is PressInteraction.Press -> {
+                        pressCount++
+                        if (pressCount == 1 && enabled) {
+                            launch {
+                                scaleAnim.animateTo(
+                                    targetValue = pressScale,
+                                    animationSpec = ConceptMotion.softPressSpring()
+                                )
+                            }
+                            launch {
+                                alphaAnim.animateTo(
+                                    targetValue = pressAlpha,
+                                    animationSpec = ConceptMotion.softPressSpring()
+                                )
+                            }
+                        }
+                    }
+                    is PressInteraction.Release, is PressInteraction.Cancel -> {
+                        pressCount = (pressCount - 1).coerceAtLeast(0)
+                        if (pressCount == 0) {
+                            launch {
+                                scaleAnim.animateTo(
+                                    targetValue = 1f,
+                                    animationSpec = ConceptMotion.softReleaseSpring()
+                                )
+                            }
+                            launch {
+                                alphaAnim.animateTo(
+                                    targetValue = 1f,
+                                    animationSpec = ConceptMotion.gentleBounceSpring()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    override fun MeasureScope.measure(
+        measurable: Measurable,
+        constraints: Constraints
+    ): MeasureResult {
+        val placeable = measurable.measure(constraints)
+        return layout(placeable.width, placeable.height) {
+            placeable.placeWithLayer(0, 0) {
+                val s = scaleAnim.value
+                scaleX = s
+                scaleY = s
+                alpha = alphaAnim.value
+            }
+        }
+    }
+}
+
+/**
+ * 柔和唯美无框点击反馈修饰符（按压敏捷收敛 + 松手微回弹 + 100% Draw 阶段图层渲染）
  */
 fun Modifier.softClickable(
     enabled: Boolean = true,
-    pressScale: Float = 0.94f,
-    pressAlpha: Float = 0.72f,
+    pressScale: Float = 0.93f,
+    pressAlpha: Float = 0.76f,
     onClick: () -> Unit
 ): Modifier = composed {
     val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed && enabled) pressScale else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMediumLow
-        ),
-        label = "softClickScale"
-    )
-    val alpha by animateFloatAsState(
-        targetValue = if (isPressed && enabled) pressAlpha else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "softClickAlpha"
-    )
     this
-        .graphicsLayer {
-            scaleX = scale
-            scaleY = scale
-            this.alpha = alpha
-        }
+        .then(
+            SoftBounceTouchElement(
+                interactionSource = interactionSource,
+                enabled = enabled,
+                pressScale = pressScale,
+                pressAlpha = pressAlpha
+            )
+        )
         .clickable(
             interactionSource = interactionSource,
             indication = null,
@@ -282,33 +423,19 @@ fun Modifier.softCardClickable(
     enabled: Boolean = true,
     shape: Shape = RoundedCornerShape(24.dp),
     clip: Boolean = true,
-    pressScale: Float = 0.98f,
-    pressAlpha: Float = 0.88f,
+    pressScale: Float = 0.975f,
+    pressAlpha: Float = 0.90f,
     onClick: () -> Unit
 ): Modifier = composed {
     val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed && enabled) pressScale else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMediumLow
-        ),
-        label = "softCardScale"
+    val base = this.then(
+        SoftBounceTouchElement(
+            interactionSource = interactionSource,
+            enabled = enabled,
+            pressScale = pressScale,
+            pressAlpha = pressAlpha
+        )
     )
-    val alpha by animateFloatAsState(
-        targetValue = if (isPressed && enabled) pressAlpha else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "softCardAlpha"
-    )
-    val base = this.graphicsLayer {
-        scaleX = scale
-        scaleY = scale
-        this.alpha = alpha
-    }
     val clipped = if (clip) base.clip(shape) else base
     clipped.clickable(
         interactionSource = interactionSource,
@@ -319,14 +446,8 @@ fun Modifier.softCardClickable(
 }
 
 /**
- * 触屏左右滑动切换分类标题修饰符：
- * - 左滑切换至下一分类，右滑切换至上一分类；
- * - 若当前处于首个分类且传入了 onSwipeRightAtStart / onSwipeBackAtFirst，则右滑触发返回/重置。
- */
-
-/**
- * 灵动多维分类内容切换过渡动画（3D 弹性缩放 + 水平弹簧位移 + 微幅垂直悬浮上扬 + 渐隐渐显）：
- * 告别呆板的纯左右线性平移，让分类标题切换时下方内容具有呼吸感与空间层次感。
+ * 灵动多维分类内容切换过渡动画（入场与退场统一采用物理弹簧配速 + 顺向惯性微滑出 + 景深微缩放）：
+ * 消除原本入场弹簧、退场 150ms 短促线性硬切造成的物理节奏割裂。
  */
 fun conceptCategoryContentTransition(direction: Int): ContentTransform {
     val dir = if (direction >= 0) 1 else -1
@@ -334,48 +455,37 @@ fun conceptCategoryContentTransition(direction: Int): ContentTransform {
     val exitOrigin = TransformOrigin(if (dir >= 0) 0.32f else 0.68f, 0.35f)
     return (
         slideInHorizontally(
-            animationSpec = spring(
-                dampingRatio = 0.80f,
-                stiffness = Spring.StiffnessMediumLow
-            )
+            animationSpec = ConceptMotion.spatialPageSpring()
         ) { fullWidth -> dir * (fullWidth / 6) } +
             slideInVertically(
-                animationSpec = spring(
-                    dampingRatio = 0.82f,
-                    stiffness = Spring.StiffnessMediumLow
-                )
-            ) { fullHeight -> (fullHeight / 32).coerceAtLeast(12) } +
+                animationSpec = ConceptMotion.spatialPageSpring()
+            ) { fullHeight -> (fullHeight / 34).coerceAtLeast(10) } +
             scaleIn(
-                initialScale = 0.94f,
+                initialScale = 0.945f,
                 transformOrigin = enterOrigin,
-                animationSpec = spring(
-                    dampingRatio = 0.78f,
-                    stiffness = Spring.StiffnessMediumLow
-                )
+                animationSpec = ConceptMotion.spatialPageSpring()
             ) +
-            fadeIn(animationSpec = tween(durationMillis = 210, easing = FastOutSlowInEasing))
+            fadeIn(animationSpec = tween(durationMillis = 240, easing = ConceptMotion.EmphasizedDecelerate))
         ) togetherWith (
         slideOutHorizontally(
-            animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
-        ) { fullWidth -> -dir * (fullWidth / 10) } +
+            animationSpec = ConceptMotion.spatialPageSpring()
+        ) { fullWidth -> -dir * (fullWidth / 9) } +
+            slideOutVertically(
+                animationSpec = ConceptMotion.spatialPageSpring()
+            ) { fullHeight -> -(fullHeight / 48).coerceAtLeast(6) } +
             scaleOut(
-                targetScale = 0.95f,
+                targetScale = 0.955f,
                 transformOrigin = exitOrigin,
-                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
+                animationSpec = ConceptMotion.spatialPageSpring()
             ) +
-            fadeOut(animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing))
+            fadeOut(animationSpec = tween(durationMillis = 200, easing = ConceptMotion.EmphasizedAccelerate))
         )
 }
 
 /**
- * 抽屉 / BottomSheet 内容灵动弹出入场修饰符：
- * 在底部抽屉弹出时赋予内容柔和的弹簧上浮与微缩放绽放感。
- */
-
-/**
  * 针对 LazyColumn 内部分类内容流的 120fps GPU 灵动切换修饰符：
- * 在保持 LazyColumn 原生滚动与虚拟化的同时，在分类 Tab 切换瞬间赋予下方列表项
- * 方向感弹簧平移 + 3D 缩放 + 微幅上浮 + 渐显过渡。
+ * 【阶段延迟修复】：将 `anim.value` 的读取严格封装在 `Modifier.graphicsLayer { ... }` 内部，
+ * 切换分类时仅更新 RenderNode 属性，实现宿主页（我的页/歌手页）0 次全树重组！
  */
 @Composable
 fun rememberCategorySwitchGraphicModifier(selectedIndex: Int): Modifier {
@@ -390,17 +500,14 @@ fun rememberCategorySwitchGraphicModifier(selectedIndex: Int): Modifier {
             anim.snapTo(0f)
             anim.animateTo(
                 targetValue = 1f,
-                animationSpec = spring(
-                    dampingRatio = 0.78f,
-                    stiffness = Spring.StiffnessMediumLow
-                )
+                animationSpec = ConceptMotion.spatialPageSpring()
             )
         }
     }
 
-    val p = anim.value
-    val dir = direction
     return Modifier.graphicsLayer {
+        val p = anim.value
+        val dir = direction
         if (p < 0.999f) {
             val inv = 1f - p
             translationX = dir * inv * 64f
@@ -414,23 +521,24 @@ fun rememberCategorySwitchGraphicModifier(selectedIndex: Int): Modifier {
     }
 }
 
+/**
+ * 抽屉 / BottomSheet 内容灵动弹出入场修饰符：
+ * 【阶段延迟修复】：将 `progress.value` 严格移入 `graphicsLayer` 闭包内部读取，彻底消除入场期间的逐帧重组。
+ */
 fun Modifier.conceptSheetSpringEntrance(): Modifier = composed {
     val progress = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
         progress.animateTo(
             targetValue = 1f,
-            animationSpec = spring(
-                dampingRatio = 0.76f,
-                stiffness = Spring.StiffnessMediumLow
-            )
+            animationSpec = ConceptMotion.spatialSheetSpring()
         )
     }
-    val p = progress.value
     this.graphicsLayer {
+        val p = progress.value
         val s = 0.95f + 0.05f * p
         scaleX = s
         scaleY = s
-        translationY = (1f - p) * 38f
+        translationY = (1f - p) * 42f * density
         alpha = p.coerceIn(0f, 1f)
         transformOrigin = TransformOrigin(0.5f, 0.92f)
     }
@@ -463,10 +571,7 @@ fun Modifier.horizontalCategorySwipe(
                 scope.launch {
                     dragFeedbackX.animateTo(
                         targetValue = 0f,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessMedium
-                        )
+                        animationSpec = ConceptMotion.gentleBounceSpring()
                     )
                 }
             }
@@ -493,11 +598,11 @@ fun Modifier.horizontalCategorySwipe(
                     val resistance = when {
                         totalDx < 0f && !canGoNext -> 0.08f
                         totalDx > 0f && !canGoPrev -> 0.08f
-                        else -> 0.24f
+                        else -> 0.26f
                     }
                     scope.launch {
                         dragFeedbackX.snapTo(
-                            (dragFeedbackX.value + dragAmount * resistance).coerceIn(-34f, 34f)
+                            (dragFeedbackX.value + dragAmount * resistance).coerceIn(-40f, 40f)
                         )
                     }
                     if (totalDx <= -swipeThresholdPx) {
@@ -537,10 +642,7 @@ data class ConceptCategoryTabItem(
 )
 
 /**
- * 丝滑流体分类标题栏（支持左右滑动动画 + 多彩横条渐变过渡 + 120fps 零重排 GPU 缩放）：
- * - 单色模式（如「新歌速递」「歌单内排序」所有分类同色）：底部彩色横条在左右滑动时保持纯净单色并带水滴弹性拉伸；
- * - 多色模式（如「巅峰排行榜」「我的页」「搜索页」「歌手页」「电台页」各分类不同颜色）：
- *   底部横条在左右移动时自动呈现平滑双色水平渐变过渡（起始分类色 -> 目标分类色流光渐变）。
+ * 丝滑流体分类标题栏（支持左右滑动动画 + 多彩横条渐变过渡 + 120fps 零重排 GPU 缩放）
  */
 @Composable
 fun ConceptSlidingCategoryTabs(
@@ -572,12 +674,9 @@ fun ConceptSlidingCategoryTabs(
     }
 
     // 丝滑弹簧驱动的浮点索引，实现横条左右连续滑动与水滴拉伸
-    val animatedIndex by animateFloatAsState(
+    val animatedIndexState = animateFloatAsState(
         targetValue = selectedIndex.toFloat(),
-        animationSpec = spring(
-            dampingRatio = 0.78f,
-            stiffness = Spring.StiffnessMediumLow
-        ),
+        animationSpec = ConceptMotion.expressiveSpring(),
         label = "categoryTabSlideIndex"
     )
 
@@ -621,7 +720,7 @@ fun ConceptSlidingCategoryTabs(
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f)
                         },
-                        animationSpec = tween(durationMillis = 220),
+                        animationSpec = tween(durationMillis = 220, easing = ConceptMotion.EmphasizedDecelerate),
                         label = "tabTextColor_$index"
                     )
                     val countColor by animateColorAsState(
@@ -630,15 +729,12 @@ fun ConceptSlidingCategoryTabs(
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.58f)
                         },
-                        animationSpec = tween(durationMillis = 220),
+                        animationSpec = tween(durationMillis = 220, easing = ConceptMotion.EmphasizedDecelerate),
                         label = "tabCountColor_$index"
                     )
-                    val textScale by animateFloatAsState(
+                    val textScaleState = animateFloatAsState(
                         targetValue = if (isSelected) 1.06f else 1.0f,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessMediumLow
-                        ),
+                        animationSpec = ConceptMotion.expressiveSpring(),
                         label = "tabTextScale_$index"
                     )
 
@@ -662,8 +758,9 @@ fun ConceptSlidingCategoryTabs(
                         Row(
                             verticalAlignment = Alignment.Bottom,
                             modifier = Modifier.graphicsLayer {
-                                scaleX = textScale
-                                scaleY = textScale
+                                val s = textScaleState.value
+                                scaleX = s
+                                scaleY = s
                                 transformOrigin = TransformOrigin(0.5f, 0.85f)
                             }
                         ) {
@@ -703,6 +800,7 @@ fun ConceptSlidingCategoryTabs(
             ) {
                 val _ver = layoutVersion // 订阅坐标测量更新
                 if (tabs.isEmpty()) return@Canvas
+                val animatedIndex = animatedIndexState.value
                 val clamped = animatedIndex.coerceIn(0f, tabs.lastIndex.toFloat())
                 val lowerIdx = clamped.toInt().coerceIn(0, tabs.lastIndex)
                 val upperIdx = (lowerIdx + 1).coerceIn(0, tabs.lastIndex)
@@ -790,7 +888,7 @@ fun ConceptFluidRefreshIcon(
             }
         }
     }
-    val animatedSpin by animateFloatAsState(
+    val animatedSpinState = animateFloatAsState(
         targetValue = spinTurns * 360f + rotationDegrees,
         animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing),
         label = "conceptFluidRefreshSpin"
@@ -806,7 +904,7 @@ fun ConceptFluidRefreshIcon(
         val radius = arcSize.width / 2f
         val center = Offset(w / 2f, h / 2f)
 
-        rotate(degrees = animatedSpin, pivot = center) {
+        rotate(degrees = animatedSpinState.value, pivot = center) {
             // 上半圆润流线弧 (22° -> 158°)
             drawArc(
                 color = tint,

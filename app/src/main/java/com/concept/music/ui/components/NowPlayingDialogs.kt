@@ -69,11 +69,12 @@ import coil.compose.AsyncImage
 import com.concept.music.data.model.AudioQuality
 import com.concept.music.data.model.Song
 import com.concept.music.service.SystemLyricBridge
+import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
+import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
-import com.concept.music.ui.theme.conceptSheetSpringEntrance
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.CoverStyle
@@ -120,8 +121,6 @@ internal fun LyricSettingsDialog(
     onSetKeepScreenOn: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
-    BackHandler(onBack = onDismiss)
-
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -144,28 +143,13 @@ internal fun LyricSettingsDialog(
     } else {
         RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
     }
-    val sheetDragScope = rememberCoroutineScope()
-    val panelDragOffsetY = remember { Animatable(0f) }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .zIndex(85f),
-        contentAlignment = if (isLandscape) Alignment.Center else Alignment.BottomCenter
+    ConceptAnimatedOverlaySheet(
+        onDismiss = onDismiss,
+        isLandscape = isLandscape,
+        dismissDragThresholdPx = 110f
     ) {
-        // 全屏沉浸式遮罩（完整覆盖横竖屏刘海区与系统栏区域，绝无右侧未渲染留白）
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = if (isLandscape) 0.56f else 0.50f))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss
-                )
-        )
-
-        // 现代玻璃拟态主窗口
+        // 现代玻璃拟态主窗口（入退场弹簧与遮罩渐隐由 ConceptAnimatedOverlaySheet 统一在 Draw 阶段驱动）
         Box(
             modifier = Modifier
                 .then(
@@ -179,14 +163,6 @@ internal fun LyricSettingsDialog(
                         Modifier.fillMaxWidth()
                     }
                 )
-                .graphicsLayer {
-                    val dragY = panelDragOffsetY.value.coerceAtLeast(0f)
-                    translationY = dragY
-                    val s = (1f - (dragY / 2800f)).coerceIn(0.95f, 1f)
-                    scaleX = s
-                    scaleY = s
-                }
-                .conceptSheetSpringEntrance()
                 .shadow(elevation = 28.dp, shape = panelShape)
                 .clip(panelShape)
                 .background(
@@ -225,52 +201,13 @@ internal fun LyricSettingsDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // 顶部一体化手势指示横条（置于同一渐变容器内，无任何分层割裂，支持跟手平滑下滑关闭与松手弹性回弹）
+                    // 顶部一体化手势指示横条（支持跟手平滑下滑关闭与松手弹性回弹）
                     if (!isLandscape) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 2.dp, bottom = 2.dp)
-                                .pointerInput(Unit) {
-                                    detectVerticalDragGestures(
-                                        onVerticalDrag = { change, dragAmount ->
-                                            if (dragAmount > 0f || panelDragOffsetY.value > 0f) {
-                                                change.consume()
-                                                sheetDragScope.launch {
-                                                    panelDragOffsetY.snapTo(
-                                                        (panelDragOffsetY.value + dragAmount * 0.90f).coerceAtLeast(0f)
-                                                    )
-                                                }
-                                            }
-                                        },
-                                        onDragCancel = {
-                                            sheetDragScope.launch {
-                                                panelDragOffsetY.animateTo(
-                                                    targetValue = 0f,
-                                                    animationSpec = spring(
-                                                        dampingRatio = 0.78f,
-                                                        stiffness = Spring.StiffnessMediumLow
-                                                    )
-                                                )
-                                            }
-                                        },
-                                        onDragEnd = {
-                                            if (panelDragOffsetY.value > 110f) {
-                                                onDismiss()
-                                            } else {
-                                                sheetDragScope.launch {
-                                                    panelDragOffsetY.animateTo(
-                                                        targetValue = 0f,
-                                                        animationSpec = spring(
-                                                            dampingRatio = 0.78f,
-                                                            stiffness = Spring.StiffnessMediumLow
-                                                        )
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    )
-                                },
+                                .sheetVerticalDragGesture(),
                             contentAlignment = Alignment.Center
                         ) {
                             Box(
@@ -369,7 +306,7 @@ internal fun LyricSettingsDialog(
                                 color = glassPillBg,
                                 modifier = Modifier
                                     .size(30.dp)
-                                    .softClickable(onClick = onDismiss)
+                                    .softClickable(onClick = requestDismiss)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -1001,9 +938,7 @@ fun QueueBottomSheet(
     onReorderQueueByMood: (String) -> String = { "" },
     onMoveQueueItem: (Int, Int) -> Unit = { _, _ -> }
 ) {
-    BackHandler {
-        onDismiss()
-    }
+
 
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
@@ -1156,27 +1091,12 @@ fun QueueBottomSheet(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .zIndex(85f),
-        contentAlignment = if (isLandscape) Alignment.Center else Alignment.BottomCenter
+    ConceptAnimatedOverlaySheet(
+        onDismiss = onDismiss,
+        isLandscape = isLandscape,
+        dismissDragThresholdPx = 110f
     ) {
-        // 全屏沉浸式遮罩（横竖屏无死角覆盖，消除右侧未渲染区域）
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = if (isLandscape) 0.56f else 0.50f))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss
-                )
-        )
-
-        // 一体化连续渐变玻璃容器（包含顶部横线与下方全部内容，绝无颜色分层）
-        val queueSheetDragScope = rememberCoroutineScope()
-        val queuePanelDragOffsetY = remember { Animatable(0f) }
+        // 一体化连续渐变玻璃容器（入退场弹簧与遮罩渐隐由 ConceptAnimatedOverlaySheet 统一在 Draw 阶段驱动）
         Box(
             modifier = Modifier
                 .then(
@@ -1190,14 +1110,6 @@ fun QueueBottomSheet(
                         Modifier.fillMaxWidth()
                     }
                 )
-                .graphicsLayer {
-                    val dragY = queuePanelDragOffsetY.value.coerceAtLeast(0f)
-                    translationY = dragY
-                    val s = (1f - (dragY / 2800f)).coerceIn(0.95f, 1f)
-                    scaleX = s
-                    scaleY = s
-                }
-                .conceptSheetSpringEntrance()
                 .shadow(elevation = 28.dp, shape = panelShape)
                 .clip(panelShape)
                 .background(
@@ -1233,52 +1145,13 @@ fun QueueBottomSheet(
                     )
                     .then(if (!isLandscape) Modifier.navigationBarsPadding() else Modifier)
             ) {
-                // 顶部横线指示条（直接绘制在同一渐变容器内部，彻底告别顶部与下方的颜色断层，支持跟手平滑下滑关闭与松手弹性回弹）
+                // 顶部横线指示条（支持跟手平滑下滑关闭与松手弹性回弹）
                 if (!isLandscape) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 2.dp, bottom = 8.dp)
-                            .pointerInput(Unit) {
-                                detectVerticalDragGestures(
-                                    onVerticalDrag = { change, dragAmount ->
-                                        if (dragAmount > 0f || queuePanelDragOffsetY.value > 0f) {
-                                            change.consume()
-                                            queueSheetDragScope.launch {
-                                                queuePanelDragOffsetY.snapTo(
-                                                    (queuePanelDragOffsetY.value + dragAmount * 0.90f).coerceAtLeast(0f)
-                                                )
-                                            }
-                                        }
-                                    },
-                                    onDragCancel = {
-                                        queueSheetDragScope.launch {
-                                            queuePanelDragOffsetY.animateTo(
-                                                targetValue = 0f,
-                                                animationSpec = spring(
-                                                    dampingRatio = 0.78f,
-                                                    stiffness = Spring.StiffnessMediumLow
-                                                )
-                                            )
-                                        }
-                                    },
-                                    onDragEnd = {
-                                        if (queuePanelDragOffsetY.value > 110f) {
-                                            onDismiss()
-                                        } else {
-                                            queueSheetDragScope.launch {
-                                                queuePanelDragOffsetY.animateTo(
-                                                    targetValue = 0f,
-                                                    animationSpec = spring(
-                                                        dampingRatio = 0.78f,
-                                                        stiffness = Spring.StiffnessMediumLow
-                                                    )
-                                                )
-                                            }
-                                        }
-                                    }
-                                )
-                            },
+                            .sheetVerticalDragGesture(),
                         contentAlignment = Alignment.Center
                     ) {
                         Box(
@@ -1406,7 +1279,7 @@ fun QueueBottomSheet(
                                 color = Color.White.copy(alpha = 0.08f),
                                 modifier = Modifier
                                     .size(32.dp)
-                                    .softClickable(onClick = onDismiss)
+                                    .softClickable(onClick = requestDismiss)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -1426,8 +1299,12 @@ fun QueueBottomSheet(
                 AnimatedContent(
                     targetState = showRecentDeckPage,
                     transitionSpec = {
-                        (fadeIn(tween(220)) + scaleIn(initialScale = 0.95f, animationSpec = tween(220)))
-                            .togetherWith(fadeOut(tween(180)) + scaleOut(targetScale = 0.95f, animationSpec = tween(180)))
+                        (fadeIn(tween(240, easing = ConceptMotion.EmphasizedDecelerate)) +
+                            scaleIn(initialScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring()))
+                            .togetherWith(
+                                fadeOut(tween(180, easing = ConceptMotion.EmphasizedAccelerate)) +
+                                    scaleOut(targetScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring())
+                            )
                     },
                     label = "QueueDeckViewSwitch"
                 ) { inRecentDeck ->
@@ -1699,7 +1576,10 @@ fun QueueBottomSheet(
                                                         }
                                                     )
                                                 }
-                                                .clickable(enabled = !isReorderActive) { onSongClick(item) }
+                                                .clickable(enabled = !isReorderActive) {
+                                                    onSongClick(item)
+                                                    requestDismiss()
+                                                }
                                         ) {
                                             Row(
                                                 modifier = Modifier
@@ -2045,7 +1925,12 @@ private fun RecentQueuesStaggeredDeckPage(
         animatedFocusIndex.snapTo(clamped)
     }
 
-    val activeFocusInt = animatedFocusIndex.value.roundToInt().coerceIn(0, recentQueues.lastIndex)
+    // 使用 derivedStateOf 隔离焦点索引整数态：横滑连续拖拽期间绝不触发全弹窗重组，仅在跨卡片边界时更新边框高亮
+    val activeFocusInt by remember(recentQueues.size) {
+        derivedStateOf {
+            animatedFocusIndex.value.roundToInt().coerceIn(0, (recentQueues.size - 1).coerceAtLeast(0))
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -2074,58 +1959,56 @@ private fun RecentQueuesStaggeredDeckPage(
                             scope.launch {
                                 animatedFocusIndex.animateTo(
                                     targetValue = target.toFloat(),
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioLowBouncy,
-                                        stiffness = Spring.StiffnessMediumLow
-                                    )
+                                    animationSpec = ConceptMotion.expressiveSpring()
                                 )
                             }
                         },
                         onDragCancel = {
                             val target = animatedFocusIndex.value.roundToInt()
                                 .coerceIn(0, recentQueues.lastIndex)
-                            scope.launch { animatedFocusIndex.animateTo(target.toFloat()) }
+                            scope.launch {
+                                animatedFocusIndex.animateTo(
+                                    targetValue = target.toFloat(),
+                                    animationSpec = ConceptMotion.gentleBounceSpring()
+                                )
+                            }
                         }
                     )
                 },
             contentAlignment = Alignment.Center
         ) {
             recentQueues.forEachIndexed { idx, savedQueue ->
-                val relativeOffset = idx - animatedFocusIndex.value
-                val absOffset = abs(relativeOffset)
                 val isFocused = idx == activeFocusInt
+                val staticDistance = abs(idx - activeFocusInt)
                 val isCurrentPlayingQueue = savedQueue.id == activeQueueId || (activeQueueId.isBlank() && idx == 0)
                 val coverSong = savedQueue.songs.getOrNull(savedQueue.currentIndex) ?: savedQueue.songs.firstOrNull()
-
-                // 错位立体几何变换参数
-                val cardScale = (1f - absOffset * 0.11f).coerceIn(0.72f, 1f)
-                val cardAlpha = (1f - absOffset * 0.24f).coerceIn(0.35f, 1f)
-                val transX = relativeOffset * 58f * density
-                val transY = absOffset * 13f * density
-                val rotY = (-relativeOffset * 12f).coerceIn(-28f, 28f)
-                val rotZ = (relativeOffset * 2.4f).coerceIn(-7f, 7f)
+                val cardShape = RoundedCornerShape(22.dp)
 
                 Surface(
-                    shape = RoundedCornerShape(22.dp),
+                    shape = cardShape,
                     color = cardBg,
                     modifier = Modifier
-                        .zIndex(10f - absOffset)
+                        .zIndex(10f - staticDistance)
                         .width(if (isLandscape) 330.dp else 288.dp)
                         .fillMaxHeight(0.94f)
                         .graphicsLayer {
+                            // 严格在 Draw/Layer 阶段读取 animatedFocusIndex.value 并驱动 3D 变换与阴影，拖拽全程 0 次重组
+                            val relativeOffset = idx - animatedFocusIndex.value
+                            val absOffset = abs(relativeOffset)
+                            val cardScale = (1f - absOffset * 0.11f).coerceIn(0.72f, 1f)
+                            val cardAlpha = (1f - absOffset * 0.24f).coerceIn(0.35f, 1f)
                             cameraDistance = 16f * density
-                            translationX = transX
-                            translationY = transY
+                            translationX = relativeOffset * 58f * density
+                            translationY = absOffset * 13f * density
                             scaleX = cardScale
                             scaleY = cardScale
-                            rotationY = rotY
-                            rotationZ = rotZ
+                            rotationY = (-relativeOffset * 12f).coerceIn(-28f, 28f)
+                            rotationZ = (relativeOffset * 2.4f).coerceIn(-7f, 7f)
                             alpha = cardAlpha
+                            shadowElevation = (20f - absOffset * 5f).coerceAtLeast(4f) * density
+                            shape = cardShape
+                            clip = true
                         }
-                        .shadow(
-                            elevation = (20f - absOffset * 5f).coerceAtLeast(4f).dp,
-                            shape = RoundedCornerShape(22.dp)
-                        )
                         .border(
                             width = if (isFocused) 1.5.dp else 0.8.dp,
                             brush = Brush.linearGradient(
@@ -2135,14 +2018,14 @@ private fun RecentQueuesStaggeredDeckPage(
                                     listOf(textPrimary.copy(alpha = 0.14f), Color.Transparent)
                                 }
                             ),
-                            shape = RoundedCornerShape(22.dp)
+                            shape = cardShape
                         )
-                        .softCardClickable(shape = RoundedCornerShape(22.dp)) {
+                        .softCardClickable(shape = cardShape) {
                             if (!isFocused) {
                                 scope.launch {
                                     animatedFocusIndex.animateTo(
                                         idx.toFloat(),
-                                        spring(stiffness = Spring.StiffnessMediumLow)
+                                        ConceptMotion.expressiveSpring()
                                     )
                                 }
                             } else {
@@ -2361,6 +2244,15 @@ internal fun PlayerMoreControlSheet(
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val coroutineScope = rememberCoroutineScope()
+    val dismissThen: (() -> Unit) -> Unit = remember(coroutineScope, sheetState) {
+        { actionAfterHide ->
+            coroutineScope.launch {
+                runCatching { sheetState.hide() }
+                actionAfterHide()
+            }
+        }
+    }
 
     val sheetBg = conceptSheetContainerColor()
     val tileBg = conceptElevatedSurfaceColor()
@@ -2389,7 +2281,6 @@ internal fun PlayerMoreControlSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .conceptSheetSpringEntrance()
                     .padding(horizontal = 18.dp, vertical = 4.dp)
                     .navigationBarsPadding()
                     .verticalScroll(rememberScrollState()),
@@ -2452,7 +2343,7 @@ internal fun PlayerMoreControlSheet(
                                 color = accentColor.copy(alpha = 0.14f),
                                 modifier = Modifier.softCardClickable(
                                     shape = RoundedCornerShape(10.dp),
-                                    onClick = onOpenSongDetail
+                                    onClick = { dismissThen(onOpenSongDetail) }
                                 )
                             ) {
                                 Row(
@@ -2488,7 +2379,7 @@ internal fun PlayerMoreControlSheet(
                                     .weight(1f)
                                     .softCardClickable(
                                         shape = RoundedCornerShape(14.dp),
-                                        onClick = onOpenArtist
+                                        onClick = { dismissThen(onOpenArtist) }
                                     )
                             ) {
                                 Row(
@@ -2544,7 +2435,7 @@ internal fun PlayerMoreControlSheet(
                                     .weight(1f)
                                     .softCardClickable(
                                         shape = RoundedCornerShape(14.dp),
-                                        onClick = onOpenAlbum
+                                        onClick = { dismissThen(onOpenAlbum) }
                                     )
                             ) {
                                 Row(
@@ -2632,7 +2523,7 @@ internal fun PlayerMoreControlSheet(
                             subtitle = currentQualityLabel,
                             active = true,
                             activeColor = accentColor,
-                            onClick = onOpenQualitySelect,
+                            onClick = { dismissThen(onOpenQualitySelect) },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -2647,7 +2538,7 @@ internal fun PlayerMoreControlSheet(
                             subtitle = "${String.format(Locale.getDefault(), "%.2f", playbackSpeed)}x 播放",
                             active = playbackSpeed != 1.0f,
                             activeColor = accentColor,
-                            onClick = onOpenSpeedPitch,
+                            onClick = { dismissThen(onOpenSpeedPitch) },
                             modifier = Modifier.weight(1f)
                         )
                         val sleepDesc = when {
@@ -2662,7 +2553,7 @@ internal fun PlayerMoreControlSheet(
                             subtitle = sleepDesc,
                             active = sleepTimerRemainingSec > 0L || sleepPendingStopAtTrackEnd,
                             activeColor = accentColor,
-                            onClick = onOpenSleepTimer,
+                            onClick = { dismissThen(onOpenSleepTimer) },
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -2911,62 +2802,112 @@ internal fun QualitySelectDialog(
 ) {
     val context = LocalContext.current
     val validQualities = availableQualities.ifEmpty { listOf(AudioQuality.STANDARD) }
+    val baseSheetBg = conceptSheetContainerColor()
+    val textPrimary = MaterialTheme.colorScheme.onSurface
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val panelShape = RoundedCornerShape(26.dp)
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text("选择音质档位", fontWeight = FontWeight.Bold)
-        },
-        text = {
-            Column {
-                validQualities.forEach { quality ->
-                    val desc = when (quality) {
-                        AudioQuality.HI_RES -> "Hi-Res (24bit 高解析度无损)"
-                        AudioQuality.LOSSLESS -> "SQ 无损 (16bit FLAC)"
-                        AudioQuality.HIGH -> "HQ 高品 (320kbps)"
-                        AudioQuality.STANDARD -> "标准 (128kbps)"
-                    }
-                    val isSelected = currentQualityLabel.contains(quality.label.take(2))
-                    val onSelect = {
-                        onSelectQuality(quality)
-                        Toast.makeText(context, "已切换音质：${quality.label}", Toast.LENGTH_SHORT).show()
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .softClickable { onSelect() }
-                            .padding(vertical = 10.dp, horizontal = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = isSelected,
-                            onClick = { onSelect() }
-                        )
+    ConceptAnimatedOverlaySheet(
+        onDismiss = onDismiss,
+        isLandscape = true,
+        scrimAlpha = 0.54f
+    ) {
+        Surface(
+            shape = panelShape,
+            color = baseSheetBg.copy(alpha = 0.98f),
+            contentColor = textPrimary,
+            shadowElevation = 24.dp,
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 400.dp)
+                .fillMaxWidth()
+                .border(
+                    width = 1.dp,
+                    color = ConceptPrimary.copy(alpha = 0.28f),
+                    shape = panelShape
+                )
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.HighQuality, contentDescription = null, tint = ConceptPrimary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = quality.label,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isSelected) ConceptPrimary else MaterialTheme.colorScheme.onSurface
-                                )
+                        Text("选择音质档位", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = textPrimary)
+                    }
+                    IconButton(onClick = requestDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Rounded.Close, contentDescription = "关闭", tint = textSecondary, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    validQualities.forEach { quality ->
+                        val desc = when (quality) {
+                            AudioQuality.HI_RES -> "Hi-Res (24bit 高解析度无损)"
+                            AudioQuality.LOSSLESS -> "SQ 无损 (16bit FLAC)"
+                            AudioQuality.HIGH -> "HQ 高品 (320kbps)"
+                            AudioQuality.STANDARD -> "标准 (128kbps)"
+                        }
+                        val isSelected = currentQualityLabel.contains(quality.label.take(2))
+                        val onSelect = {
+                            onSelectQuality(quality)
+                            Toast.makeText(context, "已切换音质：${quality.label}", Toast.LENGTH_SHORT).show()
+                            requestDismiss()
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (isSelected) ConceptPrimary.copy(alpha = 0.14f) else Color.Transparent)
+                                .softClickable { onSelect() }
+                                .padding(vertical = 8.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = { onSelect() }
                             )
-                            Text(
-                                text = desc,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = quality.label,
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isSelected) ConceptPrimary else textPrimary
+                                    )
                                 )
-                            )
+                                Text(
+                                    text = desc,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = textSecondary,
+                                        fontSize = 11.sp
+                                    )
+                                )
+                            }
                         }
                     }
                 }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = requestDismiss) { Text("取消") }
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
         }
-    )
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -2984,18 +2925,55 @@ internal fun SleepTimerDialog(
     var stopAfterSong by remember(stopAfterCurrentSong) { mutableStateOf(stopAfterCurrentSong) }
     val presets = listOf(15, 30, 45, 60, 90)
     val isTimerRunning = remainingSec > 0L || pendingStopAtTrackEnd
+    val baseSheetBg = conceptSheetContainerColor()
+    val textPrimary = MaterialTheme.colorScheme.onSurface
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val panelShape = RoundedCornerShape(26.dp)
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Bedtime, contentDescription = null, tint = ConceptPrimary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("睡眠定时", fontWeight = FontWeight.Bold)
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    ConceptAnimatedOverlaySheet(
+        onDismiss = onDismiss,
+        isLandscape = true,
+        scrimAlpha = 0.54f
+    ) {
+        Surface(
+            shape = panelShape,
+            color = baseSheetBg.copy(alpha = 0.98f),
+            contentColor = textPrimary,
+            shadowElevation = 24.dp,
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 420.dp)
+                .fillMaxWidth()
+                .border(
+                    width = 1.dp,
+                    color = ConceptPrimary.copy(alpha = 0.28f),
+                    shape = panelShape
+                )
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Bedtime, contentDescription = null, tint = ConceptPrimary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("睡眠定时", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = textPrimary)
+                    }
+                    IconButton(onClick = requestDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Rounded.Close, contentDescription = "关闭", tint = textSecondary, modifier = Modifier.size(18.dp))
+                    }
+                }
+
                 if (isTimerRunning) {
                     Surface(
                         color = ConceptPrimary.copy(alpha = 0.14f),
@@ -3033,6 +3011,7 @@ internal fun SleepTimerDialog(
                                     "已设置 $mins 分钟后停止",
                                     Toast.LENGTH_SHORT
                                 ).show()
+                                requestDismiss()
                             },
                             label = { Text("${mins}分钟") }
                         )
@@ -3042,6 +3021,7 @@ internal fun SleepTimerDialog(
                         onClick = {
                             onSetTimer(0, true)
                             Toast.makeText(context, "将在当前歌曲播完后停止", Toast.LENGTH_SHORT).show()
+                            requestDismiss()
                         },
                         label = { Text("播完本首") }
                     )
@@ -3057,7 +3037,7 @@ internal fun SleepTimerDialog(
                         Text(
                             text = "到点后等待当前歌曲自然结束",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = textSecondary,
                             fontSize = 11.sp
                         )
                     }
@@ -3070,24 +3050,29 @@ internal fun SleepTimerDialog(
                         colors = SwitchDefaults.colors(checkedThumbColor = ConceptPrimary)
                     )
                 }
-            }
-        },
-        dismissButton = {
-            if (isTimerRunning) {
-                TextButton(
-                    onClick = {
-                        onCancelTimer()
-                        Toast.makeText(context, "已关闭睡眠定时", Toast.LENGTH_SHORT).show()
-                    }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("关闭定时", color = MaterialTheme.colorScheme.error)
+                    if (isTimerRunning) {
+                        TextButton(
+                            onClick = {
+                                onCancelTimer()
+                                Toast.makeText(context, "已关闭睡眠定时", Toast.LENGTH_SHORT).show()
+                                requestDismiss()
+                            }
+                        ) {
+                            Text("关闭定时", color = MaterialTheme.colorScheme.error)
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    TextButton(onClick = requestDismiss) { Text("完成") }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("完成") }
         }
-    )
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -3103,18 +3088,55 @@ internal fun SpeedPitchDialog(
     onDismiss: () -> Unit
 ) {
     val speedPresets = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+    val baseSheetBg = conceptSheetContainerColor()
+    val textPrimary = MaterialTheme.colorScheme.onSurface
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val panelShape = RoundedCornerShape(26.dp)
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Speed, contentDescription = null, tint = ConceptPrimary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("倍速与变调", fontWeight = FontWeight.Bold)
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    ConceptAnimatedOverlaySheet(
+        onDismiss = onDismiss,
+        isLandscape = true,
+        scrimAlpha = 0.54f
+    ) {
+        Surface(
+            shape = panelShape,
+            color = baseSheetBg.copy(alpha = 0.98f),
+            contentColor = textPrimary,
+            shadowElevation = 24.dp,
+            modifier = Modifier
+                .padding(horizontal = 24.dp)
+                .widthIn(max = 420.dp)
+                .fillMaxWidth()
+                .border(
+                    width = 1.dp,
+                    color = ConceptPrimary.copy(alpha = 0.28f),
+                    shape = panelShape
+                )
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Speed, contentDescription = null, tint = ConceptPrimary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("倍速与变调", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = textPrimary)
+                    }
+                    IconButton(onClick = requestDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Rounded.Close, contentDescription = "关闭", tint = textSecondary, modifier = Modifier.size(18.dp))
+                    }
+                }
+
                 Column {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -3182,7 +3204,7 @@ internal fun SpeedPitchDialog(
                         Text(
                             "音调随倍速同步升降，还原黑胶变速听感",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = textSecondary,
                             fontSize = 11.sp
                         )
                     }
@@ -3192,17 +3214,21 @@ internal fun SpeedPitchDialog(
                         colors = SwitchDefaults.colors(checkedThumbColor = ConceptPrimary)
                     )
                 }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onReset) {
+                        Text("恢复默认")
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    TextButton(onClick = requestDismiss) { Text("完成") }
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onReset) {
-                Text("恢复默认")
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("完成") }
         }
-    )
+    }
 }
 
 private fun formatDialogDuration(ms: Long): String {

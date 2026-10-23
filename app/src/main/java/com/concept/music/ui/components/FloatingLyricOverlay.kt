@@ -2,15 +2,13 @@ package com.concept.music.ui.components
 
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -52,14 +50,16 @@ import com.concept.music.data.model.Song
 import com.concept.music.service.DesktopLyricColorScheme
 import com.concept.music.service.DesktopLyricLineMode
 import com.concept.music.service.SystemLyricBridge
+import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.softClickable
+import kotlinx.coroutines.isActive
 
 /**
  * 全新重构「桌面歌词 (Desktop Lyrics)」双引擎宿主组件：
  * 1. 自动向 `SystemLyricBridge` 同步实时毫秒级进度、歌词与控播回调，驱动 Android 系统级全局悬浮窗 (`WindowManager`)；
- * 2. 若已授予「显示在其他应用上层」权限，直接由系统级 `NativeDesktopLyricView` 跨应用全局渲染（切到桌面/微信/游戏依然常驻），本组件自动隐退防重叠；
- * 3. 若暂未授予系统悬浮窗权限，则以「零重排 GPU 图层位移 (`graphicsLayer`) + 自适应紧凑窗口尺寸 + 穿透式防误触锁」渲染应用内桌面歌词，并提供一键授权升级入口。
+ * 2. 若已授予「显示在其他应用上层」权限，直接由系统级 `NativeDesktopLyricView` 跨应用全局渲染，本组件自动隐退防重叠；
+ * 3. 引入 `positionProvider: () -> Long` 局部帧采样，仅在激活行内部更新逐字染色，外层悬浮窗容器 0 次重组。
  */
 @Composable
 fun FloatingLyricOverlay(
@@ -67,6 +67,7 @@ fun FloatingLyricOverlay(
     lyricData: LyricData,
     currentLyricIndex: Int,
     currentPositionMs: Long,
+    positionProvider: () -> Long = { currentPositionMs },
     isPlaying: Boolean = true,
     onTogglePlay: () -> Unit = {},
     onPrevious: () -> Unit = {},
@@ -83,7 +84,7 @@ fun FloatingLyricOverlay(
             song = song,
             lyricData = lyricData,
             currentLyricIndex = currentLyricIndex,
-            currentPositionMs = currentPositionMs,
+            currentPositionMs = positionProvider(),
             isPlaying = isPlaying,
             onTogglePlay = onTogglePlay,
             onPrevious = onPrevious,
@@ -147,13 +148,13 @@ fun FloatingLyricOverlay(
     AnimatedVisibility(
         visible = state.floatingCapsuleEnabled && song != null,
         enter = scaleIn(
-            initialScale = 0.92f,
-            animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMedium)
-        ) + fadeIn(tween(150)),
+            initialScale = 0.90f,
+            animationSpec = ConceptMotion.expressiveSpring()
+        ) + fadeIn(tween(180, easing = ConceptMotion.EmphasizedDecelerate)),
         exit = scaleOut(
-            targetScale = 0.92f,
-            animationSpec = tween(140)
-        ) + fadeOut(tween(130)),
+            targetScale = 0.90f,
+            animationSpec = ConceptMotion.spatialSheetSpring()
+        ) + fadeOut(tween(150, easing = ConceptMotion.EmphasizedAccelerate)),
         modifier = modifier
     ) {
         val lines = lyricData.lines
@@ -192,7 +193,6 @@ fun FloatingLyricOverlay(
                                 }
                             }
                         } else {
-                            // 锁定状态下主歌词区不拦截触摸事件，实现真正的防误触点击穿透
                             Modifier
                         }
                     )
@@ -227,11 +227,12 @@ fun FloatingLyricOverlay(
                     // 1. 顶部交互控制栏（未锁定且点击桌面歌词后展开）
                     AnimatedVisibility(
                         visible = showHudControls && !state.floatingCapsuleLocked,
-                        enter = expandVertically() + fadeIn(tween(140)),
-                        exit = shrinkVertically() + fadeOut(tween(110))
+                        enter = expandVertically(animationSpec = ConceptMotion.spatialSheetSpring()) +
+                            fadeIn(tween(180, easing = ConceptMotion.EmphasizedDecelerate)),
+                        exit = shrinkVertically(animationSpec = ConceptMotion.spatialSheetSpring()) +
+                            fadeOut(tween(140, easing = ConceptMotion.EmphasizedAccelerate))
                     ) {
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            // 若尚未开启系统全局悬浮窗权限，提供一键升级提示条
                             if (!SystemLyricBridge.canDrawSystemOverlays(context)) {
                                 Surface(
                                     shape = RoundedCornerShape(10.dp),
@@ -376,7 +377,7 @@ fun FloatingLyricOverlay(
                         }
                     }
 
-                    // 2. 桌面歌词实时逐字流光主显示区
+                    // 2. 桌面歌词实时逐字流光主显示区（局部帧采样，不引起外层容器重组）
                     val textAlign = if (state.desktopAlignment == 1) TextAlign.Start else TextAlign.Center
                     val colAlign = if (state.desktopAlignment == 1) Alignment.Start else Alignment.CenterHorizontally
 
@@ -389,7 +390,9 @@ fun FloatingLyricOverlay(
                                 DesktopKrcKaraokeLineText(
                                     line = currentLine,
                                     fallbackText = "${song?.title.orEmpty()} - ${song?.artist.orEmpty()}",
-                                    currentPositionMs = currentPositionMs,
+                                    isActiveLine = true,
+                                    isPlaying = isPlaying,
+                                    positionProvider = positionProvider,
                                     fontSizeSp = state.desktopFontSize,
                                     playedStartColor = playedStartColor,
                                     playedEndColor = playedEndColor,
@@ -407,7 +410,9 @@ fun FloatingLyricOverlay(
                                 DesktopKrcKaraokeLineText(
                                     line = topLine,
                                     fallbackText = "${song?.title.orEmpty()} - ${song?.artist.orEmpty()}",
-                                    currentPositionMs = if (isEvenLine) currentPositionMs else -1L,
+                                    isActiveLine = isEvenLine,
+                                    isPlaying = isPlaying,
+                                    positionProvider = positionProvider,
                                     fontSizeSp = if (isEvenLine) state.desktopFontSize else (state.desktopFontSize - 2.5f).coerceAtLeast(12f),
                                     playedStartColor = playedStartColor,
                                     playedEndColor = playedEndColor,
@@ -419,7 +424,9 @@ fun FloatingLyricOverlay(
                                 DesktopKrcKaraokeLineText(
                                     line = bottomLine,
                                     fallbackText = "♪ • • •",
-                                    currentPositionMs = if (!isEvenLine) currentPositionMs else -1L,
+                                    isActiveLine = !isEvenLine,
+                                    isPlaying = isPlaying,
+                                    positionProvider = positionProvider,
                                     fontSizeSp = if (!isEvenLine) state.desktopFontSize else (state.desktopFontSize - 2.5f).coerceAtLeast(12f),
                                     playedStartColor = playedStartColor,
                                     playedEndColor = playedEndColor,
@@ -433,7 +440,9 @@ fun FloatingLyricOverlay(
                                 DesktopKrcKaraokeLineText(
                                     line = currentLine,
                                     fallbackText = "${song?.title.orEmpty()} - ${song?.artist.orEmpty()}",
-                                    currentPositionMs = currentPositionMs,
+                                    isActiveLine = true,
+                                    isPlaying = isPlaying,
+                                    positionProvider = positionProvider,
                                     fontSizeSp = state.desktopFontSize,
                                     playedStartColor = playedStartColor,
                                     playedEndColor = playedEndColor,
@@ -468,11 +477,13 @@ fun FloatingLyricOverlay(
                         }
                     }
 
-                    // 3. 展开式桌面歌词个性定制面板（配色、行模式、字号、窗口宽度、底框透明度）
+                    // 3. 展开式桌面歌词个性定制面板
                     AnimatedVisibility(
                         visible = showHudControls && showStyleSubPanel && !state.floatingCapsuleLocked,
-                        enter = expandVertically() + fadeIn(tween(140)),
-                        exit = shrinkVertically() + fadeOut(tween(110))
+                        enter = expandVertically(animationSpec = ConceptMotion.spatialSheetSpring()) +
+                            fadeIn(tween(180, easing = ConceptMotion.EmphasizedDecelerate)),
+                        exit = shrinkVertically(animationSpec = ConceptMotion.spatialSheetSpring()) +
+                            fadeOut(tween(140, easing = ConceptMotion.EmphasizedAccelerate))
                     ) {
                         Column(
                             modifier = Modifier
@@ -682,7 +693,9 @@ fun FloatingLyricOverlay(
 private fun DesktopKrcKaraokeLineText(
     line: LyricLine?,
     fallbackText: String,
-    currentPositionMs: Long,
+    isActiveLine: Boolean,
+    isPlaying: Boolean,
+    positionProvider: () -> Long,
     fontSizeSp: Float,
     playedStartColor: Color,
     playedEndColor: Color,
@@ -690,6 +703,25 @@ private fun DesktopKrcKaraokeLineText(
     textShadow: Shadow,
     textAlign: TextAlign
 ) {
+    var sampledPosMs by remember(line, isActiveLine) {
+        mutableLongStateOf(if (isActiveLine) positionProvider() else -1L)
+    }
+    LaunchedEffect(line, isActiveLine, isPlaying) {
+        if (isActiveLine && line != null && line.words.isNotEmpty()) {
+            sampledPosMs = positionProvider()
+            if (isPlaying) {
+                while (isActive) {
+                    withFrameMillis {
+                        sampledPosMs = positionProvider()
+                    }
+                }
+            }
+        } else {
+            sampledPosMs = if (isActiveLine) positionProvider() else -1L
+        }
+    }
+
+    val currentPositionMs = if (isActiveLine) sampledPosMs else -1L
     if (line != null && line.words.isNotEmpty() && currentPositionMs >= 0L) {
         val annotated = buildAnnotatedString {
             line.words.forEach { word ->
@@ -751,12 +783,11 @@ private fun DesktopKrcKaraokeLineText(
         )
     } else {
         val display = line?.text?.takeIf { it.isNotBlank() } ?: fallbackText
-        val isActive = currentPositionMs >= 0L
         Text(
             text = display,
             style = MaterialTheme.typography.bodyMedium.copy(
-                color = if (isActive) playedStartColor else unplayedColor,
-                fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.SemiBold,
+                color = if (isActiveLine) playedStartColor else unplayedColor,
+                fontWeight = if (isActiveLine) FontWeight.ExtraBold else FontWeight.SemiBold,
                 fontSize = fontSizeSp.sp,
                 shadow = textShadow
             ),

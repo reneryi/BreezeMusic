@@ -2,6 +2,7 @@ package com.concept.music.ui.viewmodel
 
 import android.app.Application
 import android.content.ComponentName
+import android.os.SystemClock
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -25,7 +26,6 @@ import com.concept.music.service.ConceptMusicWidgetUpdater
 import com.concept.music.service.PlaybackService
 import com.concept.music.service.SystemLyricBridge
 import com.google.common.util.concurrent.ListenableFuture
-import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -85,6 +85,21 @@ data class SavedPlayQueue(
     val songs: List<Song>,
     val currentIndex: Int = 0,
     val updatedAtMs: Long = System.currentTimeMillis()
+)
+
+/**
+ * 独立高频播放进度快照：
+ * 将每 120ms 变化的播放进度与结构化 `PlayerUiState` 彻底解耦，并结合 `sampleElapsedRealtimeMs`
+ * 支持 UI 渲染帧（60/120fps）无锁线性插值采样，斩断播放器全树重组风暴。
+ */
+@Immutable
+data class PlaybackPositionSnapshot(
+    val positionMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val bufferedPositionMs: Long = 0L,
+    val sampleElapsedRealtimeMs: Long = 0L,
+    val isPlaying: Boolean = false,
+    val playbackSpeed: Float = 1.0f
 )
 
 @Immutable
@@ -151,6 +166,50 @@ data class PlayerUiState(
 class MusicPlayerViewModel(application: Application) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(PlayerUiState())
     val uiState = mutableState.asStateFlow()
+
+    private val mutablePositionFlow = MutableStateFlow(PlaybackPositionSnapshot())
+    val playbackPositionFlow = mutablePositionFlow.asStateFlow()
+
+    private fun safeElapsedRealtime(): Long =
+        runCatching { SystemClock.elapsedRealtime() }.getOrDefault(0L)
+
+    private fun updatePositionSnapshot(
+        positionMs: Long,
+        durationMs: Long = mutableState.value.durationMs,
+        bufferedPositionMs: Long = mutablePositionFlow.value.bufferedPositionMs,
+        isPlaying: Boolean = mutableState.value.isPlaying,
+        playbackSpeed: Float = mutableState.value.playbackSpeed
+    ) {
+        mutablePositionFlow.value = PlaybackPositionSnapshot(
+            positionMs = positionMs.coerceAtLeast(0L),
+            durationMs = durationMs.coerceAtLeast(0L),
+            bufferedPositionMs = bufferedPositionMs.coerceAtLeast(0L),
+            sampleElapsedRealtimeMs = safeElapsedRealtime(),
+            isPlaying = isPlaying,
+            playbackSpeed = playbackSpeed
+        )
+    }
+
+    /**
+     * 供进度条 `Canvas` 与激活歌词行在 60/120fps 绘制帧中直接按需无锁采样的平滑进度计算器：
+     * 结合最近一次 ExoPlayer 采样位置与实时单调时钟插值，彻底消除 120ms 阶梯跳动感与全树重组。
+     */
+    fun currentSmoothPositionMs(): Long {
+        val snap = mutablePositionFlow.value
+        val basePos = snap.positionMs.coerceAtLeast(0L)
+        if (!snap.isPlaying || snap.sampleElapsedRealtimeMs <= 0L) {
+            return basePos
+        }
+        val now = safeElapsedRealtime()
+        if (now <= snap.sampleElapsedRealtimeMs) return basePos
+        val elapsed = (now - snap.sampleElapsedRealtimeMs).coerceIn(0L, 360L)
+        val interpolated = basePos + (elapsed * snap.playbackSpeed).toLong()
+        return if (snap.durationMs > 0L) {
+            interpolated.coerceIn(0L, snap.durationMs)
+        } else {
+            interpolated.coerceAtLeast(0L)
+        }
+    }
 
     private val gson = com.concept.music.data.kugou.KugouSigner.gson
     private val prefs by lazy {
@@ -219,7 +278,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             val failedSong = mutableState.value.currentSong
             if (failedSong != null && lastErrorRetrySongId != failedSong.id) {
                 lastErrorRetrySongId = failedSong.id
-                val retryPos = mutableState.value.currentPositionMs
+                val retryPos = currentSmoothPositionMs().takeIf { it > 0L } ?: mutableState.value.currentPositionMs
                 VipManager.music.clearPlaybackCache(failedSong.hash)
                 playSong(
                     song = failedSong.copy(playUrl = ""),
@@ -232,6 +291,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 loading = false,
                 isPlaying = false,
                 error = error.message ?: "播放器解码失败，请稍后重试"
+            )
+            updatePositionSnapshot(
+                positionMs = mutablePositionFlow.value.positionMs,
+                isPlaying = false
             )
         }
     }
@@ -255,6 +318,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     isPlaying = false,
                     sleepPendingStopAtTrackEnd = false
                 )
+                updatePositionSnapshot(positionMs = mutablePositionFlow.value.positionMs, isPlaying = false)
                 return
             }
         }
@@ -294,6 +358,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         val updatedRecent = syncActiveQueueInRecent(updatedQueue, newIdx, mutableState.value.activeQueueId, mutableState.value.recentQueues)
         commentsJob?.cancel()
+        updatePositionSnapshot(
+            positionMs = startPos,
+            durationMs = resolvedSong.durationMs,
+            bufferedPositionMs = 0L,
+            isPlaying = mutableState.value.isPlaying
+        )
         mutableState.value = mutableState.value.copy(
             currentSong = resolvedSong,
             playlistQueue = updatedQueue,
@@ -393,6 +463,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                         recordedMediaId = null
                         songsByMediaId.clear()
                         mutableState.value = PlayerUiState()
+                        mutablePositionFlow.value = PlaybackPositionSnapshot()
                     }
                 }
             }
@@ -504,7 +575,6 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val savedQuality = runCatching {
             AudioQuality.valueOf(prefs.getString("preferred_quality_v2", AudioQuality.HIGH.name) ?: AudioQuality.HIGH.name)
         }.getOrDefault(AudioQuality.HIGH)
-        // 外语翻译与音译注音默认关闭
         val savedShowTrans = prefs.getBoolean("show_translation_v3", false)
         val savedShowPhonetic = prefs.getBoolean("show_phonetic_v3", false)
         val savedFontSize = prefs.getFloat("lyric_font_size_v3", 24f).coerceIn(18f, 34f)
@@ -590,6 +660,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 ?: if (savedQuality in restoredSong.effectiveQualities) savedQuality else restoredSong.highestQuality
         } else savedQuality
 
+        val initialPos = if (restoredSong != null) savedPosMs else 0L
+        val initialDur = restoredSong?.durationMs ?: 0L
+        updatePositionSnapshot(
+            positionMs = initialPos,
+            durationMs = initialDur,
+            bufferedPositionMs = 0L,
+            isPlaying = false
+        )
+
         mutableState.value = mutableState.value.copy(
             coverStyle = savedCover,
             playerBackgroundStyle = savedBgStyle,
@@ -624,8 +703,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             recentQueues = syncedRecent,
             activeQueueId = activeQueueId,
             currentSong = restoredSong,
-            currentPositionMs = if (restoredSong != null) savedPosMs else 0L,
-            durationMs = restoredSong?.durationMs ?: 0L,
+            currentPositionMs = initialPos,
+            durationMs = initialDur,
             songDetail = restoredSong?.let { VipManager.music.songDetail(it) }
         )
 
@@ -643,6 +722,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private fun persistPlaybackStateAsync() {
         val snapshot = mutableState.value
+        val latestPos = mutablePositionFlow.value.positionMs.takeIf { it > 0L } ?: snapshot.currentPositionMs
         persistStateJob?.cancel()
         persistStateJob = viewModelScope.launch(Dispatchers.IO) {
             runCatching {
@@ -685,7 +765,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     .putString("saved_recent_queues_json", recentJson)
                     .putString("saved_active_queue_id", snapshot.activeQueueId)
                     .putInt("saved_current_index", snapshot.currentIndex)
-                    .putLong("saved_position_ms", snapshot.currentPositionMs)
+                    .putLong("saved_position_ms", latestPos)
                     .apply()
             }
         }
@@ -693,9 +773,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private fun persistPositionOnlyAsync() {
         val snapshot = mutableState.value
+        val latestPos = mutablePositionFlow.value.positionMs.takeIf { it > 0L } ?: snapshot.currentPositionMs
         prefs.edit()
             .putInt("saved_current_index", snapshot.currentIndex)
-            .putLong("saved_position_ms", snapshot.currentPositionMs)
+            .putLong("saved_position_ms", latestPos)
             .apply()
     }
 
@@ -729,6 +810,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             existingRecent = mutableState.value.recentQueues
         )
 
+        updatePositionSnapshot(
+            positionMs = seekToPositionMs,
+            durationMs = song.durationMs,
+            bufferedPositionMs = 0L,
+            isPlaying = false
+        )
         mutableState.value = mutableState.value.copy(
             loading = true,
             error = null,
@@ -838,6 +925,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 val updatedQueue = mutableState.value.playlistQueue.map {
                     if (it.id == resolvedSong.id) resolvedSong else it
                 }
+                updatePositionSnapshot(
+                    positionMs = targetSeekMs,
+                    durationMs = resolvedSong.durationMs,
+                    bufferedPositionMs = 0L,
+                    isPlaying = player.isPlaying
+                )
                 mutableState.value = mutableState.value.copy(
                     loading = false,
                     currentSong = resolvedSong,
@@ -859,6 +952,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     isPlaying = false,
                     error = e.message ?: "无法获取歌曲播放地址"
                 )
+                updatePositionSnapshot(positionMs = mutablePositionFlow.value.positionMs, isPlaying = false)
             }
         }
     }
@@ -878,7 +972,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                         lyricLoading = false,
                         currentLyric = data
                     )
-                    updateLyricIndex(mutableState.value.currentPositionMs)
+                    updateLyricIndex(currentSmoothPositionMs())
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -897,7 +991,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val player = activePlayer ?: return
         val state = mutableState.value
         if (player.mediaItemCount == 0 && state.currentSong != null) {
-            playSong(state.currentSong, state.playlistQueue, seekToPositionMs = state.currentPositionMs)
+            val resumePos = currentSmoothPositionMs().takeIf { it > 0L } ?: state.currentPositionMs
+            playSong(state.currentSong, state.playlistQueue, seekToPositionMs = resumePos)
             return
         }
         playPauseFadeJob?.cancel()
@@ -951,11 +1046,16 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         if (!inSleepFade && playPauseFadeJob?.isActive != true) {
             player?.volume = 1f
         }
+        updatePositionSnapshot(
+            positionMs = clamped,
+            durationMs = st.durationMs,
+            bufferedPositionMs = mutablePositionFlow.value.bufferedPositionMs,
+            isPlaying = st.isPlaying
+        )
+        mutableState.value = st.copy(currentPositionMs = clamped)
         if (player != null && player.mediaItemCount > 0) {
             player.seekTo(clamped)
             syncPlayer()
-        } else {
-            mutableState.value = mutableState.value.copy(currentPositionMs = clamped)
         }
         updateLyricIndex(clamped)
         persistPlaybackStateAsync()
@@ -1147,6 +1247,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         songsByMediaId.clear()
         val st = mutableState.value
         val remainingRecent = st.recentQueues.filterNot { it.id == st.activeQueueId }
+        mutablePositionFlow.value = PlaybackPositionSnapshot(playbackSpeed = st.playbackSpeed)
         mutableState.value = PlayerUiState(
             coverStyle = st.coverStyle,
             playerBackgroundStyle = st.playerBackgroundStyle,
@@ -1190,7 +1291,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         )
         persistPlaybackStateAsync()
         val currentSong = mutableState.value.currentSong ?: return
-        val currentPosition = mutableState.value.currentPositionMs
+        val currentPosition = currentSmoothPositionMs().takeIf { it > 0L } ?: mutableState.value.currentPositionMs
         VipManager.music.clearPlaybackCache(currentSong.hash)
         val updatedSong = currentSong.copy(playUrl = "")
         playSong(updatedSong, mutableState.value.playlistQueue, seekToPositionMs = currentPosition)
@@ -1385,7 +1486,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun setLyricOffsetMs(offsetMs: Long) {
         val clamped = offsetMs.coerceIn(-5000L, 5000L)
         mutableState.value = mutableState.value.copy(lyricOffsetMs = clamped)
-        updateLyricIndex(mutableState.value.currentPositionMs)
+        updateLyricIndex(currentSmoothPositionMs())
         persistPlaybackStateAsync()
     }
 
@@ -1439,6 +1540,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             playbackSpeed = clampedSpeed,
             playbackPitch = newPitch
         )
+        updatePositionSnapshot(
+            positionMs = currentSmoothPositionMs(),
+            playbackSpeed = clampedSpeed
+        )
         activePlayer?.playbackParameters = PlaybackParameters(clampedSpeed, newPitch)
     }
 
@@ -1467,6 +1572,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             playbackSpeed = 1.0f,
             playbackPitch = 1.0f,
             linkPitchToSpeed = false
+        )
+        updatePositionSnapshot(
+            positionMs = currentSmoothPositionMs(),
+            playbackSpeed = 1.0f
         )
         activePlayer?.playbackParameters = PlaybackParameters(1.0f, 1.0f)
     }
@@ -1573,9 +1682,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         if (enabled) {
             val climaxStart = song.effectiveClimaxStartMs
             val climaxEnd = song.effectiveClimaxEndMs
-            if (current.currentPositionMs < climaxStart || current.currentPositionMs >= climaxEnd) {
+            val curPos = currentSmoothPositionMs()
+            if (curPos < climaxStart || curPos >= climaxEnd) {
                 player.seekTo(climaxStart)
                 triggerClimaxSmoothFadeIn()
+                updatePositionSnapshot(positionMs = climaxStart)
                 mutableState.value = mutableState.value.copy(currentPositionMs = climaxStart)
             }
         } else {
@@ -1596,7 +1707,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val nextAccompany = !mutableState.value.accompanyModeEnabled
         mutableState.value = mutableState.value.copy(accompanyModeEnabled = nextAccompany)
         val currentSong = mutableState.value.currentSong ?: return
-        val currentPosition = mutableState.value.currentPositionMs
+        val currentPosition = currentSmoothPositionMs().takeIf { it > 0L } ?: mutableState.value.currentPositionMs
         val updatedSong = currentSong.copy(playUrl = "")
         playSong(updatedSong, mutableState.value.playlistQueue, seekToPositionMs = currentPosition)
     }
@@ -1936,6 +2047,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 isPlaying = false,
                 sleepPendingStopAtTrackEnd = false
             )
+            updatePositionSnapshot(positionMs = mutablePositionFlow.value.positionMs, isPlaying = false)
             return
         }
         when (mutableState.value.playMode) {
@@ -1977,12 +2089,20 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         val isResolving = resolveJob?.isActive == true
         val hasMedia = player.mediaItemCount > 0
-        val pos = if (isResolving || !hasMedia) mutableState.value.currentPositionMs else player.currentPosition.coerceAtLeast(0)
+        val pos = if (isResolving || !hasMedia) mutablePositionFlow.value.positionMs.takeIf { it > 0L } ?: mutableState.value.currentPositionMs else player.currentPosition.coerceAtLeast(0)
         val dur = if (isResolving || !hasMedia) (song?.durationMs ?: 0L) else (player.duration.takeIf { it > 0 } ?: song?.durationMs ?: 0L)
         val buf = if (isResolving || !hasMedia) 0L else player.bufferedPosition.coerceAtLeast(0)
         val isPlayingNow = if (isResolving || !hasMedia) false else player.isPlaying
 
         val st = mutableState.value
+        updatePositionSnapshot(
+            positionMs = pos,
+            durationMs = dur,
+            bufferedPositionMs = buf,
+            isPlaying = isPlayingNow,
+            playbackSpeed = st.playbackSpeed
+        )
+
         if (st.isPlaying != isPlayingNow) {
             AmbientSoundManager.onMusicPlayStateChanged(isPlayingNow)
             if (song != null) {
@@ -2035,8 +2155,9 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             VipManager.music.songDetail(updatedSongWithDur)
         } else st.songDetail
 
+        // 核心性能优化：仅当低频结构性状态（播放启停、总时长、缓冲加载态、当前曲目）变更时才广播 uiState，
+        // 毫秒级进度更新由 playbackPositionFlow 与 currentSmoothPositionMs() 独立承载，彻底消除每 120ms 全树重组！
         if (st.isPlaying != isPlayingNow ||
-            st.currentPositionMs != pos ||
             st.durationMs != dur ||
             st.loading != newLoading ||
             updatedSongWithDur !== song
@@ -2055,7 +2176,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             updateLyricIndex(pos)
         }
         val latestState = mutableState.value
-        val adjustedPos = (latestState.currentPositionMs + latestState.lyricOffsetMs).coerceAtLeast(0L)
+        val adjustedPos = (pos + latestState.lyricOffsetMs).coerceAtLeast(0L)
         SystemLyricBridge.updatePlaybackSnapshot(
             song = latestState.currentSong,
             lyricData = latestState.currentLyric,
@@ -2072,7 +2193,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         if (lyric.lines.isNotEmpty()) {
             val index = lyric.getLineIndexAt(adjustedPos)
             if (index != st.currentLyricIndex) {
-                mutableState.value = st.copy(currentLyricIndex = index)
+                mutableState.value = st.copy(
+                    currentLyricIndex = index,
+                    currentPositionMs = pos
+                )
                 val line = lyric.lines.getOrNull(index)
                 SystemLyricBridge.onLyricLineUpdated(
                     context = getApplication(),
@@ -2090,7 +2214,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 isPlaying = st.isPlaying
             )
         } else if (st.currentLyricIndex != -1) {
-            mutableState.value = st.copy(currentLyricIndex = -1)
+            mutableState.value = st.copy(
+                currentLyricIndex = -1,
+                currentPositionMs = pos
+            )
             SystemLyricBridge.updatePlaybackSnapshot(
                 song = st.currentSong,
                 lyricData = lyric,

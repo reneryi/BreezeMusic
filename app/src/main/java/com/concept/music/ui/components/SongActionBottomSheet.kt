@@ -1,6 +1,6 @@
 package com.concept.music.ui.components
 
-import com.concept.music.ui.theme.conceptSheetSpringEntrance
+import kotlinx.coroutines.launch
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -46,6 +46,16 @@ fun SongActionBottomSheet(
     onRemoveFromCurrentPlaylist: (() -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val coroutineScope = rememberCoroutineScope()
+    val dismissWithAction: (() -> Unit) -> Unit = remember(coroutineScope, sheetState, onDismiss) {
+        { action ->
+            coroutineScope.launch {
+                runCatching { sheetState.hide() }
+                onDismiss()
+                action()
+            }
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -67,7 +77,6 @@ fun SongActionBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .conceptSheetSpringEntrance()
                 .padding(horizontal = 20.dp, vertical = 4.dp)
                 .navigationBarsPadding()
         ) {
@@ -141,8 +150,7 @@ fun SongActionBottomSheet(
 
                 IconButton(
                     onClick = {
-                        onToggleFavorite()
-                        onDismiss()
+                        dismissWithAction { onToggleFavorite() }
                     }
                 ) {
                     Icon(
@@ -162,8 +170,7 @@ fun SongActionBottomSheet(
                 title = "立即播放",
                 tint = ConceptPrimary,
                 onClick = {
-                    onDismiss()
-                    onPlayNow()
+                    dismissWithAction { onPlayNow() }
                 }
             )
 
@@ -171,8 +178,7 @@ fun SongActionBottomSheet(
                 icon = Icons.Rounded.QueuePlayNext,
                 title = "下一首播放",
                 onClick = {
-                    onDismiss()
-                    onPlayNext()
+                    dismissWithAction { onPlayNext() }
                 }
             )
 
@@ -181,8 +187,7 @@ fun SongActionBottomSheet(
                 title = if (isFavorite) "从「我喜欢的音乐」移除" else "收藏到「我喜欢的音乐」",
                 tint = if (isFavorite) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
                 onClick = {
-                    onDismiss()
-                    onToggleFavorite()
+                    dismissWithAction { onToggleFavorite() }
                 }
             )
 
@@ -190,8 +195,7 @@ fun SongActionBottomSheet(
                 icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
                 title = "添加到其他歌单...",
                 onClick = {
-                    onDismiss()
-                    onAddToPlaylist()
+                    dismissWithAction { onAddToPlaylist() }
                 }
             )
 
@@ -200,8 +204,7 @@ fun SongActionBottomSheet(
                     icon = Icons.AutoMirrored.Rounded.Comment,
                     title = "查看歌曲评论",
                     onClick = {
-                        onDismiss()
-                        onOpenComments()
+                        dismissWithAction { onOpenComments() }
                     }
                 )
             }
@@ -218,8 +221,7 @@ fun SongActionBottomSheet(
                         "查看歌手：${song.artist}"
                     },
                     onClick = {
-                        onDismiss()
-                        onOpenArtist()
+                        dismissWithAction { onOpenArtist() }
                     }
                 )
             }
@@ -229,8 +231,7 @@ fun SongActionBottomSheet(
                     icon = Icons.Rounded.Album,
                     title = "查看专辑：${song.album.ifBlank { "未知专辑" }}",
                     onClick = {
-                        onDismiss()
-                        onOpenAlbum()
+                        dismissWithAction { onOpenAlbum() }
                     }
                 )
             }
@@ -240,8 +241,7 @@ fun SongActionBottomSheet(
                     icon = Icons.Rounded.Info,
                     title = "音频技术参数与特征码",
                     onClick = {
-                        onDismiss()
-                        onOpenSongDetail()
+                        dismissWithAction { onOpenSongDetail() }
                     }
                 )
             }
@@ -257,8 +257,7 @@ fun SongActionBottomSheet(
                     tint = MaterialTheme.colorScheme.error,
                     textColor = MaterialTheme.colorScheme.error,
                     onClick = {
-                        onDismiss()
-                        onRemoveFromCurrentPlaylist()
+                        dismissWithAction { onRemoveFromCurrentPlaylist() }
                     }
                 )
             }

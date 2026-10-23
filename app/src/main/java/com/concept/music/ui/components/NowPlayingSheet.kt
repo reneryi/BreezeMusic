@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
-import android.graphics.BlurMaskFilter
 import android.view.OrientationEventListener
 import android.graphics.drawable.BitmapDrawable
 import android.media.AudioDeviceInfo
@@ -46,6 +45,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -120,7 +120,9 @@ import com.concept.music.data.model.Song
 import com.concept.music.data.model.SongDetailInfo
 import com.concept.music.service.AudioEffectManager
 import com.concept.music.service.SystemLyricBridge
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import com.concept.music.ui.theme.ConceptCyanAccent
+import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.SystemBarAppearanceEffect
 import com.concept.music.ui.theme.VipGold
@@ -325,7 +327,8 @@ fun NowPlayingSheet(
     onOpenAlbum: (Song) -> Unit = {},
     onPlayQueueSong: (Song) -> Unit,
     onRemoveFromQueue: (Song) -> Unit,
-    onClearQueue: () -> Unit
+    onClearQueue: () -> Unit,
+    positionProvider: () -> Long = { currentPositionMs }
 ) {
     if (song == null) return
 
@@ -468,15 +471,25 @@ fun NowPlayingSheet(
     val sheetDragScope = rememberCoroutineScope()
     val verticalDragAnim = remember { Animatable(0f) }
 
-    // 仅在黑胶封面模式下驱动连续旋转相位；圆角方形封面保持静态不旋转
+    // 仅在黑胶封面模式下驱动连续旋转相位；暂停时执行物理惯性阻尼减速停转（告别瞬间急停）
     val rotationAnim = remember(song.id) { Animatable(0f) }
+    var wasVinylPlaying by remember(song.id) { mutableStateOf(isPlaying) }
     LaunchedEffect(isPlaying, song.id, coverStyle) {
-        if (isPlaying && coverStyle == CoverStyle.VINYL) {
-            while (isActive) {
-                val target = rotationAnim.value + 360f
+        if (coverStyle == CoverStyle.VINYL) {
+            if (isPlaying) {
+                wasVinylPlaying = true
+                while (isActive) {
+                    val target = rotationAnim.value + 360f
+                    rotationAnim.animateTo(
+                        targetValue = target,
+                        animationSpec = tween(durationMillis = 20000, easing = LinearEasing)
+                    )
+                }
+            } else if (wasVinylPlaying) {
+                wasVinylPlaying = false
                 rotationAnim.animateTo(
-                    targetValue = target,
-                    animationSpec = tween(durationMillis = 20000, easing = LinearEasing)
+                    targetValue = rotationAnim.value + 16f,
+                    animationSpec = tween(durationMillis = 460, easing = ConceptMotion.EmphasizedDecelerate)
                 )
             }
         }
@@ -532,6 +545,10 @@ fun NowPlayingSheet(
     )
 
     val effectiveLyricPositionMs = (currentPositionMs + lyricOffsetMs).coerceAtLeast(0L)
+    val lyricPositionProvider: () -> Long = remember(positionProvider, lyricOffsetMs) {
+        { (positionProvider() + lyricOffsetMs).coerceAtLeast(0L) }
+    }
+    val rawPositionProvider: () -> Long = positionProvider
     val showTranslationBtn = remember(song.id, lyricData) {
         shouldShowTranslationButton(song, lyricData)
     }
@@ -582,11 +599,11 @@ fun NowPlayingSheet(
         AnimatedContent(
             targetState = effectiveLandscape,
             transitionSpec = {
-                (fadeIn(tween(320, easing = FastOutSlowInEasing)) +
-                    scaleIn(initialScale = 0.94f, animationSpec = tween(320, easing = FastOutSlowInEasing)))
+                (fadeIn(tween(280, easing = ConceptMotion.EmphasizedDecelerate)) +
+                    scaleIn(initialScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring()))
                     .togetherWith(
-                        fadeOut(tween(220, easing = FastOutSlowInEasing)) +
-                            scaleOut(targetScale = 0.94f, animationSpec = tween(220, easing = FastOutSlowInEasing))
+                        fadeOut(tween(200, easing = ConceptMotion.EmphasizedAccelerate)) +
+                            scaleOut(targetScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring())
                     )
             },
             modifier = Modifier.fillMaxSize(),
@@ -598,6 +615,8 @@ fun NowPlayingSheet(
                     isPlaying = isPlaying,
                     currentPositionMs = effectiveLyricPositionMs,
                     rawPositionMs = currentPositionMs,
+                    lyricPositionProvider = lyricPositionProvider,
+                    rawPositionProvider = rawPositionProvider,
                     durationMs = durationMs,
                     playMode = playMode,
                     coverStyle = coverStyle,
@@ -638,6 +657,10 @@ fun NowPlayingSheet(
                 )
             } else {
                 // 2. 竖屏主体内容区：顶部返回按钮与歌名区域适度上移，使视觉重心更紧凑自然
+                val density = LocalDensity.current
+                val dismissSlideTargetPx = remember(configuration.screenHeightDp, density) {
+                    with(density) { configuration.screenHeightDp.dp.toPx() }.coerceAtLeast(1200f)
+                }
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -649,7 +672,7 @@ fun NowPlayingSheet(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .pointerInput(showLyricView) {
+                        .pointerInput(showLyricView, dismissSlideTargetPx) {
                             detectVerticalDragGestures(
                                 onVerticalDrag = { change, dragAmount ->
                                     if (dragAmount > 0f || verticalDragAnim.value > 0f) {
@@ -665,24 +688,25 @@ fun NowPlayingSheet(
                                     sheetDragScope.launch {
                                         verticalDragAnim.animateTo(
                                             targetValue = 0f,
-                                            animationSpec = spring(
-                                                dampingRatio = 0.78f,
-                                                stiffness = Spring.StiffnessMediumLow
-                                            )
+                                            animationSpec = ConceptMotion.gentleBounceSpring()
                                         )
                                     }
                                 },
                                 onDragEnd = {
                                     if (verticalDragAnim.value > 145f) {
-                                        onDismiss()
+                                        sheetDragScope.launch {
+                                            verticalDragAnim.animateTo(
+                                                targetValue = dismissSlideTargetPx,
+                                                animationSpec = ConceptMotion.spatialSheetSpring()
+                                            )
+                                            onDismiss()
+                                            verticalDragAnim.snapTo(0f)
+                                        }
                                     } else {
                                         sheetDragScope.launch {
                                             verticalDragAnim.animateTo(
                                                 targetValue = 0f,
-                                                animationSpec = spring(
-                                                    dampingRatio = 0.78f,
-                                                    stiffness = Spring.StiffnessMediumLow
-                                                )
+                                                animationSpec = ConceptMotion.gentleBounceSpring()
                                             )
                                         }
                                     }
@@ -715,14 +739,25 @@ fun NowPlayingSheet(
                     )
                 }
 
-                // 页面主体：通过丝滑转场切换「封面播放页」与「重构专属歌词页」
+                // 页面主体：通过空间景深弹性转场切换「封面播放页」与「重构专属歌词页」
                 AnimatedContent(
                     targetState = showLyricView,
                     transitionSpec = {
-                        (fadeIn(tween(260, easing = FastOutSlowInEasing)) +
-                            scaleIn(initialScale = 0.95f, animationSpec = tween(260, easing = FastOutSlowInEasing))) togetherWith
-                            (fadeOut(tween(190, easing = FastOutSlowInEasing)) +
-                                scaleOut(targetScale = 0.96f, animationSpec = tween(190, easing = FastOutSlowInEasing)))
+                        if (targetState) {
+                            (fadeIn(tween(280, easing = ConceptMotion.EmphasizedDecelerate)) +
+                                scaleIn(initialScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring()) +
+                                slideInVertically(animationSpec = ConceptMotion.spatialPageSpring()) { it / 14 }) togetherWith
+                                (fadeOut(tween(200, easing = ConceptMotion.EmphasizedAccelerate)) +
+                                    scaleOut(targetScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring()) +
+                                    slideOutVertically(animationSpec = ConceptMotion.spatialPageSpring()) { -it / 18 })
+                        } else {
+                            (fadeIn(tween(280, easing = ConceptMotion.EmphasizedDecelerate)) +
+                                scaleIn(initialScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring()) +
+                                slideInVertically(animationSpec = ConceptMotion.spatialPageSpring()) { -it / 18 }) togetherWith
+                                (fadeOut(tween(200, easing = ConceptMotion.EmphasizedAccelerate)) +
+                                    scaleOut(targetScale = 0.94f, animationSpec = ConceptMotion.spatialPageSpring()) +
+                                    slideOutVertically(animationSpec = ConceptMotion.spatialPageSpring()) { it / 14 })
+                        }
                     },
                     modifier = Modifier
                         .weight(1f)
@@ -738,6 +773,8 @@ fun NowPlayingSheet(
                             lyricData = lyricData,
                             currentLyricIndex = currentLyricIndex,
                             currentPositionMs = effectiveLyricPositionMs,
+                            lyricPositionProvider = lyricPositionProvider,
+                            rawPositionProvider = rawPositionProvider,
                             durationMs = durationMs,
                             showTranslation = showTranslation,
                             showTranslationButton = showTranslationBtn,
@@ -788,6 +825,8 @@ fun NowPlayingSheet(
                             currentLyricIndex = currentLyricIndex,
                             currentPositionMs = effectiveLyricPositionMs,
                             rawPositionMs = currentPositionMs,
+                            lyricPositionProvider = lyricPositionProvider,
+                            rawPositionProvider = rawPositionProvider,
                             durationMs = durationMs,
                             isPlaying = isPlaying,
                             isFavorite = isFavorite,
@@ -838,7 +877,6 @@ fun NowPlayingSheet(
             onDismiss = { showQueueSheet = false },
             onSongClick = {
                 onPlayQueueSong(it)
-                showQueueSheet = false
             },
             onRemoveSong = onRemoveFromQueue,
             onClear = onClearQueue,
@@ -913,7 +951,6 @@ fun NowPlayingSheet(
             onDismiss = { showQualityDialog = false },
             onSelectQuality = {
                 onSelectQuality(it)
-                showQualityDialog = false
             }
         )
     }
@@ -962,11 +999,9 @@ fun NowPlayingSheet(
             onToggleStopAfterSongPref = onSetSleepStopAfterCurrentSongPref,
             onSetTimer = { mins, stopCurrent ->
                 onSetSleepTimer(mins, stopCurrent)
-                showSleepTimerDialog = false
             },
             onCancelTimer = {
                 onCancelSleepTimer()
-                showSleepTimerDialog = false
             },
             onDismiss = { showSleepTimerDialog = false }
         )
@@ -1009,25 +1044,36 @@ private fun NowPlayingSelectableBackground(
     accentSecondary: Color
 ) {
     val context = LocalContext.current
-    val infiniteTransition = rememberInfiniteTransition(label = "bgModeAnim")
-    val phase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isPlaying) 14000 else 28000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "bgPhase"
-    )
-    val pulse by infiniteTransition.animateFloat(
-        initialValue = 0.88f,
-        targetValue = if (isPlaying) 1.16f else 0.94f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2100, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "bgPulse"
-    )
+    val isDynamicAnimatedBackground = backgroundStyle != PlayerBackgroundStyle.COVER_BLUR &&
+        backgroundStyle != PlayerBackgroundStyle.DEEP_OLED
+    val phase: Float
+    val pulse: Float
+    if (isDynamicAnimatedBackground && isPlaying) {
+        val infiniteTransition = rememberInfiniteTransition(label = "bgModeAnim")
+        val animatedPhase by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2f * PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 14000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "bgPhase"
+        )
+        val animatedPulse by infiniteTransition.animateFloat(
+            initialValue = 0.88f,
+            targetValue = 1.16f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2100, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "bgPulse"
+        )
+        phase = animatedPhase
+        pulse = animatedPulse
+    } else {
+        phase = 0f
+        pulse = 0.94f
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         when (backgroundStyle) {
@@ -1497,6 +1543,8 @@ private fun CoverPlayerPageContent(
     lyricData: LyricData,
     currentLyricIndex: Int,
     currentPositionMs: Long,
+    lyricPositionProvider: () -> Long = { currentPositionMs },
+    rawPositionProvider: () -> Long = { currentPositionMs },
     durationMs: Long,
     showTranslation: Boolean,
     showTranslationButton: Boolean,
@@ -1533,14 +1581,22 @@ private fun CoverPlayerPageContent(
     onOpenQueue: () -> Unit,
     onOpenComments: () -> Unit
 ) {
-    val favScale by animateFloatAsState(
-        targetValue = if (isFavorite) 1.14f else 1.0f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "coverFavScale"
-    )
+    val favBurstAnim = remember { Animatable(1f) }
+    var prevFavState by remember { mutableStateOf(isFavorite) }
+    LaunchedEffect(isFavorite) {
+        if (isFavorite != prevFavState) {
+            prevFavState = isFavorite
+            if (isFavorite) {
+                favBurstAnim.snapTo(0.75f)
+                favBurstAnim.animateTo(1.18f, ConceptMotion.expressiveSpring())
+                favBurstAnim.animateTo(1.0f, ConceptMotion.gentleBounceSpring())
+            } else {
+                favBurstAnim.animateTo(0.90f, tween(90))
+                favBurstAnim.animateTo(1.0f, ConceptMotion.gentleBounceSpring())
+            }
+        }
+    }
+    val favScale = favBurstAnim.value
     val coverSwipeScope = rememberCoroutineScope()
     val coverDragX = remember { Animatable(0f) }
 
@@ -1723,6 +1779,8 @@ private fun CoverPlayerPageContent(
             lyricData = lyricData,
             currentLyricIndex = currentLyricIndex,
             currentPositionMs = currentPositionMs,
+            isPlaying = isPlaying,
+            positionProvider = lyricPositionProvider,
             showTranslation = showTranslation && showTranslationButton,
             showPhonetic = showPhonetic && showPhoneticButton,
             lyricWordByWord = lyricWordByWord,
@@ -1815,6 +1873,7 @@ private fun CoverPlayerPageContent(
         // 4. 现代自然光学彗星拖尾进度条 + 圆润饱满五大播放控件
         PlayerControlsSection(
             currentPositionMs = currentPositionMs,
+            positionProvider = rawPositionProvider,
             durationMs = durationMs,
             climaxStartMs = climaxStartMs,
             climaxEndMs = climaxEndMs,
@@ -1967,10 +2026,7 @@ private fun MasterVinylTurntableView(
 ) {
     val armAngle by animateFloatAsState(
         targetValue = if (isPlaying) 25f else 2f,
-        animationSpec = spring(
-            dampingRatio = 0.72f,
-            stiffness = Spring.StiffnessLow
-        ),
+        animationSpec = ConceptMotion.gentleBounceSpring(),
         label = "masterTonearmAngle"
     )
 
@@ -2235,24 +2291,27 @@ private fun StaticRoundedSquareCoverView(
     isPlaying: Boolean,
     accentColor: Color
 ) {
+    // 播放/暂停弹性呼吸缩放：播放态 1.0f 饱满悬浮，暂停态以 ExpressiveMicroSpring 优雅微缩至 0.90f
     val coverScale by animateFloatAsState(
-        targetValue = if (isPlaying) 1.0f else 0.93f,
-        animationSpec = spring(
-            dampingRatio = 0.75f,
-            stiffness = Spring.StiffnessMediumLow
-        ),
+        targetValue = if (isPlaying) 1.0f else 0.90f,
+        animationSpec = ConceptMotion.expressiveSpring(),
         label = "squareCoverScale"
     )
-    val infiniteTransition = rememberInfiniteTransition(label = "squareCoverHaloTransition")
-    val haloPulse by infiniteTransition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "squareCoverHaloPulse"
-    )
+    val haloPulse: Float = if (isPlaying) {
+        val infiniteTransition = rememberInfiniteTransition(label = "squareCoverHaloTransition")
+        val pulse by infiniteTransition.animateFloat(
+            initialValue = 0.94f,
+            targetValue = 1.07f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "squareCoverHaloPulse"
+        )
+        pulse
+    } else {
+        0.92f
+    }
 
     val haloPrimary = lerp(accentColor, Color.White, 0.18f)
     val deepShadowColor = lerp(accentColor, Color.Black, 0.66f)
@@ -2269,48 +2328,42 @@ private fun StaticRoundedSquareCoverView(
                 val w = size.width
                 val h = size.height
                 val cornerPx = 30.dp.toPx()
-                val pulse = if (isPlaying) haloPulse else 0.95f
+                val pulse = haloPulse
+                val center = Offset(w * 0.5f, h * 0.5f)
 
-                drawIntoCanvas { canvas ->
-                    // 1. 外围柔和彩色漫射光晕 (Diffused Ambient Halo)
-                    val outerHaloPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        style = android.graphics.Paint.Style.FILL
-                        color = haloPrimary.copy(
-                            alpha = (if (isPlaying) 0.50f * pulse else 0.32f).coerceIn(0f, 0.85f)
-                        ).toArgb()
-                        maskFilter = BlurMaskFilter(34.dp.toPx() * pulse, BlurMaskFilter.Blur.NORMAL)
-                    }
-                    val spread = 8.dp.toPx() * pulse
-                    canvas.nativeCanvas.drawRoundRect(
-                        -spread,
-                        -spread,
-                        w + spread,
-                        h + spread,
-                        cornerPx + spread,
-                        cornerPx + spread,
-                        outerHaloPaint
-                    )
+                // 1. 零 BlurMaskFilter 纯 GPU 径向漫射光晕 (Zero-Jank Radial Ambient Halo)
+                val ambientRadius = (w * 0.72f * pulse).coerceAtLeast(1f)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colorStops = arrayOf(
+                            0.00f to haloPrimary.copy(alpha = if (isPlaying) 0.46f else 0.24f),
+                            0.58f to accentColor.copy(alpha = if (isPlaying) 0.26f else 0.12f),
+                            0.84f to accentColor.copy(alpha = if (isPlaying) 0.08f else 0.03f),
+                            1.00f to Color.Transparent
+                        ),
+                        center = center,
+                        radius = ambientRadius
+                    ),
+                    radius = ambientRadius,
+                    center = center
+                )
 
-                    // 2. 底部立体景深悬浮投影 (3D Floating Elevation Shadow)
-                    val dropShadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        style = android.graphics.Paint.Style.FILL
-                        color = deepShadowColor.copy(
-                            alpha = if (isPlaying) 0.74f else 0.52f
-                        ).toArgb()
-                        maskFilter = BlurMaskFilter(26.dp.toPx(), BlurMaskFilter.Blur.NORMAL)
-                    }
-                    val dy = 14.dp.toPx()
-                    val inset = 6.dp.toPx()
-                    canvas.nativeCanvas.drawRoundRect(
-                        inset,
-                        dy,
-                        w - inset,
-                        h + dy * 0.85f,
-                        cornerPx,
-                        cornerPx,
-                        dropShadowPaint
-                    )
-                }
+                // 2. 底部立体景深悬浮投影 (GPU Radial Elevation Shadow)
+                val shadowCenter = Offset(w * 0.5f, h * 0.58f)
+                val shadowRadius = (w * 0.66f).coerceAtLeast(1f)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colorStops = arrayOf(
+                            0.00f to deepShadowColor.copy(alpha = if (isPlaying) 0.68f else 0.44f),
+                            0.65f to deepShadowColor.copy(alpha = if (isPlaying) 0.34f else 0.20f),
+                            1.00f to Color.Transparent
+                        ),
+                        center = shadowCenter,
+                        radius = shadowRadius
+                    ),
+                    radius = shadowRadius,
+                    center = shadowCenter
+                )
 
                 // 3. 外环微光光圈 (Outer Luminous Aura Ring)
                 val ringOutset = 3.5.dp.toPx()
@@ -2424,6 +2477,8 @@ private fun FullWidthLyricPreviewSection(
     lyricData: LyricData,
     currentLyricIndex: Int,
     currentPositionMs: Long,
+    isPlaying: Boolean = true,
+    positionProvider: () -> Long = { currentPositionMs },
     showTranslation: Boolean,
     showPhonetic: Boolean,
     lyricWordByWord: Boolean = true,
@@ -2432,6 +2487,22 @@ private fun FullWidthLyricPreviewSection(
     accentSecondary: Color = ConceptCyanAccent,
     onLyricClick: () -> Unit
 ) {
+    var sampledPositionMs by remember { mutableLongStateOf(positionProvider()) }
+    LaunchedEffect(currentPositionMs, currentLyricIndex) {
+        sampledPositionMs = positionProvider()
+    }
+    LaunchedEffect(isPlaying, currentLyricIndex, lyricWordByWord, positionProvider) {
+        if (isPlaying && lyricWordByWord) {
+            while (isActive) {
+                withFrameMillis {
+                    sampledPositionMs = positionProvider()
+                }
+            }
+        } else {
+            sampledPositionMs = positionProvider()
+        }
+    }
+    val livePositionMs = sampledPositionMs
     val density = LocalDensity.current
     val activePrimaryColor = if (lyricHighlightTheme == LyricHighlightTheme.DYNAMIC_COVER) {
         lerp(accentPrimary, Color.White, 0.16f)
@@ -2469,7 +2540,7 @@ private fun FullWidthLyricPreviewSection(
     val targetScrollPx = if (!isSuperLongLyric || maxScrollPx <= 1f || currentLineObj == null) {
         0f
     } else if (currentLineObj.hasWordTiming && currentLineObj.words.isNotEmpty() && lyricWordByWord) {
-        val activeWordIdx = currentLineObj.words.indexOfLast { currentPositionMs >= it.startTimeMs }
+        val activeWordIdx = currentLineObj.words.indexOfLast { livePositionMs >= it.startTimeMs }
             .coerceAtLeast(0)
         val activeWordY = wordTopYMap[activeWordIdx] ?: 0f
         // 当演唱推进到第 2 行往后时，平滑向上混动滚动，使当前演唱行保持在三行视口中央区域
@@ -2483,7 +2554,7 @@ private fun FullWidthLyricPreviewSection(
             ?: (currentLineObj.startTimeMs + 5000L)
         val lineDurationMs = (currentLineObj.durationMs.takeIf { it > 0L }
             ?: (nextStartMs - currentLineObj.startTimeMs)).coerceAtLeast(2500L)
-        val lineProgress = ((currentPositionMs - currentLineObj.startTimeMs).toFloat() / lineDurationMs.toFloat())
+        val lineProgress = ((livePositionMs - currentLineObj.startTimeMs).toFloat() / lineDurationMs.toFloat())
             .coerceIn(0f, 1f)
         val scrollFraction = ((lineProgress - 0.20f) / 0.68f).coerceIn(0f, 1f)
         (scrollFraction * maxScrollPx).coerceIn(0f, maxScrollPx)
@@ -2576,8 +2647,8 @@ private fun FullWidthLyricPreviewSection(
                 ) {
                     currentLineObj.words.forEachIndexed { wordIndex, word ->
                         val wordProgress = when {
-                            word.durationMs > 0L -> ((currentPositionMs - word.startTimeMs).toFloat() / word.durationMs.toFloat()).coerceIn(0f, 1f)
-                            currentPositionMs >= word.startTimeMs -> 1f
+                            word.durationMs > 0L -> ((livePositionMs - word.startTimeMs).toFloat() / word.durationMs.toFloat()).coerceIn(0f, 1f)
+                            livePositionMs >= word.startTimeMs -> 1f
                             else -> 0f
                         }
                         val isSinging = wordProgress in 0.01f..0.99f
@@ -2679,6 +2750,7 @@ private fun FullWidthLyricPreviewSection(
 @Composable
 private fun PlayerControlsSection(
     currentPositionMs: Long,
+    positionProvider: () -> Long = { currentPositionMs },
     durationMs: Long,
     climaxStartMs: Long = 0L,
     climaxEndMs: Long = 0L,
@@ -2697,9 +2769,28 @@ private fun PlayerControlsSection(
     val context = LocalContext.current
     var isInteractingWithBar by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
+    var sampledPositionMs by remember { mutableLongStateOf(positionProvider()) }
 
+    LaunchedEffect(currentPositionMs) {
+        if (!isInteractingWithBar) {
+            sampledPositionMs = positionProvider()
+        }
+    }
+    LaunchedEffect(isPlaying, isInteractingWithBar, positionProvider) {
+        if (isPlaying && !isInteractingWithBar) {
+            while (isActive) {
+                withFrameMillis {
+                    sampledPositionMs = positionProvider()
+                }
+            }
+        } else if (!isInteractingWithBar) {
+            sampledPositionMs = positionProvider()
+        }
+    }
+
+    val livePositionMs = sampledPositionMs
     val currentFraction = if (durationMs > 0) {
-        (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+        (livePositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
 
     val targetFraction = if (isInteractingWithBar) dragFraction else currentFraction
@@ -2712,7 +2803,7 @@ private fun PlayerControlsSection(
         },
         label = "cometProgressSmoothFraction"
     )
-    val displayCurrentMs = if (isInteractingWithBar) (dragFraction * durationMs).toLong() else currentPositionMs
+    val displayCurrentMs = if (isInteractingWithBar) (dragFraction * durationMs).toLong() else livePositionMs
 
     Column(
         modifier = Modifier
@@ -2864,25 +2955,34 @@ internal fun CometTailProgressBar(
         label = "cometThumbScale"
     )
 
-    val infiniteTransition = rememberInfiniteTransition(label = "cometOpticalFlow")
-    val cometPulse by infiniteTransition.animateFloat(
-        initialValue = 0.90f,
-        targetValue = 1.12f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "cometBreath"
-    )
-    val stardustPhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (isPlaying) 1400 else 3200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "stardustPhase"
-    )
+    val cometPulse: Float
+    val stardustPhase: Float
+    if (isPlaying) {
+        val infiniteTransition = rememberInfiniteTransition(label = "cometOpticalFlow")
+        val animatedPulse by infiniteTransition.animateFloat(
+            initialValue = 0.90f,
+            targetValue = 1.12f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "cometBreath"
+        )
+        val animatedStardust by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1400, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "stardustPhase"
+        )
+        cometPulse = animatedPulse
+        stardustPhase = animatedStardust
+    } else {
+        cometPulse = 1.0f
+        stardustPhase = 0f
+    }
 
     Box(
         modifier = Modifier
@@ -3182,6 +3282,106 @@ internal fun createPlumpPlayTrianglePath(
         quadraticBezierTo(p1.x, p1.y, p1b.x, p1b.y)
         close()
     }
+}
+
+/**
+ * 连续几何插值播放/暂停形变绘制 (True Geometric Play/Pause Morph):
+ * - 彻底淘汰 `morphProgress > 0.5f` 瞬间硬切；
+ * - `morphProgress = 0f`（暂停态，显示饱满圆角播放三角） <-> `morphProgress = 1f`（播放态，分裂并延展为双圆角暂停竖柱）；
+ * - 通过左右两组圆润四边几何路径连续线性插值，实现 120fps 丝滑无缝形变。
+ */
+internal fun DrawScope.drawContinuousPlayPauseMorph(
+    morphProgress: Float,
+    color: Color
+) {
+    val w = size.width
+    val h = size.height
+    if (w <= 2f || h <= 2f) return
+    val p = morphProgress.coerceIn(0f, 1f)
+
+    if (p <= 0.02f) {
+        val triPath = createPlumpPlayTrianglePath(
+            centerX = w * 0.54f,
+            centerY = h * 0.50f,
+            size = min(w, h) * 0.84f
+        )
+        drawPath(path = triPath, color = color)
+        return
+    }
+    if (p >= 0.98f) {
+        val barW = w * 0.24f
+        val barH = h * 0.72f
+        val topY = (h - barH) / 2f
+        val leftX = w * 0.18f
+        val rightX = w - leftX - barW
+        val radius = CornerRadius(barW / 2f, barW / 2f)
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(leftX, topY),
+            size = Size(barW, barH),
+            cornerRadius = radius
+        )
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(rightX, topY),
+            size = Size(barW, barH),
+            cornerRadius = radius
+        )
+        return
+    }
+
+    fun lerpF(a: Float, b: Float, t: Float): Float = a + (b - a) * t
+
+    // 左半路径：从三角左半梯形平滑过渡到左暂停竖条
+    val lTopLeftX = lerpF(w * 0.19f, w * 0.18f, p)
+    val lTopLeftY = lerpF(h * 0.14f, h * 0.14f, p)
+    val lTopRightX = lerpF(w * 0.53f, w * 0.42f, p)
+    val lTopRightY = lerpF(h * 0.32f, h * 0.14f, p)
+    val lBotRightX = lerpF(w * 0.53f, w * 0.42f, p)
+    val lBotRightY = lerpF(h * 0.68f, h * 0.86f, p)
+    val lBotLeftX = lerpF(w * 0.19f, w * 0.18f, p)
+    val lBotLeftY = lerpF(h * 0.86f, h * 0.86f, p)
+
+    // 右半路径：从三角右尖端平滑分裂延展为右暂停竖条
+    val gapProgress = ((p - 0.10f) / 0.90f).coerceIn(0f, 1f)
+    val rTopLeftX = lerpF(w * 0.51f, w * 0.58f, gapProgress)
+    val rTopLeftY = lerpF(h * 0.31f, h * 0.14f, p)
+    val rTopRightX = lerpF(w * 0.87f, w * 0.82f, p)
+    val rTopRightY = lerpF(h * 0.50f, h * 0.14f, p)
+    val rBotRightX = lerpF(w * 0.87f, w * 0.82f, p)
+    val rBotRightY = lerpF(h * 0.50f, h * 0.86f, p)
+    val rBotLeftX = lerpF(w * 0.51f, w * 0.58f, gapProgress)
+    val rBotLeftY = lerpF(h * 0.69f, h * 0.86f, p)
+
+    val strokeJoinRadius = min(w, h) * 0.11f
+
+    val leftMorphPath = Path().apply {
+        moveTo(lTopLeftX, lTopLeftY)
+        lineTo(lTopRightX, lTopRightY)
+        lineTo(lBotRightX, lBotRightY)
+        lineTo(lBotLeftX, lBotLeftY)
+        close()
+    }
+    val rightMorphPath = Path().apply {
+        moveTo(rTopLeftX, rTopLeftY)
+        lineTo(rTopRightX, rTopRightY)
+        lineTo(rBotRightX, rBotRightY)
+        lineTo(rBotLeftX, rBotLeftY)
+        close()
+    }
+
+    drawPath(path = leftMorphPath, color = color)
+    drawPath(
+        path = leftMorphPath,
+        color = color,
+        style = Stroke(width = strokeJoinRadius, cap = StrokeCap.Round, join = StrokeJoin.Round)
+    )
+    drawPath(path = rightMorphPath, color = color)
+    drawPath(
+        path = rightMorphPath,
+        color = color,
+        style = Stroke(width = strokeJoinRadius, cap = StrokeCap.Round, join = StrokeJoin.Round)
+    )
 }
 
 // =========================================================================================
@@ -3558,23 +3758,25 @@ internal fun AnimatedPlayPauseCenterButton(
 ) {
     val morphProgress by animateFloatAsState(
         targetValue = if (isPlaying) 1f else 0f,
-        animationSpec = spring(
-            dampingRatio = 0.72f,
-            stiffness = Spring.StiffnessMediumLow
-        ),
+        animationSpec = ConceptMotion.expressiveSpring(),
         label = "playPauseMorph"
     )
 
-    val infiniteTransition = rememberInfiniteTransition(label = "playButtonAura")
-    val auraScale by infiniteTransition.animateFloat(
-        initialValue = 1.0f,
-        targetValue = if (isPlaying) 1.12f else 1.03f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1600, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "auraScale"
-    )
+    val auraScale: Float = if (isPlaying) {
+        val infiniteTransition = rememberInfiniteTransition(label = "playButtonAura")
+        val animatedAura by infiniteTransition.animateFloat(
+            initialValue = 1.0f,
+            targetValue = 1.12f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1600, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "auraScale"
+        )
+        animatedAura
+    } else {
+        1.0f
+    }
 
     Box(
         modifier = Modifier.size(76.dp),
@@ -3629,48 +3831,16 @@ internal fun AnimatedPlayPauseCenterButton(
                     modifier = Modifier
                         .size(28.dp)
                         .graphicsLayer {
-                            val bounce = (1f - 0.10f * sin(safeMorph * PI.toFloat())).coerceIn(0.86f, 1.12f)
+                            val bounce = (1f - 0.08f * sin(safeMorph * PI.toFloat())).coerceIn(0.88f, 1.10f)
                             scaleX = bounce
                             scaleY = bounce
+                            rotationZ = (1f - safeMorph) * -6f * sin(safeMorph * PI.toFloat())
                         }
                 ) {
-                    val w = size.width
-                    val h = size.height
-                    if (w <= 2f || h <= 2f) return@Canvas
-
-                    if (safeMorph > 0.5f) {
-                        val pauseScale = 0.72f + (safeMorph - 0.5f) * 0.56f
-                        val barW = w * 0.24f
-                        val barH = h * 0.72f * pauseScale
-                        val topY = (h - barH) / 2f
-                        val leftX = w * 0.18f
-                        val rightX = w - leftX - barW
-                        val radius = CornerRadius(barW / 2f, barW / 2f)
-
-                        drawRoundRect(
-                            color = Color.White,
-                            topLeft = Offset(leftX, topY),
-                            size = Size(barW, barH),
-                            cornerRadius = radius
-                        )
-                        drawRoundRect(
-                            color = Color.White,
-                            topLeft = Offset(rightX, topY),
-                            size = Size(barW, barH),
-                            cornerRadius = radius
-                        )
-                    } else {
-                        val playScale = 1f - safeMorph * 0.32f
-                        val triPath = createPlumpPlayTrianglePath(
-                            centerX = w * 0.54f,
-                            centerY = h * 0.50f,
-                            size = min(w, h) * 0.84f * playScale
-                        )
-                        drawPath(
-                            path = triPath,
-                            color = Color.White
-                        )
-                    }
+                    drawContinuousPlayPauseMorph(
+                        morphProgress = safeMorph,
+                        color = Color.White
+                    )
                 }
             }
         }
@@ -3738,6 +3908,8 @@ private fun RedesignedDedicatedLyricPage(
     currentLyricIndex: Int,
     currentPositionMs: Long,
     rawPositionMs: Long,
+    lyricPositionProvider: () -> Long = { currentPositionMs },
+    rawPositionProvider: () -> Long = { rawPositionMs },
     durationMs: Long,
     isPlaying: Boolean,
     isFavorite: Boolean,
@@ -3821,10 +3993,29 @@ private fun RedesignedDedicatedLyricPage(
 
                 LaunchedEffect(currentLyricIndex, isUserScrubbing) {
                     if (!isUserScrubbing && currentLyricIndex in lyricData.lines.indices) {
-                        listState.animateScrollToItem(
-                            index = currentLyricIndex,
-                            scrollOffset = -210
-                        )
+                        val layoutInfo = listState.layoutInfo
+                        val viewportHeight = (layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset).coerceAtLeast(360)
+                        val goldenFocusOffset = -(viewportHeight * 0.28f).roundToInt()
+                        val targetItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == currentLyricIndex }
+                        if (targetItem != null) {
+                            val currentTargetCenter = targetItem.offset + (targetItem.size / 2)
+                            val desiredCenter = -goldenFocusOffset
+                            val scrollDelta = (currentTargetCenter - desiredCenter).toFloat()
+                            if (abs(scrollDelta) > 2f) {
+                                listState.animateScrollBy(
+                                    value = scrollDelta,
+                                    animationSpec = tween(
+                                        durationMillis = 420,
+                                        easing = ConceptMotion.LyricSmoothScrollEasing
+                                    )
+                                )
+                            }
+                        } else {
+                            listState.animateScrollToItem(
+                                index = currentLyricIndex,
+                                scrollOffset = goldenFocusOffset
+                            )
+                        }
                     }
                 }
 
@@ -3885,23 +4076,24 @@ private fun RedesignedDedicatedLyricPage(
                         val isScrubTarget = isUserScrubbing && index == scrubLineIndex
                         val distance = abs(index - currentLyricIndex)
 
+                        // 零 Text Relayout 弹性缩放：统一基础排版字号，通过 GPU graphicsLayer 连续驱动缩放 (0.86f <-> 1.05f)
                         val lineScale by animateFloatAsState(
                             targetValue = when {
-                                isCurrent -> 1.03f
+                                isCurrent -> 1.05f
                                 isScrubTarget -> 1.0f
-                                else -> (1.0f - distance * 0.024f).coerceAtLeast(0.89f)
+                                else -> (0.93f - (distance - 1).coerceAtLeast(0) * 0.02f).coerceAtLeast(0.86f)
                             },
-                            animationSpec = tween(durationMillis = 260),
+                            animationSpec = ConceptMotion.spatialPageSpring(),
                             label = "lyricLineScale"
                         )
 
-                        val depthBlurVal = if (lyricBlurEnabled && !isUserScrubbing && !isCurrent) {
+                        // 仅对距离 >= 2 的远端静态非激活行施加柔和景深模糊，避免相邻行滚动切换瞬间触发 RenderNode 离屏重建卡顿
+                        val depthBlurVal = if (lyricBlurEnabled && !isUserScrubbing && !isCurrent && !listState.isScrollInProgress && distance >= 2) {
                             when (distance) {
-                                1 -> 0.8f * lyricBlurIntensity
-                                2 -> 1.6f * lyricBlurIntensity
-                                3 -> 2.4f * lyricBlurIntensity
-                                else -> 3.2f * lyricBlurIntensity
-                            }.coerceIn(0f, 5.5f)
+                                2 -> 1.2f * lyricBlurIntensity
+                                3 -> 2.0f * lyricBlurIntensity
+                                else -> 2.8f * lyricBlurIntensity
+                            }.coerceIn(0f, 5.0f)
                         } else 0f
 
                         val transformOriginX = when (lyricAlignment) {
@@ -3919,7 +4111,7 @@ private fun RedesignedDedicatedLyricPage(
                                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(transformOriginX, 0.5f)
                                 }
                                 .then(
-                                    if (supportsHardwareBlur && depthBlurVal >= 0.5f) {
+                                    if (supportsHardwareBlur && depthBlurVal >= 0.6f) {
                                         Modifier.blur(depthBlurVal.dp)
                                     } else Modifier
                                 )
@@ -3959,73 +4151,16 @@ private fun RedesignedDedicatedLyricPage(
                                 }
 
                                 if (isCurrent && line.hasWordTiming && lyricWordByWord) {
-                                    FlowRow(
-                                        horizontalArrangement = flowArrangement,
-                                        verticalArrangement = Arrangement.Center,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        line.words.forEach { word ->
-                                            val wordProgress = when {
-                                                word.durationMs > 0L -> ((currentPositionMs - word.startTimeMs).toFloat() / word.durationMs.toFloat()).coerceIn(0f, 1f)
-                                                currentPositionMs >= word.startTimeMs -> 1f
-                                                else -> 0f
-                                            }
-                                            val isSinging = wordProgress in 0.01f..0.99f
-                                            val dimColor = Color.White.copy(alpha = 0.40f)
-
-                                            val annotatedWord = buildAnnotatedString {
-                                                if (wordProgress <= 0f) {
-                                                    withStyle(SpanStyle(color = dimColor)) {
-                                                        append(word.text)
-                                                    }
-                                                } else if (wordProgress >= 1f) {
-                                                    withStyle(SpanStyle(color = activePrimaryColor)) {
-                                                        append(word.text)
-                                                    }
-                                                } else {
-                                                    val leftStop = (wordProgress - 0.14f).coerceAtLeast(0f)
-                                                    val rightStop = (wordProgress + 0.14f).coerceAtMost(1f)
-                                                    withStyle(
-                                                        SpanStyle(
-                                                            brush = Brush.horizontalGradient(
-                                                                0.0f to activePrimaryColor,
-                                                                leftStop to activeSecondaryColor,
-                                                                rightStop to dimColor,
-                                                                1.0f to dimColor
-                                                            )
-                                                        )
-                                                    ) {
-                                                        append(word.text)
-                                                    }
-                                                }
-                                            }
-
-                                            val wave = if (isSinging) sin(wordProgress * PI.toFloat()) else 0f
-                                            val isLongNote = word.durationMs >= 750L && isSinging
-
-                                            Text(
-                                                text = annotatedWord,
-                                                style = MaterialTheme.typography.headlineSmall.copy(
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    fontSize = (lyricFontSize + 3.5f).sp,
-                                                    lineHeight = (lyricFontSize + 11f).sp,
-                                                    shadow = if (isLongNote) {
-                                                        Shadow(
-                                                            color = activePrimaryColor.copy(alpha = (0.80f * wave).coerceIn(0f, 1f)),
-                                                            offset = Offset.Zero,
-                                                            blurRadius = (20f * wave + 6f).coerceAtLeast(1f)
-                                                        )
-                                                    } else null
-                                                ),
-                                                modifier = Modifier.graphicsLayer {
-                                                    translationY = -3.2f * wave
-                                                    val s = 1f + 0.035f * wave
-                                                    scaleX = s
-                                                    scaleY = s
-                                                }
-                                            )
-                                        }
-                                    }
+                                    DedicatedActiveKaraokeWords(
+                                        words = line.words,
+                                        initialPositionMs = currentPositionMs,
+                                        isPlaying = isPlaying,
+                                        lyricPositionProvider = lyricPositionProvider,
+                                        lyricFontSize = lyricFontSize,
+                                        flowArrangement = flowArrangement,
+                                        activePrimaryColor = activePrimaryColor,
+                                        activeSecondaryColor = activeSecondaryColor
+                                    )
                                 } else {
                                     val distanceAlpha = when {
                                         isCurrent -> 1.0f
@@ -4037,7 +4172,7 @@ private fun RedesignedDedicatedLyricPage(
                                     }
                                     val textColor = if (isCurrent) activePrimaryColor else Color.White.copy(alpha = distanceAlpha)
                                     val textWeight = if (isCurrent || isScrubTarget) FontWeight.ExtraBold else FontWeight.SemiBold
-                                    val lineSize = if (isCurrent) (lyricFontSize + 3f).sp else lyricFontSize.sp
+                                    val lineSize = lyricFontSize.sp
 
                                     val fallbackBlurShadow = if (!supportsHardwareBlur && depthBlurVal >= 0.5f) {
                                         Shadow(
@@ -4303,12 +4438,111 @@ private fun RedesignedDedicatedLyricPage(
         // 歌词页专属底部极简控播栏：无边框圆润播放/暂停按钮 + 极光细丝进度条
         LyricPageMinimalBottomBar(
             currentPositionMs = rawPositionMs,
+            positionProvider = rawPositionProvider,
             durationMs = durationMs,
             isPlaying = isPlaying,
             accentColor = activePrimaryColor,
             onTogglePlay = onTogglePlay,
             onSeekTo = onSeekTo
         )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DedicatedActiveKaraokeWords(
+    words: List<com.concept.music.data.model.LyricWord>,
+    initialPositionMs: Long,
+    isPlaying: Boolean,
+    lyricPositionProvider: () -> Long,
+    lyricFontSize: Float,
+    flowArrangement: Arrangement.Horizontal,
+    activePrimaryColor: Color,
+    activeSecondaryColor: Color
+) {
+    var sampledPosMs by remember { mutableLongStateOf(lyricPositionProvider()) }
+    LaunchedEffect(initialPositionMs) {
+        sampledPosMs = lyricPositionProvider()
+    }
+    LaunchedEffect(isPlaying, lyricPositionProvider) {
+        if (isPlaying) {
+            while (isActive) {
+                withFrameMillis {
+                    sampledPosMs = lyricPositionProvider()
+                }
+            }
+        } else {
+            sampledPosMs = lyricPositionProvider()
+        }
+    }
+    val livePosMs = sampledPosMs
+    val dimColor = Color.White.copy(alpha = 0.40f)
+
+    FlowRow(
+        horizontalArrangement = flowArrangement,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        words.forEach { word ->
+            val wordProgress = when {
+                word.durationMs > 0L -> ((livePosMs - word.startTimeMs).toFloat() / word.durationMs.toFloat()).coerceIn(0f, 1f)
+                livePosMs >= word.startTimeMs -> 1f
+                else -> 0f
+            }
+            val isSinging = wordProgress in 0.01f..0.99f
+
+            val annotatedWord = buildAnnotatedString {
+                if (wordProgress <= 0f) {
+                    withStyle(SpanStyle(color = dimColor)) {
+                        append(word.text)
+                    }
+                } else if (wordProgress >= 1f) {
+                    withStyle(SpanStyle(color = activePrimaryColor)) {
+                        append(word.text)
+                    }
+                } else {
+                    val leftStop = (wordProgress - 0.14f).coerceAtLeast(0f)
+                    val rightStop = (wordProgress + 0.14f).coerceAtMost(1f)
+                    withStyle(
+                        SpanStyle(
+                            brush = Brush.horizontalGradient(
+                                0.0f to activePrimaryColor,
+                                leftStop to activeSecondaryColor,
+                                rightStop to dimColor,
+                                1.0f to dimColor
+                            )
+                        )
+                    ) {
+                        append(word.text)
+                    }
+                }
+            }
+
+            val wave = if (isSinging) sin(wordProgress * PI.toFloat()) else 0f
+            val isLongNote = word.durationMs >= 750L && isSinging
+
+            Text(
+                text = annotatedWord,
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = lyricFontSize.sp,
+                    lineHeight = (lyricFontSize + 9f).sp,
+                    shadow = if (isLongNote) {
+                        Shadow(
+                            color = activePrimaryColor.copy(alpha = (0.80f * wave).coerceIn(0f, 1f)),
+                            offset = Offset.Zero,
+                            blurRadius = (20f * wave + 6f).coerceAtLeast(1f)
+                        )
+                    } else null
+                ),
+                modifier = Modifier.graphicsLayer {
+                    translationY = -3.2f * wave
+                    val s = 1f + 0.035f * wave
+                    scaleX = s
+                    scaleY = s
+                }
+            )
+        }
     }
 }
 
@@ -4351,6 +4585,7 @@ private fun LyricRightDockGlassButton(
 @Composable
 private fun LyricPageMinimalBottomBar(
     currentPositionMs: Long,
+    positionProvider: () -> Long = { currentPositionMs },
     durationMs: Long,
     isPlaying: Boolean,
     accentColor: Color,
@@ -4359,9 +4594,28 @@ private fun LyricPageMinimalBottomBar(
 ) {
     var isDragging by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
+    var sampledPositionMs by remember { mutableLongStateOf(positionProvider()) }
 
+    LaunchedEffect(currentPositionMs) {
+        if (!isDragging) {
+            sampledPositionMs = positionProvider()
+        }
+    }
+    LaunchedEffect(isPlaying, isDragging, positionProvider) {
+        if (isPlaying && !isDragging) {
+            while (isActive) {
+                withFrameMillis {
+                    sampledPositionMs = positionProvider()
+                }
+            }
+        } else if (!isDragging) {
+            sampledPositionMs = positionProvider()
+        }
+    }
+
+    val livePositionMs = sampledPositionMs
     val currentFraction = if (durationMs > 0L) {
-        (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+        (livePositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
 
     val targetFraction = if (isDragging) dragFraction else currentFraction
@@ -4374,7 +4628,7 @@ private fun LyricPageMinimalBottomBar(
         },
         label = "lyricBarSmoothFraction"
     )
-    val displayTimeMs = if (isDragging) (dragFraction * durationMs).toLong() else currentPositionMs
+    val displayTimeMs = if (isDragging) (dragFraction * durationMs).toLong() else livePositionMs
 
     val railHeightDp by animateDpAsState(
         targetValue = if (isDragging) 7.dp else 3.5.dp,
@@ -4416,39 +4670,20 @@ private fun LyricPageMinimalBottomBar(
                 )
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Canvas(modifier = Modifier.size(20.dp)) {
-                    val w = size.width
-                    val h = size.height
-                    val p = morphProgress.coerceIn(0f, 1f)
-                    if (p < 0.96f) {
-                        val triAlpha = (1f - p * 1.15f).coerceIn(0f, 1f)
-                        val tri = createPlumpPlayTrianglePath(
-                            centerX = w * 0.54f,
-                            centerY = h * 0.50f,
-                            size = min(w, h) * 0.84f * (0.76f + 0.24f * (1f - p))
-                        )
-                        drawPath(path = tri, color = Color.White.copy(alpha = triAlpha))
-                    }
-                    if (p > 0.04f) {
-                        val pauseAlpha = ((p - 0.04f) / 0.96f).coerceIn(0f, 1f)
-                        val barW = w * 0.25f
-                        val barH = h * (0.48f + 0.22f * p)
-                        val topY = (h - barH) / 2f
-                        val r = CornerRadius(barW / 2f, barW / 2f)
-                        val spread = 0.14f + 0.05f * p
-                        drawRoundRect(
-                            color = Color.White.copy(alpha = pauseAlpha),
-                            topLeft = Offset(w * (0.37f - spread), topY),
-                            size = Size(barW, barH),
-                            cornerRadius = r
-                        )
-                        drawRoundRect(
-                            color = Color.White.copy(alpha = pauseAlpha),
-                            topLeft = Offset(w * (0.38f + spread), topY),
-                            size = Size(barW, barH),
-                            cornerRadius = r
-                        )
-                    }
+                val safeMorph = morphProgress.coerceIn(0f, 1f)
+                Canvas(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .graphicsLayer {
+                            val bounce = (1f - 0.08f * sin(safeMorph * PI.toFloat())).coerceIn(0.88f, 1.10f)
+                            scaleX = bounce
+                            scaleY = bounce
+                        }
+                ) {
+                    drawContinuousPlayPauseMorph(
+                        morphProgress = safeMorph,
+                        color = Color.White
+                    )
                 }
             }
         }

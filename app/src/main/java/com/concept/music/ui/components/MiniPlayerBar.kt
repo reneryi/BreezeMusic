@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.Song
 import com.concept.music.ui.theme.ConceptCyanAccent
+import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
@@ -69,7 +70,8 @@ fun MiniPlayerBar(
     onNextClick: () -> Unit,
     onBarClick: () -> Unit,
     onQueueClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    positionProvider: () -> Long = { currentPositionMs }
 ) {
     if (currentSong == null) return
 
@@ -99,45 +101,48 @@ fun MiniPlayerBar(
 
     val scope = rememberCoroutineScope()
     val rotationAnim = remember { Animatable(0f) }
+    var wasMiniVinylPlaying by remember { mutableStateOf(isPlaying) }
     val dragOffsetX = remember { Animatable(0f) }
 
     LaunchedEffect(isPlaying) {
         if (isPlaying) {
+            wasMiniVinylPlaying = true
             while (isActive) {
                 rotationAnim.animateTo(
                     targetValue = rotationAnim.value + 360f,
                     animationSpec = tween(durationMillis = 16000, easing = LinearEasing)
                 )
             }
+        } else if (wasMiniVinylPlaying) {
+            wasMiniVinylPlaying = false
+            rotationAnim.animateTo(
+                targetValue = rotationAnim.value + 14f,
+                animationSpec = tween(durationMillis = 420, easing = ConceptMotion.EmphasizedDecelerate)
+            )
         }
     }
 
-    val rawProgressFraction = if (durationMs > 0L) {
-        (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-    } else 0f
-    val progressFraction by animateFloatAsState(
-        targetValue = rawProgressFraction,
-        animationSpec = tween(durationMillis = 150, easing = LinearEasing),
-        label = "miniProgressFraction"
-    )
-    val playPauseMorph by animateFloatAsState(
-        targetValue = if (isPlaying) 1f else 0f,
-        animationSpec = spring(
-            dampingRatio = 0.72f,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "miniPlayPauseMorph"
-    )
-
     val swipeThreshold = 82f
-    val currentDrag = dragOffsetX.value
-    val isSwipingNext = currentDrag < -28f
-    val isSwipingPrev = currentDrag > 28f
-    val willTriggerSwitch = abs(currentDrag) >= swipeThreshold
+    // 使用 derivedStateOf 将连续像素偏移离散化为 5 个区间状态 (-2, -1, 0, 1, 2)，手指横滑全程 0 次不必要重组
+    val swipeStage by remember {
+        derivedStateOf {
+            val dx = dragOffsetX.value
+            when {
+                dx <= -swipeThreshold -> -2
+                dx < -28f -> -1
+                dx >= swipeThreshold -> 2
+                dx > 28f -> 1
+                else -> 0
+            }
+        }
+    }
+    val isSwipingNext = swipeStage < 0
+    val isSwipingPrev = swipeStage > 0
+    val willTriggerSwitch = abs(swipeStage) == 2
 
     val barScale by animateFloatAsState(
         targetValue = if (willTriggerSwitch) 0.985f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        animationSpec = ConceptMotion.gentleBounceSpring(),
         label = "miniBarSwipeScale"
     )
 
@@ -169,16 +174,13 @@ fun MiniPlayerBar(
                             scope.launch {
                                 dragOffsetX.animateTo(
                                     targetValue = 0f,
-                                    animationSpec = spring(
-                                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                                        stiffness = Spring.StiffnessMedium
-                                    )
+                                    animationSpec = ConceptMotion.gentleBounceSpring()
                                 )
                             }
                         },
                         onDragCancel = {
                             scope.launch {
-                                dragOffsetX.animateTo(0f, spring())
+                                dragOffsetX.animateTo(0f, ConceptMotion.gentleBounceSpring())
                             }
                         },
                         onHorizontalDrag = { change, dragAmount ->
@@ -208,8 +210,9 @@ fun MiniPlayerBar(
                     modifier = Modifier
                         .weight(1f)
                         .graphicsLayer {
-                            translationX = currentDrag * 0.42f
-                            alpha = (1f - (abs(currentDrag) / 340f)).coerceIn(0.35f, 1f)
+                            val d = dragOffsetX.value
+                            translationX = d * 0.42f
+                            alpha = (1f - (abs(d) / 340f)).coerceIn(0.35f, 1f)
                         },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -338,82 +341,14 @@ fun MiniPlayerBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .softClickable(
-                                pressScale = 0.88f,
-                                pressAlpha = 0.85f,
-                                onClick = onTogglePlay
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Canvas(modifier = Modifier.fillMaxSize()) {
-                            val strokeW = 2.2.dp.toPx()
-                            drawCircle(
-                                color = ConceptPrimary.copy(alpha = if (isDark) 0.22f else 0.16f),
-                                style = Stroke(width = strokeW)
-                            )
-                            if (progressFraction > 0.005f) {
-                                drawArc(
-                                    brush = Brush.sweepGradient(
-                                        listOf(ConceptPrimary, ConceptCyanAccent, ConceptPrimary)
-                                    ),
-                                    startAngle = -90f,
-                                    sweepAngle = 360f * progressFraction,
-                                    useCenter = false,
-                                    style = Stroke(width = strokeW, cap = StrokeCap.Round)
-                                )
-                            }
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(ConceptPrimary, ConceptCyanAccent.copy(alpha = 0.9f))
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Canvas(modifier = Modifier.size(15.dp)) {
-                                val w = size.width
-                                val h = size.height
-                                val p = playPauseMorph.coerceIn(0f, 1f)
-                                if (p < 0.96f) {
-                                    val triAlpha = (1f - p * 1.15f).coerceIn(0f, 1f)
-                                    val tri = createPlumpPlayTrianglePath(
-                                        centerX = w * 0.55f,
-                                        centerY = h * 0.50f,
-                                        size = min(w, h) * 0.86f * (0.76f + 0.24f * (1f - p))
-                                    )
-                                    drawPath(path = tri, color = Color.White.copy(alpha = triAlpha))
-                                }
-                                if (p > 0.04f) {
-                                    val pauseAlpha = ((p - 0.04f) / 0.96f).coerceIn(0f, 1f)
-                                    val barW = w * 0.25f
-                                    val barH = h * (0.48f + 0.22f * p)
-                                    val topY = (h - barH) / 2f
-                                    val r = CornerRadius(barW / 2f, barW / 2f)
-                                    val spread = 0.14f + 0.05f * p
-                                    drawRoundRect(
-                                        color = Color.White.copy(alpha = pauseAlpha),
-                                        topLeft = Offset(w * (0.37f - spread), topY),
-                                        size = Size(barW, barH),
-                                        cornerRadius = r
-                                    )
-                                    drawRoundRect(
-                                        color = Color.White.copy(alpha = pauseAlpha),
-                                        topLeft = Offset(w * (0.38f + spread), topY),
-                                        size = Size(barW, barH),
-                                        cornerRadius = r
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    MiniPlayerPlayProgressButton(
+                        isPlaying = isPlaying,
+                        isDark = isDark,
+                        initialPositionMs = currentPositionMs,
+                        durationMs = durationMs,
+                        positionProvider = positionProvider,
+                        onTogglePlay = onTogglePlay
+                    )
 
                     Surface(
                         shape = CircleShape,
@@ -441,6 +376,95 @@ fun MiniPlayerBar(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MiniPlayerPlayProgressButton(
+    isPlaying: Boolean,
+    isDark: Boolean,
+    initialPositionMs: Long,
+    durationMs: Long,
+    positionProvider: () -> Long,
+    onTogglePlay: () -> Unit
+) {
+    var sampledPositionMs by remember { mutableLongStateOf(positionProvider()) }
+    LaunchedEffect(initialPositionMs) {
+        sampledPositionMs = positionProvider()
+    }
+    LaunchedEffect(isPlaying, positionProvider) {
+        if (isPlaying) {
+            while (isActive) {
+                withFrameMillis {
+                    sampledPositionMs = positionProvider()
+                }
+            }
+        } else {
+            sampledPositionMs = positionProvider()
+        }
+    }
+
+    val rawProgressFraction = if (durationMs > 0L) {
+        (sampledPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+    val progressFraction by animateFloatAsState(
+        targetValue = rawProgressFraction,
+        animationSpec = tween(durationMillis = 140, easing = LinearEasing),
+        label = "miniProgressFraction"
+    )
+    val playPauseMorph by animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0f,
+        animationSpec = ConceptMotion.expressiveSpring(),
+        label = "miniPlayPauseMorph"
+    )
+
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .softClickable(
+                pressScale = 0.88f,
+                pressAlpha = 0.85f,
+                onClick = onTogglePlay
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val strokeW = 2.2.dp.toPx()
+            drawCircle(
+                color = ConceptPrimary.copy(alpha = if (isDark) 0.22f else 0.16f),
+                style = Stroke(width = strokeW)
+            )
+            if (progressFraction > 0.005f) {
+                drawArc(
+                    brush = Brush.sweepGradient(
+                        listOf(ConceptPrimary, ConceptCyanAccent, ConceptPrimary)
+                    ),
+                    startAngle = -90f,
+                    sweepAngle = 360f * progressFraction,
+                    useCenter = false,
+                    style = Stroke(width = strokeW, cap = StrokeCap.Round)
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(
+                    Brush.linearGradient(
+                        listOf(ConceptPrimary, ConceptCyanAccent.copy(alpha = 0.9f))
+                    )
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.size(15.dp)) {
+                drawContinuousPlayPauseMorph(
+                    morphProgress = playPauseMorph,
+                    color = Color.White
+                )
             }
         }
     }

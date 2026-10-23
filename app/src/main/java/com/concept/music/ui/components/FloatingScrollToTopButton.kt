@@ -6,6 +6,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import com.concept.music.ui.theme.ConceptMotion
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -61,8 +64,12 @@ fun FloatingScrollToTopButton(
 
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(180)) + scaleIn(initialScale = 0.84f, animationSpec = tween(200)),
-        exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.84f, animationSpec = tween(170)),
+        enter = fadeIn(tween(180, easing = ConceptMotion.EmphasizedDecelerate)) +
+            scaleIn(initialScale = 0.75f, animationSpec = ConceptMotion.expressiveSpring()) +
+            slideInVertically(animationSpec = ConceptMotion.expressiveSpring()) { it / 2 },
+        exit = fadeOut(tween(150, easing = ConceptMotion.EmphasizedAccelerate)) +
+            scaleOut(targetScale = 0.75f, animationSpec = ConceptMotion.spatialPageSpring()) +
+            slideOutVertically(animationSpec = ConceptMotion.spatialPageSpring()) { it / 2 },
         modifier = modifier
     ) {
         FilledIconButton(

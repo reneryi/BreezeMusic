@@ -31,7 +31,6 @@ import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
-import com.concept.music.ui.theme.conceptSheetSpringEntrance
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,7 +84,6 @@ fun CommentsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .conceptSheetSpringEntrance()
                 .fillMaxHeight(0.8f)
                 .padding(horizontal = 20.dp, vertical = 4.dp)
                 .navigationBarsPadding()

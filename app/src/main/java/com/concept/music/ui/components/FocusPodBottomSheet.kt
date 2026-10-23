@@ -1,8 +1,18 @@
 package com.concept.music.ui.components
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.ui.graphics.graphicsLayer
+import com.concept.music.ui.theme.ConceptMotion
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -34,7 +44,6 @@ import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
-import com.concept.music.ui.theme.conceptSheetSpringEntrance
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
 
@@ -57,6 +66,15 @@ fun FocusPodBottomSheet(
     val state by FocusPodManager.state.collectAsState()
     val ambientState by AmbientSoundManager.state.collectAsState()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val coroutineScope = rememberCoroutineScope()
+    val dismissWithAnimation: () -> Unit = remember(coroutineScope, sheetState, onDismiss) {
+        {
+            coroutineScope.launch {
+                runCatching { sheetState.hide() }
+                onDismiss()
+            }
+        }
+    }
     var selectedSection by remember { mutableIntStateOf(0) }
 
     val podAccent = if (isDark) Color(0xFF9688FF) else ConceptVioletAccent
@@ -96,7 +114,6 @@ fun FocusPodBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .conceptSheetSpringEntrance()
                 .fillMaxHeight(0.86f)
                 .padding(horizontal = 20.dp)
                 .navigationBarsPadding()
@@ -144,7 +161,7 @@ fun FocusPodBottomSheet(
                         )
                     }
                 }
-                IconButton(onClick = onDismiss) {
+                IconButton(onClick = dismissWithAnimation) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
                         contentDescription = "关闭",
@@ -155,49 +172,65 @@ fun FocusPodBottomSheet(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // 2. 顶部双模块切换栏：「专注定时」与「环境伴音舱」
+            // 2. 顶部双模块切换栏：「专注定时」与「环境伴音舱」（搭载 ExpressiveMicroSpring 滑动胶囊指示器）
+            val pillFraction by animateFloatAsState(
+                targetValue = selectedSection.toFloat(),
+                animationSpec = ConceptMotion.expressiveSpring(),
+                label = "focusTabSlidingPill"
+            )
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = cardSurfaceColor,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        .padding(4.dp)
                 ) {
-                    val tabs = listOf(
-                        0 to "心流专注定时",
-                        1 to if (ambientState.masterEnabled) "环境伴音舱 · 已开" else "环境伴音舱"
+                    val tabGap = 6.dp
+                    val singleTabWidth = (maxWidth - tabGap) / 2f
+                    // 灵动滑动胶囊底座
+                    Box(
+                        modifier = Modifier
+                            .width(singleTabWidth)
+                            .height(36.dp)
+                            .graphicsLayer {
+                                translationX = pillFraction * (singleTabWidth.toPx() + tabGap.toPx())
+                            }
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(podAccent)
                     )
-                    tabs.forEach { (idx, label) ->
-                        val selected = selectedSection == idx
-                        val bg by animateColorAsState(
-                            targetValue = if (selected) podAccent else Color.Transparent,
-                            animationSpec = tween(180),
-                            label = "focusTabBg_$idx"
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(tabGap)
+                    ) {
+                        val tabs = listOf(
+                            0 to "心流专注定时",
+                            1 to if (ambientState.masterEnabled) "环境伴音舱 · 已开" else "环境伴音舱"
                         )
-                        val txtColor by animateColorAsState(
-                            targetValue = if (selected) Color.White else subText,
-                            animationSpec = tween(180),
-                            label = "focusTabTxt_$idx"
-                        )
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(bg)
-                                .softClickable { selectedSection = idx }
-                                .padding(vertical = 9.dp)
-                        ) {
-                            Text(
-                                text = label,
-                                color = txtColor,
-                                fontSize = 13.sp,
-                                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold
+                        tabs.forEach { (idx, label) ->
+                            val selected = selectedSection == idx
+                            val txtColor by animateColorAsState(
+                                targetValue = if (selected) Color.White else subText,
+                                animationSpec = tween(200),
+                                label = "focusTabTxt_$idx"
                             )
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(36.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .softClickable { selectedSection = idx }
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = txtColor,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold
+                                )
+                            }
                         }
                     }
                 }
@@ -205,15 +238,28 @@ fun FocusPodBottomSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            Column(
+            AnimatedContent(
+                targetState = selectedSection,
+                transitionSpec = {
+                    val dir = if (targetState > initialState) 1 else -1
+                    (slideInHorizontally(animationSpec = ConceptMotion.spatialPageSpring()) { fullW -> dir * (fullW / 7) } +
+                        fadeIn(tween(240, easing = ConceptMotion.EmphasizedDecelerate))) togetherWith
+                        (slideOutHorizontally(animationSpec = ConceptMotion.spatialPageSpring()) { fullW -> -dir * (fullW / 9) } +
+                            fadeOut(tween(170, easing = ConceptMotion.EmphasizedAccelerate)))
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                if (selectedSection == 0) {
+                    .weight(1f),
+                label = "focusPodSectionTransition"
+            ) { activeSection ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    if (activeSection == 0) {
                     // 模块一：心流专注计时与场景预设
                     Surface(
                         shape = RoundedCornerShape(24.dp),
@@ -606,6 +652,7 @@ fun FocusPodBottomSheet(
                             }
                         }
                     }
+                }
                 }
             }
         }

@@ -3,15 +3,14 @@ package com.concept.music.ui.home
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import com.concept.music.ui.theme.ConceptMotion
+import kotlinx.coroutines.isActive
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -88,6 +87,7 @@ fun RadioScreen(
     onBack: () -> Unit,
     onSongClick: (Song, List<Song>) -> Unit,
     currentSong: Song? = null,
+    isPlaying: Boolean = false,
     onSongMoreClick: (Song) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -167,20 +167,31 @@ fun RadioScreen(
         return "FM $major.$minor"
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "tunerVinyl")
-    val vinylRotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 18000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "vinylRot"
-    )
+    // 电台黑胶唱盘按需旋转：仅在音乐处于播放状态时驱动旋转，暂停或静态浏览时平滑阻尼减速停转（0 空跑帧循环）
+    val isTunerPlaying = isPlaying && currentSong != null
+    val vinylRotationAnim = remember { Animatable(0f) }
+    var wasTunerPlaying by remember { mutableStateOf(isTunerPlaying) }
+    LaunchedEffect(isTunerPlaying) {
+        if (isTunerPlaying) {
+            wasTunerPlaying = true
+            while (isActive) {
+                vinylRotationAnim.animateTo(
+                    targetValue = vinylRotationAnim.value + 360f,
+                    animationSpec = tween(durationMillis = 18000, easing = LinearEasing)
+                )
+            }
+        } else if (wasTunerPlaying) {
+            wasTunerPlaying = false
+            vinylRotationAnim.animateTo(
+                targetValue = vinylRotationAnim.value + 15f,
+                animationSpec = tween(durationMillis = 450, easing = ConceptMotion.EmphasizedDecelerate)
+            )
+        }
+    }
 
     val expandArrowRotation by animateFloatAsState(
         targetValue = if (showAllStationsGrid) 180f else 0f,
-        animationSpec = tween(durationMillis = 250),
+        animationSpec = ConceptMotion.expressiveSpring(),
         label = "stationGridArrow"
     )
 
@@ -331,7 +342,7 @@ fun RadioScreen(
                                         modifier = Modifier
                                             .fillMaxSize()
                                             .graphicsLayer {
-                                                rotationZ = vinylRotation
+                                                rotationZ = vinylRotationAnim.value % 360f
                                                 shape = CircleShape
                                                 clip = true
                                             }
@@ -350,7 +361,7 @@ fun RadioScreen(
                                             modifier = Modifier
                                                 .size(60.dp)
                                                 .graphicsLayer {
-                                                    rotationZ = vinylRotation
+                                                    rotationZ = vinylRotationAnim.value % 360f
                                                     shape = CircleShape
                                                     clip = true
                                                 }
@@ -416,7 +427,7 @@ fun RadioScreen(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        PlayingAudioWaveIndicator()
+                                        PlayingAudioWaveIndicator(color = currentCategoryAccent, isPlaying = isTunerPlaying)
                                     }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(

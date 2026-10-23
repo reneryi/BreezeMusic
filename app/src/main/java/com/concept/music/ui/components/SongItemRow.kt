@@ -5,9 +5,11 @@ import com.concept.music.ui.theme.softClickable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import com.concept.music.ui.theme.ConceptMotion
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -223,36 +225,52 @@ fun SongItemRow(
 @Composable
 fun PlayingAudioWaveIndicator(
     color: Color = ConceptPrimary,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isPlaying: Boolean = true
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "audioWave")
-    val bar1 by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(420, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "bar1"
-    )
-    val bar2 by infiniteTransition.animateFloat(
-        initialValue = 0.95f,
-        targetValue = 0.25f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(360, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "bar2"
-    )
-    val bar3 by infiniteTransition.animateFloat(
-        initialValue = 0.45f,
-        targetValue = 0.9f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(500, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "bar3"
-    )
+    val bar1: Float
+    val bar2: Float
+    val bar3: Float
+    if (isPlaying) {
+        val infiniteTransition = rememberInfiniteTransition(label = "audioWave")
+        val animBar1 by infiniteTransition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(420, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "bar1"
+        )
+        val animBar2 by infiniteTransition.animateFloat(
+            initialValue = 0.95f,
+            targetValue = 0.25f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(360, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "bar2"
+        )
+        val animBar3 by infiniteTransition.animateFloat(
+            initialValue = 0.45f,
+            targetValue = 0.9f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(500, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "bar3"
+        )
+        bar1 = animBar1
+        bar2 = animBar2
+        bar3 = animBar3
+    } else {
+        val settled1 by animateFloatAsState(0.28f, ConceptMotion.gentleBounceSpring(), label = "settledBar1")
+        val settled2 by animateFloatAsState(0.44f, ConceptMotion.gentleBounceSpring(), label = "settledBar2")
+        val settled3 by animateFloatAsState(0.24f, ConceptMotion.gentleBounceSpring(), label = "settledBar3")
+        bar1 = settled1
+        bar2 = settled2
+        bar3 = settled3
+    }
 
     // 采用 Canvas 硬件加速绘制跳动音律柱，仅在 Draw 阶段更新，完全消除每帧 Layout 重排开销
     Canvas(
