@@ -57,7 +57,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -447,46 +449,80 @@ fun Modifier.horizontalCategorySwipe(
     val count by rememberUpdatedState(if (itemCount > 0) itemCount else totalCount)
     val onSelect by rememberUpdatedState(onSelectIndex)
     val onBack by rememberUpdatedState(onSwipeRightAtStart ?: onSwipeBackAtFirst)
+    val scope = rememberCoroutineScope()
+    val dragFeedbackX = remember { Animatable(0f) }
 
-    this.pointerInput(Unit) {
-        var totalDx = 0f
-        var triggered = false
-        detectHorizontalDragGestures(
-            onDragStart = {
-                totalDx = 0f
-                triggered = false
-            },
-            onDragEnd = {
-                totalDx = 0f
-                triggered = false
-            },
-            onDragCancel = {
-                totalDx = 0f
-                triggered = false
-            },
-            onHorizontalDrag = { change, dragAmount ->
-                if (triggered || count <= 1) return@detectHorizontalDragGestures
-                totalDx += dragAmount
-                if (totalDx <= -swipeThresholdPx) {
-                    if (curIdx < count - 1) {
-                        triggered = true
-                        change.consume()
-                        onSelect(curIdx + 1)
-                    }
-                } else if (totalDx >= swipeThresholdPx) {
-                    if (curIdx > 0) {
-                        triggered = true
-                        change.consume()
-                        onSelect(curIdx - 1)
-                    } else if (onBack != null) {
-                        triggered = true
-                        change.consume()
-                        onBack?.invoke()
-                    }
+    this
+        .graphicsLayer {
+            translationX = dragFeedbackX.value
+        }
+        .pointerInput(Unit) {
+            var totalDx = 0f
+            var triggered = false
+            val settleBack: () -> Unit = {
+                scope.launch {
+                    dragFeedbackX.animateTo(
+                        targetValue = 0f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        )
+                    )
                 }
             }
-        )
-    }
+            detectHorizontalDragGestures(
+                onDragStart = {
+                    totalDx = 0f
+                    triggered = false
+                },
+                onDragEnd = {
+                    totalDx = 0f
+                    triggered = false
+                    settleBack()
+                },
+                onDragCancel = {
+                    totalDx = 0f
+                    triggered = false
+                    settleBack()
+                },
+                onHorizontalDrag = { change, dragAmount ->
+                    if (triggered || count <= 1) return@detectHorizontalDragGestures
+                    totalDx += dragAmount
+                    val canGoNext = curIdx < count - 1
+                    val canGoPrev = curIdx > 0 || onBack != null
+                    val resistance = when {
+                        totalDx < 0f && !canGoNext -> 0.08f
+                        totalDx > 0f && !canGoPrev -> 0.08f
+                        else -> 0.24f
+                    }
+                    scope.launch {
+                        dragFeedbackX.snapTo(
+                            (dragFeedbackX.value + dragAmount * resistance).coerceIn(-34f, 34f)
+                        )
+                    }
+                    if (totalDx <= -swipeThresholdPx) {
+                        if (canGoNext) {
+                            triggered = true
+                            change.consume()
+                            settleBack()
+                            onSelect(curIdx + 1)
+                        }
+                    } else if (totalDx >= swipeThresholdPx) {
+                        if (curIdx > 0) {
+                            triggered = true
+                            change.consume()
+                            settleBack()
+                            onSelect(curIdx - 1)
+                        } else if (onBack != null) {
+                            triggered = true
+                            change.consume()
+                            settleBack()
+                            onBack?.invoke()
+                        }
+                    }
+                }
+            )
+        }
 }
 
 /**

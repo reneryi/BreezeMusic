@@ -3,6 +3,8 @@ package com.concept.music.ui.home
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -118,6 +120,7 @@ fun HomeScreen(
     isPlaying: Boolean = false,
     onTogglePlayPause: () -> Unit = {},
     onSongMoreClick: (Song) -> Unit = {},
+    isOverlayOpen: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val dailySongs by viewModel.dailyRecommendSongs.collectAsState()
@@ -162,6 +165,15 @@ fun HomeScreen(
     // 发现页内直接打开的全量榜单分类宫格选择器
     var showRankGridSheet by remember { mutableStateOf(false) }
     var selectedRankCategory by remember { mutableStateOf("全部") }
+
+    // 当打开歌曲评论页、全屏播放页或二级页面时，立即关闭首页内的 ModalBottomSheet 抽屉，避免 DialogWindow 遮挡评论页面
+    LaunchedEffect(isOverlayOpen) {
+        if (isOverlayOpen) {
+            showPersonalFmSheet = false
+            quickFmStation = null
+            showRankGridSheet = false
+        }
+    }
 
     // 严格隔离随心听与每日推荐数据源，绝不在随心听未加载完成时盗用每日推荐第一首歌曲的封面
     val fmPool = personalFmSongs
@@ -522,7 +534,7 @@ fun HomeScreen(
         }
     }
 
-    if (showRankGridSheet) {
+    if (showRankGridSheet && !isOverlayOpen) {
         RankGridPickerSheet(
             ranks = ranks,
             selectedRankId = null,
@@ -534,7 +546,7 @@ fun HomeScreen(
         )
     }
 
-    if (showPersonalFmSheet) {
+    if (showPersonalFmSheet && !isOverlayOpen) {
         val pfmSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val mintAccent = if (isDark) Color(0xFF26DEBF) else ConceptMintAccent
         val sheetBgColor = if (isDark) Color(0xFF0E1D22) else Color(0xFFF2FCF9)
@@ -720,7 +732,7 @@ fun HomeScreen(
         }
     }
 
-    if (quickFmStation != null) {
+    if (quickFmStation != null && !isOverlayOpen) {
         val station = quickFmStation!!
         val qfmSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
@@ -1115,36 +1127,56 @@ private fun PersonalFmPlayerCard(
                         .background(Brush.linearGradient(listOf(ConceptMintAccent, ConceptPrimaryDark))),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (!activeSong?.coverUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = activeSong!!.coverUrl,
-                            contentDescription = activeSong.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Rounded.Radio,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(26.dp)
-                        )
+                    Crossfade(
+                        targetState = activeSong?.coverUrl.orEmpty(),
+                        animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing),
+                        label = "personalFmCoverCrossfade"
+                    ) { coverUrl ->
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (coverUrl.isNotBlank()) {
+                                AsyncImage(
+                                    model = coverUrl,
+                                    contentDescription = activeSong?.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.Radio,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.width(13.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = activeSong?.title ?: if (isRefreshing) "正在为你调频私人曲库..." else "轻触开启私人随心漫游",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 15.5.sp
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    AnimatedContent(
+                        targetState = activeSong?.title ?: if (isRefreshing) "正在为你调频私人曲库..." else "轻触开启私人随心漫游",
+                        transitionSpec = {
+                            fadeIn(tween(220, easing = FastOutSlowInEasing))
+                                .togetherWith(fadeOut(tween(150, easing = FastOutSlowInEasing)))
+                        },
+                        label = "personalFmTitleTransition"
+                    ) { displayTitle ->
+                        Text(
+                            text = displayTitle,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 15.5.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(4.dp))
 

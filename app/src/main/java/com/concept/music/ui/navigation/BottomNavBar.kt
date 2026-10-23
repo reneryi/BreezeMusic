@@ -124,15 +124,21 @@ fun BottomNavBar(
                     ConceptPrimary.copy(alpha = 0.24f)
                 }
 
-                // 底层左右滑动流体胶囊指示器（无边框线、无生硬3D投影）
-                Box(
-                    modifier = Modifier
-                        .offset(x = pillOffsetX)
-                        .width(dynamicPillWidth)
-                        .height(40.dp)
-                        .clip(CircleShape)
-                        .background(pillBrush)
-                )
+                // 底层左右滑动流体胶囊指示器（采用 Canvas 渲染阶段直绘，彻底消除 120Hz 滑动时的 Layout 重排抖动）
+                Canvas(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    val pillW = dynamicPillWidth.toPx()
+                    val pillH = 40.dp.toPx()
+                    val leftX = pillOffsetX.toPx().coerceIn(0f, (size.width - pillW).coerceAtLeast(0f))
+                    val topY = (size.height - pillH) / 2f
+                    drawRoundRect(
+                        brush = pillBrush,
+                        topLeft = Offset(leftX, topY),
+                        size = Size(pillW, pillH),
+                        cornerRadius = CornerRadius(pillH / 2f, pillH / 2f)
+                    )
+                }
 
                 // 顶层双态图标与标签交互行
                 Row(

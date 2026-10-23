@@ -1,11 +1,18 @@
 package com.concept.music.ui.components
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -105,9 +112,22 @@ fun MiniPlayerBar(
         }
     }
 
-    val progressFraction = if (durationMs > 0L) {
+    val rawProgressFraction = if (durationMs > 0L) {
         (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
+    val progressFraction by animateFloatAsState(
+        targetValue = rawProgressFraction,
+        animationSpec = tween(durationMillis = 150, easing = LinearEasing),
+        label = "miniProgressFraction"
+    )
+    val playPauseMorph by animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0f,
+        animationSpec = spring(
+            dampingRatio = 0.72f,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "miniPlayPauseMorph"
+    )
 
     val swipeThreshold = 82f
     val currentDrag = dragOffsetX.value
@@ -247,30 +267,44 @@ fun MiniPlayerBar(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = currentSong.title,
-                                style = MaterialTheme.typography.titleMedium.copy(
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = primaryTextColor,
-                                    fontSize = 14.sp
-                                ),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false)
-                            )
-                            when {
-                                currentSong.isHiRes -> {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    BadgeTag(text = "Hi-Res", color = goldColor)
-                                }
-                                currentSong.isLossless -> {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    BadgeTag(text = "SQ", color = ConceptPrimary)
-                                }
-                                currentSong.quality == "320" -> {
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    BadgeTag(text = "HQ", color = ConceptPrimary)
+                        AnimatedContent(
+                            targetState = currentSong,
+                            contentKey = { it.id },
+                            transitionSpec = {
+                                (fadeIn(tween(220, easing = FastOutSlowInEasing)) +
+                                    slideInVertically(tween(240, easing = FastOutSlowInEasing)) { it / 3 })
+                                    .togetherWith(
+                                        fadeOut(tween(150, easing = FastOutSlowInEasing)) +
+                                            slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { -it / 3 }
+                                    )
+                            },
+                            label = "miniPlayerSongTitleTransition"
+                        ) { displaySong ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = displaySong.title,
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = primaryTextColor,
+                                        fontSize = 14.sp
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                when {
+                                    displaySong.isHiRes -> {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        BadgeTag(text = "Hi-Res", color = goldColor)
+                                    }
+                                    displaySong.isLossless -> {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        BadgeTag(text = "SQ", color = ConceptPrimary)
+                                    }
+                                    displaySong.quality == "320" -> {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        BadgeTag(text = "HQ", color = ConceptPrimary)
+                                    }
                                 }
                             }
                         }
@@ -347,30 +381,35 @@ fun MiniPlayerBar(
                             Canvas(modifier = Modifier.size(15.dp)) {
                                 val w = size.width
                                 val h = size.height
-                                if (isPlaying) {
-                                    val barW = w * 0.25f
-                                    val barH = h * 0.70f
-                                    val topY = (h - barH) / 2f
-                                    val r = CornerRadius(barW / 2f, barW / 2f)
-                                    drawRoundRect(
-                                        color = Color.White,
-                                        topLeft = Offset(w * 0.18f, topY),
-                                        size = Size(barW, barH),
-                                        cornerRadius = r
-                                    )
-                                    drawRoundRect(
-                                        color = Color.White,
-                                        topLeft = Offset(w * 0.57f, topY),
-                                        size = Size(barW, barH),
-                                        cornerRadius = r
-                                    )
-                                } else {
+                                val p = playPauseMorph.coerceIn(0f, 1f)
+                                if (p < 0.96f) {
+                                    val triAlpha = (1f - p * 1.15f).coerceIn(0f, 1f)
                                     val tri = createPlumpPlayTrianglePath(
                                         centerX = w * 0.55f,
                                         centerY = h * 0.50f,
-                                        size = min(w, h) * 0.86f
+                                        size = min(w, h) * 0.86f * (0.76f + 0.24f * (1f - p))
                                     )
-                                    drawPath(path = tri, color = Color.White)
+                                    drawPath(path = tri, color = Color.White.copy(alpha = triAlpha))
+                                }
+                                if (p > 0.04f) {
+                                    val pauseAlpha = ((p - 0.04f) / 0.96f).coerceIn(0f, 1f)
+                                    val barW = w * 0.25f
+                                    val barH = h * (0.48f + 0.22f * p)
+                                    val topY = (h - barH) / 2f
+                                    val r = CornerRadius(barW / 2f, barW / 2f)
+                                    val spread = 0.14f + 0.05f * p
+                                    drawRoundRect(
+                                        color = Color.White.copy(alpha = pauseAlpha),
+                                        topLeft = Offset(w * (0.37f - spread), topY),
+                                        size = Size(barW, barH),
+                                        cornerRadius = r
+                                    )
+                                    drawRoundRect(
+                                        color = Color.White.copy(alpha = pauseAlpha),
+                                        topLeft = Offset(w * (0.38f + spread), topY),
+                                        size = Size(barW, barH),
+                                        cornerRadius = r
+                                    )
                                 }
                             }
                         }

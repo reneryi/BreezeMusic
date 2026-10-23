@@ -5898,9 +5898,26 @@ class MusicApiRepository(
             }
         }
 
-        // 自动并发预取本页所有含楼中楼回复评论的子回复列表（默认展示前 3 条平级回复，点击查看全部进入独立楼中楼页面）
+        // 自动并发预取本页所有含楼中楼回复评论的子回复列表（确保过滤掉 2 级及更深回复后，仍有充足的 1 级评论可供默认展示前 3 条）
+        fun isLevel1PreviewCandidate(rootCmt: SongComment, reply: SongComment): Boolean {
+            if (reply.replyChainHops.isNotEmpty()) return false
+            val targetId = reply.replyTargetCommentId?.trim().orEmpty()
+            if (targetId.isNotBlank() && targetId != "0" && targetId != rootCmt.id) return false
+            val pId = reply.parentId?.trim().orEmpty()
+            if (pId.isNotBlank() && pId != "0" && pId != rootCmt.id) return false
+            val rootUserClean = rootCmt.userName.trim().removePrefix("@")
+            val replyUserClean = reply.replyUserName?.trim()?.removePrefix("@").orEmpty()
+            if (replyUserClean.isNotBlank() && !replyUserClean.equals(rootUserClean, ignoreCase = true)) {
+                return false
+            }
+            return true
+        }
+
         val candidatesForReplyFetch = mergedRaw
-            .filter { it.replyCount > 0 && it.replies.size < minOf(it.replyCount, 3) && it.id.isNotBlank() }
+            .filter { cmt ->
+                val level1Count = cmt.replies.count { isLevel1PreviewCandidate(cmt, it) }
+                cmt.replyCount > 0 && level1Count < minOf(cmt.replyCount, 3) && cmt.id.isNotBlank()
+            }
             .take(25)
 
         if (candidatesForReplyFetch.isEmpty()) {
@@ -5915,7 +5932,7 @@ class MusicApiRepository(
                             song = song,
                             commentId = parentCmt.id,
                             page = 1,
-                            pageSize = 10,
+                            pageSize = 20,
                             resolvedMixSongId = mixSongId,
                             specialChildId = parentCmt.specialChildId
                         )

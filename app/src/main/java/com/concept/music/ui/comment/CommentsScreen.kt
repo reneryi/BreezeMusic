@@ -5,7 +5,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -1365,7 +1367,7 @@ private fun CommentConversationDetailScreen(
                 itemsIndexed(
                     items = conversation.dialogueList,
                     key = { idx, (cmt, _) -> "conv_item_${cmt.id}_$idx" }
-                ) { idx, (cmt, level) ->
+                ) { idx, (cmt, _) ->
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = cardColor,
@@ -1418,18 +1420,20 @@ private fun CommentConversationDetailScreen(
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Surface(
-                                            shape = RoundedCornerShape(4.dp),
-                                            color = if (idx == 0) ConceptPrimary.copy(alpha = 0.16f) else elevatedBg
-                                        ) {
-                                            Text(
-                                                text = if (idx == 0) "层主" else "${level}级回复",
-                                                color = if (idx == 0) ConceptPrimary else subText,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                            )
+                                        if (idx == 0) {
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = ConceptPrimary.copy(alpha = 0.16f)
+                                            ) {
+                                                Text(
+                                                    text = "层主",
+                                                    color = ConceptPrimary,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                )
+                                            }
                                         }
                                     }
                                     Spacer(modifier = Modifier.height(2.dp))
@@ -1700,22 +1704,6 @@ private fun MultiLevelClusterReplyNode(
                         modifier = Modifier.weight(1f, fill = false)
                     )
 
-                    if (level >= 2) {
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = branchAccent.copy(alpha = 0.15f)
-                        ) {
-                            Text(
-                                text = "${level}级",
-                                color = branchAccent,
-                                fontSize = 8.5.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 0.5.dp)
-                            )
-                        }
-                    }
-
                     if (reply.ipLocation.isNotBlank()) {
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
@@ -1741,6 +1729,14 @@ private fun MultiLevelClusterReplyNode(
                         modifier = Modifier.weight(1f)
                     )
 
+                    val replyLikeScale by animateFloatAsState(
+                        targetValue = if (reply.isLiked) 1.18f else 1f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        ),
+                        label = "replyLikeScale"
+                    )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -1751,7 +1747,12 @@ private fun MultiLevelClusterReplyNode(
                             imageVector = if (reply.isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                             contentDescription = "点赞",
                             tint = if (reply.isLiked) Color(0xFFFF5252) else subText.copy(alpha = 0.6f),
-                            modifier = Modifier.size(13.dp)
+                            modifier = Modifier
+                                .size(13.dp)
+                                .graphicsLayer {
+                                    scaleX = replyLikeScale
+                                    scaleY = replyLikeScale
+                                }
                         )
                         if (reply.likeCount > 0) {
                             Spacer(modifier = Modifier.width(2.dp))
@@ -2025,43 +2026,85 @@ private fun RootCommentCard(
                 }
             }
 
-            // 主评论卡片下方默认预览前 3 条回复（已自动剥离 //@用户名:原评 尾巴）
-            if (comment.replies.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(4.dp))
-                val visibleReplies = comment.replies.take(3)
-                val hasMoreReplies = totalRepliesCount > 3 || comment.replies.size > 3
+            // 主评论卡片下方默认预览前 3 条回复（严格限定为直接回复层主本人的 1 级评论，绝不展示 2 级及往后的评论）
+            if (comment.replies.isNotEmpty() || totalRepliesCount > 0) {
+                val level1Replies = remember(comment.id, comment.userName, comment.content, comment.replies) {
+                    comment.replies.filter { isLevel1DirectReply(rootComment = comment, reply = it) }
+                }
+                val visibleReplies = remember(level1Replies) { level1Replies.take(3) }
+                val hasMoreReplies = totalRepliesCount > visibleReplies.size || comment.replies.size > visibleReplies.size
 
-                Column(modifier = Modifier.padding(start = 18.dp)) {
-                    visibleReplies.forEachIndexed { index, reply ->
-                        val isFirst = index == 0
-                        val isLast = index == visibleReplies.lastIndex
-                        // 若回复目标是楼主本人，则作为一级评论直接显示正文，不加冗余的 "回复 @楼主"
-                        val displayReply = if (reply.replyUserName.equals(comment.userName, ignoreCase = true)) {
-                            reply.copy(replyUserName = null)
-                        } else {
-                            reply
+                if (visibleReplies.isNotEmpty() || hasMoreReplies) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Column(modifier = Modifier.padding(start = 18.dp)) {
+                        visibleReplies.forEachIndexed { index, reply ->
+                            val isFirst = index == 0
+                            val isLast = index == visibleReplies.lastIndex
+                            // 1 级评论直接回复层主，统一剥离 replyUserName，不加任何 "回复 @某某"
+                            val displayReply = reply.copy(replyUserName = null)
+                            TreeBranchReplyNode(
+                                reply = displayReply,
+                                isFirstNode = isFirst,
+                                isLastNode = isLast,
+                                hasMoreNodesBelow = isLast && hasMoreReplies,
+                                onReplyClick = { onReplySub(reply.id, reply.userName) },
+                                onLikeClick = { onLikeComment(reply.id) },
+                                onPreviewImage = onPreviewImage
+                            )
                         }
-                        TreeBranchReplyNode(
-                            reply = displayReply,
-                            isFirstNode = isFirst,
-                            isLastNode = isLast,
-                            hasMoreNodesBelow = isLast && hasMoreReplies,
-                            onReplyClick = { onReplySub(reply.id, reply.userName) },
-                            onLikeClick = { onLikeComment(reply.id) },
-                            onPreviewImage = onPreviewImage
-                        )
-                    }
 
-                    if (hasMoreReplies) {
-                        TreeBranchViewAllNode(
-                            totalCount = totalRepliesCount,
-                            onClick = onOpenAllRepliesFloor
-                        )
+                        if (hasMoreReplies) {
+                            TreeBranchViewAllNode(
+                                totalCount = maxOf(totalRepliesCount, comment.replies.size),
+                                onClick = onOpenAllRepliesFloor
+                            )
+                        }
                     }
                 }
             }
         }
     }
+}
+
+/**
+ * 严格判定一条子回复是否为直接回复层主本人的「1级评论」：
+ * - 不包含多级 //@ 引用链 (replyChainHops 为空)
+ * - replyTargetCommentId 与 parentId 未指向除层主以外的其他子评论
+ * - replyUserName 为空或等于层主昵称（不指向其他层内评论者，如“回复 @某某”）
+ * - 引用文本 replyQuotedContent 为空或仅对应层主原评
+ */
+internal fun isLevel1DirectReply(rootComment: SongComment, reply: SongComment): Boolean {
+    if (reply.replyChainHops.isNotEmpty()) return false
+    val rootId = rootComment.id.trim()
+    val targetId = reply.replyTargetCommentId?.trim().orEmpty()
+    if (targetId.isNotBlank() && targetId != "0" && targetId != rootId) return false
+    val pId = reply.parentId?.trim().orEmpty()
+    if (pId.isNotBlank() && pId != "0" && pId != rootId) return false
+
+    val rootUserClean = rootComment.userName.trim().removePrefix("@")
+    val replyUserClean = reply.replyUserName?.trim()?.removePrefix("@").orEmpty()
+    if (replyUserClean.isNotBlank() && !replyUserClean.equals(rootUserClean, ignoreCase = true)) {
+        return false
+    }
+
+    if (!reply.replyQuotedContent.isNullOrBlank()) {
+        val rootNorm = rootComment.content.replace(Regex("""\s+"""), "")
+        val quoteNorm = reply.replyQuotedContent.replace(Regex("""\s+"""), "")
+        if (quoteNorm.isNotBlank() && rootNorm.isNotBlank() && !rootNorm.contains(quoteNorm) && !quoteNorm.contains(rootNorm)) {
+            return false
+        }
+    }
+
+    val contentTrimmed = reply.content.trim()
+    val replyPrefixMatch = Regex("""^回复\s*@?([^:：]+)[:：]""").find(contentTrimmed)
+    if (replyPrefixMatch != null) {
+        val targetNameInText = replyPrefixMatch.groupValues[1].trim()
+        if (targetNameInText.isNotBlank() && !targetNameInText.equals(rootUserClean, ignoreCase = true)) {
+            return false
+        }
+    }
+
+    return true
 }
 
 @Composable
@@ -2191,6 +2234,19 @@ private fun CommentUserHeaderRow(
             }
         }
 
+        val likeScale by animateFloatAsState(
+            targetValue = if (comment.isLiked) 1.18f else 1f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMedium
+            ),
+            label = "rootLikeScale"
+        )
+        val likeTint by animateColorAsState(
+            targetValue = if (comment.isLiked) Color(0xFFFF5252) else subText.copy(alpha = 0.7f),
+            animationSpec = tween(200),
+            label = "rootLikeTint"
+        )
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
@@ -2200,8 +2256,13 @@ private fun CommentUserHeaderRow(
             Icon(
                 imageVector = if (comment.isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 contentDescription = "点赞",
-                tint = if (comment.isLiked) Color(0xFFFF5252) else subText.copy(alpha = 0.7f),
-                modifier = Modifier.size(16.dp)
+                tint = likeTint,
+                modifier = Modifier
+                    .size(16.dp)
+                    .graphicsLayer {
+                        scaleX = likeScale
+                        scaleY = likeScale
+                    }
             )
             if (comment.likeCount > 0) {
                 Spacer(modifier = Modifier.width(4.dp))
@@ -2363,6 +2424,14 @@ private fun TreeBranchReplyNode(
                         modifier = Modifier.weight(1f)
                     )
 
+                    val replyLikeScale by animateFloatAsState(
+                        targetValue = if (reply.isLiked) 1.18f else 1f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        ),
+                        label = "replyLikeScale"
+                    )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -2373,7 +2442,12 @@ private fun TreeBranchReplyNode(
                             imageVector = if (reply.isLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                             contentDescription = "点赞",
                             tint = if (reply.isLiked) Color(0xFFFF5252) else subText.copy(alpha = 0.6f),
-                            modifier = Modifier.size(13.dp)
+                            modifier = Modifier
+                                .size(13.dp)
+                                .graphicsLayer {
+                                    scaleX = replyLikeScale
+                                    scaleY = replyLikeScale
+                                }
                         )
                         if (reply.likeCount > 0) {
                             Spacer(modifier = Modifier.width(2.dp))

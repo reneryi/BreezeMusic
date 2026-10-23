@@ -5,8 +5,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -21,6 +24,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -140,6 +144,8 @@ internal fun LyricSettingsDialog(
     } else {
         RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
     }
+    val sheetDragScope = rememberCoroutineScope()
+    val panelDragOffsetY = remember { Animatable(0f) }
 
     Box(
         modifier = Modifier
@@ -173,6 +179,13 @@ internal fun LyricSettingsDialog(
                         Modifier.fillMaxWidth()
                     }
                 )
+                .graphicsLayer {
+                    val dragY = panelDragOffsetY.value.coerceAtLeast(0f)
+                    translationY = dragY
+                    val s = (1f - (dragY / 2800f)).coerceIn(0.95f, 1f)
+                    scaleX = s
+                    scaleY = s
+                }
                 .conceptSheetSpringEntrance()
                 .shadow(elevation = 28.dp, shape = panelShape)
                 .clip(panelShape)
@@ -212,19 +225,49 @@ internal fun LyricSettingsDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // 顶部一体化手势指示横条（置于同一渐变容器内，无任何分层割裂，支持下滑关闭）
+                    // 顶部一体化手势指示横条（置于同一渐变容器内，无任何分层割裂，支持跟手平滑下滑关闭与松手弹性回弹）
                     if (!isLandscape) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 2.dp, bottom = 2.dp)
                                 .pointerInput(Unit) {
-                                    var dragDy = 0f
                                     detectVerticalDragGestures(
-                                        onDragStart = { dragDy = 0f },
-                                        onVerticalDrag = { _, dragAmount ->
-                                            dragDy += dragAmount
-                                            if (dragDy > 72f) onDismiss()
+                                        onVerticalDrag = { change, dragAmount ->
+                                            if (dragAmount > 0f || panelDragOffsetY.value > 0f) {
+                                                change.consume()
+                                                sheetDragScope.launch {
+                                                    panelDragOffsetY.snapTo(
+                                                        (panelDragOffsetY.value + dragAmount * 0.90f).coerceAtLeast(0f)
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        onDragCancel = {
+                                            sheetDragScope.launch {
+                                                panelDragOffsetY.animateTo(
+                                                    targetValue = 0f,
+                                                    animationSpec = spring(
+                                                        dampingRatio = 0.78f,
+                                                        stiffness = Spring.StiffnessMediumLow
+                                                    )
+                                                )
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            if (panelDragOffsetY.value > 110f) {
+                                                onDismiss()
+                                            } else {
+                                                sheetDragScope.launch {
+                                                    panelDragOffsetY.animateTo(
+                                                        targetValue = 0f,
+                                                        animationSpec = spring(
+                                                            dampingRatio = 0.78f,
+                                                            stiffness = Spring.StiffnessMediumLow
+                                                        )
+                                                    )
+                                                }
+                                            }
                                         }
                                     )
                                 },
@@ -967,12 +1010,129 @@ fun QueueBottomSheet(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val density = LocalDensity.current
     val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
     var activeMoodMode by remember { mutableStateOf("") }
     var showRecentDeckPage by remember { mutableStateOf(false) }
 
-    var draggingIndex by remember { mutableStateOf<Int?>(null) }
-    var dragAccumulatedPx by remember { mutableFloatStateOf(0f) }
-    val rowHeightPx = with(density) { 56.dp.toPx() }
+    var displayQueue by remember { mutableStateOf(queue) }
+    var displayCurrentIndex by remember { mutableIntStateOf(currentIndex) }
+    var dragStartIndex by remember { mutableStateOf<Int?>(null) }
+    var dragTargetIndex by remember { mutableStateOf<Int?>(null) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+    var isSettlingDrop by remember { mutableStateOf(false) }
+    val settleDropAnim = remember { Animatable(0f) }
+    val rowHeightPx = with(density) { 56.5.dp.toPx() }
+
+    val isReorderActive = dragStartIndex != null
+
+    LaunchedEffect(queue, currentIndex, isReorderActive) {
+        if (!isReorderActive) {
+            displayQueue = queue
+            displayCurrentIndex = currentIndex
+        }
+    }
+
+    fun resolveRowStridePx(): Float {
+        val visible = listState.layoutInfo.visibleItemsInfo
+        if (visible.size >= 2) {
+            val diff = (visible[1].offset - visible[0].offset).toFloat()
+            if (diff > 24f) return diff
+        }
+        return (visible.firstOrNull()?.size?.toFloat() ?: rowHeightPx).coerceAtLeast(36f)
+    }
+
+    fun updateDragTargetFromOffset() {
+        val startIdx = dragStartIndex ?: return
+        val stridePx = resolveRowStridePx()
+        var currentShift = (dragTargetIndex ?: startIdx) - startIdx
+        val rawShift = dragOffsetY / stridePx
+        while (rawShift - currentShift >= 0.52f && startIdx + currentShift < displayQueue.lastIndex) {
+            currentShift += 1
+        }
+        while (rawShift - currentShift <= -0.52f && startIdx + currentShift > 0) {
+            currentShift -= 1
+        }
+        dragTargetIndex = (startIdx + currentShift).coerceIn(0, displayQueue.lastIndex)
+    }
+
+    fun startQueueDrag(index: Int) {
+        if (isSettlingDrop || index !in displayQueue.indices) return
+        dragStartIndex = index
+        dragTargetIndex = index
+        dragOffsetY = 0f
+    }
+
+    fun handleQueueDragDelta(deltaY: Float) {
+        val startIdx = dragStartIndex ?: return
+        if (isSettlingDrop) return
+        dragOffsetY += deltaY
+        val stridePx = resolveRowStridePx()
+        val minOffsetPx = -startIdx * stridePx
+        val maxOffsetPx = (displayQueue.lastIndex - startIdx) * stridePx
+        dragOffsetY = dragOffsetY.coerceIn(minOffsetPx - stridePx * 0.25f, maxOffsetPx + stridePx * 0.25f)
+        updateDragTargetFromOffset()
+
+        val visibleItems = listState.layoutInfo.visibleItemsInfo
+        val startItemInfo = visibleItems.firstOrNull { it.index == startIdx }
+        if (startItemInfo != null) {
+            val viewportStart = listState.layoutInfo.viewportStartOffset
+            val viewportEnd = listState.layoutInfo.viewportEndOffset
+            val draggedCenterY = startItemInfo.offset + dragOffsetY + startItemInfo.size / 2f
+            val edgeZonePx = stridePx * 1.1f
+            if (draggedCenterY < viewportStart + edgeZonePx && listState.canScrollBackward) {
+                coroutineScope.launch {
+                    val consumed = listState.scrollBy(-14f)
+                    if (consumed != 0f && dragStartIndex != null && !isSettlingDrop) {
+                        dragOffsetY += consumed
+                        updateDragTargetFromOffset()
+                    }
+                }
+            } else if (draggedCenterY > viewportEnd - edgeZonePx && listState.canScrollForward) {
+                coroutineScope.launch {
+                    val consumed = listState.scrollBy(14f)
+                    if (consumed != 0f && dragStartIndex != null && !isSettlingDrop) {
+                        dragOffsetY += consumed
+                        updateDragTargetFromOffset()
+                    }
+                }
+            }
+        }
+    }
+
+    fun finishQueueDrag() {
+        val startIdx = dragStartIndex ?: return
+        val targetIdx = (dragTargetIndex ?: startIdx).coerceIn(0, displayQueue.lastIndex)
+        if (isSettlingDrop) return
+        val stridePx = resolveRowStridePx()
+        val targetSettleOffsetPx = (targetIdx - startIdx) * stridePx
+        isSettlingDrop = true
+        coroutineScope.launch {
+            settleDropAnim.snapTo(dragOffsetY)
+            settleDropAnim.animateTo(
+                targetValue = targetSettleOffsetPx,
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMedium
+                )
+            )
+            if (startIdx in displayQueue.indices && targetIdx in displayQueue.indices && startIdx != targetIdx) {
+                val playingSongId = displayQueue.getOrNull(displayCurrentIndex)?.id
+                val updated = displayQueue.toMutableList()
+                val movedItem = updated.removeAt(startIdx)
+                updated.add(targetIdx, movedItem)
+                displayQueue = updated
+                if (playingSongId != null) {
+                    val newPlayingIdx = updated.indexOfFirst { it.id == playingSongId }
+                    if (newPlayingIdx >= 0) displayCurrentIndex = newPlayingIdx
+                }
+                onMoveQueueItem(startIdx, targetIdx)
+            }
+            dragStartIndex = null
+            dragTargetIndex = null
+            dragOffsetY = 0f
+            isSettlingDrop = false
+        }
+    }
 
     val baseSheetBg = conceptSheetContainerColor()
     val cardBg = Color.White.copy(alpha = 0.055f).compositeOver(conceptElevatedSurfaceColor())
@@ -989,9 +1149,10 @@ fun QueueBottomSheet(
         RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
     }
 
-    LaunchedEffect(currentIndex, showRecentDeckPage) {
-        if (!showRecentDeckPage && currentIndex in queue.indices && draggingIndex == null) {
-            listState.scrollToItem((currentIndex - 1).coerceAtLeast(0))
+    val activePlayingSongId = displayQueue.getOrNull(displayCurrentIndex)?.id
+    LaunchedEffect(activePlayingSongId, showRecentDeckPage) {
+        if (!showRecentDeckPage && displayCurrentIndex in displayQueue.indices && !isReorderActive) {
+            listState.scrollToItem((displayCurrentIndex - 1).coerceAtLeast(0))
         }
     }
 
@@ -1014,6 +1175,8 @@ fun QueueBottomSheet(
         )
 
         // 一体化连续渐变玻璃容器（包含顶部横线与下方全部内容，绝无颜色分层）
+        val queueSheetDragScope = rememberCoroutineScope()
+        val queuePanelDragOffsetY = remember { Animatable(0f) }
         Box(
             modifier = Modifier
                 .then(
@@ -1027,6 +1190,13 @@ fun QueueBottomSheet(
                         Modifier.fillMaxWidth()
                     }
                 )
+                .graphicsLayer {
+                    val dragY = queuePanelDragOffsetY.value.coerceAtLeast(0f)
+                    translationY = dragY
+                    val s = (1f - (dragY / 2800f)).coerceIn(0.95f, 1f)
+                    scaleX = s
+                    scaleY = s
+                }
                 .conceptSheetSpringEntrance()
                 .shadow(elevation = 28.dp, shape = panelShape)
                 .clip(panelShape)
@@ -1063,19 +1233,49 @@ fun QueueBottomSheet(
                     )
                     .then(if (!isLandscape) Modifier.navigationBarsPadding() else Modifier)
             ) {
-                // 顶部横线指示条（直接绘制在同一渐变容器内部，彻底告别顶部与下方的颜色断层）
+                // 顶部横线指示条（直接绘制在同一渐变容器内部，彻底告别顶部与下方的颜色断层，支持跟手平滑下滑关闭与松手弹性回弹）
                 if (!isLandscape) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 2.dp, bottom = 8.dp)
                             .pointerInput(Unit) {
-                                var dragDy = 0f
                                 detectVerticalDragGestures(
-                                    onDragStart = { dragDy = 0f },
-                                    onVerticalDrag = { _, dragAmount ->
-                                        dragDy += dragAmount
-                                        if (dragDy > 72f) onDismiss()
+                                    onVerticalDrag = { change, dragAmount ->
+                                        if (dragAmount > 0f || queuePanelDragOffsetY.value > 0f) {
+                                            change.consume()
+                                            queueSheetDragScope.launch {
+                                                queuePanelDragOffsetY.snapTo(
+                                                    (queuePanelDragOffsetY.value + dragAmount * 0.90f).coerceAtLeast(0f)
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onDragCancel = {
+                                        queueSheetDragScope.launch {
+                                            queuePanelDragOffsetY.animateTo(
+                                                targetValue = 0f,
+                                                animationSpec = spring(
+                                                    dampingRatio = 0.78f,
+                                                    stiffness = Spring.StiffnessMediumLow
+                                                )
+                                            )
+                                        }
+                                    },
+                                    onDragEnd = {
+                                        if (queuePanelDragOffsetY.value > 110f) {
+                                            onDismiss()
+                                        } else {
+                                            queueSheetDragScope.launch {
+                                                queuePanelDragOffsetY.animateTo(
+                                                    targetValue = 0f,
+                                                    animationSpec = spring(
+                                                        dampingRatio = 0.78f,
+                                                        stiffness = Spring.StiffnessMediumLow
+                                                    )
+                                                )
+                                            }
+                                        }
                                     }
                                 )
                             },
@@ -1374,9 +1574,9 @@ fun QueueBottomSheet(
                                     }
                                 }
                             } else {
-                                val queueItemKeys = remember(queue) {
-                                    val seen = HashSet<String>(queue.size)
-                                    queue.mapIndexed { idx, s ->
+                                val queueItemKeys = remember(displayQueue) {
+                                    val seen = HashSet<String>(displayQueue.size)
+                                    displayQueue.mapIndexed { idx, s ->
                                         val base = "q_${s.id}_${s.hash}"
                                         if (seen.add(base)) base else "${base}_dup_$idx"
                                     }
@@ -1386,31 +1586,95 @@ fun QueueBottomSheet(
                                     modifier = Modifier.heightIn(max = if (isLandscape) 260.dp else 420.dp)
                                 ) {
                                     itemsIndexed(
-                                        items = queue,
+                                        items = displayQueue,
                                         key = { idx, item -> queueItemKeys.getOrElse(idx) { "q_${item.id}_$idx" } },
                                         contentType = { _, _ -> "queue_song_row" }
                                     ) { index, item ->
-                                        val isPlayingThis = index == currentIndex
-                                        val isDraggingThis = draggingIndex == index
+                                        val itemKey = queueItemKeys.getOrElse(index) { "q_${item.id}_$index" }
+                                        val activeStartIdx = dragStartIndex
+                                        val activeTargetIdx = dragTargetIndex ?: activeStartIdx
+                                        val isPlayingThis = index == displayCurrentIndex
+                                        val isDraggingThis = isReorderActive && index == activeStartIdx
                                         val currentIdxState by rememberUpdatedState(index)
+
+                                        val stridePx = resolveRowStridePx()
+                                        val targetNeighborShiftPx = when {
+                                            !isReorderActive || activeStartIdx == null || activeTargetIdx == null -> 0f
+                                            index == activeStartIdx -> 0f
+                                            activeStartIdx < activeTargetIdx && index in (activeStartIdx + 1)..activeTargetIdx -> -stridePx
+                                            activeStartIdx > activeTargetIdx && index in activeTargetIdx until activeStartIdx -> stridePx
+                                            else -> 0f
+                                        }
+
+                                        val neighborOffsetAnim = remember(itemKey) { Animatable(0f) }
+                                        LaunchedEffect(isReorderActive, targetNeighborShiftPx) {
+                                            if (!isReorderActive) {
+                                                neighborOffsetAnim.snapTo(0f)
+                                            } else {
+                                                neighborOffsetAnim.animateTo(
+                                                    targetValue = targetNeighborShiftPx,
+                                                    animationSpec = spring(
+                                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                                        stiffness = Spring.StiffnessMediumLow
+                                                    )
+                                                )
+                                            }
+                                        }
+
+                                        val displayOrderIndex = when {
+                                            !isReorderActive || activeStartIdx == null || activeTargetIdx == null -> index
+                                            index == activeStartIdx -> activeTargetIdx
+                                            activeStartIdx < activeTargetIdx && index in (activeStartIdx + 1)..activeTargetIdx -> index - 1
+                                            activeStartIdx > activeTargetIdx && index in activeTargetIdx until activeStartIdx -> index + 1
+                                            else -> index
+                                        }
+
+                                        val dragScale by animateFloatAsState(
+                                            targetValue = if (isDraggingThis && !isSettlingDrop) 1.028f else 1f,
+                                            animationSpec = spring(
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                                stiffness = Spring.StiffnessMedium
+                                            ),
+                                            label = "queueDragScale"
+                                        )
+                                        val dragElevation by animateDpAsState(
+                                            targetValue = if (isDraggingThis && !isSettlingDrop) 14.dp else 0.dp,
+                                            animationSpec = spring(stiffness = Spring.StiffnessMedium),
+                                            label = "queueDragElevation"
+                                        )
 
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
+                                                .zIndex(if (isDraggingThis) 10f else 0f)
                                                 .graphicsLayer {
-                                                    translationY = if (isDraggingThis) dragAccumulatedPx else 0f
-                                                    scaleX = if (isDraggingThis) 1.02f else 1f
-                                                    scaleY = if (isDraggingThis) 1.02f else 1f
-                                                    alpha = if (isDraggingThis) 0.94f else 1f
+                                                    translationY = when {
+                                                        !isReorderActive -> 0f
+                                                        isDraggingThis -> if (isSettlingDrop) settleDropAnim.value else dragOffsetY
+                                                        else -> neighborOffsetAnim.value
+                                                    }
+                                                    scaleX = dragScale
+                                                    scaleY = dragScale
+                                                    shadowElevation = dragElevation.toPx()
+                                                    shape = RoundedCornerShape(14.dp)
+                                                    clip = false
                                                 }
                                                 .background(
-                                                    if (isDraggingThis) cardBg
-                                                    else if (isPlayingThis) accentColor.copy(alpha = 0.15f)
-                                                    else Color.Transparent,
+                                                    when {
+                                                        isDraggingThis -> accentColor.copy(alpha = 0.22f).compositeOver(baseSheetBg)
+                                                        isPlayingThis -> accentColor.copy(alpha = 0.15f)
+                                                        else -> Color.Transparent
+                                                    },
                                                     shape = RoundedCornerShape(14.dp)
                                                 )
                                                 .then(
-                                                    if (isPlayingThis) {
+                                                    if (isDraggingThis) {
+                                                        Modifier.border(
+                                                            1.dp,
+                                                            accentColor.copy(alpha = 0.55f),
+                                                            RoundedCornerShape(14.dp)
+                                                        )
+                                                    } else if (isPlayingThis) {
                                                         Modifier.border(
                                                             0.8.dp,
                                                             accentColor.copy(alpha = 0.32f),
@@ -1418,37 +1682,24 @@ fun QueueBottomSheet(
                                                         )
                                                     } else Modifier
                                                 )
-                                                .pointerInput(queue.size) {
+                                                .pointerInput(displayQueue.size) {
                                                     detectDragGesturesAfterLongPress(
                                                         onDragStart = {
-                                                            draggingIndex = currentIdxState
-                                                            dragAccumulatedPx = 0f
+                                                            startQueueDrag(currentIdxState)
                                                         },
                                                         onDrag = { change, dragAmount ->
                                                             change.consume()
-                                                            val activeIdx = draggingIndex ?: return@detectDragGesturesAfterLongPress
-                                                            dragAccumulatedPx += dragAmount.y
-                                                            val indexShift = (dragAccumulatedPx / rowHeightPx).toInt()
-                                                            if (indexShift != 0) {
-                                                                val targetIdx = (activeIdx + indexShift).coerceIn(0, queue.lastIndex)
-                                                                if (targetIdx != activeIdx) {
-                                                                    onMoveQueueItem(activeIdx, targetIdx)
-                                                                    draggingIndex = targetIdx
-                                                                    dragAccumulatedPx -= indexShift * rowHeightPx
-                                                                }
-                                                            }
+                                                            handleQueueDragDelta(dragAmount.y)
                                                         },
                                                         onDragEnd = {
-                                                            draggingIndex = null
-                                                            dragAccumulatedPx = 0f
+                                                            finishQueueDrag()
                                                         },
                                                         onDragCancel = {
-                                                            draggingIndex = null
-                                                            dragAccumulatedPx = 0f
+                                                            finishQueueDrag()
                                                         }
                                                     )
                                                 }
-                                                .clickable { onSongClick(item) }
+                                                .clickable(enabled = !isReorderActive) { onSongClick(item) }
                                         ) {
                                             Row(
                                                 modifier = Modifier
@@ -1464,7 +1715,7 @@ fun QueueBottomSheet(
                                                         PlayingAudioWaveIndicator(color = accentColor)
                                                     } else {
                                                         Text(
-                                                            text = (index + 1).toString().padStart(2, '0'),
+                                                            text = (displayOrderIndex + 1).toString().padStart(2, '0'),
                                                             color = textSecondary.copy(alpha = 0.6f),
                                                             fontSize = 12.sp,
                                                             fontWeight = FontWeight.SemiBold
@@ -1531,33 +1782,20 @@ fun QueueBottomSheet(
                                                 Box(
                                                     modifier = Modifier
                                                         .size(32.dp)
-                                                        .pointerInput(queue.size) {
+                                                        .pointerInput(displayQueue.size) {
                                                             detectVerticalDragGestures(
                                                                 onDragStart = {
-                                                                    draggingIndex = currentIdxState
-                                                                    dragAccumulatedPx = 0f
+                                                                    startQueueDrag(currentIdxState)
                                                                 },
                                                                 onVerticalDrag = { change, dragAmount ->
                                                                     change.consume()
-                                                                    val activeIdx = draggingIndex ?: return@detectVerticalDragGestures
-                                                                    dragAccumulatedPx += dragAmount
-                                                                    val indexShift = (dragAccumulatedPx / rowHeightPx).toInt()
-                                                                    if (indexShift != 0) {
-                                                                        val targetIdx = (activeIdx + indexShift).coerceIn(0, queue.lastIndex)
-                                                                        if (targetIdx != activeIdx) {
-                                                                            onMoveQueueItem(activeIdx, targetIdx)
-                                                                            draggingIndex = targetIdx
-                                                                            dragAccumulatedPx -= indexShift * rowHeightPx
-                                                                        }
-                                                                    }
+                                                                    handleQueueDragDelta(dragAmount)
                                                                 },
                                                                 onDragEnd = {
-                                                                    draggingIndex = null
-                                                                    dragAccumulatedPx = 0f
+                                                                    finishQueueDrag()
                                                                 },
                                                                 onDragCancel = {
-                                                                    draggingIndex = null
-                                                                    dragAccumulatedPx = 0f
+                                                                    finishQueueDrag()
                                                                 }
                                                             )
                                                         },
@@ -2055,12 +2293,25 @@ private fun RecentQueuesStaggeredDeckPage(
         ) {
             recentQueues.forEachIndexed { idx, _ ->
                 val selected = idx == activeFocusInt
+                val dotWidth by animateDpAsState(
+                    targetValue = if (selected) 20.dp else 6.dp,
+                    animationSpec = spring(
+                        dampingRatio = 0.74f,
+                        stiffness = Spring.StiffnessMediumLow
+                    ),
+                    label = "deckDotWidth_$idx"
+                )
+                val dotColor by animateColorAsState(
+                    targetValue = if (selected) accentColor else textSecondary.copy(alpha = 0.3f),
+                    animationSpec = tween(220),
+                    label = "deckDotColor_$idx"
+                )
                 Box(
                     modifier = Modifier
                         .height(6.dp)
-                        .width(if (selected) 20.dp else 6.dp)
+                        .width(dotWidth)
                         .clip(CircleShape)
-                        .background(if (selected) accentColor else textSecondary.copy(alpha = 0.3f))
+                        .background(dotColor)
                         .softClickable {
                             scope.launch {
                                 animatedFocusIndex.animateTo(

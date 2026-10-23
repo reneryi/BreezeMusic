@@ -4,6 +4,7 @@ import android.os.Build
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -318,20 +319,31 @@ internal fun LandscapePlayerPage(
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (song.coverUrl.isNotBlank()) {
-                                AsyncImage(
-                                    model = song.coverUrl,
-                                    contentDescription = song.title,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Rounded.MusicNote,
-                                    contentDescription = null,
-                                    tint = Color.White.copy(alpha = 0.4f),
-                                    modifier = Modifier.size(52.dp)
-                                )
+                            Crossfade(
+                                targetState = song.coverUrl,
+                                animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
+                                label = "landscapeCoverCrossfade"
+                            ) { activeCoverUrl ->
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (activeCoverUrl.isNotBlank()) {
+                                        AsyncImage(
+                                            model = activeCoverUrl,
+                                            contentDescription = song.title,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Rounded.MusicNote,
+                                            contentDescription = null,
+                                            tint = Color.White.copy(alpha = 0.4f),
+                                            modifier = Modifier.size(52.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -343,7 +355,16 @@ internal fun LandscapePlayerPage(
                 val currentFraction = if (durationMs > 0) {
                     (rawPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
                 } else 0f
-                val effectiveFraction = if (isInteractingWithBar) dragFraction else currentFraction
+                val targetFraction = if (isInteractingWithBar) dragFraction else currentFraction
+                val effectiveFraction by animateFloatAsState(
+                    targetValue = targetFraction,
+                    animationSpec = if (isInteractingWithBar) {
+                        spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh)
+                    } else {
+                        tween(durationMillis = 140, easing = LinearEasing)
+                    },
+                    label = "landscapeProgressSmoothFraction"
+                )
                 val displayCurrentMs = if (isInteractingWithBar) (dragFraction * durationMs).toLong() else rawPositionMs
 
                 Column(

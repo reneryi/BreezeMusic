@@ -1261,6 +1261,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    private var queueReorderCommitJob: Job? = null
+
     fun moveQueueItem(fromIndex: Int, toIndex: Int) {
         val state = mutableState.value
         val queue = state.playlistQueue.toMutableList()
@@ -1271,16 +1273,28 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val newCurrentIndex = if (currentSongId != null) {
             queue.indexOfFirst { it.id == currentSongId }.coerceAtLeast(0)
         } else state.currentIndex
-        val (updatedRecent, activeId) = syncActiveQueueInRecent(queue, newCurrentIndex, state.activeQueueId, state.recentQueues)
         mutableState.value = state.copy(
             playlistQueue = queue,
-            currentIndex = newCurrentIndex,
-            recentQueues = updatedRecent,
-            activeQueueId = activeId
+            currentIndex = newCurrentIndex
         )
-        persistPlaybackStateAsync()
-        clearPrefetchedPlayerItems()
-        prefetchNextSong(queue, newCurrentIndex)
+        queueReorderCommitJob?.cancel()
+        queueReorderCommitJob = viewModelScope.launch {
+            delay(220L)
+            val latest = mutableState.value
+            val (updatedRecent, activeId) = syncActiveQueueInRecent(
+                latest.playlistQueue,
+                latest.currentIndex,
+                latest.activeQueueId,
+                latest.recentQueues
+            )
+            mutableState.value = latest.copy(
+                recentQueues = updatedRecent,
+                activeQueueId = activeId
+            )
+            persistPlaybackStateAsync()
+            clearPrefetchedPlayerItems()
+            prefetchNextSong(latest.playlistQueue, latest.currentIndex)
+        }
     }
 
     internal fun clearPrefetchedPlayerItems() {

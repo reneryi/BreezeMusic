@@ -462,7 +462,8 @@ fun MainContent(
                         onSongMoreClick = { song ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = null
-                        }
+                        },
+                        isOverlayOpen = showCommentsScreen || showNowPlaying || showViperEffectOverlay || isSubDetail
                     )
                 }
 
