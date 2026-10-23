@@ -41,7 +41,9 @@ object KugouCsccReporter {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val serialDispatcher = Dispatchers.IO.limitedParallelism(1)
+    private val scope = CoroutineScope(serialDispatcher + SupervisorJob())
 
     private data class CsccSession(
         val cookie: String,
@@ -51,9 +53,12 @@ object KugouCsccReporter {
         val expireTime: Long
     )
 
+    @Volatile
     private var cachedSession: CsccSession? = null
-    private var currentPlayingSongId: String? = null
-    private var songStartTimeMs: Long = 0L
+    @Volatile
+    internal var currentPlayingSongId: String? = null
+    @Volatile
+    internal var songStartTimeMs: Long = 0L
 
     /**
      * 歌曲开始播放时上报 start 事件
@@ -77,8 +82,18 @@ object KugouCsccReporter {
      * 歌曲切歌、暂停或结束时上报 end 事件 (真实播放时长大于 10 秒才计入)
      */
     fun onSongEnd(song: Song, playedDurationMs: Long = 0L) {
-        val actualPlayedMs = if (playedDurationMs > 0L) playedDurationMs else (System.currentTimeMillis() - songStartTimeMs).coerceAtLeast(0L)
-        songStartTimeMs = 0L
+        val startSnapshot = songStartTimeMs
+        val actualPlayedMs = if (playedDurationMs > 0L) {
+            playedDurationMs
+        } else if (startSnapshot > 0L) {
+            (System.currentTimeMillis() - startSnapshot).coerceAtLeast(0L)
+        } else {
+            0L
+        }
+        if (currentPlayingSongId == song.id) {
+            currentPlayingSongId = null
+            songStartTimeMs = 0L
+        }
 
         // 听歌小于 10 秒视为试听或误点，不发送 end 事件
         if (actualPlayedMs < 10000L) {
@@ -121,7 +136,7 @@ object KugouCsccReporter {
         0L
     }
 
-    private suspend fun getOrCreateSession(device: DeviceIdentity): CsccSession = withContext(Dispatchers.IO) {
+    private suspend fun getOrCreateSession(device: DeviceIdentity): CsccSession = withContext(serialDispatcher) {
         val now = System.currentTimeMillis()
         val session = cachedSession
         if (session != null && session.expireTime > now) {
@@ -187,7 +202,7 @@ object KugouCsccReporter {
         newSession
     }
 
-    private suspend fun sendEvent(mixSongId: Long, isStart: Boolean, durationMs: Long) = withContext(Dispatchers.IO) {
+    private suspend fun sendEvent(mixSongId: Long, isStart: Boolean, durationMs: Long) = withContext(serialDispatcher) {
         val sessionContext = VipManager.accounts.context() ?: return@withContext
         val session = sessionContext.session
         val device = VipManager.device()

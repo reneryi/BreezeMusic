@@ -39,7 +39,16 @@ object VipManager {
             transport = transport,
             accounts = accounts,
             verification = verification,
-            onVipActivated = { music.clearPlaybackCache() }
+            onVipActivated = {
+                music.clearPlaybackCache()
+                initScope.launch {
+                    accounts.context()?.let { ctx ->
+                        if (ctx.session.vipToken.isNullOrBlank()) {
+                            runCatching { accounts.refreshSession(ctx) }
+                        }
+                    }
+                }
+            }
         )
         lyric = LyricRepository(transport, store::device)
         history = PlaybackHistoryRepository(appCtx)
@@ -47,10 +56,10 @@ object VipManager {
         discoverCache = DiscoverLocalCache(appCtx)
         ListeningGradeManager.initialize(appCtx)
 
-        // [P0-1] 启动时若本地尚未注册 dfid ("-")，在后台静默向酷狗概念版网关申请持久化 dfid
-        if (store.device().dfid == "-") {
+        // [PROTO-02] 启动时若本地尚未向远端风控网关完成 dfid 注册，在后台静默向酷狗概念版网关申请持久化 dfid
+        if (!store.isDfidRegistered() || store.device().dfid == "-") {
             initScope.launch {
-                runCatching { auth.registerDevice() }
+                runCatching { auth.registerDevice(forceRefresh = true) }
             }
         }
     }

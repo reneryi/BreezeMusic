@@ -22,6 +22,10 @@ class PlaylistManagementTest {
 
         val decrypted = KugouSigner.playlistAesDecrypt(key, base64Cipher)
         assertEquals(originalText, decrypted)
+
+        val rawCipherBytes = Base64.getDecoder().decode(base64Cipher)
+        val decryptedFromBytes = KugouSigner.playlistAesDecrypt(rawCipherBytes, key)
+        assertEquals(originalText, decryptedFromBytes)
     }
 
     @Test
@@ -114,9 +118,71 @@ class PlaylistManagementTest {
     }
 
     @Test
-    fun addAndRemoveSongFromPlaylist() = runTest {
+    fun deleteOrUncollectPlaylistRejectsErrorResponseAndDecryptsEncryptedSuccess() = runTest {
+        var capturedP = ""
+        var mockRawBytes: ByteArray = """{"status":0,"err_code":30001}""".toByteArray(Charsets.UTF_8)
+
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String,
+                session: KugouSession?,
+                query: Map<String, String>,
+                body: JsonObject?,
+                host: String,
+                method: String,
+                web: Boolean,
+                headers: Map<String, String>,
+                device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+
+            override suspend fun requestRawBytes(
+                path: String,
+                session: KugouSession?,
+                query: Map<String, String>,
+                rawBody: String?,
+                host: String,
+                method: String,
+                headers: Map<String, String>,
+                sign: Boolean,
+                includeDefaultParams: Boolean,
+                device: DeviceIdentity?
+            ): ByteArray {
+                assertEquals("/v2/delete_list", path)
+                capturedP = query["p"].orEmpty()
+                return mockRawBytes
+            }
+        }
+
+        val store = MemoryStore()
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+        store.saveSession(KugouSession("123", "mock-token"))
+
+        val targetPlaylist = Playlist(
+            id = "556677",
+            listId = 556677L,
+            title = "测试待删歌单",
+            isCreatedByMe = true
+        )
+
+        // 1. 服务端返回错误 JSON (status=0, err_code=30001) 时绝不能假成功返回 true
+        val failedResult = repo.deleteOrUncollectPlaylist(targetPlaylist)
+        assertFalse("delete_list 返回 status=0 时必须返回 false", failedResult)
+        assertEquals(256, capturedP.length)
+        assertEquals(capturedP.lowercase(), capturedP)
+
+        // 2. 服务端返回 status=1, err_code=0 时返回 true
+        mockRawBytes = """{"status":1,"err_code":0}""".toByteArray(Charsets.UTF_8)
+        val okResult = repo.deleteOrUncollectPlaylist(targetPlaylist)
+        assertTrue("delete_list 返回 status=1 且 err_code=0 时必须返回 true", okResult)
+    }
+
+    @Test
+    fun addAndRemoveSongFromPlaylistAndBatchAdd() = runTest {
         var addSongBody: JsonObject? = null
         var deleteSongBody: JsonObject? = null
+        var addCallCount = 0
 
         val transport = object : KugouTransport {
             override suspend fun call(
@@ -131,6 +197,7 @@ class PlaylistManagementTest {
                 device: DeviceIdentity?
             ): ApiResponse {
                 if (path.contains("add_song")) {
+                    addCallCount++
                     addSongBody = body
                 } else if (path.contains("delete_songs")) {
                     deleteSongBody = body
@@ -165,7 +232,15 @@ class PlaylistManagementTest {
         assertEquals(song.hash, songItemInAdd?.get("hash")?.asString)
         assertEquals(12345678L, songItemInAdd?.get("mixsongid")?.asLong)
 
-        // 2. 从歌单移除单曲
+        // 2. 批量添加多首歌曲到歌单（单次网络请求提交全部歌曲）
+        addCallCount = 0
+        val song2 = song.copy(id = "song_2", hash = "F8C93356D5C51C6EC4995E8860197222", title = "七里香")
+        val batchAdded = repo.addSongsToPlaylistBatch(1001L, listOf(song, song2))
+        assertEquals(2, batchAdded)
+        assertEquals("批量添加应只发起 1 次请求", 1, addCallCount)
+        assertEquals(2, addSongBody?.getAsJsonArray("data")?.size())
+
+        // 3. 从歌单移除单曲
         val removeSuccess = repo.removeSongFromPlaylist(1001L, song)
         assertTrue(removeSuccess)
         assertNotNull(deleteSongBody)

@@ -376,6 +376,27 @@ class SongPlaybackSwitchTest {
         assertEquals("song_3", state.commentTargetSong?.id)
     }
 
+    @Test
+    fun testReorderQueueByMoodAndMoveQueueItem_ClearsStalePrefetchedMediaItems() = runTest(testDispatcher) {
+        val queue = listOf(song1, song2, song3)
+        viewModel.playSong(song1, queue)
+        testScheduler.advanceUntilIdle()
+
+        // 模拟 ExoPlayer 队列中存在旧的预加载项 (mediaItems.size == 2)
+        val staleNextItem = MediaItem.Builder().setMediaId("stale_song_id").build()
+        fakePlayerHolder.mediaItems.add(staleNextItem)
+        assertEquals(2, fakePlayerHolder.mediaItems.size)
+
+        // 执行拖拽移位，应立即清理旧预加载项并重新预加载
+        viewModel.clearPrefetchedPlayerItems()
+        assertEquals(1, fakePlayerHolder.mediaItems.size)
+        assertEquals("song_1", fakePlayerHolder.mediaItems.first().mediaId)
+
+        fakePlayerHolder.mediaItems.add(staleNextItem)
+        viewModel.moveQueueItem(2, 1)
+        assertFalse(fakePlayerHolder.mediaItems.any { it.mediaId == "stale_song_id" })
+    }
+
     private class TestSessionStore : SessionStore {
         var rows = listOf(SavedAccount("user_1"))
         var activeKey: String? = "user_1"

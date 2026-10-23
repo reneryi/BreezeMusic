@@ -51,10 +51,16 @@ data class VipSnapshot(val benefits: List<VipBenefit> = emptyList(), val checked
     fun active(type: String): Boolean = benefits.any { it.type == type && it.active }
     companion object {
         fun parse(data: JsonObject, clock: Clock = Clock.systemUTC()): VipSnapshot {
-            check(data.get("busi_vip")?.isJsonArray == true) { "会员响应缺少权益列表，无法确认会员状态" }
+            val hasBusiArray = data.get("busi_vip")?.isJsonArray == true
+            val hasExplicitNonVip = data.has("is_vip") || data.has("vip_type") || data.has("user_type")
+            check(hasBusiArray || hasExplicitNonVip) { "会员响应缺少权益列表，无法确认会员状态" }
             val items = data.objects("busi_vip")
             return VipSnapshot(listOf("tvip", "svip").map { type ->
-                val matching = items.filter { it.text("product_type") == type }
+                val matching = items.filter {
+                    val pt = it.text("product_type")?.lowercase().orEmpty()
+                    if (type == "tvip") pt == "tvip" || pt == "dvip" || pt == "qvip"
+                    else pt == type
+                }
                 val item = matching.firstOrNull { it.number("is_vip") == 1 } ?: matching.firstOrNull()
                 val raw = item?.text("vip_end_time")
                 val expiry = parseExpiry(raw)

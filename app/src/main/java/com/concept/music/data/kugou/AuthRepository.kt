@@ -9,16 +9,71 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
     private val clock: Clock = Clock.systemUTC()) {
 
     /**
-     * [P0-1] 概念版设备注册 (对齐 MakcRe/KuGouMusicApi register_dev.js)
-     * 支持首次自动注册与手动强制刷新 (forceRefresh=true)，当远端风控接口不可达时使用设备特征指纹生成合规 24 位 DFID，
-     * 彻底杜绝设备标识停留在无用的 "-" 状态。
+     * [PROTO-02] 概念版设备注册 (对齐 MakcRe/KuGouMusicApi register_dev.js)
+     * 首选通道请求 https://userservice.kugou.com/risk/v2/r_register_dev (playlistAesEncrypt + rsaPkcs1 + playlistAesDecrypt)，
+     * 回退兼容 /v1/register_dev 与 /risk/v1/r_register_dev，当远端风控接口不可达时使用设备特征指纹生成合规 24 位 DFID。
      */
     suspend fun registerDevice(forceRefresh: Boolean = false): String? {
         val current = store.device()
-        if (!forceRefresh && current.dfid.isNotBlank() && current.dfid != "-") {
+        if (!forceRefresh && store.isDfidRegistered() && current.dfid.isNotBlank() && current.dfid != "-") {
             return current.dfid
         }
         val nowSec = clock.instant().epochSecond
+        val activeUserId = store.activeId() ?: "0"
+        val activeSession = store.activeId()?.let { store.session(it) }
+        val activeToken = activeSession?.token.orEmpty()
+
+        // 1. 首选通道：对齐上游 register_dev.js -> https://userservice.kugou.com/risk/v2/r_register_dev
+        val riskV2Dfid = runCatching {
+            val dataPlain = KugouSigner.gson.toJson(
+                json(
+                    "mid" to current.mid,
+                    "uuid" to current.guid,
+                    "appid" to "1014",
+                    "userid" to activeUserId
+                )
+            )
+            val (aesKey, aesCipher) = KugouSigner.playlistAesEncrypt(dataPlain)
+            val pInner = KugouSigner.gson.toJson(
+                json(
+                    "aes" to aesKey,
+                    "uid" to activeUserId,
+                    "token" to activeToken
+                )
+            )
+            val pRsa = KugouSigner.rsaPkcs1(pInner, lite = true).uppercase()
+            val rawBytes = transport.requestRawBytes(
+                path = "/risk/v2/r_register_dev",
+                host = "https://userservice.kugou.com",
+                method = "POST",
+                session = activeSession,
+                query = mapOf(
+                    "part" to "1",
+                    "plat" to "1",
+                    "p" to pRsa
+                ),
+                rawBody = aesCipher,
+                sign = true,
+                includeDefaultParams = true
+            )
+            if (rawBytes.isNotEmpty()) {
+                val utf8Text = String(rawBytes, Charsets.UTF_8).trim()
+                val parsedObj = if (utf8Text.startsWith("{")) {
+                    runCatching { JsonParser.parseString(utf8Text).asJsonObject }.getOrNull()
+                } else {
+                    val decrypted = runCatching { KugouSigner.playlistAesDecrypt(rawBytes, aesKey) }
+                        .getOrElse {
+                            runCatching { KugouSigner.playlistAesDecrypt(aesKey, utf8Text) }.getOrNull()
+                        }
+                    decrypted?.let { runCatching { JsonParser.parseString(it).asJsonObject }.getOrNull() }
+                }
+                val dataObj = parsedObj?.obj("data") ?: parsedObj
+                dataObj?.text("dfid")?.takeIf { it.isNotBlank() && it != "-" }
+            } else {
+                null
+            }
+        }.getOrNull()
+
         val pPlain = KugouSigner.gson.toJson(json("uuid" to current.guid, "plat" to 1, "clienttime" to nowSec))
         val pEncrypted = runCatching { KugouSigner.rsa(pPlain).uppercase() }.getOrDefault("")
         val payloadJson = KugouSigner.gson.toJson(
@@ -26,12 +81,12 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
                 "mid" to current.mid,
                 "uuid" to current.guid,
                 "appid" to KugouSigner.APP_ID.toString(),
-                "userid" to (store.activeId() ?: "0")
+                "userid" to activeUserId
             )
         )
         val encodedPayload = Base64.getEncoder().encodeToString(payloadJson.toByteArray(Charsets.UTF_8))
 
-        val registeredDfid = runCatching {
+        val remoteDfid = riskV2Dfid ?: runCatching {
             val resp = transport.callAdvanced(
                 path = "/v1/register_dev",
                 host = "https://usersdfid.kugou.com",
@@ -43,7 +98,7 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
                     "appid" to KugouSigner.APP_ID.toString(),
                     "mid" to current.mid,
                     "uuid" to current.guid,
-                    "userid" to (store.activeId() ?: "0"),
+                    "userid" to activeUserId,
                     "p" to pEncrypted
                 ),
                 body = json("data" to encodedPayload),
@@ -63,22 +118,26 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
                     "appid" to KugouSigner.APP_ID.toString(),
                     "mid" to current.mid,
                     "uuid" to current.guid,
-                    "userid" to (store.activeId() ?: "0"),
+                    "userid" to activeUserId,
                     "p" to pEncrypted
                 ),
                 sign = true,
                 includeDefaultParams = false
             )
             (resp.data.text("dfid") ?: resp.data.obj("data")?.text("dfid"))?.takeIf { it.isNotBlank() && it != "-" }
-        }.getOrNull() ?: run {
-            val salt = if (forceRefresh) nowSec.toString() else "v1"
-            "2" + KugouSigner.md5("kugou_lite_${current.guid}_${current.mid}_$salt").lowercase().take(23)
+        }.getOrNull()
+
+        if (!remoteDfid.isNullOrBlank() && remoteDfid != "-") {
+            store.saveDfid(remoteDfid)
+            return remoteDfid
         }
 
-        if (registeredDfid.isNotBlank() && registeredDfid != "-") {
-            store.saveDfid(registeredDfid)
+        val salt = if (forceRefresh) nowSec.toString() else "v1"
+        val fallbackDfid = "2" + KugouSigner.md5("kugou_lite_${current.guid}_${current.mid}_$salt").lowercase().take(23)
+        if (current.dfid.isBlank() || current.dfid == "-") {
+            store.saveDfid(fallbackDfid)
         }
-        return registeredDfid
+        return current.dfid.takeIf { it.isNotBlank() && it != "-" } ?: fallbackDfid
     }
 
     suspend fun sendCode(mobile: String): ApiResponse {

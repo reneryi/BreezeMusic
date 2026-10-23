@@ -1,6 +1,7 @@
 package com.concept.music.data.kugou
 
 import com.concept.music.ui.viewmodel.LibraryViewModel
+import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.*
@@ -55,6 +56,19 @@ class ReviewRegressionTest {
 
     @Test fun malformedVipIsUnknownInsteadOfNotVip() {
         assertThrows(IllegalStateException::class.java) { VipSnapshot.parse(JsonObject()) }
+    }
+
+    @Test fun nonVipWithNullBusiVipParsesCleanly() {
+        val nonVipData = JsonObject().apply {
+            addProperty("is_vip", 0)
+            addProperty("vip_type", 0)
+            add("busi_vip", JsonNull.INSTANCE)
+        }
+        val snapshot = VipSnapshot.parse(nonVipData)
+        assertTrue(snapshot.checked)
+        assertFalse(snapshot.isVip)
+        assertFalse(snapshot.active("svip"))
+        assertFalse(snapshot.active("tvip"))
     }
 
     @Test fun malformedHistoryNeverTriggersClaim() = runTest {

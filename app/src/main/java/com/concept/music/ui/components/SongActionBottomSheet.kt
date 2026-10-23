@@ -2,7 +2,6 @@ package com.concept.music.ui.components
 
 import com.concept.music.ui.theme.conceptSheetSpringEntrance
 
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -19,14 +18,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.Song
-import com.concept.music.service.AudioCacheManager
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptSheetContainerColor
@@ -48,10 +45,6 @@ fun SongActionBottomSheet(
     onOpenSongDetail: (() -> Unit)? = null,
     onRemoveFromCurrentPlaylist: (() -> Unit)? = null
 ) {
-    val context = LocalContext.current
-    var isPinned by remember(song.id, song.hash) {
-        mutableStateOf(AudioCacheManager.isSongPinned(context, song))
-    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
@@ -199,21 +192,6 @@ fun SongActionBottomSheet(
                 onClick = {
                     onDismiss()
                     onAddToPlaylist()
-                }
-            )
-
-            SongActionMenuItem(
-                icon = if (isPinned) Icons.Rounded.PushPin else Icons.Rounded.OfflinePin,
-                title = if (isPinned) "已固定离线保护（点击解除）" else "固定离线收藏（清理缓存时不删除）",
-                tint = if (isPinned) VipGold else ConceptPrimary,
-                onClick = {
-                    val nowPinned = AudioCacheManager.togglePinSong(context, song)
-                    isPinned = nowPinned
-                    Toast.makeText(
-                        context,
-                        if (nowPinned) "已开启「${song.title}」固定离线保护" else "已解除固定离线保护",
-                        Toast.LENGTH_SHORT
-                    ).show()
                 }
             )
 

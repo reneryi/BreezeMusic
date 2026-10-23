@@ -12,12 +12,7 @@ import com.concept.music.service.SystemLyricBridge
 import com.concept.music.service.VipGuardianManager
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
 
 class ConceptMusicApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
@@ -30,16 +25,6 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
     }
 
     override fun newImageLoader(): ImageLoader {
-        val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-        })
-
-        val sslContext = SSLContext.getInstance("SSL").apply {
-            init(null, trustAllCerts, SecureRandom())
-        }
-
         val imageDispatcher = Dispatcher().apply {
             maxRequests = 32
             maxRequestsPerHost = 10
@@ -47,8 +32,6 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
 
         val okHttpClient = OkHttpClient.Builder()
             .dispatcher(imageDispatcher)
-            .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
-            .hostnameVerifier { _, _ -> true }
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .addInterceptor { chain ->

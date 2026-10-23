@@ -6,6 +6,8 @@ import android.content.Intent
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.Player
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
@@ -19,6 +21,7 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.concept.music.MainActivity
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
@@ -53,25 +56,27 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
 
+        inputBuffer.order(ByteOrder.LITTLE_ENDIAN)
+
         val state = AudioEffectManager.state.value
         val balance = state.channelBalance.coerceIn(-1f, 1f)
         val dspActive = state.isEnabled && state.currentPreset != EffectPreset.OFF
         val widthFactor = if (dspActive) (state.virtualizerStrength / 1000f) * 0.32f else 0f
         val rotSpeed = if (dspActive) state.surroundRotationSpeed else 0
         val warmthFactor = if (dspActive) (state.analogWarmthStrength / 1000f) * 0.14f else 0f
-        val eqLoudnessComp = state.equalLoudnessCompensation
-        val volNorm = state.volumeNormalizationEnabled
-        val antiClip = state.antiClippingEnabled
+        val eqLoudnessComp = state.isEnabled && state.equalLoudnessCompensation
+        val volNorm = state.isEnabled && state.volumeNormalizationEnabled
+        val antiClip = state.isEnabled && state.antiClippingEnabled && (dspActive || eqLoudnessComp || volNorm)
 
-        // 若所有母带与声道平衡均为默认直通态，直接零拷贝透传以节省 CPU
+        // 若处于 0音染 / Bit-Perfect 原生直通态且声道平衡居中，直接零拷贝透传，不做软削波压缩
         if (abs(balance) < 0.01f && !dspActive && !eqLoudnessComp && !volNorm) {
-            val out = replaceOutputBuffer(remaining)
+            val out = replaceOutputBuffer(remaining).order(ByteOrder.LITTLE_ENDIAN)
             out.put(inputBuffer)
             out.flip()
             return
         }
 
-        val out = replaceOutputBuffer(remaining)
+        val out = replaceOutputBuffer(remaining).order(ByteOrder.LITTLE_ENDIAN)
         val leftBalGain = if (balance > 0f) (1f - balance).coerceIn(0f, 1f) else 1f
         val rightBalGain = if (balance < 0f) (1f + balance).coerceIn(0f, 1f) else 1f
         val loudnessCompGain = if (eqLoudnessComp) 1.06f else 1.0f
@@ -137,7 +142,7 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         out.flip()
     }
 
-    private fun softLimit(x: Float): Float {
+    internal fun softLimit(x: Float): Float {
         val threshold = 0.88f
         val absX = abs(x)
         if (absX <= threshold) return x
@@ -161,12 +166,24 @@ class PlaybackService : MediaSessionService() {
         @Volatile
         private var activeServiceInstance: PlaybackService? = null
 
+        @Volatile
+        var onSkipToPreviousIntercepted: (() -> Boolean)? = null
+
+        @Volatile
+        var onSkipToNextIntercepted: (() -> Boolean)? = null
+
         fun updateHandleAudioBecomingNoisy(enabled: Boolean) {
             activeServiceInstance?.player?.setHandleAudioBecomingNoisy(enabled)
         }
 
         fun updateAudioFocusDucking(pauseOnDisconnect: Boolean) {
             activeServiceInstance?.player?.setHandleAudioBecomingNoisy(pauseOnDisconnect)
+        }
+
+        internal fun toggleActivePlayerPlayPause(): Boolean {
+            val p = activeServiceInstance?.player ?: return false
+            if (p.isPlaying) p.pause() else p.play()
+            return true
         }
     }
 
@@ -220,7 +237,7 @@ class PlaybackService : MediaSessionService() {
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        // 5. 初始化 ExoPlayer（挂载边听边存 CacheDataSource 离线缓存引擎）
+        // 5. 初始化 ExoPlayer（挂载边听边存 CacheDataSource 流媒体缓存引擎）
         val mediaSourceFactory = androidx.media3.exoplayer.source.DefaultMediaSourceFactory(this)
             .setDataSourceFactory(AudioCacheManager.getDataSourceFactory(this))
 
@@ -251,8 +268,59 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE
         )
 
-        // 8. 构建 MediaSession
-        mediaSession = MediaSession.Builder(this, player!!)
+        // 8. 使用 ForwardingPlayer 包装 ExoPlayer，确保系统锁屏、通知栏与蓝牙耳机的上一曲/下一曲始终可用并精准转发至队列控制器
+        val forwardingPlayer = object : ForwardingPlayer(player!!) {
+            override fun getAvailableCommands(): Player.Commands {
+                return super.getAvailableCommands()
+                    .buildUpon()
+                    .add(Player.COMMAND_SEEK_TO_PREVIOUS)
+                    .add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                    .add(Player.COMMAND_SEEK_TO_NEXT)
+                    .add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                    .build()
+            }
+
+            override fun isCommandAvailable(command: Int): Boolean {
+                return when (command) {
+                    Player.COMMAND_SEEK_TO_PREVIOUS,
+                    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+                    Player.COMMAND_SEEK_TO_NEXT,
+                    Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> true
+                    else -> super.isCommandAvailable(command)
+                }
+            }
+
+            override fun hasPreviousMediaItem(): Boolean = true
+
+            override fun hasNextMediaItem(): Boolean = true
+
+            override fun seekToPrevious() {
+                if (onSkipToPreviousIntercepted?.invoke() != true) {
+                    super.seekToPrevious()
+                }
+            }
+
+            override fun seekToPreviousMediaItem() {
+                if (onSkipToPreviousIntercepted?.invoke() != true) {
+                    super.seekToPreviousMediaItem()
+                }
+            }
+
+            override fun seekToNext() {
+                if (onSkipToNextIntercepted?.invoke() != true) {
+                    super.seekToNext()
+                }
+            }
+
+            override fun seekToNextMediaItem() {
+                if (onSkipToNextIntercepted?.invoke() != true) {
+                    super.seekToNextMediaItem()
+                }
+            }
+        }
+
+        // 9. 构建 MediaSession
+        mediaSession = MediaSession.Builder(this, forwardingPlayer)
             .setSessionActivity(sessionActivityPendingIntent)
             .build()
     }
@@ -265,6 +333,7 @@ class PlaybackService : MediaSessionService() {
         if (activeServiceInstance === this) {
             activeServiceInstance = null
         }
+        AudioEffectManager.releaseEffects()
         mediaSession?.run {
             player.release()
             release()

@@ -239,13 +239,19 @@ class UiAlignmentRegressionTest {
     }
 
     @Test
-    fun testPostSongCommentProfilePreservation() = kotlinx.coroutines.runBlocking {
+    fun testPostSongCommentProfilePreservationAndRouting() = kotlinx.coroutines.runBlocking {
         val store = MemoryStore()
+        val capturedRoutes = mutableListOf<String>()
+        val capturedRouters = mutableListOf<String>()
         val transport = object : KugouTransport {
             override suspend fun call(
                 path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
                 host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
-            ): ApiResponse = ApiResponse(JsonObject())
+            ): ApiResponse {
+                query["r"]?.let { capturedRoutes.add(it) }
+                headers["x-router"]?.let { capturedRouters.add(it) }
+                return ApiResponse(JsonObject())
+            }
         }
         val auth = AuthRepository(transport, store)
         val accounts = AccountRepository(store, auth, transport)
@@ -263,6 +269,24 @@ class UiAlignmentRegressionTest {
         assertEquals("root_1", comment.parentId)
         assertEquals("原评主", comment.replyUserName)
         assertEquals("刚刚", comment.timeFormatted)
+        assertEquals("commentsv2/reply", capturedRoutes.firstOrNull())
+        assertEquals("m.comment.service.kugou.com", capturedRouters.firstOrNull())
+
+        val rootComment = repo.postSongComment(
+            song = testSong,
+            content = "主评论内容"
+        )
+        assertEquals("主评论内容", rootComment.content)
+        assertTrue(capturedRoutes.contains("commentsv3/add"))
+
+        // 未登录时必须抛出 ApiFailure，绝不伪造 userId="10086" 的假评论
+        accounts.select(null)
+        try {
+            repo.postSongComment(song = testSong, content = "未登录评论")
+            fail("未登录状态下发表评论应抛出 ApiFailure")
+        } catch (expected: ApiFailure) {
+            assertEquals(20010, expected.code)
+        }
     }
 
     @Test

@@ -779,6 +779,51 @@ class LibraryViewModel(
         }
     }
 
+    fun addSongsToPlaylistBatch(playlistId: Long, songs: List<Song>, playlistName: String = "", onResult: (Int, String) -> Unit = { _, _ -> }) {
+        if (accountState.value.auth != AuthState.READY) {
+            onResult(0, "请先登录酷狗账号")
+            return
+        }
+        if (songs.isEmpty()) {
+            onResult(0, "未选择需要添加的歌曲")
+            return
+        }
+        viewModelScope.launch {
+            val addedCount = runCatching { VipManager.music.addSongsToPlaylistBatch(playlistId, songs) }.getOrDefault(0)
+            if (addedCount > 0) {
+                val targetPl = _playlists.value.firstOrNull { it.listId == playlistId }
+                _playlists.value = _playlists.value.map {
+                    if (it.listId == playlistId) it.copy(trackCount = it.trackCount + addedCount) else it
+                }
+                VipManager.discoverCache.saveUserPlaylists(accountState.value.currentId, _playlists.value)
+                if (targetPl != null) {
+                    val cached = VipManager.discoverCache.getPlaylistSongs(targetPl.id)
+                    if (cached.isNotEmpty()) {
+                        val newOnes = songs.filter { s -> cached.none { isSameSong(it, s) } }
+                        if (newOnes.isNotEmpty()) {
+                            VipManager.discoverCache.savePlaylistSongs(targetPl.id, newOnes + cached)
+                        }
+                    }
+                    if (_librarySection.value == "歌单:${targetPl.id}") {
+                        val curList = _librarySongs.value
+                        val newOnes = songs.filter { s -> curList.none { isSameSong(it, s) } }
+                        if (newOnes.isNotEmpty()) {
+                            _librarySongs.value = newOnes + curList
+                        }
+                    }
+                }
+                val tip = if (playlistName.isNotBlank()) {
+                    "已将 $addedCount 首歌曲加入「$playlistName」"
+                } else {
+                    "已成功添加 $addedCount 首歌曲到歌单"
+                }
+                onResult(addedCount, tip)
+            } else {
+                onResult(0, "批量添加到歌单失败，请重试")
+            }
+        }
+    }
+
     fun removeSongFromPlaylist(playlistId: Long, song: Song, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
             val success = runCatching { VipManager.music.removeSongFromPlaylist(playlistId, song) }.getOrDefault(false)

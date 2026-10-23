@@ -60,6 +60,8 @@ import kotlinx.coroutines.launch
 /**
  * 歌单内排序模式（无门槛直接标配，不设 200 首门槛限制）
  */
+private fun Song.selectionKey(): String = "${id}_${hash}"
+
 enum class PlaylistSortMode(val label: String) {
     DEFAULT("默认顺序"),
     TITLE_AZ("歌名 A-Z"),
@@ -395,7 +397,7 @@ fun PlaylistDetailScreen(
                                                     selectedSongIds = if (selectedSongIds.size == filteredAndSortedSongs.size) {
                                                         emptySet()
                                                     } else {
-                                                        filteredAndSortedSongs.map { it.id }.toSet()
+                                                        filteredAndSortedSongs.map { it.selectionKey() }.toSet()
                                                     }
                                                 },
                                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
@@ -412,7 +414,7 @@ fun PlaylistDetailScreen(
                                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                             FilledTonalButton(
                                                 onClick = {
-                                                    val chosen = filteredAndSortedSongs.filter { selectedSongIds.contains(it.id) }
+                                                    val chosen = filteredAndSortedSongs.filter { selectedSongIds.contains(it.selectionKey()) }
                                                     if (chosen.isNotEmpty()) {
                                                         onSongClick(chosen.first(), chosen)
                                                         isMultiSelectMode = false
@@ -486,14 +488,15 @@ fun PlaylistDetailScreen(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val songKey = song.selectionKey()
                             if (isMultiSelectMode) {
                                 Checkbox(
-                                    checked = selectedSongIds.contains(song.id),
+                                    checked = selectedSongIds.contains(songKey),
                                     onCheckedChange = { checked ->
                                         selectedSongIds = if (checked) {
-                                            selectedSongIds + song.id
+                                            selectedSongIds + songKey
                                         } else {
-                                            selectedSongIds - song.id
+                                            selectedSongIds - songKey
                                         }
                                     },
                                     colors = CheckboxDefaults.colors(checkedColor = ConceptPrimary),
@@ -507,10 +510,10 @@ fun PlaylistDetailScreen(
                                     isPlaying = isCurrentTrack,
                                     onClick = {
                                         if (isMultiSelectMode) {
-                                            selectedSongIds = if (selectedSongIds.contains(song.id)) {
-                                                selectedSongIds - song.id
+                                            selectedSongIds = if (selectedSongIds.contains(songKey)) {
+                                                selectedSongIds - songKey
                                             } else {
-                                                selectedSongIds + song.id
+                                                selectedSongIds + songKey
                                             }
                                         } else {
                                             onSongClick(song, filteredAndSortedSongs)
@@ -598,7 +601,7 @@ fun PlaylistDetailScreen(
 
     // 批量添加到歌单弹窗
     if (showBatchAddToPlaylistDialog) {
-        val chosenSongs = filteredAndSortedSongs.filter { selectedSongIds.contains(it.id) }
+        val chosenSongs = filteredAndSortedSongs.filter { selectedSongIds.contains(it.selectionKey()) }
         val lead = chosenSongs.firstOrNull()
         if (lead != null) {
             AddToPlaylistDialog(
@@ -606,10 +609,9 @@ fun PlaylistDetailScreen(
                 playlists = playlists,
                 onSelectPlaylist = { targetPl ->
                     showBatchAddToPlaylistDialog = false
-                    chosenSongs.forEach { s ->
-                        viewModel.addSongToPlaylist(targetPl.listId, s, targetPl.title) { _, _ -> }
+                    viewModel.addSongsToPlaylistBatch(targetPl.listId, chosenSongs, targetPl.title) { _, msg ->
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                     }
-                    Toast.makeText(context, "已将 ${chosenSongs.size} 首歌曲加入「${targetPl.title}」", Toast.LENGTH_SHORT).show()
                     isMultiSelectMode = false
                     selectedSongIds = emptySet()
                 },

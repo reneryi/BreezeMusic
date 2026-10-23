@@ -1,5 +1,6 @@
 package com.concept.music.data.kugou
 
+import com.concept.music.data.model.Song
 import com.google.gson.JsonObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -18,11 +19,14 @@ class KugouProtocolTest {
     @Test fun fixedAesAndRawRsaAreDeterministic() {
         assertEquals("8270cd5eba410362918595d0cc6188dd", KugouSigner.aes("|1770000000123", "5e4ef500e9597fe004bd09a46d8add98", "04bd09a46d8add98"))
         assertEquals("73143dd1ae3d044b1eb18cb4178c7ead1c10607262e8afe75d954c2b4a5eb365b1913e1ab60fc516ad3154114c6eefe9b47a7b6895fb0f67ce7422b62f75255a574be399ac6cc2f39e5fb9a543c55523be17e52f4aecee6f8a497568d65f61559a204967195ab22dca1c6d27d85e2f7b0ae9262bb51808e2ce0d9190e5d5c998", KugouSigner.rsa("{\"clienttime_ms\":1770000000123,\"key\":\"0123456789abcdef\"}"))
+        val pkcs1Hex = KugouSigner.rsaPkcs1("{\"aes\":\"abcdef\",\"uid\":123,\"token\":\"t\"}")
+        assertEquals(256, pkcs1Hex.length)
+        assertEquals(pkcs1Hex.lowercase(), pkcs1Hex)
     }
 
-    @Test fun vipParsesTypesAndDateRepresentations() {
+    @Test fun vipParsesTypesAndDateRepresentationsIncludingDvipQvip() {
         val root = JsonObject().apply { add("busi_vip", com.google.gson.JsonArray().apply {
-            add(JsonObject().apply { addProperty("product_type", "tvip"); addProperty("is_vip", 1); addProperty("vip_end_time", "2026-12-01 10:00:00") })
+            add(JsonObject().apply { addProperty("product_type", "dvip"); addProperty("is_vip", 1); addProperty("vip_end_time", "2026-12-01 10:00:00") })
             add(JsonObject().apply { addProperty("product_type", "svip"); addProperty("is_vip", 0); addProperty("vip_end_time", "0") })
         }) }
         val snapshot = VipSnapshot.parse(root, java.time.Clock.fixed(Instant.parse("2026-10-04T00:00:00Z"), java.time.ZoneOffset.UTC))
@@ -36,11 +40,16 @@ class KugouProtocolTest {
         try { response.requireSuccess(); fail("missing status must fail") } catch (expected: ApiFailure) { assertNull(expected.code) }
     }
 
-    @Test fun registerDeviceSavesDfidWhenCurrentDfidIsPlaceholder() = kotlinx.coroutines.test.runTest {
-        var savedDfid = "-"
+    @Test fun registerDeviceSavesDfidWhenCurrentDfidIsPlaceholderOrUnregistered() = kotlinx.coroutines.test.runTest {
+        var savedDfid = "2localfallbackdfid000000"
+        var registeredFlag = false
         val store = object : SessionStore by MemoryStore() {
             override fun device() = DeviceIdentity("fixture-guid", "1234", "dev", dfid = savedDfid)
-            override fun saveDfid(dfid: String) { savedDfid = dfid }
+            override fun isDfidRegistered() = registeredFlag
+            override fun saveDfid(dfid: String) {
+                savedDfid = dfid
+                registeredFlag = true
+            }
         }
         val transport = object : KugouTransport {
             override suspend fun call(
@@ -48,19 +57,32 @@ class KugouProtocolTest {
                 host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
             ): ApiResponse = ApiResponse(JsonObject())
 
-            override suspend fun callAdvanced(
-                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
-                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?,
-                sign: Boolean, includeDefaultParams: Boolean
-            ): ApiResponse {
-                assertEquals("/v1/register_dev", path)
-                return ApiResponse(com.google.gson.JsonParser.parseString("{\"status\":1,\"data\":{\"dfid\":\"dfid_concept_2026\"}}").asJsonObject)
+            override suspend fun requestRawBytes(
+                path: String, session: KugouSession?, query: Map<String, String>, rawBody: String?,
+                host: String, method: String, headers: Map<String, String>, sign: Boolean,
+                includeDefaultParams: Boolean, device: DeviceIdentity?
+            ): ByteArray {
+                assertEquals("/risk/v2/r_register_dev", path)
+                assertEquals("https://userservice.kugou.com", host)
+                return "{\"status\":1,\"data\":{\"dfid\":\"dfid_concept_2026\"}}".toByteArray(Charsets.UTF_8)
             }
         }
         val auth = AuthRepository(transport, store)
         val dfid = auth.registerDevice()
         assertEquals("dfid_concept_2026", dfid)
         assertEquals("dfid_concept_2026", savedDfid)
+        assertTrue(store.isDfidRegistered())
+    }
+
+    @Test fun csccReporterMaintainsConsistentSongStateOnRapidSwitch() {
+        val songA = Song(id = "song_a", title = "Song A", artist = "Artist A")
+        val songB = Song(id = "song_b", title = "Song B", artist = "Artist B")
+        KugouCsccReporter.currentPlayingSongId = songB.id
+        KugouCsccReporter.songStartTimeMs = 123456L
+        // Ending previous songA after songB already started must NOT clear songB's state
+        KugouCsccReporter.onSongEnd(songA, playedDurationMs = 5000L)
+        assertEquals("song_b", KugouCsccReporter.currentPlayingSongId)
+        assertEquals(123456L, KugouCsccReporter.songStartTimeMs)
     }
 
     @Test fun resolvePlaybackUsesPrivUrlEvenWhenVipTokenIsNull() = kotlinx.coroutines.test.runTest {

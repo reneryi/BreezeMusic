@@ -23,6 +23,7 @@ interface SessionStore {
     fun removeSession(id: String)
     fun device(): DeviceIdentity
     fun saveDfid(dfid: String)
+    fun isDfidRegistered(): Boolean = true
 }
 
 class EncryptedSessionStore(context: Context) : SessionStore {
@@ -39,6 +40,9 @@ class EncryptedSessionStore(context: Context) : SessionStore {
 
     @Volatile
     private var cachedDevice: DeviceIdentity? = null
+
+    @Volatile
+    private var dfidRegistered: Boolean = false
 
     private val sessionCache = ConcurrentHashMap<String, KugouSession>()
 
@@ -57,11 +61,19 @@ class EncryptedSessionStore(context: Context) : SessionStore {
     }
 
     init {
+        dfidRegistered = metadata.getBoolean("device.dfid_registered", false)
         if (!metadata.contains("guid")) {
             val guid = KugouSigner.md5(UUID.randomUUID().toString())
             val dev = KugouSigner.random(10).uppercase()
             val initialDfid = synthesizeFallbackDfid(guid, dev)
-            check(metadata.edit().putString("guid", guid).putString("dev", dev).putString("dfid", initialDfid).commit())
+            check(
+                metadata.edit()
+                    .putString("guid", guid)
+                    .putString("dev", dev)
+                    .putString("dfid", initialDfid)
+                    .putBoolean("device.dfid_registered", false)
+                    .commit()
+            )
             cachedDevice = DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = initialDfid)
         } else {
             val guid = metadata.getString("guid", null).orEmpty()
@@ -69,7 +81,8 @@ class EncryptedSessionStore(context: Context) : SessionStore {
             val existingDfid = metadata.getString("dfid", "-") ?: "-"
             if (existingDfid.isBlank() || existingDfid == "-") {
                 val fallbackDfid = synthesizeFallbackDfid(guid, dev)
-                metadata.edit().putString("dfid", fallbackDfid).apply()
+                metadata.edit().putString("dfid", fallbackDfid).putBoolean("device.dfid_registered", false).apply()
+                dfidRegistered = false
             }
         }
         val old = context.getSharedPreferences("kugou_session", Context.MODE_PRIVATE)
@@ -161,7 +174,10 @@ class EncryptedSessionStore(context: Context) : SessionStore {
     override fun saveDfid(dfid: String) {
         if (dfid.isNotBlank() && dfid != "-") {
             cachedDevice = device().copy(dfid = dfid)
-            metadata.edit().putString("dfid", dfid).apply()
+            dfidRegistered = true
+            metadata.edit().putString("dfid", dfid).putBoolean("device.dfid_registered", true).apply()
         }
     }
+
+    override fun isDfidRegistered(): Boolean = dfidRegistered
 }

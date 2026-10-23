@@ -891,7 +891,7 @@ object AudioEffectManager {
         }
     }
 
-    private fun releaseEffects() {
+    internal fun releaseEffects() {
         runCatching {
             equalizer?.enabled = false
             equalizer?.release()

@@ -427,7 +427,7 @@ fun CommentsScreen(
     onRefresh: () -> Unit = {},
     onLoadReplies: (commentId: String) -> Unit = {},
     onSyncReplyCount: (commentId: String, actualCount: Int, latestReplies: List<SongComment>?) -> Unit = { _, _, _ -> },
-    onPostComment: (content: String, replyToCommentId: String?, replyToUserName: String?) -> Unit = { _, _, _ -> },
+    onPostComment: (content: String, replyToCommentId: String?, replyToUserName: String?, onResult: (Boolean, String) -> Unit) -> Unit = { _, _, _, cb -> cb(true, "评论已发布") },
     onLikeComment: (commentId: String) -> Unit = {}
 ) {
     // 独立楼中楼详情页目标根评论 ID（仅以 ID 驱动页面开关，杜绝因 replies 异步刷新导致切换动画重复触发卡顿）
@@ -633,11 +633,14 @@ fun CommentsScreen(
                         onSend = {
                             val content = commentInputText.trim()
                             if (content.isNotBlank()) {
-                                onPostComment(content, replyTarget?.first, replyTarget?.second)
-                                commentInputText = ""
-                                replyTarget = null
-                                showEmojiBar = false
-                                Toast.makeText(context, "评论已发送", Toast.LENGTH_SHORT).show()
+                                onPostComment(content, replyTarget?.first, replyTarget?.second) { ok, msg ->
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                    if (ok) {
+                                        commentInputText = ""
+                                        replyTarget = null
+                                        showEmojiBar = false
+                                    }
+                                }
                             }
                         }
                     )
@@ -879,8 +882,8 @@ fun CommentsScreen(
                     onSyncReplyCount = { actualCnt, latestReplies ->
                         onSyncReplyCount(floorComment.id, actualCnt, latestReplies)
                     },
-                    onPostReply = { content, replyToId, replyToUser ->
-                        onPostComment(content, replyToId ?: floorComment.id, replyToUser ?: floorComment.userName)
+                    onPostReply = { content, replyToId, replyToUser, onResult ->
+                        onPostComment(content, replyToId ?: floorComment.id, replyToUser ?: floorComment.userName, onResult)
                     },
                     onLikeComment = onLikeComment,
                     onPreviewImage = { previewImageUrl = it }
@@ -910,8 +913,8 @@ fun CommentsScreen(
                     conversation = chain,
                     currentUserAvatar = currentUserAvatar,
                     onBack = { activeConversationChain = null },
-                    onPostReply = { content, replyToId, replyToUser ->
-                        onPostComment(content, replyToId, replyToUser)
+                    onPostReply = { content, replyToId, replyToUser, onResult ->
+                        onPostComment(content, replyToId, replyToUser, onResult)
                     },
                     onLikeComment = onLikeComment,
                     onPreviewImage = { previewImageUrl = it }
@@ -936,7 +939,7 @@ fun CommentFloorDetailScreen(
     onBack: () -> Unit,
     onOpenConversationChain: (CommentConversationChain) -> Unit = {},
     onSyncReplyCount: (actualCount: Int, latestReplies: List<SongComment>) -> Unit = { _, _ -> },
-    onPostReply: (content: String, replyToCommentId: String?, replyToUserName: String?) -> Unit,
+    onPostReply: (content: String, replyToCommentId: String?, replyToUserName: String?, onResult: (Boolean, String) -> Unit) -> Unit,
     onLikeComment: (commentId: String) -> Unit,
     onPreviewImage: (String) -> Unit
 ) {
@@ -1094,11 +1097,14 @@ fun CommentFloorDetailScreen(
                         if (content.isNotBlank()) {
                             val targetCommentId = replyTarget?.first ?: rootComment.id
                             val targetUserName = replyTarget?.second ?: rootComment.userName
-                            onPostReply(content, targetCommentId, targetUserName)
-                            inputText = ""
-                            replyTarget = null
-                            showEmojiBar = false
-                            Toast.makeText(context, "回复已发送", Toast.LENGTH_SHORT).show()
+                            onPostReply(content, targetCommentId, targetUserName) { ok, msg ->
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                if (ok) {
+                                    inputText = ""
+                                    replyTarget = null
+                                    showEmojiBar = false
+                                }
+                            }
                         }
                     }
                 )
@@ -1253,7 +1259,7 @@ private fun CommentConversationDetailScreen(
     conversation: CommentConversationChain,
     currentUserAvatar: String,
     onBack: () -> Unit,
-    onPostReply: (content: String, replyToCommentId: String?, replyToUserName: String?) -> Unit,
+    onPostReply: (content: String, replyToCommentId: String?, replyToUserName: String?, onResult: (Boolean, String) -> Unit) -> Unit,
     onLikeComment: (commentId: String) -> Unit,
     onPreviewImage: (String) -> Unit
 ) {
@@ -1336,11 +1342,14 @@ private fun CommentConversationDetailScreen(
                                 content,
                                 replyTarget?.first ?: conversation.rootClusterComment.id,
                                 replyTarget?.second ?: conversation.rootClusterComment.userName
-                            )
-                            inputText = ""
-                            replyTarget = null
-                            showEmojiBar = false
-                            Toast.makeText(context, "回复已发送", Toast.LENGTH_SHORT).show()
+                            ) { ok, msg ->
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                if (ok) {
+                                    inputText = ""
+                                    replyTarget = null
+                                    showEmojiBar = false
+                                }
+                            }
                         }
                     }
                 )

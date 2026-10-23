@@ -16,8 +16,19 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
     val state = mutable.asStateFlow()
     fun clear() { mutable.value = VipUiState() }
     private suspend fun snapshot(context: AccountContext): VipSnapshot = accounts.authenticated(context) {
-        VipSnapshot.parse(transport.call("/v1/get_union_vip", it, host = "https://kugouvip.kugou.com",
-            query = mapOf("busi_type" to "concept")).requireSuccess().data, clock)
+        VipSnapshot.parse(
+            transport.call(
+                path = "/v1/get_union_vip",
+                session = it,
+                host = "https://kugouvip.kugou.com",
+                query = mapOf(
+                    "busi_type" to "concept",
+                    "opt_product_types" to "dvip,qvip",
+                    "product_type" to "svip"
+                )
+            ).requireSuccess().data,
+            clock
+        )
     }
     private suspend fun records(context: AccountContext): List<VipDayRecord> = accounts.authenticated(context) { session ->
         val data = transport.call("/youth/v1/activity/get_month_vip_record", session, query = mapOf("latest_limit" to "100"))
@@ -40,7 +51,24 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
         catch (e: Exception) { accounts.ensureCurrent(context); mutable.value = state.value.copy(fresh = false, error = "权益尚未完整刷新：${e.message}") }
     }
     private fun confirmed(day: String, vip: VipSnapshot, records: List<VipDayRecord>): Boolean =
-        records.any { it.day == day && it.received && it.type == "svip" } && vip.active("svip")
+        records.any { it.day == day && it.received && it.type.lowercase() == "svip" } && vip.active("svip")
+
+    private suspend fun reportAdPlayForVip(context: AccountContext) {
+        val nowMs = clock.millis()
+        accounts.authenticated(context) { session ->
+            accounts.ensureCurrent(context)
+            transport.call(
+                path = "/youth/v1/ad/play_report",
+                session = session,
+                method = "POST",
+                body = json(
+                    "ad_id" to 12307537187L,
+                    "play_end" to nowMs,
+                    "play_start" to (nowMs - 30_000L)
+                )
+            )
+        }
+    }
 
     suspend fun claim(context: AccountContext, automatic: Boolean = false): VipClaimResult {
         val lock = locks.getOrPut(context.session.userId) { Mutex() }
@@ -59,8 +87,26 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
             }
             var received = history.any { it.day == day && it.received }
             if (!received) {
-                val claim = mutate(context, automatic, "/youth/v1/recharge/receive_vip_listen_song",
-                    mapOf("source_id" to "90139", "receive_day" to day), setOf(131001))
+                val claim = try {
+                    mutate(
+                        context = context,
+                        automatic = automatic,
+                        path = "/youth/v1/recharge/receive_vip_listen_song",
+                        query = mapOf("source_id" to "90139", "receive_day" to day),
+                        alreadyCodes = setOf(131001)
+                    )
+                } catch (e: ApiFailure) {
+                    if (e.code == 20028 || e.invalidSession) throw e
+                    // 备选激励广告通道 (/youth/v1/ad/play_report)，零听歌上报、不改变账号听歌时长
+                    runCatching { reportAdPlayForVip(context) }
+                    mutate(
+                        context = context,
+                        automatic = automatic,
+                        path = "/youth/v1/recharge/receive_vip_listen_song",
+                        query = mapOf("source_id" to "90139", "receive_day" to day),
+                        alreadyCodes = setOf(131001)
+                    )
+                }
                 received = claim.success || claim.code == 131001
             }
             var upgradeFailure: ApiFailure? = null

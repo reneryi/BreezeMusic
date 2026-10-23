@@ -34,7 +34,7 @@ object KugouSigner {
             else params.toSortedMap().entries.joinToString("") { "${it.key}=${it.value}" }
         return md5(salt + ordered + body + salt)
     }
-    fun paramsKey(time: Long): String = md5("$APP_ID$ANDROID_SALT$CLIENT_VERSION$time")
+    fun paramsKey(time: Long, extra: String = ""): String = md5("$APP_ID$ANDROID_SALT$CLIENT_VERSION$time$extra")
     data class Encrypted(val ciphertext: String, val key: String)
     fun encrypt(text: String, temporaryKey: String = random(16)): Encrypted {
         val key = md5(temporaryKey)
@@ -60,6 +60,13 @@ object KugouSigner {
         // Upstream pads on the RIGHT and uses raw modular exponentiation, not PKCS#1.
         return BigInteger(1, bytes.copyOf(size)).modPow(key.publicExponent, key.modulus).toString(16).padStart(size * 2, '0')
     }
+    fun rsaPkcs1(payload: String, lite: Boolean = true): String {
+        val pubKeyB64 = if (lite) PUBLIC_KEY else PUBLIC_KEY_STANDARD
+        val key = KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(Base64.getDecoder().decode(pubKeyB64)))
+        val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, key)
+        return hex(cipher.doFinal(payload.toByteArray(Charsets.UTF_8)))
+    }
     fun playlistAesEncrypt(data: String): Pair<String, String> {
         val key = (1..6).map { ('a'..'z').random() }.joinToString("")
         val md = md5(key)
@@ -72,12 +79,16 @@ object KugouSigner {
     }
 
     fun playlistAesDecrypt(key: String, base64Cipher: String): String {
+        return playlistAesDecrypt(Base64.getDecoder().decode(base64Cipher), key)
+    }
+
+    fun playlistAesDecrypt(cipherBytes: ByteArray, key: String): String {
         val md = md5(key)
         val encKey = md.substring(0, 16)
         val iv = md.substring(16, 32)
         val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(encKey.toByteArray(Charsets.UTF_8), "AES"), IvParameterSpec(iv.toByteArray(Charsets.UTF_8)))
-        val decrypted = cipher.doFinal(Base64.getDecoder().decode(base64Cipher))
+        val decrypted = cipher.doFinal(cipherBytes)
         return String(decrypted, Charsets.UTF_8)
     }
 

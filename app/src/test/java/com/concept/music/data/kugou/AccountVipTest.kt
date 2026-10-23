@@ -28,13 +28,33 @@ private class FakeTransport : KugouTransport {
     var upgraded = false
     var upgradeFails = false
     var challenge = false
+    var failFirstClaimUntilAdReport = false
+    var adReported = false
     val paths = mutableListOf<String>()
+    val unionVipQueries = mutableListOf<Map<String, String>>()
     override suspend fun call(path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
         host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?): ApiResponse {
         paths += path
         val payload = when {
-            path.endsWith("get_month_vip_record") -> """{"status":1,"data":{"list":[{"day":"2026-10-04","receive_vip":1,"vip_type":"${if(upgraded) "svip" else "tvip"}"}]}}"""
-            path.endsWith("get_union_vip") -> """{"status":1,"data":{"busi_vip":[{"product_type":"svip","is_vip":${if(upgraded) 1 else 0},"vip_end_time":"2026-10-05 23:00:00"}]}}"""
+            path.endsWith("get_month_vip_record") -> {
+                val hasRec = !failFirstClaimUntilAdReport || adReported
+                """{"status":1,"data":{"list":${if (hasRec) """[{"day":"2026-10-04","receive_vip":1,"vip_type":"${if(upgraded) "svip" else "tvip"}"}]""" else "[]"}}}"""
+            }
+            path.endsWith("get_union_vip") -> {
+                unionVipQueries += query
+                """{"status":1,"data":{"busi_vip":[{"product_type":"svip","is_vip":${if(upgraded) 1 else 0},"vip_end_time":"2026-10-05 23:00:00"}]}}"""
+            }
+            path.endsWith("receive_vip_listen_song") -> {
+                if (failFirstClaimUntilAdReport && !adReported) {
+                    """{"status":0,"error_code":130001,"error_msg":"请先完成激励任务"}"""
+                } else {
+                    """{"status":1,"error_code":0}"""
+                }
+            }
+            path.endsWith("ad/play_report") -> {
+                adReported = true
+                """{"status":1,"error_code":0}"""
+            }
             path.endsWith("upgrade_vip_reward") -> {
                 if (challenge) return ApiResponse(json("status" to 0, "error_code" to 20028), "event")
                 if (upgradeFails) """{"status":0,"error_code":999,"error_msg":"升级被拒绝"}"""
@@ -47,15 +67,30 @@ private class FakeTransport : KugouTransport {
 }
 class AccountVipTest {
     private val clock = Clock.fixed(Instant.parse("2026-10-04T00:00:00Z"), ZoneOffset.UTC)
-    @Test fun alreadyClaimedListeningVipStillUpgrades() = runTest {
+    @Test fun alreadyClaimedListeningVipStillUpgradesAndNeverReportsListenSong() = runTest {
         val store = MemoryStore(); val transport = FakeTransport()
         val accounts = AccountRepository(store, AuthRepository(transport, store), transport)
-        val vip = VipRepository(transport, accounts, VerificationCoordinator(transport), clock, 0)
+        var activatedCount = 0
+        val vip = VipRepository(transport, accounts, VerificationCoordinator(transport), clock, 0, onVipActivated = { activatedCount++ })
         assertEquals(ClaimOutcome.SUCCESS, vip.claim(accounts.context()!!).outcome)
         assertTrue(transport.paths.any { it.endsWith("upgrade_vip_reward") })
         assertFalse(transport.paths.any { it.endsWith("receive_vip_listen_song") })
+        assertFalse("严禁调用 listen_song 污染用户听歌时长", transport.paths.any { it.contains("report/listen_song") })
+        assertEquals("concept", transport.unionVipQueries.first()["busi_type"])
+        assertEquals("dvip,qvip", transport.unionVipQueries.first()["opt_product_types"])
+        assertEquals("svip", transport.unionVipQueries.first()["product_type"])
+        assertTrue(activatedCount > 0)
         assertEquals("2026-10-04", store.rows.first().completedDay)
         assertEquals(ClaimOutcome.ALREADY_DONE, vip.claim(accounts.context()!!).outcome)
+    }
+    @Test fun claimRetriesWithAdPlayReportWithoutListenSongWhenInitialClaimFails() = runTest {
+        val store = MemoryStore()
+        val transport = FakeTransport().apply { failFirstClaimUntilAdReport = true }
+        val accounts = AccountRepository(store, AuthRepository(transport, store), transport)
+        val vip = VipRepository(transport, accounts, VerificationCoordinator(transport), clock, 0)
+        assertEquals(ClaimOutcome.SUCCESS, vip.claim(accounts.context()!!).outcome)
+        assertTrue(transport.adReported)
+        assertFalse(transport.paths.any { it.contains("report/listen_song") })
     }
     @Test fun upgradeFailureCannotMarkDayCompleted() = runTest {
         val store = MemoryStore(); val transport = FakeTransport().apply { upgradeFails = true }

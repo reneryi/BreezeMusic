@@ -1,12 +1,6 @@
 package com.concept.music.ui.settings
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -73,19 +67,7 @@ fun SettingsScreen(
     val smoothPlayPauseFade = uiState.smoothPlayPauseFade
     val motionOrientationPermissionEnabled = uiState.motionOrientationPermissionEnabled
 
-    val motionPermLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        viewModel.setMotionOrientationPermissionEnabled(true)
-        if (granted) {
-            Toast.makeText(context, "已授权设备动作与方向权限，开启手机自动旋转后在封面播放页横放即可进入横屏", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(context, "已开启横放感应开关（建议在系统权限中允许“身体活动/设备动作与方向”）", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     val cacheSizeBytes by AudioCacheManager.cacheSizeBytes.collectAsState()
-    val pinnedSongs by AudioCacheManager.pinnedSongIds.collectAsState()
     val themeMode by ThemeManager.themeMode.collectAsState()
 
     val systemLyricState by SystemLyricBridge.state.collectAsState()
@@ -445,22 +427,10 @@ fun SettingsScreen(
 
                         SettingToggleRow(
                             title = "横放手机自动进入横屏播放",
-                            subtitle = "需开启系统自动旋转并授权“设备动作与方向”，仅在封面播放页生效",
+                            subtitle = "需开启系统自动旋转，仅在封面播放页生效",
                             checked = motionOrientationPermissionEnabled,
                             onCheckedChange = { enabled ->
-                                if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                    val hasPerm = ContextCompat.checkSelfPermission(
-                                        context,
-                                        Manifest.permission.ACTIVITY_RECOGNITION
-                                    ) == PackageManager.PERMISSION_GRANTED
-                                    if (!hasPerm) {
-                                        motionPermLauncher.launch(Manifest.permission.ACTIVITY_RECOGNITION)
-                                    } else {
-                                        viewModel.setMotionOrientationPermissionEnabled(true)
-                                    }
-                                } else {
-                                    viewModel.setMotionOrientationPermissionEnabled(enabled)
-                                }
+                                viewModel.setMotionOrientationPermissionEnabled(enabled)
                             }
                         )
                     }
@@ -676,7 +646,7 @@ fun SettingsScreen(
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                                 )
                                 Text(
-                                    text = if (pinnedSongs.isNotEmpty()) "已固定 ${pinnedSongs.size} 首离线歌曲" else "已播歌曲自动缓存，提升二次加载速度",
+                                    text = "已播歌曲自动缓存，提升二次加载速度",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -717,7 +687,7 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(10.dp))
                             Button(
                                 onClick = {
-                                    AudioCacheManager.clearCache(context, keepPinned = true) {
+                                    AudioCacheManager.clearCache(context) {
                                         Toast.makeText(context, "已清理音频缓存", Toast.LENGTH_SHORT).show()
                                     }
                                 },

@@ -183,6 +183,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private var activePlayingSong: Song? = null
     private var songPlaybackStartTimestamp: Long = 0L
     private var nextShuffleIndex: Int = -1
+    private var prefetchedNextQueueIndex: Int = -1
+    private var prefetchedNextSongKey: String = ""
 
     internal val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -328,6 +330,31 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     ConceptMusicWidgetUpdater.ACTION_WIDGET_PREV -> skipToPrevious()
                 }
             }
+        }
+
+        SystemLyricBridge.onTogglePlayCallback = {
+            viewModelScope.launch(Dispatchers.Main) { togglePlayPause() }
+        }
+        SystemLyricBridge.onPreviousCallback = {
+            viewModelScope.launch(Dispatchers.Main) { skipToPrevious() }
+        }
+        SystemLyricBridge.onNextCallback = {
+            viewModelScope.launch(Dispatchers.Main) { skipToNext() }
+        }
+
+        PlaybackService.onSkipToPreviousIntercepted = {
+            val hasQueue = mutableState.value.playlistQueue.isNotEmpty()
+            if (hasQueue) {
+                viewModelScope.launch(Dispatchers.Main) { skipToPrevious() }
+            }
+            hasQueue
+        }
+        PlaybackService.onSkipToNextIntercepted = {
+            val hasQueue = mutableState.value.playlistQueue.isNotEmpty()
+            if (hasQueue) {
+                viewModelScope.launch(Dispatchers.Main) { skipToNext() }
+            }
+            hasQueue
         }
 
         runCatching {
@@ -917,6 +944,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun seekTo(positionMs: Long) {
         val clamped = positionMs.coerceAtLeast(0L)
         val player = activePlayer
+        val st = mutableState.value
+        val inSleepFade = (!st.sleepStopAfterCurrentSong && st.sleepTimerRemainingSec in 1L..5L) ||
+            (st.sleepPendingStopAtTrackEnd && st.sleepTimerRemainingSec <= 0L && st.durationMs > 5_000L && (st.durationMs - clamped) in 1L..5_000L)
+        if (!inSleepFade && playPauseFadeJob?.isActive != true) {
+            player?.volume = 1f
+        }
         if (player != null && player.mediaItemCount > 0) {
             player.seekTo(clamped)
             syncPlayer()
@@ -1217,6 +1250,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             activeQueueId = activeId
         )
         persistPlaybackStateAsync()
+        clearPrefetchedPlayerItems()
         prefetchNextSong(newQueue, 0)
 
         return when (mode) {
@@ -1244,7 +1278,18 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             activeQueueId = activeId
         )
         persistPlaybackStateAsync()
+        clearPrefetchedPlayerItems()
         prefetchNextSong(queue, newCurrentIndex)
+    }
+
+    internal fun clearPrefetchedPlayerItems() {
+        prefetchedNextQueueIndex = -1
+        prefetchedNextSongKey = ""
+        activePlayer?.let { player ->
+            while (player.mediaItemCount > player.currentMediaItemIndex + 1) {
+                player.removeMediaItem(player.mediaItemCount - 1)
+            }
+        }
     }
 
     private fun resolveNetworkAwarePreferredQuality(preferred: AudioQuality): AudioQuality {
@@ -1696,10 +1741,16 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         content: String,
         replyToCommentId: String? = null,
         replyToUserName: String? = null,
-        onComplete: (Boolean) -> Unit = {}
+        onComplete: (Boolean, String) -> Unit = { _, _ -> }
     ) {
-        val song = mutableState.value.commentTargetSong ?: mutableState.value.currentSong ?: return
-        if (content.isBlank()) return
+        val song = mutableState.value.commentTargetSong ?: mutableState.value.currentSong ?: run {
+            onComplete(false, "未选择当前歌曲")
+            return
+        }
+        if (content.isBlank()) {
+            onComplete(false, "评论内容不能为空")
+            return
+        }
 
         viewModelScope.launch {
             runCatching {
@@ -1740,9 +1791,9 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     comments = currentList,
                     commentCount = mutableState.value.commentCount + 1
                 )
-                onComplete(true)
-            }.onFailure {
-                onComplete(false)
+                onComplete(true, if (replyToCommentId != null) "回复已发布" else "评论已发布")
+            }.onFailure { err ->
+                onComplete(false, err.message ?: "评论发送失败，请稍后重试")
             }
         }
     }
@@ -1844,6 +1895,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                             while (player.mediaItemCount > player.currentMediaItemIndex + 1) {
                                 player.removeMediaItem(player.mediaItemCount - 1)
                             }
+                            prefetchedNextQueueIndex = nextIndex
+                            prefetchedNextSongKey = "${nextSong.id}_${nextSong.hash}"
                             player.addMediaItem(nextItem)
                         }
                     }
@@ -1952,7 +2005,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 player.volume = (remainTrackMs.toFloat() / fadeWindowMs.toFloat()).coerceIn(0.15f, 1f)
             } else if (pos < 1_500L && st.crossfadeSeconds >= 2) {
                 player.volume = (0.35f + 0.65f * (pos.toFloat() / 1_500f)).coerceIn(0.35f, 1f)
+            } else if (playPauseFadeJob?.isActive != true && player.volume < 0.99f) {
+                player.volume = 1f
             }
+        } else if (playPauseFadeJob?.isActive != true && climaxFadeInJob?.isActive != true && !st.climaxModeEnabled && player.volume < 0.99f) {
+            player.volume = 1f
         }
 
         val newLoading = isResolving || (hasMedia && player.playbackState == Player.STATE_BUFFERING)
@@ -1982,13 +2039,22 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         if (!isResolving) {
             updateLyricIndex(pos)
         }
+        val latestState = mutableState.value
+        val adjustedPos = (latestState.currentPositionMs + latestState.lyricOffsetMs).coerceAtLeast(0L)
+        SystemLyricBridge.updatePlaybackSnapshot(
+            song = latestState.currentSong,
+            lyricData = latestState.currentLyric,
+            currentLyricIndex = latestState.currentLyricIndex,
+            currentPositionMs = adjustedPos,
+            isPlaying = latestState.isPlaying
+        )
     }
 
     internal fun updateLyricIndex(pos: Long) {
         val st = mutableState.value
         val lyric = st.currentLyric
+        val adjustedPos = (pos + st.lyricOffsetMs).coerceAtLeast(0L)
         if (lyric.lines.isNotEmpty()) {
-            val adjustedPos = (pos + st.lyricOffsetMs).coerceAtLeast(0L)
             val index = lyric.getLineIndexAt(adjustedPos)
             if (index != st.currentLyricIndex) {
                 mutableState.value = st.copy(currentLyricIndex = index)
@@ -2001,8 +2067,22 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     isPlaying = st.isPlaying
                 )
             }
+            SystemLyricBridge.updatePlaybackSnapshot(
+                song = st.currentSong,
+                lyricData = lyric,
+                currentLyricIndex = index,
+                currentPositionMs = adjustedPos,
+                isPlaying = st.isPlaying
+            )
         } else if (st.currentLyricIndex != -1) {
             mutableState.value = st.copy(currentLyricIndex = -1)
+            SystemLyricBridge.updatePlaybackSnapshot(
+                song = st.currentSong,
+                lyricData = lyric,
+                currentLyricIndex = -1,
+                currentPositionMs = adjustedPos,
+                isPlaying = st.isPlaying
+            )
         }
     }
 
@@ -2057,6 +2137,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         sleepTimerJob?.cancel()
         climaxFadeInJob?.cancel()
         playPauseFadeJob?.cancel()
+        ConceptMusicWidgetUpdater.onWidgetCommand = null
+        PlaybackService.onSkipToNextIntercepted = null
+        PlaybackService.onSkipToPreviousIntercepted = null
+        SystemLyricBridge.onTogglePlayCallback = null
+        SystemLyricBridge.onPreviousCallback = null
+        SystemLyricBridge.onNextCallback = null
         activePlayer?.removeListener(listener)
         controllerFuture?.let(MediaController::releaseFuture)
         super.onCleared()

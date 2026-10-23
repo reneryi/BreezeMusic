@@ -21,7 +21,31 @@ object ConceptMusicWidgetUpdater {
     private var cachedLyric: String = "KRC 逐字流光 · 每日自动领概念版 VIP"
     private var cachedPlaying: Boolean = false
 
+    @Volatile
     var onWidgetCommand: ((String) -> Unit)? = null
+
+    fun dispatchCommand(context: Context, action: String) {
+        val handler = onWidgetCommand
+        if (handler != null) {
+            handler(action)
+            return
+        }
+        val handledByService = when (action) {
+            ACTION_WIDGET_TOGGLE_PLAY -> PlaybackService.toggleActivePlayerPlayPause()
+            ACTION_WIDGET_NEXT -> PlaybackService.onSkipToNextIntercepted?.invoke() == true
+            ACTION_WIDGET_PREV -> PlaybackService.onSkipToPreviousIntercepted?.invoke() == true
+            else -> false
+        }
+        if (!handledByService) {
+            runCatching {
+                val launchIntent = Intent(context.applicationContext, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra("widget_command", action)
+                }
+                context.applicationContext.startActivity(launchIntent)
+            }
+        }
+    }
 
     fun updateState(
         context: Context,
@@ -132,7 +156,7 @@ class ConceptMusicWidgetProvider : AppWidgetProvider() {
             ConceptMusicWidgetUpdater.ACTION_WIDGET_TOGGLE_PLAY,
             ConceptMusicWidgetUpdater.ACTION_WIDGET_NEXT,
             ConceptMusicWidgetUpdater.ACTION_WIDGET_PREV -> {
-                ConceptMusicWidgetUpdater.onWidgetCommand?.invoke(action)
+                ConceptMusicWidgetUpdater.dispatchCommand(context, action)
             }
         }
     }

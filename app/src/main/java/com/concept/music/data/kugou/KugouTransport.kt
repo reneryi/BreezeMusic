@@ -29,6 +29,11 @@ interface KugouTransport {
         rawBody: String? = null, host: String = "https://gateway.kugou.com", method: String = "POST",
         headers: Map<String, String> = emptyMap(), sign: Boolean = true, includeDefaultParams: Boolean = true,
         device: DeviceIdentity? = null): ByteArray = ByteArray(0)
+    suspend fun requestRawBytes(path: String, session: KugouSession? = null, query: Map<String, String> = emptyMap(),
+        rawBody: String? = null, host: String = "https://gateway.kugou.com", method: String = "POST",
+        headers: Map<String, String> = emptyMap(), sign: Boolean = true, includeDefaultParams: Boolean = true,
+        device: DeviceIdentity? = null): ByteArray =
+        callRaw(path, session, query, rawBody, host, method, headers, sign, includeDefaultParams, device)
 }
 
 class DirectKugouTransport(
@@ -138,6 +143,11 @@ class DirectKugouTransport(
     }
 
     override suspend fun callRaw(path: String, session: KugouSession?, query: Map<String, String>,
+        rawBody: String?, host: String, method: String, headers: Map<String, String>,
+        sign: Boolean, includeDefaultParams: Boolean, device: DeviceIdentity?): ByteArray =
+        requestRawBytes(path, session, query, rawBody, host, method, headers, sign, includeDefaultParams, device)
+
+    override suspend fun requestRawBytes(path: String, session: KugouSession?, query: Map<String, String>,
         rawBody: String?, host: String, method: String, headers: Map<String, String>,
         sign: Boolean, includeDefaultParams: Boolean, device: DeviceIdentity?): ByteArray = withContext(Dispatchers.IO) {
         val d = device ?: identity()

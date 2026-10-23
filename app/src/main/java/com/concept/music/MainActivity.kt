@@ -719,8 +719,8 @@ fun MainContent(
                         onSyncReplyCount = { cid, cnt, replies ->
                             musicPlayerViewModel.syncCommentReplyCount(cid, cnt, replies)
                         },
-                        onPostComment = { content, replyId, replyUser ->
-                            musicPlayerViewModel.postComment(content, replyId, replyUser)
+                        onPostComment = { content, replyId, replyUser, onResult ->
+                            musicPlayerViewModel.postComment(content, replyId, replyUser, onResult)
                         },
                         onLikeComment = { musicPlayerViewModel.likeComment(it) }
                     )
@@ -926,8 +926,8 @@ fun MainContent(
                         onSyncReplyCount = { cid, cnt, replies ->
                             musicPlayerViewModel.syncCommentReplyCount(cid, cnt, replies)
                         },
-                onPostComment = { content, replyId, replyUser ->
-                    musicPlayerViewModel.postComment(content, replyId, replyUser)
+                onPostComment = { content, replyId, replyUser, onResult ->
+                    musicPlayerViewModel.postComment(content, replyId, replyUser, onResult)
                 },
                 onLikeComment = { musicPlayerViewModel.likeComment(it) }
             )
@@ -1165,10 +1165,11 @@ private fun IsolatedDesktopLyricHost(
     visible: Boolean,
     onOpenPlayer: () -> Unit
 ) {
+    if (!visible) return
     val playerUiState by viewModel.uiState.collectAsState()
     val adjustedPos = (playerUiState.currentPositionMs + playerUiState.lyricOffsetMs).coerceAtLeast(0L)
     FloatingLyricOverlay(
-        song = if (visible) playerUiState.currentSong else null,
+        song = playerUiState.currentSong,
         lyricData = playerUiState.currentLyric,
         currentLyricIndex = playerUiState.currentLyricIndex,
         currentPositionMs = adjustedPos,

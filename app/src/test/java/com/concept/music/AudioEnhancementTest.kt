@@ -449,4 +449,31 @@ class AudioEnhancementTest {
         val allSongs = repo.fetchPlaylistSongsAll("collection_3_123_456_0")
         assertEquals(333, allSongs.size)
     }
+
+    @Test
+    fun testConceptMasteringAudioProcessorLittleEndianAndBitPerfectBypass() {
+        val processor = com.concept.music.service.ConceptMasteringAudioProcessor()
+        val format = androidx.media3.common.audio.AudioProcessor.AudioFormat(44100, 2, androidx.media3.common.C.ENCODING_PCM_16BIT)
+        val outFormat = processor.configure(format)
+        processor.flush()
+        assertEquals(44100, outFormat.sampleRate)
+        assertEquals(2, outFormat.channelCount)
+
+        // 构造小端序 16-bit PCM 峰值采样（32000 与 -32000，超过 0.88 * 32767 = 28835）
+        val input = java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        input.putShort(32000.toShort())
+        input.putShort((-32000).toShort())
+        input.putShort(16384.toShort())
+        input.putShort((-16384).toShort())
+        input.flip()
+
+        // 默认 OFF 直通态下应保持 Bit-Perfect 无损原值，不被 softLimit 压缩
+        processor.queueInput(input)
+        val output = processor.output.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        assertEquals(8, output.remaining())
+        assertEquals(32000.toShort(), output.short)
+        assertEquals((-32000).toShort(), output.short)
+        assertEquals(16384.toShort(), output.short)
+        assertEquals((-16384).toShort(), output.short)
+    }
 }

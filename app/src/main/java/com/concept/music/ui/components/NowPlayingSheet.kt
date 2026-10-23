@@ -7,13 +7,10 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.view.OrientationEventListener
 import android.graphics.drawable.BitmapDrawable
-import android.Manifest
-import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.view.WindowManager
-import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -218,21 +215,10 @@ internal fun isSystemAutoRotateEnabled(context: Context): Boolean {
 }
 
 /**
- * 检查用户是否授予 App「设备动作与方向」相关权限（含应用内权限开关与 Android 10+ 动作传感器运行时权限）
+ * 检查用户是否开启封面播放页横放自动进入横屏播放开关（OrientationEventListener 无需 ACTIVITY_RECOGNITION 权限）
  */
 internal fun hasDeviceMotionOrientationPermission(context: Context, appToggleEnabled: Boolean): Boolean {
-    if (!appToggleEnabled) return false
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        val granted = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACTIVITY_RECOGNITION
-        ) == PackageManager.PERMISSION_GRANTED
-        // 若用户在应用设置中开启了“设备动作与方向”授权或系统已授予 ACTIVITY_RECOGNITION 则允许
-        granted || context.getSharedPreferences("concept_player_prefs", Context.MODE_PRIVATE)
-            .getBoolean("motion_orientation_sensor_enabled", true)
-    } else {
-        true
-    }
+    return appToggleEnabled
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

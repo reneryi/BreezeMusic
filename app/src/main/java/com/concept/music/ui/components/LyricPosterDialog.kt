@@ -1877,7 +1877,10 @@ private suspend fun renderAndSavePosterToGallery(
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
     }
-    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: run {
+        if (!bitmap.isRecycled) bitmap.recycle()
+        return null
+    }
     return try {
         resolver.openOutputStream(uri)?.use { out ->
             bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
@@ -1889,6 +1892,10 @@ private suspend fun renderAndSavePosterToGallery(
     } catch (_: Exception) {
         resolver.delete(uri, null, null)
         null
+    } finally {
+        if (!bitmap.isRecycled) {
+            bitmap.recycle()
+        }
     }
 }
 
@@ -1916,6 +1923,35 @@ private fun drawClippedCover(
     }
 }
 
+private fun breakTextIntoLines(text: String, paint: Paint, maxWidth: Float): List<String> {
+    val cleaned = text.trim()
+    if (cleaned.isEmpty()) return emptyList()
+    val result = mutableListOf<String>()
+    var offset = 0
+    val len = cleaned.length
+    val safeMaxWidth = maxWidth.coerceAtLeast(240f)
+    while (offset < len) {
+        val count = paint.breakText(cleaned, offset, len, true, safeMaxWidth, null)
+        if (count <= 0) break
+        var end = offset + count
+        if (end < len && cleaned[end - 1].isLetterOrDigit() && cleaned[end].isLetterOrDigit()) {
+            val lastSpace = cleaned.lastIndexOf(' ', end - 1)
+            if (lastSpace > offset) {
+                end = lastSpace + 1
+            }
+        }
+        val segment = cleaned.substring(offset, end).trim()
+        if (segment.isNotEmpty()) {
+            result.add(segment)
+        }
+        offset = end
+        while (offset < len && cleaned[offset] == ' ') {
+            offset++
+        }
+    }
+    return result
+}
+
 private fun drawCanvasLyrics(
     canvas: Canvas,
     lines: List<LyricLine>,
@@ -1938,15 +1974,25 @@ private fun drawCanvasLyrics(
         textSize = 28f
         textAlign = if (centerAlign) Paint.Align.CENTER else Paint.Align.LEFT
     }
+    val availableWidth = if (centerAlign) (1080f - 280f) else (1080f - startX * 2f)
+    val mainLineStep = if (lines.size <= 3) 60f else 50f
+    val transLineStep = 38f
     var cursorY = startY
     lines.take(6).forEach { ln ->
-        canvas.drawText(ln.text.take(22), startX, cursorY, lyricMainPaint)
-        cursorY += if (lines.size <= 3) 62f else 52f
-        if (includeTranslation && !ln.translation.isNullOrBlank()) {
-            canvas.drawText(ln.translation.take(28), startX, cursorY, lyricTransPaint)
-            cursorY += 42f
+        val wrappedMain = breakTextIntoLines(ln.text, lyricMainPaint, availableWidth)
+        wrappedMain.forEach { subLine ->
+            canvas.drawText(subLine, startX, cursorY, lyricMainPaint)
+            cursorY += mainLineStep
         }
-        cursorY += 30f
+        if (includeTranslation && !ln.translation.isNullOrBlank()) {
+            val wrappedTrans = breakTextIntoLines(ln.translation, lyricTransPaint, availableWidth)
+            wrappedTrans.forEach { subTrans ->
+                canvas.drawText(subTrans, startX, cursorY, lyricTransPaint)
+                cursorY += transLineStep
+            }
+            cursorY += 6f
+        }
+        cursorY += 26f
     }
 }
 
