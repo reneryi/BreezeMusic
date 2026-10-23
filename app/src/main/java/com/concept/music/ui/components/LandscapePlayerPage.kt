@@ -597,7 +597,7 @@ internal fun LandscapePlayerPage(
                     }
 
                     // 横屏滑动歌词时的双翼渐隐中空导引线（不遮挡歌词）
-                    AnimatedVisibility(
+                    androidx.compose.animation.AnimatedVisibility(
                         visible = isUserScrubbing && scrubLineIndex in lyricData.lines.indices,
                         enter = fadeIn(tween(150)),
                         exit = fadeOut(tween(150)),

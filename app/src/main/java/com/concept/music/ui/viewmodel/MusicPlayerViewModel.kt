@@ -1378,6 +1378,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             playlistQueue = queue,
             currentIndex = newCurrentIndex
         )
+        clearPrefetchedPlayerItems()
         queueReorderCommitJob?.cancel()
         queueReorderCommitJob = viewModelScope.launch {
             delay(220L)
