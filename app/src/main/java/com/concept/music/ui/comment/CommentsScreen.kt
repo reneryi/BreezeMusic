@@ -10,6 +10,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculateCentroidSize
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -33,6 +40,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -52,6 +65,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
+import coil.size.Scale
 import com.concept.music.data.model.KugouCommentEmojiParser
 import com.concept.music.data.model.Song
 import com.concept.music.data.model.SongComment
@@ -436,6 +453,14 @@ fun CommentsScreen(
     // 独立楼中楼详情页目标根评论 ID（仅以 ID 驱动页面开关，杜绝因 replies 异步刷新导致切换动画重复触发卡顿）
     var activeFloorCommentId by remember { mutableStateOf<String?>(null) }
     var lastOpenedFloorComment by remember { mutableStateOf<SongComment?>(null) }
+    val activeFloorRootComment = remember(comments, activeFloorCommentId) {
+        activeFloorCommentId?.let { id -> comments.find { it.id == id } }
+    }
+    LaunchedEffect(activeFloorRootComment) {
+        if (activeFloorRootComment != null) {
+            lastOpenedFloorComment = activeFloorRootComment
+        }
+    }
     // 超过四级评论点击「查看对话」进入的完整对话新页面（实时映射最新点赞与回复态）
     var activeConversationChainRaw by remember { mutableStateOf<CommentConversationChain?>(null) }
     val activeConversationChain = remember(activeConversationChainRaw, comments, activeFloorRootComment) {
@@ -451,20 +476,11 @@ fun CommentsScreen(
             }
         }.associateBy { it.id }
         raw.copy(
-            rootComment = livePool[raw.rootComment.id] ?: raw.rootComment,
-            chainItems = raw.chainItems.map { item -> livePool[item.id] ?: item }
+            rootClusterComment = livePool[raw.rootClusterComment.id] ?: raw.rootClusterComment,
+            dialogueList = raw.dialogueList.map { (item, level) -> (livePool[item.id] ?: item) to level }
         )
     }
     var previewImageUrl by remember { mutableStateOf<String?>(null) }
-
-    val activeFloorRootComment = remember(comments, activeFloorCommentId) {
-        activeFloorCommentId?.let { id -> comments.find { it.id == id } }
-    }
-    LaunchedEffect(activeFloorRootComment) {
-        if (activeFloorRootComment != null) {
-            lastOpenedFloorComment = activeFloorRootComment
-        }
-    }
 
     BackHandler {
         when {
@@ -475,13 +491,6 @@ fun CommentsScreen(
         }
     }
 
-    // 评论大图全屏预览弹窗
-    previewImageUrl?.let { imgUrl ->
-        CommentImagePreviewDialog(
-            imageUrl = imgUrl,
-            onDismiss = { previewImageUrl = null }
-        )
-    }
 
     val context = LocalContext.current
     val isDark = LocalIsDarkTheme.current
@@ -934,6 +943,28 @@ fun CommentsScreen(
                     },
                     onLikeComment = onLikeComment,
                     onPreviewImage = { previewImageUrl = it }
+                )
+            }
+        }
+
+        // 第四层：评论大图全屏预览层（支持原图比例展示、双指捏合放大缩小与平移、单击任意处自然退出）
+        var lastPreviewImageUrl by remember { mutableStateOf<String?>(null) }
+        if (previewImageUrl != null) {
+            lastPreviewImageUrl = previewImageUrl
+        }
+        AnimatedVisibility(
+            visible = previewImageUrl != null,
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(50f),
+            enter = fadeIn(animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)),
+            exit = fadeOut(animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing))
+        ) {
+            val activeUrl = previewImageUrl ?: lastPreviewImageUrl
+            if (activeUrl != null) {
+                CommentImagePreviewDialog(
+                    imageUrl = activeUrl,
+                    onDismiss = { previewImageUrl = null }
                 )
             }
         }
@@ -2601,15 +2632,57 @@ internal fun CommentImagesGrid(
             .horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        val context = LocalContext.current
+        val elevatedBg = conceptElevatedSurfaceColor()
+        val subText = MaterialTheme.colorScheme.onSurfaceVariant
         val itemSize = if (images.size == 1) 132.dp else 88.dp
+        val reqPxSize = if (images.size == 1) 480 else 320
         images.take(6).forEach { url ->
-            AsyncImage(
-                model = url,
+            SubcomposeAsyncImage(
+                model = remember(url, reqPxSize) {
+                    ImageRequest.Builder(context)
+                        .data(url)
+                        .size(reqPxSize)
+                        .precision(Precision.INEXACT)
+                        .scale(Scale.FIT)
+                        .crossfade(true)
+                        .build()
+                },
                 contentDescription = "评论图片",
                 contentScale = ContentScale.Crop,
+                loading = {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(elevatedBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            color = ConceptPrimary.copy(alpha = 0.65f),
+                            strokeWidth = 1.8.dp,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                },
+                error = {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(elevatedBg),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.BrokenImage,
+                            contentDescription = "图片加载失败",
+                            tint = subText.copy(alpha = 0.45f),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                },
                 modifier = Modifier
                     .size(itemSize)
                     .clip(RoundedCornerShape(12.dp))
+                    .background(elevatedBg)
                     .border(0.6.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
                     .softClickable { onImageClick(url) }
             )
@@ -2617,42 +2690,198 @@ internal fun CommentImagesGrid(
     }
 }
 
+internal fun clampPreviewOffset(
+    rawOffset: Offset,
+    scale: Float,
+    containerSize: IntSize,
+    imageIntrinsicSize: Size
+): Offset {
+    if (scale <= 1f || containerSize.width <= 0 || containerSize.height <= 0) {
+        return Offset.Zero
+    }
+    val cw = containerSize.width.toFloat()
+    val ch = containerSize.height.toFloat()
+    val (fittedW, fittedH) = if (
+        imageIntrinsicSize.isSpecified &&
+        imageIntrinsicSize.width > 0f &&
+        imageIntrinsicSize.height > 0f
+    ) {
+        val fitScale = minOf(cw / imageIntrinsicSize.width, ch / imageIntrinsicSize.height)
+        (imageIntrinsicSize.width * fitScale) to (imageIntrinsicSize.height * fitScale)
+    } else {
+        cw to ch
+    }
+    val maxX = ((fittedW * (scale - 1f)) / 2f).coerceAtLeast(0f)
+    val maxY = ((fittedH * (scale - 1f)) / 2f).coerceAtLeast(0f)
+    return Offset(
+        x = rawOffset.x.coerceIn(-maxX, maxX),
+        y = rawOffset.y.coerceIn(-maxY, maxY)
+    )
+}
+
 @Composable
 private fun CommentImagePreviewDialog(
     imageUrl: String,
     onDismiss: () -> Unit
 ) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    val context = LocalContext.current
+    var scale by remember(imageUrl) { mutableFloatStateOf(1f) }
+    var offset by remember(imageUrl) { mutableStateOf(Offset.Zero) }
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    var imageIntrinsicSize by remember(imageUrl) { mutableStateOf(Size.Unspecified) }
+
+    val previewRequest = remember(imageUrl, context) {
+        ImageRequest.Builder(context)
+            .data(imageUrl)
+            .size(coil.size.Size.ORIGINAL)
+            .precision(Precision.EXACT)
+            .scale(Scale.FIT)
+            .crossfade(false)
+            .build()
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.94f))
+            .onSizeChanged { containerSize = it }
+            .pointerInput(imageUrl) {
+                awaitEachGesture {
+                    val firstDown = awaitFirstDown(requireUnconsumed = false)
+                    val downTime = System.currentTimeMillis()
+                    val startPosition = firstDown.position
+                    var maxPointerCount = 1
+                    var movedBeyondSlop = false
+                    val touchSlop = viewConfiguration.touchSlop
+
+                    do {
+                        val event = awaitPointerEvent()
+                        val currentPointerCount = event.changes.size
+                        if (currentPointerCount > maxPointerCount) {
+                            maxPointerCount = currentPointerCount
+                        }
+
+                        val canceled = event.changes.any { it.isConsumed }
+                        if (!canceled) {
+                            val zoomChange = event.calculateZoom()
+                            val panChange = event.calculatePan()
+
+                            if (!movedBeyondSlop) {
+                                val centroidSize = event.calculateCentroidSize(useCurrent = false)
+                                val zoomMotion = kotlin.math.abs(1f - zoomChange) * centroidSize
+                                val distanceFromStart = (event.changes.first().position - startPosition).getDistance()
+                                if (currentPointerCount > 1 || zoomMotion > touchSlop || distanceFromStart > touchSlop) {
+                                    movedBeyondSlop = true
+                                }
+                            }
+
+                            if (currentPointerCount > 1 || (movedBeyondSlop && scale > 1.01f)) {
+                                val oldScale = scale
+                                val newScale = (oldScale * zoomChange).coerceIn(0.6f, 5f)
+                                val effectiveZoom = if (oldScale > 0f) newScale / oldScale else 1f
+                                scale = newScale
+
+                                if (newScale > 1f) {
+                                    val centroid = event.calculateCentroid(useCurrent = false)
+                                    val center = Offset(containerSize.width / 2f, containerSize.height / 2f)
+                                    val rawOffset = if (
+                                        currentPointerCount > 1 &&
+                                        centroid.isSpecified &&
+                                        containerSize.width > 0 &&
+                                        containerSize.height > 0
+                                    ) {
+                                        offset * effectiveZoom + (centroid - center) * (1f - effectiveZoom) + panChange
+                                    } else {
+                                        offset + panChange
+                                    }
+                                    offset = clampPreviewOffset(
+                                        rawOffset = rawOffset,
+                                        scale = newScale,
+                                        containerSize = containerSize,
+                                        imageIntrinsicSize = imageIntrinsicSize
+                                    )
+                                } else {
+                                    offset = Offset.Zero
+                                }
+
+                                event.changes.forEach { change ->
+                                    if (change.positionChanged()) {
+                                        change.consume()
+                                    }
+                                }
+                            }
+                        }
+                    } while (event.changes.any { it.pressed })
+
+                    if (scale < 1f) {
+                        scale = 1f
+                        offset = Offset.Zero
+                    }
+                    val elapsed = System.currentTimeMillis() - downTime
+                    if (maxPointerCount == 1 && !movedBeyondSlop && elapsed < 500L) {
+                        onDismiss()
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.92f))
-                .softClickable(onClick = onDismiss),
-            contentAlignment = Alignment.Center
-        ) {
-            AsyncImage(
-                model = imageUrl,
-                contentDescription = "评论大图预览",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-                    .clip(RoundedCornerShape(16.dp))
-            )
-            IconButton(
-                onClick = onDismiss,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .statusBarsPadding()
-                    .padding(16.dp)
-                    .background(Color.White.copy(alpha = 0.14f), CircleShape)
-            ) {
-                Icon(Icons.Rounded.Close, contentDescription = "关闭", tint = Color.White)
-            }
-        }
+        SubcomposeAsyncImage(
+            model = previewRequest,
+            contentDescription = "评论大图预览",
+            contentScale = ContentScale.Fit,
+            loading = {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        color = ConceptPrimary,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(30.dp)
+                    )
+                }
+            },
+            error = {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.BrokenImage,
+                        contentDescription = "图片加载失败",
+                        tint = Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
+            },
+            success = { state ->
+                val drawable = state.result.drawable
+                val iw = drawable.intrinsicWidth.toFloat()
+                val ih = drawable.intrinsicHeight.toFloat()
+                val resolvedSize = if (iw > 0f && ih > 0f) {
+                    Size(iw, ih)
+                } else {
+                    state.painter.intrinsicSize
+                }
+                if (resolvedSize.isSpecified && imageIntrinsicSize != resolvedSize) {
+                    imageIntrinsicSize = resolvedSize
+                }
+                Image(
+                    painter = state.painter,
+                    contentDescription = "评论大图预览",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offset.x
+                            translationY = offset.y
+                        }
+                )
+            },
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 

@@ -75,8 +75,9 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.2")
 
-    // Image loading with Coil
+    // Image loading with Coil (including animated GIF / WebP support for comment stickers & images)
     implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation("io.coil-kt:coil-gif:2.6.0")
 
     // AndroidX Media3 (ExoPlayer & Background MediaSession)
     implementation("androidx.media3:media3-exoplayer:1.3.1")

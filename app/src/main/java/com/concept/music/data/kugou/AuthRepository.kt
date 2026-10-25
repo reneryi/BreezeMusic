@@ -222,8 +222,20 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
 }
 fun imageUrl(raw: String?): String {
     if (raw.isNullOrBlank()) return ""
-    var url = raw.replace("{size}", "400").replace("{param}", "400")
+    val trimmed = raw.trim()
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) return ""
+    var url = trimmed.replace("{size}", "400").replace("{param}", "400")
     if (url.startsWith("//")) url = "https:$url"
-    else if (url.startsWith("http://")) url = "https://" + url.removePrefix("http://")
+    else if (url.startsWith("http://", ignoreCase = true)) {
+        val rest = url.substring(7)
+        val host = rest.substringBefore('/').substringBefore(':').lowercase()
+        val lacksMultiLevelTlsCert = host.endsWith(".bssdl.kugou.com") ||
+            host.endsWith(".bssdlbig.kugou.com") ||
+            (host.endsWith(".kugou.com") && host.count { it == '.' } > 2 &&
+                !host.endsWith(".cloud.kugou.com") && !host.endsWith(".tx.kugou.com"))
+        if (!lacksMultiLevelTlsCert) {
+            url = "https://$rest"
+        }
+    }
     return url
 }

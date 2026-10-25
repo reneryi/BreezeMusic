@@ -84,11 +84,12 @@ class ReviewRegressionTest {
         val server = MockWebServer()
         server.enqueue(MockResponse().setResponseCode(403).setHeader("ssa-code", "test-event")
             .setBody("""{"status":0,"error_code":20028,"error_msg":"验证"}"""))
-        server.start()
+        server.start(java.net.InetAddress.getByName("127.0.0.1"), 0)
         try {
-            val client = DirectKugouTransport({ DeviceIdentity("g", "1234", "d") })
+            val noProxyClient = okhttp3.OkHttpClient.Builder().proxy(java.net.Proxy.NO_PROXY).build()
+            val client = DirectKugouTransport({ DeviceIdentity("g", "1234", "d") }, client = noProxyClient)
             val body = json("label" to "中文&<test>")
-            val result = client.call("/test", KugouSession("123", "fixture"), body = body, method = "POST", host = server.url("/").toString())
+            val result = client.call("/test", KugouSession("123", "fixture"), body = body, method = "POST", host = "http://127.0.0.1:${server.port}")
             val request = server.takeRequest(2, TimeUnit.SECONDS)!!
             val url = request.requestUrl!!
             val params = url.queryParameterNames.filter { it != "signature" }.associateWith { url.queryParameter(it)!! }

@@ -220,7 +220,7 @@ object AmbientSoundManager {
         val st = _state.value
         val shouldRun = st.masterEnabled && st.hasActiveChannel && (!st.syncWithMusic || isMusicCurrentlyPlaying)
         if (shouldRun) {
-            requestStandaloneAudioFocusIfNeeded(!st.syncWithMusic)
+            requestStandaloneAudioFocusIfNeeded(!st.syncWithMusic && !isMusicCurrentlyPlaying)
             if (synthJob?.isActive != true) {
                 startSynthLoop()
             }

@@ -81,8 +81,8 @@ class DirectKugouTransport(
         ): String {
             if (!rawHost.startsWith("http://", ignoreCase = true)) return rawHost
             val hostName = runCatching { rawHost.toHttpUrl().host.lowercase() }.getOrDefault("")
-            // MockWebServer in local unit tests uses localhost / 127.0.0.1
-            if (hostName == "localhost" || hostName == "127.0.0.1") return rawHost
+            // MockWebServer in local unit tests uses localhost / 127.0.0.1 / machine hostname without dots
+            if (hostName == "localhost" || hostName == "127.0.0.1" || hostName == "::1" || !hostName.contains('.')) return rawHost
             val hasSensitiveParam = session != null ||
                 "token" in query || "vip_token" in query || "mobile" in query ||
                 body?.has("mobile") == true || body?.has("token") == true || body?.has("p3") == true

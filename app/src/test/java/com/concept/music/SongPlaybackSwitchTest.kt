@@ -322,6 +322,9 @@ class SongPlaybackSwitchTest {
         VipManager.accounts.select(null)
         testScheduler.advanceUntilIdle()
         assertNull(VipManager.accounts.state.value.currentId)
+        VipManager.music.putPlaybackCacheForTest("hash_1_${AudioQuality.LOSSLESS.apiValue}", PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.LOSSLESS, 850, 20_000_000L))
+        VipManager.music.putPlaybackCacheForTest("hash_1_${AudioQuality.HIGH.apiValue}", PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.HIGH, 320, 10_000_000L))
+        VipManager.music.putPlaybackCacheForTest("hash_1_${AudioQuality.STANDARD.apiValue}", PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.STANDARD, 128, 5_000_000L))
 
         val queue = listOf(song1, song2)
         viewModel.playSong(song1, queue)

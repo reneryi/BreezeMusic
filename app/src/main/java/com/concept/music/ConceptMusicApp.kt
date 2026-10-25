@@ -1,8 +1,11 @@
 package com.concept.music
 
 import android.app.Application
+import android.os.Build
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import coil.decode.GifDecoder
+import coil.decode.ImageDecoderDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.concept.music.data.kugou.NetworkClientProvider
@@ -14,6 +17,7 @@ import com.concept.music.service.VipGuardianManager
 import com.concept.music.ui.theme.ThemeManager
 import okhttp3.Dispatcher
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
 
 class ConceptMusicApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
@@ -32,17 +36,38 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
             maxRequestsPerHost = 10
         }
 
-        // 复用全局共享连接池，减少 TLS 握手与 Socket 创建开销
+        // 复用全局共享连接池，减少 TLS 握手与 Socket 创建开销；
+        // 对酷狗静态图片 CDN (如 webimg.bssdl.kugou.com 等无多级通配符证书的子域) 提供 HTTPS -> HTTP 降级容错
         val okHttpClient = NetworkClientProvider.baseClient.newBuilder()
             .dispatcher(imageDispatcher)
             .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(25, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val request = chain.request().newBuilder()
                     .header("Referer", "https://www.kugou.com/")
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
                     .build()
-                chain.proceed(request)
+                try {
+                    chain.proceed(request)
+                } catch (sslEx: SSLException) {
+                    val url = request.url
+                    val host = url.host.lowercase()
+                    val isPublicImageCdn = (host.endsWith(".kugou.com") || host.endsWith(".kgimg.com")) &&
+                        host !in setOf(
+                            "gateway.kugou.com",
+                            "gatewayretry.kugou.com",
+                            "login.user.kugou.com",
+                            "userservice.kugou.com",
+                            "vip.kugou.com",
+                            "tracker.kugou.com"
+                        )
+                    if (url.isHttps && isPublicImageCdn) {
+                        val fallbackUrl = url.newBuilder().scheme("http").build()
+                        chain.proceed(request.newBuilder().url(fallbackUrl).build())
+                    } else {
+                        throw sslEx
+                    }
+                }
             }
             .build()
 
@@ -53,9 +78,14 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
             .allowHardware(false)
             .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
             .components {
+                if (Build.VERSION.SDK_INT >= 28) {
+                    add(ImageDecoderDecoder.Factory())
+                } else {
+                    add(GifDecoder.Factory())
+                }
                 add(coil.intercept.Interceptor { chain ->
                     val result = chain.proceed(chain.request)
-                    if (android.os.Build.VERSION.SDK_INT >= 34 && result is coil.request.SuccessResult) {
+                    if (Build.VERSION.SDK_INT >= 34 && result is coil.request.SuccessResult) {
                         val bmp = (result.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
                         if (bmp != null && bmp.hasGainmap()) {
                             runCatching { bmp.gainmap = null }

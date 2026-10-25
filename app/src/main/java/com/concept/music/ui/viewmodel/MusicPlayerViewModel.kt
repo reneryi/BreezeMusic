@@ -2377,6 +2377,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         climaxFadeInJob?.cancel()
         playPauseFadeJob?.cancel()
         ConceptMusicWidgetUpdater.onWidgetCommand = null
+        PlaybackCoordinator.onTogglePlayDelegate = null
         PlaybackService.onSkipToNextIntercepted = null
         PlaybackService.onSkipToPreviousIntercepted = null
         SystemLyricBridge.onTogglePlayCallback = null

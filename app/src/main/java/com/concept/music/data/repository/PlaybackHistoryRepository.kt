@@ -265,6 +265,7 @@ class DiscoverLocalCache(context: Context? = null) {
                 } else {
                     prefs?.edit()?.putString(key, json)?.apply()
                 }
+                Unit
             }
         }
     }

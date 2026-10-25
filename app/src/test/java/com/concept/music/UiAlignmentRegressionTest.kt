@@ -592,4 +592,51 @@ class UiAlignmentRegressionTest {
         assertEquals(5, treeResult.visualItems.size)
         assertTrue(treeResult.visualItems.last() is com.concept.music.ui.comment.FloorTreeVisualItem.ViewDeepDialogueBadgeRow)
     }
+
+    @Test
+    fun testCommentImageUrlPreservesCleartextMultiLevelBssdlAndUpgradesSingleLevel() {
+        // Multi-level bssdl CDN (no *.bssdl.kugou.com wildcard cert) must remain http:// to avoid SSLPeerUnverifiedException
+        assertEquals(
+            "http://webimg.bssdl.kugou.com/eef916e65102022ea9ac4d379179fd04.jpg",
+            imageUrl("http://webimg.bssdl.kugou.com/eef916e65102022ea9ac4d379179fd04.jpg")
+        )
+        // Single-level imge.kugou.com and cloud.kugou.com work over HTTPS
+        assertEquals(
+            "https://imge.kugou.com/stdmusic/400/20260318/cover.jpg",
+            imageUrl("http://imge.kugou.com/stdmusic/{size}/20260318/cover.jpg")
+        )
+        assertEquals(
+            "https://cmtimgbssdl.cloud.kugou.com/eeff95d6c551b31371097b1795197256.png",
+            imageUrl("https://cmtimgbssdl.cloud.kugou.com/eeff95d6c551b31371097b1795197256.png")
+        )
+        // JSON string accidentally passed to imageUrl must return empty string
+        assertEquals("", imageUrl("{\"city\":\"杭州\"}"))
+    }
+
+    @Test
+    fun testCommentImagePreviewZoomAndPanClampPreservesAspectRatioBounds() {
+        val container = androidx.compose.ui.unit.IntSize(1200, 2400)
+        // 3:2 landscape image (600x400) fitted into 1200x2400 -> fitted size is 1200x800
+        val intrinsic = androidx.compose.ui.geometry.Size(600f, 400f)
+
+        // At scale 1f, offset must always clamp to zero
+        val at1x = com.concept.music.ui.comment.clampPreviewOffset(
+            rawOffset = androidx.compose.ui.geometry.Offset(150f, -200f),
+            scale = 1f,
+            containerSize = container,
+            imageIntrinsicSize = intrinsic
+        )
+        assertEquals(0f, at1x.x, 0.01f)
+        assertEquals(0f, at1x.y, 0.01f)
+
+        // At scale 2f, fittedW=1200 -> maxX = 1200*(2-1)/2 = 600; fittedH=800 -> maxY = 800*(2-1)/2 = 400
+        val at2x = com.concept.music.ui.comment.clampPreviewOffset(
+            rawOffset = androidx.compose.ui.geometry.Offset(900f, -650f),
+            scale = 2f,
+            containerSize = container,
+            imageIntrinsicSize = intrinsic
+        )
+        assertEquals(600f, at2x.x, 0.01f)
+        assertEquals(-400f, at2x.y, 0.01f)
+    }
 }

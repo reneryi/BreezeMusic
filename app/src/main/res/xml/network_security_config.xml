@@ -1,17 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="false">
+    <!-- 允许酷狗各音频流媒体 CDN 子域（如 fs.youthandroid2.kugou.com）及运营商动态边缘缓存 IP 的 HTTP 302 跳转 -->
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-    <!-- 仅允许酷狗不支持 TLS 的纯音频流媒体分发 CDN 与备用节点走 HTTP -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">fs.android.kugou.com</domain>
-        <domain includeSubdomains="true">bssdlbig.kugou.com</domain>
-        <domain includeSubdomains="true">bssdl.kugou.com</domain>
-        <domain includeSubdomains="true">trackercdn.kugou.com</domain>
-        <domain includeSubdomains="true">mobilecdnbj.kugou.com</domain>
+    <!-- 显式禁止携带账号/Token 的核心业务与鉴权网关使用明文 HTTP，强制走 TLS -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">gateway.kugou.com</domain>
+        <domain includeSubdomains="true">gatewayretry.kugou.com</domain>
+        <domain includeSubdomains="true">login.user.kugou.com</domain>
+        <domain includeSubdomains="true">userservice.kugou.com</domain>
+        <domain includeSubdomains="true">vip.kugou.com</domain>
+        <domain includeSubdomains="true">tracker.kugou.com</domain>
     </domain-config>
     <!-- 仅在 Debug 构建中信任用户抓包证书 -->
     <debug-overrides>

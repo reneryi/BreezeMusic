@@ -151,7 +151,7 @@ class HomeViewModel : ViewModel() {
                 val dailyJob = launch {
                     val daily = runCatching { VipManager.music.dailyRecommend() }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && daily.isNotEmpty()) {
-                        if (_songs.value.map { it.id } != daily.map { it.id }) {
+                        if (_songs.value != daily) {
                             _songs.value = daily
                         }
                         VipManager.discoverCache.saveDailyRecommend(currentUserId, daily)
@@ -178,7 +178,7 @@ class HomeViewModel : ViewModel() {
                     val list = runCatching { VipManager.music.newSongExpress(periodKey = period) }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && list.isNotEmpty()) {
                         newSongCache[period] = list
-                        if (_currentNewSongs.value.map { it.id } != list.map { it.id }) {
+                        if (_currentNewSongs.value != list) {
                             _currentNewSongs.value = list
                         }
                         VipManager.discoverCache.saveNewSongs(period, list)

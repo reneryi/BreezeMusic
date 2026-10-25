@@ -126,7 +126,7 @@ object AudioCacheManager {
     /**
      * 安全清理流媒体音频缓存与图片磁盘缓存（严禁直接物理删除 SimpleCache 索引文件）
      */
-    @OptIn(coil.annotation.ExperimentalCoilApi::class)
+    @kotlin.OptIn(coil.annotation.ExperimentalCoilApi::class)
     fun clearCache(context: Context, onComplete: (Boolean) -> Unit = {}) {
         val appCtx = context.applicationContext
         scope.launch {

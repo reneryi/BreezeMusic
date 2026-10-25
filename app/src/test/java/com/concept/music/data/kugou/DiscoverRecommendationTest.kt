@@ -301,6 +301,8 @@ class DiscoverRecommendationTest {
                 includeDefaultParams: Boolean
             ): ApiResponse {
                 if (path == "/v2/get_res_privilege/lite") {
+                    assertFalse("privilege/lite body must NOT contain empty key or vip_type field that triggers 20010", body?.has("key") == true || body?.has("vip_type") == true)
+                    assertEquals(1, body?.number("support_verify"))
                     // Song 1: Normal 16-bit SQ FLAC (26MB, 920kbps) + Viper "super" stream + unverified/26MB level=6 "high"
                     // Song 2: True 24-bit/96kHz Hi-Res Master (54MB, 2304kbps) + 16-bit SQ FLAC (27MB)
                     val mockPriv = """
@@ -322,7 +324,7 @@ class DiscoverRecommendationTest {
                                     "relate_goods": [
                                         {"hash": "11111111111111111111111111111111", "level": 2, "quality": "128", "info": {"filesize": 3800000, "bitrate": 128}},
                                         {"hash": "22222222222222222222222222222222", "level": 5, "quality": "flac", "info": {"filesize": 27000000, "bitrate": 950}},
-                                        {"hash": "33333333333333333333333333333333", "level": 6, "quality": "high", "info": {"filesize": 54000000, "bitrate": 2304}}
+                                        {"hash": "33333333333333333333333333333333", "level": 6, "quality": "high", "privilege": 10, "status": 0, "publish": 1, "is_publish": 1, "info": {"filesize": 54000000, "bitrate": 2304}}
                                     ]
                                 }
                             ]
@@ -705,7 +707,7 @@ class DiscoverRecommendationTest {
 
         val artists = repo.searchArtists("鹿晗")
         assertEquals(1, artists.size)
-        assertEquals("http://imge.kugou.com/stdmusic/400/luhan.jpg", artists.first().avatarUrl)
+        assertEquals("https://imge.kugou.com/stdmusic/400/luhan.jpg", artists.first().avatarUrl)
         assertEquals(545, artists.first().songCount)
         assertEquals(63, artists.first().albumCount)
 

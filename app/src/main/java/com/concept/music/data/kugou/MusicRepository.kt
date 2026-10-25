@@ -1031,7 +1031,7 @@ class MusicApiRepository(
                             addProperty("type", "audio")
                             addProperty("page_id", 1)
                             addProperty("id", 0)
-                            addProperty("area_code", "1")
+                            addProperty("area_code", 1)
                             addProperty("album_audio_id", owner?.albumAudioId ?: 0L)
                             addProperty("album_id", owner?.albumId?.toLongOrNull() ?: 0L)
                             addProperty("hash", h)
@@ -1046,12 +1046,12 @@ class MusicApiRepository(
                         addProperty("clientver", KugouSigner.CLIENT_VERSION)
                         addProperty("mid", d.mid)
                         addProperty("clienttime", System.currentTimeMillis() / 1000)
-                        addProperty("key", "")
-                        addProperty("area_code", "1")
+                        addProperty("support_verify", 1)
+                        addProperty("area_code", 1)
                         addProperty("behavior", "play")
                         addProperty("need_hash_offset", 1)
                         addProperty("relate", 1)
-                        addProperty("vip_type", 0)
+                        add("qualities", upstreamQualitiesArr)
                         add("qualities", upstreamQualitiesArr)
                         add("resource", resourceArr)
                         add("resources", resourceArr)
@@ -1133,8 +1133,8 @@ class MusicApiRepository(
             // 第一遍扫描：提取准确的 sqSize (level=5, quality=flac) 和 durationMs
             for (rg in relateGoods) {
                 val rgInfo = rg.obj("info")
-                val status = rg.number("status") ?: rgInfo?.number("status") ?: 1
-                if (status == 0) continue
+                val isPublished = (rg.number("publish") ?: 1) != 0 && (rg.number("is_publish") ?: 1) != 0
+                if (!isPublished) continue
                 val durRaw = (rg.number("duration") ?: rgInfo?.number("duration") ?: rgInfo?.number("timelength") ?: 0).toLong()
                 if (effectiveDurMs <= 0L && durRaw > 0L) {
                     effectiveDurMs = if (durRaw in 1 until 10000) durRaw * 1000L else durRaw
@@ -1155,8 +1155,8 @@ class MusicApiRepository(
             for (rg in relateGoods) {
                 val rgInfo = rg.obj("info")
                 val rgHash = (rg.text("hash") ?: rgInfo?.text("hash"))?.takeIf { isValidHash(it) } ?: continue
-                val status = rg.number("status") ?: rgInfo?.number("status") ?: 1
-                if (status == 0) continue
+                val isPublished = (rg.number("publish") ?: 1) != 0 && (rg.number("is_publish") ?: 1) != 0
+                if (!isPublished) continue
                 val level = rg.number("level") ?: rgInfo?.number("level") ?: -1
                 val qStr = (rg.text("quality") ?: rg.text("type") ?: rgInfo?.text("quality") ?: "").lowercase()
                 val extStr = (rg.text("extname") ?: rgInfo?.text("extname") ?: rg.text("name") ?: "").lowercase()
@@ -5890,10 +5890,30 @@ class MusicApiRepository(
         val classifyList = classifyCommentsDef.await()
         val fallbackList = cmtListDef.await()
 
+        fun deduplicateAndMergeComments(raw: List<SongComment>): List<SongComment> {
+            val map = LinkedHashMap<String, SongComment>()
+            for (c in raw) {
+                val existing = map[c.id]
+                if (existing == null) {
+                    map[c.id] = c
+                } else {
+                    map[c.id] = existing.copy(
+                        images = existing.images.ifEmpty { c.images },
+                        ipLocation = existing.ipLocation.ifBlank { c.ipLocation },
+                        specialChildId = existing.specialChildId.ifBlank { c.specialChildId },
+                        likeCount = maxOf(existing.likeCount, c.likeCount),
+                        replyCount = maxOf(existing.replyCount, c.replyCount),
+                        replies = (existing.replies + c.replies).distinctBy { it.id }
+                    )
+                }
+            }
+            return map.values.toList()
+        }
+
         val mergedRaw = if (isHotTab) {
             // 最热评论：第一页优先展示高权重热评 (isHot=true) 并按点赞量降序，后续分页保持热评与高赞流畅加载
             (classifyList + fallbackList)
-                .distinctBy { it.id }
+                .let(::deduplicateAndMergeComments)
                 .sortedWith(
                     compareByDescending<SongComment> { if (page == 1) it.isHot else false }
                         .thenByDescending { it.likeCount }
@@ -5903,7 +5923,7 @@ class MusicApiRepository(
         } else {
             // 最新评论：优先采用 /mcomment/v1/cmtlist 实时最新流，并严格按真实毫秒时间戳降序排列（越新越靠前）
             (fallbackList + classifyList)
-                .distinctBy { it.id }
+                .let(::deduplicateAndMergeComments)
                 .sortedWith(
                     compareByDescending<SongComment> { it.timestampMs }
                         .thenByDescending { it.id }
@@ -6178,7 +6198,7 @@ class MusicApiRepository(
 
     private fun extractCommentImages(o: JsonObject): List<String> {
         val urls = mutableListOf<String>()
-        val arrayKeys = listOf("images", "img_list", "pic_list", "pictures", "imgs", "pics", "image_list")
+        val arrayKeys = listOf("images", "uimage", "img_list", "pic_list", "pictures", "imgs", "pics", "image_list")
         for (key in arrayKeys) {
             val arr = o.arr(key) ?: o.obj("content_ext")?.arr(key) ?: o.obj("ext")?.arr(key)
             if (arr != null) {
@@ -6197,7 +6217,7 @@ class MusicApiRepository(
                 }
             }
         }
-        val singleImg = o.text("u_pic") ?: o.text("comment_pic") ?: o.text("image_url") ?: o.text("img_url")
+        val singleImg = o.text("uimage") ?: o.text("u_pic") ?: o.text("comment_pic") ?: o.text("image_url") ?: o.text("img_url")
         if (!singleImg.isNullOrBlank()) {
             val u = imageUrl(singleImg)
             if (u.isNotBlank()) urls.add(u)
