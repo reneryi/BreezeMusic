@@ -75,7 +75,11 @@ private data class ArtistPageSessionSnapshot(
     val hasMoreAlbums: Boolean
 )
 
-private val artistPageSessionCache = ConcurrentHashMap<String, ArtistPageSessionSnapshot>()
+private val artistPageSessionCache: MutableMap<String, ArtistPageSessionSnapshot> = java.util.Collections.synchronizedMap(
+    object : LinkedHashMap<String, ArtistPageSessionSnapshot>(20, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ArtistPageSessionSnapshot>?): Boolean = size > 20
+    }
+)
 
 @Composable
 fun ArtistDetailScreen(

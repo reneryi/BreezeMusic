@@ -24,7 +24,7 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
         val activeToken = activeSession?.token.orEmpty()
 
         // 1. 首选通道：对齐上游 register_dev.js -> https://userservice.kugou.com/risk/v2/r_register_dev
-        val riskV2Dfid = runCatching {
+        val riskV2Dfid = suspendRunCatching {
             val dataPlain = KugouSigner.gson.toJson(
                 json(
                     "mid" to current.mid,
@@ -86,7 +86,7 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
         )
         val encodedPayload = Base64.getEncoder().encodeToString(payloadJson.toByteArray(Charsets.UTF_8))
 
-        val remoteDfid = riskV2Dfid ?: runCatching {
+        val remoteDfid = riskV2Dfid ?: suspendRunCatching {
             val resp = transport.callAdvanced(
                 path = "/v1/register_dev",
                 host = "https://usersdfid.kugou.com",
@@ -106,7 +106,7 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
                 includeDefaultParams = false
             )
             (resp.data.text("dfid") ?: resp.data.obj("data")?.text("dfid"))?.takeIf { it.isNotBlank() && it != "-" }
-        }.getOrNull() ?: runCatching {
+        }.getOrNull() ?: suspendRunCatching {
             val resp = transport.callAdvanced(
                 path = "/risk/v1/r_register_dev",
                 host = "https://usersdfid.kugou.com",
@@ -143,7 +143,7 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
     suspend fun sendCode(mobile: String): ApiResponse {
         require(mobile.matches(Regex("1[3-9][0-9]{9}"))) { "请输入有效的中国大陆手机号" }
         // The upstream captcha module deliberately uses the default dfid '-'.
-        return transport.call("/v7/send_mobile_code", host = "http://login.user.kugou.com", method = "POST",
+        return transport.call("/v7/send_mobile_code", host = "https://login.user.kugou.com", method = "POST",
             body = json("businessid" to 5, "mobile" to mobile, "plat" to 3), device = store.device().copy(dfid = "-"))
     }
     suspend fun phone(mobile: String, code: String, userId: String? = null): LoginResult {
@@ -191,7 +191,7 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
         val p3 = KugouSigner.aes(KugouSigner.gson.toJson(json("clienttime" to now / 1000, "token" to session.token)),
             "c24f74ca2820225badc01946dba4fdf7", "adc01946dba4fdf7")
         val d = store.device()
-        val response = transport.call("/v5/login_by_token", session, host = "http://login.user.kugou.com", method = "POST",
+        val response = transport.call("/v5/login_by_token", session, host = "https://login.user.kugou.com", method = "POST",
             body = json("dfid" to d.dfid, "p3" to p3, "plat" to 1, "t1" to t1(session.t1, now), "t2" to t2(d, now),
                 "t3" to "MCwwLDAsMCwwLDAsMCwwLDA=", "pk" to KugouSigner.rsa(KugouSigner.gson.toJson(json("clienttime_ms" to now, "key" to encrypted.key))),
                 "params" to encrypted.ciphertext, "userid" to session.userId, "clienttime_ms" to now, "dev" to d.dev)).requireSuccess()

@@ -136,8 +136,8 @@ internal fun LyricSettingsDialog(
     val panelTopColor = themeAccent.copy(alpha = 0.18f).compositeOver(baseSheetBg.copy(alpha = 0.96f))
     val panelMidColor = themeAccent.copy(alpha = 0.07f).compositeOver(baseSheetBg.copy(alpha = 0.97f))
     val panelBottomColor = baseSheetBg.copy(alpha = 0.98f)
-    val glassCardBg = Color.White.copy(alpha = 0.055f).compositeOver(baseSheetBg.copy(alpha = 0.88f))
-    val glassPillBg = Color.White.copy(alpha = 0.07f)
+    val glassCardBg = textPrimary.copy(alpha = 0.055f).compositeOver(baseSheetBg.copy(alpha = 0.90f))
+    val glassPillBg = textPrimary.copy(alpha = 0.08f)
     val panelShape = if (isLandscape) {
         RoundedCornerShape(28.dp)
     } else {
@@ -215,7 +215,7 @@ internal fun LyricSettingsDialog(
                                     .width(38.dp)
                                     .height(4.dp)
                                     .clip(CircleShape)
-                                    .background(Color.White.copy(alpha = 0.24f))
+                                    .background(textPrimary.copy(alpha = 0.24f))
                             )
                         }
                     }
@@ -733,7 +733,7 @@ private fun CompactInlineSliderRow(
             colors = SliderDefaults.colors(
                 thumbColor = accentColor,
                 activeTrackColor = accentColor,
-                inactiveTrackColor = Color.White.copy(alpha = 0.12f)
+                inactiveTrackColor = textPrimary.copy(alpha = 0.16f)
             ),
             modifier = Modifier
                 .weight(1f)

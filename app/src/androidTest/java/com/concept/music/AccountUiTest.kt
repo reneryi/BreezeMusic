@@ -8,10 +8,12 @@ import org.junit.Test
 /** Guest-state navigation; real SMS and QR authorization remain manual acceptance. */
 class AccountUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
-    @Test fun guestCanOpenPhoneLoginAndReturnToAccounts() {
+
+    @Test
+    fun guestCanOpenPhoneLoginAndReturnToLibrary() {
         compose.onNodeWithText("我的").performClick()
-        compose.onNodeWithText("账号管理").performClick()
-        compose.onNodeWithText("添加账号").performClick()
+        // 访客未登录态下，个人名片区显示“立即登录”，点击直接进入登录页
+        compose.onNodeWithText("立即登录").performClick()
         compose.onNodeWithText("手机验证码").assertIsDisplayed()
         compose.onNodeWithText("酷狗扫码").assertIsDisplayed()
         compose.onNodeWithText("发送验证码").assertIsNotEnabled()
@@ -22,6 +24,6 @@ class AccountUiTest {
         compose.onNodeWithText("13800000000").assertExists()
         compose.onNodeWithText("123456").assertExists()
         compose.onNodeWithText("返回").performClick()
-        compose.onNodeWithText("添加账号").assertIsDisplayed()
+        compose.onNodeWithText("立即登录").assertIsDisplayed()
     }
 }

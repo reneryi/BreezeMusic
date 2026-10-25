@@ -19,7 +19,7 @@ import com.concept.music.ui.theme.ConceptPrimary
 @Composable
 fun CreatePlaylistDialog(
     onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit,
+    onConfirmWithCallback: (name: String, onComplete: (Boolean) -> Unit) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var name by remember { mutableStateOf("") }
@@ -41,10 +41,8 @@ fun CreatePlaylistDialog(
                 modifier = Modifier.padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // 图标与标题
                 Box(
-                    modifier = Modifier
-                        .size(52.dp),
+                    modifier = Modifier.size(52.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Surface(
@@ -81,7 +79,6 @@ fun CreatePlaylistDialog(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // 输入框
                 OutlinedTextField(
                     value = name,
                     onValueChange = { if (it.length <= 40) name = it },
@@ -105,7 +102,6 @@ fun CreatePlaylistDialog(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // 操作按钮
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -121,9 +117,14 @@ fun CreatePlaylistDialog(
 
                     Button(
                         onClick = {
-                            if (name.isNotBlank()) {
+                            if (name.isNotBlank() && !isSubmitting) {
                                 isSubmitting = true
-                                onConfirm(name.trim())
+                                onConfirmWithCallback(name.trim()) { success ->
+                                    isSubmitting = false
+                                    if (success) {
+                                        onDismiss()
+                                    }
+                                }
                             }
                         },
                         enabled = name.isNotBlank() && !isSubmitting,

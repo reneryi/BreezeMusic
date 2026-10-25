@@ -112,6 +112,7 @@ fun LibraryScreen(
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }
+    var isImporting by remember { mutableStateOf(false) }
     var importPlaylistName by remember { mutableStateOf("") }
     var importRawText by remember { mutableStateOf("") }
     var showVipCenterSheet by remember { mutableStateOf(false) }
@@ -369,7 +370,14 @@ fun LibraryScreen(
                             ) {
                                 if (selectedTab == 0) {
                                     IconButton(
-                                        onClick = { showCreateDialog = true },
+                                        onClick = {
+                                            if (account.currentId == null) {
+                                                Toast.makeText(context, "请先登录酷狗账号", Toast.LENGTH_SHORT).show()
+                                                onLogin()
+                                            } else {
+                                                showCreateDialog = true
+                                            }
+                                        },
                                         modifier = Modifier.size(30.dp)
                                     ) {
                                         Icon(
@@ -454,7 +462,14 @@ fun LibraryScreen(
                                 )
                                 if (selectedTab == 0) {
                                     Spacer(modifier = Modifier.height(14.dp))
-                                    TextButton(onClick = { showCreateDialog = true }) {
+                                    TextButton(onClick = {
+                                        if (account.currentId == null) {
+                                            Toast.makeText(context, "请先登录酷狗账号", Toast.LENGTH_SHORT).show()
+                                            onLogin()
+                                        } else {
+                                            showCreateDialog = true
+                                        }
+                                    }) {
                                         Icon(
                                             imageVector = Icons.Rounded.Add,
                                             contentDescription = null,
@@ -1002,11 +1017,11 @@ fun LibraryScreen(
     if (showCreateDialog) {
         CreatePlaylistDialog(
             onDismiss = { showCreateDialog = false },
-            onConfirm = { name ->
+            onConfirmWithCallback = { name, onComplete ->
                 viewModel.createPlaylist(name) { success, msg ->
                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                    onComplete(success)
                     if (success) {
-                        showCreateDialog = false
                         viewModel.setSelectedAssetTab(0)
                     }
                 }
@@ -1041,8 +1056,11 @@ fun LibraryScreen(
             },
             confirmButton = {
                 TextButton(
+                    enabled = !isImporting,
                     onClick = {
+                        isImporting = true
                         viewModel.importExternalPlaylist(importPlaylistName, importRawText) { ok, msg ->
+                            isImporting = false
                             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                             if (ok) {
                                 showImportDialog = false
@@ -1053,11 +1071,11 @@ fun LibraryScreen(
                         }
                     }
                 ) {
-                    Text("开始匹配导入", color = ConceptPrimary, fontWeight = FontWeight.Bold)
+                    Text(if (isImporting) "正在导入..." else "开始匹配导入", color = ConceptPrimary, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showImportDialog = false }) {
+                TextButton(enabled = !isImporting, onClick = { showImportDialog = false }) {
                     Text("取消")
                 }
             }

@@ -96,12 +96,12 @@ class HomeViewModel : ViewModel() {
     private fun hydrateFromLocalCache(userId: String?) {
         val cache = VipManager.discoverCache
         val cachedDaily = cache.getDailyRecommend(userId).ifEmpty { cache.getDailyRecommend(null) }
-        if (_songs.value.isEmpty() && cachedDaily.isNotEmpty()) {
+        if (cachedDaily.isNotEmpty()) {
             _songs.value = cachedDaily
         }
 
         val cachedFm = cache.getPersonalFm(userId).ifEmpty { cache.getPersonalFm(null) }
-        if (_personalFmSongs.value.isEmpty() && cachedFm.isNotEmpty()) {
+        if (cachedFm.isNotEmpty()) {
             _personalFmSongs.value = cachedFm
         }
 

@@ -4,11 +4,16 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.concept.music.data.kugou.KugouSigner
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * 搜索历史记录持久化存储仓库
- * - 在真实设备上持久化至 SharedPreferences
- * - 在纯 JVM 单元测试环境中自适应内存降级，避免 Context 空指针
+ * - 线程安全读写并返回不可变快照；
+ * - 使用单线程串行 IO 调度器保序落盘。
  */
 class SearchHistoryRepository(context: Context? = null) {
     private val prefs: SharedPreferences? = try {
@@ -17,27 +22,48 @@ class SearchHistoryRepository(context: Context? = null) {
         null
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+
     private var memoryCache = mutableListOf<String>()
+    private var loadedFromDisk = false
 
-    fun get(): List<String> = runCatching {
-        val sp = prefs ?: return memoryCache
-        val json = sp.getString("history_keywords", "[]") ?: "[]"
-        val list: List<String> = KugouSigner.gson.fromJson(json, object : TypeToken<List<String>>() {}.type) ?: emptyList()
-        memoryCache = list.toMutableList()
-        list
-    }.getOrDefault(memoryCache)
+    @Synchronized
+    fun get(): List<String> {
+        if (loadedFromDisk) return memoryCache.toList()
+        return runCatching {
+            val sp = prefs ?: run {
+                loadedFromDisk = true
+                return memoryCache.toList()
+            }
+            val json = sp.getString("history_keywords", "[]") ?: "[]"
+            val list: List<String> = KugouSigner.gson.fromJson(json, object : TypeToken<List<String>>() {}.type) ?: emptyList()
+            memoryCache = list.toMutableList()
+            loadedFromDisk = true
+            memoryCache.toList()
+        }.getOrDefault(memoryCache.toList())
+    }
 
+    @Synchronized
     fun save(items: List<String>) {
-        memoryCache = items.toMutableList()
-        runCatching {
-            prefs?.edit()?.putString("history_keywords", KugouSigner.gson.toJson(items))?.apply()
+        val snapshot = items.toList()
+        memoryCache = snapshot.toMutableList()
+        loadedFromDisk = true
+        ioScope.launch {
+            runCatching {
+                prefs?.edit()?.putString("history_keywords", KugouSigner.gson.toJson(snapshot))?.apply()
+            }
         }
     }
 
+    @Synchronized
     fun clear() {
         memoryCache.clear()
-        runCatching {
-            prefs?.edit()?.remove("history_keywords")?.apply()
+        loadedFromDisk = true
+        ioScope.launch {
+            runCatching {
+                prefs?.edit()?.remove("history_keywords")?.apply()
+            }
         }
     }
 }

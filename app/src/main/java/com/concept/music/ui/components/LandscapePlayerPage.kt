@@ -988,6 +988,9 @@ private fun LandscapeBottomControlDock(
             onDragEnd = {
                 onSeekTo((dragFraction * durationMs).toLong())
                 isInteractingWithBar = false
+            },
+            onDragCancel = {
+                isInteractingWithBar = false
             }
         )
 

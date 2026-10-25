@@ -10,10 +10,11 @@ import java.util.zip.InflaterInputStream
 
 object KrcDecoder {
     private val XOR_KEY = intArrayOf(64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105)
+    private const val MAX_DECOMPRESSED_BYTES = 2 * 1024 * 1024 // 2 MB 解压上限防炸弹
 
     private val LINE_REGEX = Regex("""^\[(\d+),(\d+)\](.*)$""")
     private val WORD_REGEX = Regex("""<(-?\d+),(-?\d+)(?:,-?\d+)?>([^<]*)""")
-    private val LRC_REGEX = Regex("""^\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\](.*)$""")
+    private val LRC_TAG_REGEX = Regex("""\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]""")
 
     private val METADATA_PREFIXES = listOf(
         "[id:", "[ar:", "[ti:", "[by:", "[hash:", "[al:", "[sign:", "[qq:", "[total:", "[offset:", "[language:", "[kana:"
@@ -23,6 +24,12 @@ object KrcDecoder {
         return try {
             val rawBytes = Base64.getMimeDecoder().decode(base64Content.trim())
             if (rawBytes.size <= 4) return ""
+            // 校验 krc1 魔数头
+            val isKrc1 = rawBytes[0] == 'k'.code.toByte() &&
+                rawBytes[1] == 'r'.code.toByte() &&
+                rawBytes[2] == 'c'.code.toByte() &&
+                rawBytes[3] == '1'.code.toByte()
+            if (!isKrc1) return ""
 
             val decrypted = ByteArray(rawBytes.size - 4)
             for (i in decrypted.indices) {
@@ -31,14 +38,21 @@ object KrcDecoder {
                 decrypted[i] = (b xor k).toByte()
             }
 
-            val inflater = InflaterInputStream(ByteArrayInputStream(decrypted))
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(1024)
-            var len: Int
-            while (inflater.read(buffer).also { len = it } != -1) {
-                output.write(buffer, 0, len)
+            // 使用 .use 确保底层原生 Zlib Inflater 立即释放，同时限制最大解压字节数防 OOM
+            InflaterInputStream(ByteArrayInputStream(decrypted)).use { inflater ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(1024)
+                var totalRead = 0
+                var len: Int
+                while (inflater.read(buffer).also { len = it } != -1) {
+                    totalRead += len
+                    if (totalRead > MAX_DECOMPRESSED_BYTES) {
+                        throw IllegalStateException("KRC 解压体积超出安全上限")
+                    }
+                    output.write(buffer, 0, len)
+                }
+                output.toString("UTF-8")
             }
-            output.toString("UTF-8")
         } catch (_: Exception) {
             ""
         }
@@ -51,7 +65,6 @@ object KrcDecoder {
         val lines = mutableListOf<LyricLine>()
         val rawLines = text.split("\r\n", "\n")
 
-        // 统计总时间戳行数，以精确对齐 [language:...] 行索引（避免空时间戳行导致后续译文/注音错位）
         val totalTimeLines = rawLines.count { raw ->
             val trimmed = raw.trim()
             trimmed.isNotEmpty() &&
@@ -102,13 +115,6 @@ object KrcDecoder {
         return LyricData(lines = lines, rawText = text, isKrc = true)
     }
 
-    /**
-     * 精准提取 KRC `[language:...]` 中的外语中文翻译层 (translations) 与音译注音层 (phonetics: 罗马音/粤拼/韩文音译)：
-     * 酷狗官方 KRC 协议规范（参考 MakcRe/KuGouMusicApi util/util.js decodeLyric）：
-     * - type == 1 且每行为单元素中文字符串 `[["整句中文译文"]]` -> 外语中文翻译层 (translations)
-     * - type == 0 或每行为多元素逐字数组 `[["wa", "ta", "shi"]]` 或不含中文的注音 -> 音译注音层 (phonetics)
-     * - 同时兼容无 type 字段或单层测试数据
-     */
     internal fun extractKrcLanguageLayers(text: String): Pair<List<String>, List<String>> {
         val translations = mutableListOf<String>()
         val phonetics = mutableListOf<String>()
@@ -163,12 +169,9 @@ object KrcDecoder {
                     }
                 }
 
-                // 逐字音译层 (type=0) 在 lyricContent 中通常以多元素数组存储每个字对应的读音；
-                // 而整句翻译层 (type=1) 在 lyricContent 中每行仅包含 1 个完整句子字符串。
                 val isMultiTokenPerLine = nonEmptyRowCount > 0 && multiTokenRowCount * 2 >= nonEmptyRowCount
 
                 when {
-                    // 含中文且按整句单字符串存储：明确为中文翻译层（兼容酷狗真实接口 type=1 及测试数据 type=0）
                     hasChinese && !isMultiTokenPerLine -> {
                         if (translationObj == null || typeVal == 1) {
                             translationObj = obj
@@ -176,7 +179,6 @@ object KrcDecoder {
                             phoneticObj = obj
                         }
                     }
-                    // 不含中文（如罗马音、粤拼、英文音标）或按逐字多元素切分存储（如逐字注音/谐音）：明确为音译注音层
                     !hasChinese || isMultiTokenPerLine || typeVal == 0 -> {
                         if (phoneticObj == null || typeVal == 0) {
                             phoneticObj = obj
@@ -214,54 +216,81 @@ object KrcDecoder {
             parseLayerLines(translationObj, translations)
             parseLayerLines(phoneticObj, phonetics)
         } catch (_: Exception) {
-            // 容错返回已提取部分
         }
         return translations to phonetics
     }
 
+    /**
+     * 解析标准与扩展 LRC 文本：
+     * 1. 支持单行多时间标签（如 `[00:15.00][01:30.00]副歌`）全量展开；
+     * 2. 先按时间戳稳定排序，再合并相同时间戳的双语分离块（上半块原文 + 下半块译文），最后计算精确的每句持续时长。
+     */
     fun parseLrcText(text: String): LyricData {
         if (text.isBlank()) return LyricData()
 
+        data class RawLrcEntry(val order: Int, val line: LyricLine)
         val rawLines = text.lines()
-        val rawParsed = mutableListOf<LyricLine>()
+        val rawParsed = mutableListOf<RawLrcEntry>()
+        var seqOrder = 0
+
         for (rawLine in rawLines) {
             val line = rawLine.trim()
             if (line.isEmpty()) continue
             if (METADATA_PREFIXES.any { line.startsWith(it, ignoreCase = true) }) continue
 
-            val match = LRC_REGEX.find(line) ?: continue
-            val min = match.groupValues[1].toLongOrNull() ?: continue
-            val sec = match.groupValues[2].toLongOrNull() ?: continue
-            val fractionRaw = match.groupValues[3]
-            val ms = when (fractionRaw.length) {
-                1 -> (fractionRaw.toLongOrNull() ?: 0L) * 100
-                2 -> (fractionRaw.toLongOrNull() ?: 0L) * 10
-                3 -> fractionRaw.toLongOrNull() ?: 0L
-                else -> 0L
-            }
-            val startTimeMs = min * 60_000L + sec * 1000L + ms
-            val lineText = match.groupValues[4].trim()
-            if (lineText.isNotEmpty() && lineText != "//") {
-                val doubleSlashParts = if (lineText.contains(" // ")) {
-                    lineText.split(" // ", limit = 3).map { it.trim() }.filter { it.isNotBlank() && it != "//" }
-                } else null
-
-                if (doubleSlashParts != null && doubleSlashParts.size == 3) {
-                    rawParsed.add(LyricLine(startTimeMs, 0L, doubleSlashParts[0], translation = doubleSlashParts[2], phonetic = doubleSlashParts[1]))
-                } else if (doubleSlashParts != null && doubleSlashParts.size == 2) {
-                    rawParsed.add(LyricLine(startTimeMs, 0L, doubleSlashParts[0], translation = doubleSlashParts[1]))
-                } else if (lineText.contains(" / ") && lineText.any { it in '\u4e00'..'\u9fff' }) {
-                    val slashParts = lineText.split(" / ", limit = 2)
-                    rawParsed.add(LyricLine(startTimeMs, 0L, slashParts[0].trim(), translation = slashParts[1].trim()))
+            val tagMatches = LRC_TAG_REGEX.findAll(line).toList()
+            if (tagMatches.isEmpty()) continue
+            // 仅取行首连续的时间标签
+            val leadingTags = mutableListOf<MatchResult>()
+            var expectedStart = 0
+            for (tm in tagMatches) {
+                if (tm.range.first == expectedStart) {
+                    leadingTags.add(tm)
+                    expectedStart = tm.range.last + 1
                 } else {
-                    rawParsed.add(LyricLine(startTimeMs, 0L, lineText))
+                    break
                 }
+            }
+            if (leadingTags.isEmpty()) continue
+
+            val lineText = line.substring(expectedStart).trim()
+            if (lineText.isEmpty() || lineText == "//") continue
+
+            val doubleSlashParts = if (lineText.contains(" // ")) {
+                lineText.split(" // ", limit = 3).map { it.trim() }.filter { it.isNotBlank() && it != "//" }
+            } else null
+
+            for (tag in leadingTags) {
+                val min = tag.groupValues[1].toLongOrNull() ?: continue
+                val sec = tag.groupValues[2].toLongOrNull() ?: continue
+                val fractionRaw = tag.groupValues[3]
+                val ms = when (fractionRaw.length) {
+                    1 -> (fractionRaw.toLongOrNull() ?: 0L) * 100
+                    2 -> (fractionRaw.toLongOrNull() ?: 0L) * 10
+                    3 -> fractionRaw.toLongOrNull() ?: 0L
+                    else -> 0L
+                }
+                val startTimeMs = min * 60_000L + sec * 1000L + ms
+                val parsedLine = when {
+                    doubleSlashParts != null && doubleSlashParts.size == 3 ->
+                        LyricLine(startTimeMs, 0L, doubleSlashParts[0], translation = doubleSlashParts[2], phonetic = doubleSlashParts[1])
+                    doubleSlashParts != null && doubleSlashParts.size == 2 ->
+                        LyricLine(startTimeMs, 0L, doubleSlashParts[0], translation = doubleSlashParts[1])
+                    lineText.contains(" / ") && lineText.any { it in '\u4e00'..'\u9fff' } -> {
+                        val slashParts = lineText.split(" / ", limit = 2)
+                        LyricLine(startTimeMs, 0L, slashParts[0].trim(), translation = slashParts[1].trim())
+                    }
+                    else -> LyricLine(startTimeMs, 0L, lineText)
+                }
+                rawParsed.add(RawLrcEntry(seqOrder++, parsedLine))
             }
         }
 
-        // 合并相同时间戳的翻译/音译行
+        // 先按时间戳与原始行序稳定排序，以支持“前半段全原文、后半段全翻译”的分块式双语 LRC
+        val sortedRaw = rawParsed.sortedWith(compareBy<RawLrcEntry> { it.line.startTimeMs }.thenBy { it.order }).map { it.line }
+
         val lines = mutableListOf<LyricLine>()
-        for (entry in rawParsed) {
+        for (entry in sortedRaw) {
             val last = lines.lastOrNull()
             if (last != null && kotlin.math.abs(last.startTimeMs - entry.startTimeMs) <= 100L) {
                 if (last.translation == null) {
@@ -287,7 +316,6 @@ object KrcDecoder {
             lines[lines.size - 1] = last.copy(durationMs = 5000L)
         }
 
-        lines.sortBy { it.startTimeMs }
         return LyricData(lines = lines, rawText = text, isKrc = false)
     }
 

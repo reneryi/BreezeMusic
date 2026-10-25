@@ -5,18 +5,20 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import com.concept.music.data.kugou.NetworkClientProvider
 import com.concept.music.data.vip.VipManager
 import com.concept.music.service.AmbientSoundManager
 import com.concept.music.service.FocusPodManager
 import com.concept.music.service.SystemLyricBridge
 import com.concept.music.service.VipGuardianManager
+import com.concept.music.ui.theme.ThemeManager
 import okhttp3.Dispatcher
-import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
 class ConceptMusicApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
+        ThemeManager.init(this)
         VipManager.initialize(this)
         AmbientSoundManager.init(this)
         FocusPodManager.init(this)
@@ -30,7 +32,8 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
             maxRequestsPerHost = 10
         }
 
-        val okHttpClient = OkHttpClient.Builder()
+        // 复用全局共享连接池，减少 TLS 握手与 Socket 创建开销
+        val okHttpClient = NetworkClientProvider.baseClient.newBuilder()
             .dispatcher(imageDispatcher)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)

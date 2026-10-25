@@ -1,10 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- 全局放行明文 HTTP 流量，允许酷狗 CDN 图片与音频流正常加载 -->
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <!-- 仅允许酷狗不支持 TLS 的纯音频流媒体分发 CDN 与备用节点走 HTTP -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">fs.android.kugou.com</domain>
+        <domain includeSubdomains="true">bssdlbig.kugou.com</domain>
+        <domain includeSubdomains="true">bssdl.kugou.com</domain>
+        <domain includeSubdomains="true">trackercdn.kugou.com</domain>
+        <domain includeSubdomains="true">mobilecdnbj.kugou.com</domain>
+    </domain-config>
+    <!-- 仅在 Debug 构建中信任用户抓包证书 -->
+    <debug-overrides>
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />
         </trust-anchors>
-    </base-config>
+    </debug-overrides>
 </network-security-config>

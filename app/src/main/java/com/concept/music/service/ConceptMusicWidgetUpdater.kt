@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.widget.RemoteViews
 import com.concept.music.MainActivity
 import com.concept.music.R
@@ -15,14 +16,27 @@ object ConceptMusicWidgetUpdater {
     const val ACTION_WIDGET_TOGGLE_PLAY = "com.concept.music.ACTION_WIDGET_TOGGLE_PLAY"
     const val ACTION_WIDGET_NEXT = "com.concept.music.ACTION_WIDGET_NEXT"
     const val ACTION_WIDGET_PREV = "com.concept.music.ACTION_WIDGET_PREV"
+    private const val PREFS_NAME = "concept_widget_state"
 
     private var cachedTitle: String = "ConceptMusic 酷狗概念版"
     private var cachedArtist: String = "点击开启流光无损听歌体验"
     private var cachedLyric: String = "KRC 逐字流光 · 每日自动领概念版 VIP"
     private var cachedPlaying: Boolean = false
+    private var prefsLoaded: Boolean = false
 
     @Volatile
     var onWidgetCommand: ((String) -> Unit)? = null
+
+    private fun ensureStateLoaded(context: Context) {
+        if (prefsLoaded) return
+        prefsLoaded = true
+        runCatching {
+            val sp = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            cachedTitle = sp.getString("title", cachedTitle) ?: cachedTitle
+            cachedArtist = sp.getString("artist", cachedArtist) ?: cachedArtist
+            cachedLyric = sp.getString("lyric", cachedLyric) ?: cachedLyric
+        }
+    }
 
     fun dispatchCommand(context: Context, action: String) {
         val handler = onWidgetCommand
@@ -38,11 +52,15 @@ object ConceptMusicWidgetUpdater {
         }
         if (!handledByService) {
             runCatching {
-                val launchIntent = Intent(context.applicationContext, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    putExtra("widget_command", action)
+                val appCtx = context.applicationContext
+                val serviceIntent = Intent(appCtx, PlaybackService::class.java).apply {
+                    this.action = action
                 }
-                context.applicationContext.startActivity(launchIntent)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appCtx.startForegroundService(serviceIntent)
+                } else {
+                    appCtx.startService(serviceIntent)
+                }
             }
         }
     }
@@ -54,16 +72,26 @@ object ConceptMusicWidgetUpdater {
         lyricLine: String? = null,
         isPlaying: Boolean? = null
     ) {
+        ensureStateLoaded(context)
         if (!songTitle.isNullOrBlank()) cachedTitle = songTitle
         if (!artist.isNullOrBlank()) cachedArtist = artist
         if (!lyricLine.isNullOrBlank()) cachedLyric = lyricLine
         if (isPlaying != null) cachedPlaying = isPlaying
+        runCatching {
+            context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString("title", cachedTitle)
+                .putString("artist", cachedArtist)
+                .putString("lyric", cachedLyric)
+                .apply()
+        }
         requestUpdate(context)
     }
 
     fun requestUpdate(context: Context) {
         runCatching {
             val appCtx = context.applicationContext
+            ensureStateLoaded(appCtx)
             val manager = AppWidgetManager.getInstance(appCtx)
             val component = ComponentName(appCtx, ConceptMusicWidgetProvider::class.java)
             val ids = manager.getAppWidgetIds(component)
@@ -80,6 +108,7 @@ object ConceptMusicWidgetUpdater {
         manager: AppWidgetManager,
         appWidgetId: Int
     ) {
+        ensureStateLoaded(context)
         val views = RemoteViews(context.packageName, R.layout.widget_concept_music)
         views.setTextViewText(R.id.widget_song_title, cachedTitle)
         views.setTextViewText(R.id.widget_song_artist, cachedArtist)
@@ -126,8 +155,10 @@ object ConceptMusicWidgetUpdater {
         action: String,
         requestCode: Int
     ): PendingIntent {
+        // 使用显式组件 Intent，防止外部恶意应用伪造隐式广播指令
         val intent = Intent(context, ConceptMusicWidgetProvider::class.java).apply {
             this.action = action
+            setPackage(context.packageName)
         }
         return PendingIntent.getBroadcast(
             context,

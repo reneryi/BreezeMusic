@@ -49,7 +49,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
-private val albumSessionCache = ConcurrentHashMap<String, Pair<AlbumItem?, List<Song>>>()
+private val albumSessionCache: MutableMap<String, Pair<AlbumItem?, List<Song>>> = java.util.Collections.synchronizedMap(
+    object : LinkedHashMap<String, Pair<AlbumItem?, List<Song>>>(20, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<AlbumItem?, List<Song>>>?): Boolean = size > 20
+    }
+)
 
 @Composable
 fun AlbumDetailScreen(

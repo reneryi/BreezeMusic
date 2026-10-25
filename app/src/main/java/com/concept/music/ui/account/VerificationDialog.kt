@@ -2,6 +2,7 @@ package com.concept.music.ui.account
 
 import android.annotation.SuppressLint
 import android.net.Uri
+import android.view.ViewGroup
 import android.webkit.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -57,18 +58,45 @@ fun VerificationDialog(request: VerificationRequest, onAnswer: (VerificationAnsw
                         }.onFailure { error = "验证结果无效，请重试" }
                     }
                 }
-                loadUrl("https://appassets.androidplatform.net/assets/verification/index.html?type=${request.type}&appid=${Uri.encode(request.txAppId)}")
+                val encodedType = Uri.encode(request.type.toString())
+                val encodedAppId = Uri.encode(request.txAppId)
+                loadUrl("https://appassets.androidplatform.net/assets/verification/index.html?type=$encodedType&appid=$encodedAppId")
             } else error = "请更新 Android System WebView 后再进行安全验证"
         }
     }
-    DisposableEffect(webView) { onDispose { webView.stopLoading(); webView.destroy() } }
-    Dialog(onDismissRequest = { callback(null) }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxWidth().padding(12.dp), shape = MaterialTheme.shapes.large) {
+    DisposableEffect(webView) {
+        onDispose {
+            runCatching {
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                    WebViewCompat.removeWebMessageListener(webView, "VerificationBridge")
+                }
+                (webView.parent as? ViewGroup)?.removeView(webView)
+                webView.stopLoading()
+                webView.destroy()
+            }
+        }
+    }
+    Dialog(
+        onDismissRequest = { callback(null) },
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+                .imePadding(),
+            shape = MaterialTheme.shapes.large
+        ) {
             Column(Modifier.padding(16.dp)) {
                 Text("酷狗安全验证", style = MaterialTheme.typography.titleLarge)
                 Text(request.message, Modifier.padding(vertical = 8.dp))
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                AndroidView(factory = { webView }, modifier = Modifier.fillMaxWidth().heightIn(min = 320.dp, max = 460.dp))
+                AndroidView(
+                    factory = { webView },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 320.dp, max = 460.dp)
+                )
                 TextButton(onClick = { callback(null) }) { Text("取消验证") }
             }
         }

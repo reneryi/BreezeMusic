@@ -599,8 +599,10 @@ fun SettingsScreen(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             listOf(15, 30, 45, 60).forEach { mins ->
+                                val targetSec = mins * 60L
+                                val isPresetActive = sleepTimerRemainingSec in (targetSec - 14 * 60L).coerceAtLeast(1L)..targetSec
                                 FilterChip(
-                                    selected = false,
+                                    selected = isPresetActive,
                                     onClick = {
                                         viewModel.setSleepTimer(mins, sleepStopAfterCurrentSong)
                                         Toast.makeText(context, "已设置 $mins 分钟后停止", Toast.LENGTH_SHORT).show()

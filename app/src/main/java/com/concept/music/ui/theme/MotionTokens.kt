@@ -124,7 +124,7 @@ class ConceptOverlaySheetScope internal constructor(
     /**
      * 挂载于竖屏底部抽屉顶部手势横条或标题栏区域，支持跟手阻尼下滑与超阈值顺滑关闭
      */
-    fun Modifier.sheetVerticalDragGesture(): Modifier = this.pointerInput(Unit) {
+    fun Modifier.sheetVerticalDragGesture(): Modifier = this.pointerInput(this@ConceptOverlaySheetScope) {
         detectVerticalDragGestures(
             onVerticalDrag = { change, dragAmount ->
                 if (!canDrag()) return@detectVerticalDragGestures
@@ -217,7 +217,7 @@ fun ConceptAnimatedOverlaySheet(
                             coroutineScope {
                                 launch {
                                     dragOffsetY.animateTo(
-                                        targetValue = dragOffsetY.value + 420f,
+                                        targetValue = dragOffsetY.value + 1200f,
                                         animationSpec = ConceptMotion.spatialSheetSpring()
                                     )
                                 }

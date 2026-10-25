@@ -9,6 +9,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
+import coil.imageLoader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -38,6 +39,16 @@ object AudioCacheManager {
     private val _cacheSizeBytes = MutableStateFlow(0L)
     val cacheSizeBytes = _cacheSizeBytes.asStateFlow()
 
+    /**
+     * 构造唯一且隔离试听片段与完整正片的业务音频缓存 Key，彻底杜绝 trackercdn 路由同名导致的串歌与试听锁死
+     */
+    fun buildCacheKey(hash: String, qualityApiValue: String, isFreePart: Boolean = false): String {
+        val safeHash = hash.trim().uppercase().ifBlank { "UNKNOWN" }
+        val safeQuality = qualityApiValue.trim().lowercase().ifBlank { "128" }
+        val streamScope = if (isFreePart) "trial" else "full"
+        return "kg_v2_${safeHash}_${safeQuality}_$streamScope"
+    }
+
     @Synchronized
     fun getCache(context: Context): SimpleCache {
         simpleCache?.let { return it }
@@ -57,26 +68,36 @@ object AudioCacheManager {
     fun getDataSourceFactory(context: Context): DataSource.Factory {
         val cache = getCache(context)
         val upstreamFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent("Android15-1070-11440-46-0-NetMusic-wifi")
+            .setDefaultRequestProperties(mapOf("Referer" to "https://www.kugou.com/"))
             .setAllowCrossProtocolRedirects(true)
+            .setKeepPostFor302Redirects(true)
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(15_000)
 
-        // 剥离酷狗流媒体 URL 中每次动态变化的签名/时间戳与末尾 _s<随机数> 后缀，以稳定的哈希/资源名作为缓存 Key
+        // 优先使用 MediaItem.setCustomCacheKey 注入的业务唯一键；兜底提取 query 中的 hash/quality/IsFreePart
         val cacheKeyFactory = androidx.media3.datasource.cache.CacheKeyFactory { dataSpec ->
-            dataSpec.key?.takeIf { it.isNotBlank() } ?: run {
+            dataSpec.key?.takeIf { it.isNotBlank() && it != "kg_audio_" } ?: run {
                 val uri = dataSpec.uri
-                val path = uri.path
-                if (!path.isNullOrBlank()) {
+                val queryHash = uri.getQueryParameter("hash")
+                if (!queryHash.isNullOrBlank()) {
+                    val q = uri.getQueryParameter("quality").orEmpty().ifBlank { "128" }
+                    val free = uri.getQueryParameter("IsFreePart") == "1" || uri.getQueryParameter("is_free_part") == "1"
+                    buildCacheKey(queryHash, q, free)
+                } else {
+                    val path = uri.path.orEmpty()
                     val fileName = path.substringAfterLast('/')
                         .replace(Regex("_s\\d+(\\.[a-zA-Z0-9]+)$"), "$1")
-                    "kg_audio_$fileName"
-                } else {
-                    uri.toString().substringBefore('?')
+                        .trim()
+                    if (fileName.isNotBlank() && fileName != "priv_url" && fileName != "url" && fileName != "v2") {
+                        "kg_audio_$fileName"
+                    } else {
+                        "kg_audio_${uri.toString().substringBefore('?').hashCode().toUInt().toString(16)}"
+                    }
                 }
             }
         }
 
-        // 将单分片大小提升至 32MB，避免无损 FLAC 播放途中频繁触发 5MB 分片切分与 SQLite 同步落盘阻塞
         val cacheWriteDataSinkFactory = androidx.media3.datasource.cache.CacheDataSink.Factory()
             .setCache(cache)
             .setFragmentSize(32L * 1024L * 1024L)
@@ -90,32 +111,32 @@ object AudioCacheManager {
     }
 
     fun refreshCacheSize(context: Context) {
+        val appCtx = context.applicationContext
         scope.launch {
             val bytes = runCatching {
-                val cache = getCache(context)
-                val cacheSpace = cache.cacheSpace
-                if (cacheSpace > 0L) cacheSpace else calculateDirSize(cacheDir)
+                val cache = getCache(appCtx)
+                val audioBytes = cache.cacheSpace.takeIf { it > 0L } ?: calculateDirSize(cacheDir)
+                val imageBytes = calculateDirSize(File(appCtx.cacheDir, "image_cache"))
+                audioBytes + imageBytes
             }.getOrDefault(0L)
             _cacheSizeBytes.value = bytes.coerceAtLeast(0L)
         }
     }
 
     /**
-     * 一键清理流媒体音频缓存
+     * 安全清理流媒体音频缓存与图片磁盘缓存（严禁直接物理删除 SimpleCache 索引文件）
      */
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
     fun clearCache(context: Context, onComplete: (Boolean) -> Unit = {}) {
+        val appCtx = context.applicationContext
         scope.launch {
             val ok = runCatching {
-                val cache = getCache(context)
+                val cache = getCache(appCtx)
                 val keys = cache.keys.toList()
                 keys.forEach { key ->
                     runCatching { cache.removeResource(key) }
                 }
-                cacheDir?.listFiles()?.forEach { file ->
-                    if (file.isFile && !file.name.endsWith(".uid")) {
-                        runCatching { file.delete() }
-                    }
-                }
+                runCatching { appCtx.imageLoader.diskCache?.clear() }
                 _cacheSizeBytes.value = 0L
                 true
             }.getOrDefault(false)
@@ -139,7 +160,9 @@ object AudioCacheManager {
         if (dir == null || !dir.exists()) return 0L
         var total = 0L
         dir.walkTopDown().forEach { f ->
-            if (f.isFile) total += f.length()
+            if (f.isFile && !f.name.endsWith(".uid") && !f.name.endsWith(".exi")) {
+                total += f.length()
+            }
         }
         return total
     }

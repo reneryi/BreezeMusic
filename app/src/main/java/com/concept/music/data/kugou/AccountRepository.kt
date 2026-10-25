@@ -4,22 +4,24 @@ import com.concept.music.data.vip.ListeningGradeManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Clock
+import java.util.concurrent.atomic.AtomicLong
 
 class AccountRepository(private val store: SessionStore, private val auth: AuthRepository,
     private val transport: KugouTransport, private val clock: Clock = Clock.systemUTC()) {
-    private var generation = 0L
+    private val generation = AtomicLong(0L)
     private val refreshMutex = Mutex()
     private val mutable = MutableStateFlow(AccountState(accounts = store.accounts(), currentId = store.activeId()))
     val state = mutable.asStateFlow()
     init { select(store.activeId()) }
-    fun context(): AccountContext? = state.value.currentId?.let { id -> store.session(id)?.let { AccountContext(it, generation) } }
-    fun isCurrent(context: AccountContext): Boolean = state.value.currentId == context.session.userId && generation == context.generation
+    fun context(): AccountContext? = state.value.currentId?.let { id -> store.session(id)?.let { AccountContext(it, generation.get()) } }
+    fun isCurrent(context: AccountContext): Boolean = state.value.currentId == context.session.userId && generation.get() == context.generation
     fun ensureCurrent(context: AccountContext) { if (!isCurrent(context)) throw CancellationException("账号已切换") }
     fun select(id: String?) {
-        generation++
+        generation.incrementAndGet()
         store.setActive(id)
         val saved = store.accounts().find { it.userId == id }
         mutable.value = AccountState(store.accounts(), id, saved?.let { AccountProfile(it.userId, it.nickname, it.avatarUrl) },
@@ -37,13 +39,16 @@ class AccountRepository(private val store: SessionStore, private val auth: AuthR
     fun remove(id: String) {
         store.removeSession(id)
         store.saveAccounts(store.accounts().filterNot { it.userId == id })
-        if (id == state.value.currentId) select(null) else mutable.value = state.value.copy(accounts = store.accounts())
+        if (id == state.value.currentId) select(null) else mutable.update { it.copy(accounts = store.accounts()) }
     }
     fun setAuto(enabled: Boolean) { updateCurrent { it.copy(autoClaim = enabled) } }
     fun completed(context: AccountContext, day: String) { ensureCurrent(context); updateCurrent { it.copy(completedDay = day) } }
     private fun updateCurrent(transform: (SavedAccount) -> SavedAccount) {
-        store.saveAccounts(store.accounts().map { if (it.userId == state.value.currentId) transform(it) else it })
-        mutable.value = state.value.copy(accounts = store.accounts())
+        val curId = state.value.currentId ?: return
+        val existing = store.accounts()
+        if (existing.none { it.userId == curId }) return
+        store.saveAccounts(existing.map { if (it.userId == curId) transform(it) else it })
+        mutable.update { it.copy(accounts = store.accounts()) }
     }
     suspend fun restore() {
         val context = context() ?: return
@@ -51,12 +56,12 @@ class AccountRepository(private val store: SessionStore, private val auth: AuthR
         try {
             refreshSession(context)
             ensureCurrent(context)
-            mutable.value = state.value.copy(auth = AuthState.READY, message = null)
+            mutable.update { it.copy(auth = AuthState.READY, message = null) }
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
             ensureCurrent(context)
             if (e is ApiFailure && e.invalidSession) invalidate(context)
-            else mutable.value = state.value.copy(message = "会话刷新失败，可重试：${e.message}")
+            else mutable.update { it.copy(message = "会话刷新失败，可重试：${e.message}") }
         }
     }
     suspend fun refreshSession(context: AccountContext): KugouSession = refreshMutex.withLock {
@@ -65,6 +70,9 @@ class AccountRepository(private val store: SessionStore, private val auth: AuthR
         if (latest.token != context.session.token) return@withLock latest
         val refreshed = auth.refresh(latest)
         ensureCurrent(context)
+        if (store.accounts().none { it.userId == context.session.userId }) {
+            throw CancellationException("账号已移除")
+        }
         store.saveSession(refreshed.session)
         updateCurrent { it.copy(needsLogin = false) }
         refreshed.session
@@ -84,7 +92,7 @@ class AccountRepository(private val store: SessionStore, private val auth: AuthR
     private fun invalidate(context: AccountContext) {
         ensureCurrent(context)
         updateCurrent { it.copy(needsLogin = true) }
-        mutable.value = state.value.copy(auth = AuthState.NEEDS_LOGIN, profileFresh = false, message = "登录已失效，请重新登录")
+        mutable.update { it.copy(auth = AuthState.NEEDS_LOGIN, profileFresh = false, message = "登录已失效，请重新登录") }
     }
     suspend fun refreshProfile(context: AccountContext) {
         try {
@@ -100,9 +108,8 @@ class AccountRepository(private val store: SessionStore, private val auth: AuthR
             check(data.text("userid") == null || data.text("userid") == context.session.userId) { "账号资料不匹配" }
             val profile = AccountProfile(context.session.userId, data.text("nickname") ?: state.value.profile?.nickname ?: "酷狗用户", imageUrl(data.text("pic")))
             updateCurrent { it.copy(nickname = profile.nickname, avatarUrl = profile.avatarUrl, needsLogin = false) }
-            mutable.value = state.value.copy(profile = profile, auth = AuthState.READY, profileFresh = true, message = null)
+            mutable.update { it.copy(profile = profile, auth = AuthState.READY, profileFresh = true, message = null) }
 
-            // 同步 /v3/get_my_info (module/user_detail.js) 中的官方个人资料权威听歌时长（分钟）与等级
             val officialMinutes = listOfNotNull(
                 data.text("r_duration")?.toLongOrNull(),
                 data.text("duration")?.toLongOrNull(),
@@ -118,6 +125,6 @@ class AccountRepository(private val store: SessionStore, private val auth: AuthR
                 ListeningGradeManager.onOfficialProfileSynced(context.session.userId, officialMinutes, officialLevel)
             }
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { ensureCurrent(context); mutable.value = state.value.copy(profileFresh = false, message = "资料尚未刷新：${e.message}") }
+        catch (e: Exception) { ensureCurrent(context); mutable.update { it.copy(profileFresh = false, message = "资料尚未刷新：${e.message}") } }
     }
 }

@@ -1259,7 +1259,7 @@ private fun PosterLivePreviewCard(
                             if (selectedLines.isEmpty()) {
                                 Text("请在下方勾选 1~6 句歌词", color = textSecondary, fontSize = 13.sp)
                             } else {
-                                selectedLines.take(5).forEachIndexed { idx, ln ->
+                                selectedLines.take(6).forEachIndexed { idx, ln ->
                                     val isHighlight = idx == 0
                                     Column(
                                         horizontalAlignment = align,
@@ -1336,6 +1336,10 @@ private fun PosterLivePreviewCard(
                                     fontSize = 9.sp,
                                     fontFamily = FontFamily.Monospace
                                 )
+                                if (showWaveform) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    PosterWaveformBars(accent = accent)
+                                }
                             }
                         }
                     }
@@ -1766,7 +1770,20 @@ private suspend fun renderAndSavePosterToGallery(
             val photoRect = RectF(140f, 144f, width - 140f, 770f)
             drawClippedCover(canvas, coverBitmap, photoRect, 16f, template.accentColor)
 
-            // 胶片橙色日期戳
+            // 左下角曲名与歌手叠字 + 右下角胶片橙色日期戳（对齐预览视图）
+            val photoTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFFFFFFFF.toInt()
+                textSize = 38f
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+                setShadowLayer(8f, 0f, 3f, 0x99000000.toInt())
+            }
+            val photoArtistPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xDDFFFFFF.toInt()
+                textSize = 26f
+                setShadowLayer(6f, 0f, 2f, 0x99000000.toInt())
+            }
+            canvas.drawText(song.title.take(14), photoRect.left + 28f, photoRect.bottom - 64f, photoTitlePaint)
+            canvas.drawText(song.artist.take(18), photoRect.left + 28f, photoRect.bottom - 28f, photoArtistPaint)
             val stampPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = 0xFFFF8A2B.toInt()
                 textSize = 34f

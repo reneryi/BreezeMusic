@@ -1019,10 +1019,13 @@ fun NowPlayingSheet(
         )
     }
 
-        // 歌曲技术参数详情弹窗
-        if (showDetailSheet && songDetail != null) {
+        // 歌曲技术参数详情弹窗（即使 songDetail 尚未异步填充，也立即基于当前 Song 渲染参数卡片）
+        if (showDetailSheet) {
+            val effectiveDetail = songDetail ?: remember(song) {
+                com.concept.music.data.vip.VipManager.music.songDetail(song)
+            }
             SongDetailSheet(
-                detail = songDetail,
+                detail = effectiveDetail,
                 onDismiss = { showDetailSheet = false }
             )
         }
@@ -2658,8 +2661,9 @@ private fun FullWidthLyricPreviewSection(
     LaunchedEffect(currentPositionMs, currentLyricIndex) {
         sampledPositionMs = positionProvider()
     }
-    LaunchedEffect(isPlaying, currentLyricIndex, lyricWordByWord, positionProvider) {
-        if (isPlaying && lyricWordByWord) {
+    val currentLineHasWordTiming = lyricData.lines.getOrNull(currentLyricIndex)?.hasWordTiming == true
+    LaunchedEffect(isPlaying, currentLyricIndex, lyricWordByWord, currentLineHasWordTiming, positionProvider) {
+        if (isPlaying && lyricWordByWord && currentLineHasWordTiming) {
             while (isActive) {
                 withFrameMillis {
                     sampledPositionMs = positionProvider()
@@ -2936,6 +2940,8 @@ private fun PlayerControlsSection(
     val context = LocalContext.current
     var isInteractingWithBar by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
+    val latestDurationMs by rememberUpdatedState(durationMs)
+    val latestOnSeekTo by rememberUpdatedState(onSeekTo)
     var sampledPositionMs by remember { mutableLongStateOf(positionProvider()) }
 
     LaunchedEffect(currentPositionMs) {
@@ -2943,12 +2949,12 @@ private fun PlayerControlsSection(
             sampledPositionMs = positionProvider()
         }
     }
+    // 消除每 8ms 重建 animateFloatAsState 协程的 120Hz 全树重组风暴，按 60ms 节流采样驱动平滑进度
     LaunchedEffect(isPlaying, isInteractingWithBar, positionProvider) {
         if (isPlaying && !isInteractingWithBar) {
             while (isActive) {
-                withFrameMillis {
-                    sampledPositionMs = positionProvider()
-                }
+                sampledPositionMs = positionProvider()
+                kotlinx.coroutines.delay(60L)
             }
         } else if (!isInteractingWithBar) {
             sampledPositionMs = positionProvider()
@@ -2960,16 +2966,7 @@ private fun PlayerControlsSection(
         (livePositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
 
-    val targetFraction = if (isInteractingWithBar) dragFraction else currentFraction
-    val effectiveFraction by animateFloatAsState(
-        targetValue = targetFraction,
-        animationSpec = if (isInteractingWithBar) {
-            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh)
-        } else {
-            tween(durationMillis = 140, easing = LinearEasing)
-        },
-        label = "cometProgressSmoothFraction"
-    )
+    val effectiveFraction = if (isInteractingWithBar) dragFraction else currentFraction
     val displayCurrentMs = if (isInteractingWithBar) (dragFraction * durationMs).toLong() else livePositionMs
 
     Column(
@@ -3001,7 +2998,10 @@ private fun PlayerControlsSection(
                 dragFraction = newFrac
             },
             onDragEnd = {
-                onSeekTo((dragFraction * durationMs).toLong())
+                latestOnSeekTo((dragFraction * latestDurationMs).toLong())
+                isInteractingWithBar = false
+            },
+            onDragCancel = {
                 isInteractingWithBar = false
             }
         )
@@ -3099,8 +3099,13 @@ internal fun CometTailProgressBar(
     compact: Boolean = false,
     onDragStart: (Float) -> Unit,
     onDrag: (Float) -> Unit,
-    onDragEnd: () -> Unit
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit = onDragEnd
 ) {
+    val currentOnDragStart by rememberUpdatedState(onDragStart)
+    val currentOnDrag by rememberUpdatedState(onDrag)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+    val currentOnDragCancel by rememberUpdatedState(onDragCancel)
     val trackHeightDp by animateDpAsState(
         targetValue = if (compact) {
             if (isInteracting) 5.8.dp else 3.4.dp
@@ -3160,9 +3165,11 @@ internal fun CometTailProgressBar(
                     onPress = { offset ->
                         val w = size.width.toFloat().coerceAtLeast(1f)
                         val startF = (offset.x / w).coerceIn(0f, 1f)
-                        onDragStart(startF)
+                        currentOnDragStart(startF)
                         if (tryAwaitRelease()) {
-                            onDragEnd()
+                            currentOnDragEnd()
+                        } else {
+                            currentOnDragCancel()
                         }
                     }
                 )
@@ -3171,15 +3178,15 @@ internal fun CometTailProgressBar(
                 detectHorizontalDragGestures(
                     onDragStart = { offset ->
                         val w = size.width.toFloat().coerceAtLeast(1f)
-                        onDragStart((offset.x / w).coerceIn(0f, 1f))
+                        currentOnDragStart((offset.x / w).coerceIn(0f, 1f))
                     },
                     onHorizontalDrag = { change, _ ->
                         change.consume()
                         val w = size.width.toFloat().coerceAtLeast(1f)
-                        onDrag((change.position.x / w).coerceIn(0f, 1f))
+                        currentOnDrag((change.position.x / w).coerceIn(0f, 1f))
                     },
-                    onDragEnd = { onDragEnd() },
-                    onDragCancel = { onDragEnd() }
+                    onDragEnd = { currentOnDragEnd() },
+                    onDragCancel = { currentOnDragCancel() }
                 )
             },
         contentAlignment = Alignment.Center
@@ -4761,6 +4768,8 @@ private fun LyricPageMinimalBottomBar(
 ) {
     var isDragging by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
+    val latestDurationMs by rememberUpdatedState(durationMs)
+    val latestOnSeekTo by rememberUpdatedState(onSeekTo)
     var sampledPositionMs by remember { mutableLongStateOf(positionProvider()) }
 
     LaunchedEffect(currentPositionMs) {
@@ -4771,9 +4780,8 @@ private fun LyricPageMinimalBottomBar(
     LaunchedEffect(isPlaying, isDragging, positionProvider) {
         if (isPlaying && !isDragging) {
             while (isActive) {
-                withFrameMillis {
-                    sampledPositionMs = positionProvider()
-                }
+                sampledPositionMs = positionProvider()
+                kotlinx.coroutines.delay(60L)
             }
         } else if (!isDragging) {
             sampledPositionMs = positionProvider()
@@ -4785,16 +4793,7 @@ private fun LyricPageMinimalBottomBar(
         (livePositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
 
-    val targetFraction = if (isDragging) dragFraction else currentFraction
-    val effectiveFraction by animateFloatAsState(
-        targetValue = targetFraction,
-        animationSpec = if (isDragging) {
-            spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessHigh)
-        } else {
-            tween(durationMillis = 140, easing = LinearEasing)
-        },
-        label = "lyricBarSmoothFraction"
-    )
+    val effectiveFraction = if (isDragging) dragFraction else currentFraction
     val displayTimeMs = if (isDragging) (dragFraction * durationMs).toLong() else livePositionMs
 
     val railHeightDp by animateDpAsState(
@@ -4892,7 +4891,9 @@ private fun LyricPageMinimalBottomBar(
                                 isDragging = true
                                 dragFraction = (offset.x / w).coerceIn(0f, 1f)
                                 if (tryAwaitRelease()) {
-                                    onSeekTo((dragFraction * durationMs).toLong())
+                                    latestOnSeekTo((dragFraction * latestDurationMs).toLong())
+                                    isDragging = false
+                                } else {
                                     isDragging = false
                                 }
                             }
@@ -4911,7 +4912,7 @@ private fun LyricPageMinimalBottomBar(
                                 dragFraction = (change.position.x / w).coerceIn(0f, 1f)
                             },
                             onDragEnd = {
-                                onSeekTo((dragFraction * durationMs).toLong())
+                                latestOnSeekTo((dragFraction * latestDurationMs).toLong())
                                 isDragging = false
                             },
                             onDragCancel = {

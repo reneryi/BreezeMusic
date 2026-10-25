@@ -28,7 +28,7 @@ import javax.crypto.spec.SecretKeySpec
  */
 object KugouCsccReporter {
     private const val TAG = "KugouCSCC"
-    private const val CSCC_HOST = "http://d.kugou.com"
+    private const val CSCC_HOST = "https://d.kugou.com"
     private const val CSCC_VERSION = "10597"
     private const val CSCC_APPKEY = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
     private const val QRYDID_SALT = "pbKC7zn{4U*ydo2M1Rir"
@@ -36,7 +36,7 @@ object KugouCsccReporter {
     // Lite 客户端公钥
     private const val PUBLIC_KEY_LITE = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDECi0Np2UR87scwrvTr72L6oO01rBbbBPriSDFPxr3Z5syug0O24QyQO8bg27+0+4kBzTBTBOZ/WWU0WryL1JSXRTXLgFVxtzIY41Pe7lPOgsfTCn5kZcvKhYKJesKnnJDNr5/abvTGf+rHG3YRwsCHcQ08/q6ifSioBszvb3QiwIDAQAB"
 
-    private val client = OkHttpClient.Builder()
+    private val client = NetworkClientProvider.baseClient.newBuilder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
@@ -126,7 +126,7 @@ object KugouCsccReporter {
         // 若为 Hash，向酷狗快速反查真实 audio_id
         if (song.hash.isNotBlank()) {
             return@withContext runCatching {
-                val url = "http://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash=${song.hash}".toHttpUrl()
+                val url = "https://m.kugou.com/app/i/getSongInfo.php?cmd=playInfo&hash=${song.hash}".toHttpUrl()
                 val req = Request.Builder().url(url).build()
                 client.newCall(req).execute().use { resp ->
                     val bodyStr = resp.body?.string().orEmpty()
@@ -283,16 +283,20 @@ object KugouCsccReporter {
 
     private fun deflate(data: ByteArray): ByteArray {
         val deflater = Deflater()
-        deflater.setInput(data)
-        deflater.finish()
-        val out = ByteArrayOutputStream()
-        val buffer = ByteArray(1024)
-        while (!deflater.finished()) {
-            val count = deflater.deflate(buffer)
-            out.write(buffer, 0, count)
+        return try {
+            deflater.setInput(data)
+            deflater.finish()
+            val out = ByteArrayOutputStream()
+            val buffer = ByteArray(1024)
+            while (!deflater.finished()) {
+                val count = deflater.deflate(buffer)
+                if (count <= 0 && deflater.needsInput()) break
+                out.write(buffer, 0, count)
+            }
+            out.toByteArray()
+        } finally {
+            deflater.end()
         }
-        deflater.end()
-        return out.toByteArray()
     }
 
     private fun aesCbcEncrypt(data: ByteArray, key: ByteArray, iv: ByteArray): ByteArray {

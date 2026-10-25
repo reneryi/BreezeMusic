@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 enum class ReverbMode(val label: String, val preset: Short) {
@@ -413,6 +414,9 @@ object AudioEffectManager {
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var presetReverb: PresetReverb? = null
 
+    @Volatile
+    var onAuxEffectChanged: ((effectId: Int, sendLevel: Float) -> Unit)? = null
+
     private val _state = MutableStateFlow(AudioEffectState())
     val state = _state.asStateFlow()
 
@@ -431,12 +435,14 @@ object AudioEffectManager {
     fun refreshOnlineViperEffects() {
         if (_state.value.syncingOnlineEffects) return
         ioScope.launch {
-            _state.value = _state.value.copy(syncingOnlineEffects = true)
+            _state.update { it.copy(syncingOnlineEffects = true) }
             val fetched = runCatching { VipManager.music.fetchViperSoundEffects() }.getOrDefault(emptyMap())
-            _state.value = _state.value.copy(
-                onlineEffectMeta = if (fetched.isNotEmpty()) fetched else _state.value.onlineEffectMeta,
-                syncingOnlineEffects = false
-            )
+            _state.update {
+                it.copy(
+                    onlineEffectMeta = if (fetched.isNotEmpty()) fetched else it.onlineEffectMeta,
+                    syncingOnlineEffects = false
+                )
+            }
         }
     }
 
@@ -864,11 +870,8 @@ object AudioEffectManager {
 
         virtualizer?.let { vz ->
             runCatching {
-                val active = s.virtualizerStrength > 0
-                if (active && vz.strengthSupported) {
-                    vz.setStrength(s.virtualizerStrength.toShort())
-                }
-                vz.enabled = active
+                // 由自研 ConceptMasteringAudioProcessor 统一负责 M/S 立体声场扩展，避免硬件 Virtualizer 叠加引起双重梳状滤波失真
+                vz.enabled = false
             }
         }
 
@@ -887,6 +890,7 @@ object AudioEffectManager {
                 val active = s.reverbMode != ReverbMode.NONE
                 pr.preset = s.reverbMode.preset
                 pr.enabled = active
+                onAuxEffectChanged?.invoke(if (active) pr.id else 0, if (active) 0.36f else 0f)
             }
         }
     }
@@ -917,6 +921,7 @@ object AudioEffectManager {
         virtualizer = null
         loudnessEnhancer = null
         presetReverb = null
+        onAuxEffectChanged?.invoke(0, 0f)
     }
 
     private fun loadFromPrefs() {

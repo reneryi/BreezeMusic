@@ -2,6 +2,7 @@ package com.concept.music.data.kugou
 
 import com.concept.music.data.model.LyricData
 import com.concept.music.data.model.Song
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Base64
@@ -17,20 +18,53 @@ class LyricRepository(
         }
     }
 
+    internal fun putCacheForTest(key: String, data: LyricData) {
+        synchronized(cache) {
+            cache[key] = data
+        }
+    }
+
+    fun clearCache() {
+        synchronized(cache) {
+            cache.clear()
+        }
+    }
+
+    private fun isPredominantlyChinese(data: LyricData?): Boolean {
+        if (data == null || data.lines.isEmpty()) return false
+        var totalLetters = 0
+        var cjkCount = 0
+        var kanaHangulCount = 0
+        for (line in data.lines) {
+            for (ch in line.text) {
+                if (ch.isWhitespace()) continue
+                if (ch in '\u3040'..'\u30ff' || ch in '\uac00'..'\ud7af') {
+                    kanaHangulCount++
+                    totalLetters++
+                } else if (ch in '\u4e00'..'\u9fff') {
+                    cjkCount++
+                    totalLetters++
+                } else if (ch.isLetter()) {
+                    totalLetters++
+                }
+            }
+        }
+        if (totalLetters == 0 || kanaHangulCount > 0) return false
+        return cjkCount.toFloat() / totalLetters.toFloat() >= 0.60f
+    }
+
     suspend fun getLyric(song: Song): LyricData {
         val cacheKey = song.id.ifBlank { song.hash }
         if (cacheKey.isNotBlank()) {
             synchronized(cache) {
-                cache[cacheKey]?.let { return it }
+                cache[cacheKey]?.takeIf { it.lines.isNotEmpty() }?.let { return it }
             }
         }
 
         return withContext(Dispatchers.IO) {
             val candidates = searchLyricCandidates(song)
             if (candidates.isEmpty()) {
-                val empty = LyricData()
-                if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = empty }
-                return@withContext empty
+                return@withContext LyricData()
             }
 
             fun scoreLyricData(data: LyricData?): Int {
@@ -47,9 +81,12 @@ class LyricRepository(
             var bestData = downloadLyric(firstCandidate.id, firstCandidate.accesskey, fmt = "krc")
             var bestScore = scoreLyricData(bestData)
 
-            // 2. 若首个候选缺少翻译或音译注音（例如日韩歌/外语歌/粤语歌），扩大候选搜索范围择优挑选含官方翻译与注音的 KRC
+            // 2. 若首个候选为外语/粤语歌且缺少翻译或音译注音，扩大候选搜索范围择优挑选含官方翻译与注音的 KRC；
+            //    对纯中文歌曲（中文占比 >= 60% 且无假名/韩文）直接采纳首个有效 KRC，避免无意义串行下载 6 次
             val maxCandidatesToCheck = 6
-            if ((bestData == null || !bestData.hasTranslation || !bestData.hasPhonetic) && candidates.size > 1) {
+            val needExtraLayers = bestData == null ||
+                (!isPredominantlyChinese(bestData) && (!bestData.hasTranslation || !bestData.hasPhonetic))
+            if (needExtraLayers && candidates.size > 1) {
                 for (i in 1 until candidates.size.coerceAtMost(maxCandidatesToCheck)) {
                     val alt = candidates[i]
                     val altData = downloadLyric(alt.id, alt.accesskey, fmt = "krc") ?: continue
@@ -59,7 +96,6 @@ class LyricRepository(
                         bestScore = altScore
                         if (altData.hasTranslation && altData.hasPhonetic) break
                     } else if (bestData != null && altData.lines.size == bestData.lines.size) {
-                        // 合并同一歌词不同候选的翻译层与音译层
                         val needTrans = !bestData.hasTranslation && altData.hasTranslation
                         val needPhonetic = !bestData.hasPhonetic && altData.hasPhonetic
                         if (needTrans || needPhonetic) {
@@ -83,10 +119,12 @@ class LyricRepository(
                 return@withContext bestData
             }
 
-            // 3. KRC 不可用时降级 LRC
+            // 3. KRC 不可用时降级 LRC（仅非空歌词才写入 LRU 缓存，杜绝网络抖动或取消协程导致空歌词永久投毒）
             val lrcData = downloadLyric(firstCandidate.id, firstCandidate.accesskey, fmt = "lrc")
             val finalData = lrcData ?: LyricData()
-            if (cacheKey.isNotBlank()) synchronized(cache) { cache[cacheKey] = finalData }
+            if (cacheKey.isNotBlank() && finalData.lines.isNotEmpty()) {
+                synchronized(cache) { cache[cacheKey] = finalData }
+            }
             finalData
         }
     }
@@ -131,6 +169,8 @@ class LyricRepository(
                 val accesskey = it.text("accesskey") ?: return@mapNotNull null
                 LyricCandidate(id, accesskey)
             }
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Exception) {
             emptyList()
         }
@@ -160,6 +200,8 @@ class LyricRepository(
             }
             val raw = runCatching { String(Base64.getMimeDecoder().decode(content), Charsets.UTF_8) }.getOrNull() ?: content
             KrcDecoder.parseLrcText(raw)
+        } catch (c: CancellationException) {
+            throw c
         } catch (_: Exception) {
             null
         }

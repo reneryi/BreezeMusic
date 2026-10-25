@@ -209,6 +209,8 @@ fun MainContent(
             curRoutePattern == "album_detail/{albumId}" &&
             currentEntry?.arguments?.getString("albumId") == targetRoute.substringAfter("album_detail/")
 
+        showCommentsScreen = false
+        showViperEffectOverlay = false
         if (isSameArtist || isSameAlbum) {
             if (wasInPlayer) {
                 reopenNowPlayingOnSameRouteBack = true
@@ -705,35 +707,7 @@ fun MainContent(
                     AccountsScreen(libraryViewModel, onBack = { navController.popBackStack() }, onLogin = openLogin)
                 }
 
-                // 独立全屏评论页面路由
-                composable("comments") {
-                    val fullState by musicPlayerViewModel.uiState.collectAsState()
-                    val userAvatar = VipManager.accounts.state.value.profile?.avatarUrl ?: ""
-                    CommentsScreen(
-                        song = fullState.commentTargetSong ?: fullState.currentSong,
-                        comments = fullState.comments,
-                        totalCount = fullState.commentCount,
-                        loading = fullState.commentsLoading,
-                        currentType = fullState.commentType,
-                        hasMore = fullState.commentsHasMore,
-                        currentUserAvatar = userAvatar,
-                        onBack = {
-                            musicPlayerViewModel.closeCommentsForTargetSong()
-                            navController.popBackStack()
-                        },
-                        onTabSelected = { musicPlayerViewModel.setCommentType(it) },
-                        onLoadMore = { musicPlayerViewModel.loadComments(isRefresh = false) },
-                        onRefresh = { musicPlayerViewModel.loadComments(isRefresh = true) },
-                        onLoadReplies = { musicPlayerViewModel.loadCommentReplies(it) },
-                        onSyncReplyCount = { cid, cnt, replies ->
-                            musicPlayerViewModel.syncCommentReplyCount(cid, cnt, replies)
-                        },
-                        onPostComment = { content, replyId, replyUser, onResult ->
-                            musicPlayerViewModel.postComment(content, replyId, replyUser, onResult)
-                        },
-                        onLikeComment = { musicPlayerViewModel.likeComment(it) }
-                    )
-                }
+
             }
         }
 
@@ -907,7 +881,8 @@ fun MainContent(
             ) + fadeOut(tween(durationMillis = 300, easing = ConceptMotion.GentleSpatialExitEasing))
         ) {
             val playerUiState by musicPlayerViewModel.uiState.collectAsState()
-            val userAvatar = VipManager.accounts.state.value.profile?.avatarUrl ?: ""
+            val accountSnapshot by VipManager.accounts.state.collectAsState()
+            val userAvatar = accountSnapshot.profile?.avatarUrl ?: ""
             CommentsScreen(
                 song = playerUiState.commentTargetSong ?: playerUiState.currentSong,
                 comments = playerUiState.comments,
@@ -995,13 +970,25 @@ fun MainContent(
         if (showCreatePlaylistFromGlobal) {
             CreatePlaylistDialog(
                 onDismiss = { showCreatePlaylistFromGlobal = false },
-                onConfirm = { name ->
-                    libraryViewModel.createPlaylist(name) { success, msg ->
-                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                        if (success) {
-                            showCreatePlaylistFromGlobal = false
+                onConfirmWithCallback = { name, onComplete ->
+                    val pendingSong = songToAddToPlaylist
+                    libraryViewModel.createPlaylist(
+                        name = name,
+                        onCreatedPlaylist = { createdPl ->
+                            if (createdPl != null && pendingSong != null) {
+                                songToAddToPlaylist = null
+                                libraryViewModel.addSongToPlaylist(createdPl.listId, pendingSong, createdPl.title) { _, addMsg ->
+                                    Toast.makeText(context, addMsg, Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        onResult = { success, msg ->
+                            if (!success || pendingSong == null) {
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            }
+                            onComplete(success)
                         }
-                    }
+                    )
                 }
             )
         }

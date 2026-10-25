@@ -11,8 +11,11 @@ import com.concept.music.data.model.Song
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import java.io.File
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -107,16 +110,23 @@ fun deduplicateAndMergeSongs(songs: List<Song>): List<Song> {
     return result
 }
 
-class PlaybackHistoryRepository(private val context: Context) {
-    private val prefs = context.getSharedPreferences("play_history", Context.MODE_PRIVATE)
-    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+open class PlaybackHistoryRepository(private val context: Context?) {
+    private val prefs: SharedPreferences? = try {
+        context?.applicationContext?.getSharedPreferences("play_history", Context.MODE_PRIVATE)
+    } catch (_: Exception) {
+        null
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val memoryHistory = ConcurrentHashMap<String, List<Song>>()
 
-    fun get(userId: String?): List<Song> {
+    open fun get(userId: String?): List<Song> {
         val key = "songs_${userId ?: "guest"}"
         memoryHistory[key]?.let { return it }
         return runCatching {
-            val raw = prefs.getString(key, "[]") ?: "[]"
+            val sp = prefs ?: return emptyList()
+            val raw = sp.getString(key, "[]") ?: "[]"
             val parsed = KugouSigner.gson.fromJson<List<Song>>(raw, object : TypeToken<List<Song>>() {}.type) ?: emptyList()
             val deduped = deduplicateAndMergeSongs(parsed)
             memoryHistory[key] = deduped
@@ -124,7 +134,8 @@ class PlaybackHistoryRepository(private val context: Context) {
         }.getOrDefault(emptyList())
     }
 
-    fun add(userId: String?, song: Song) {
+    @Synchronized
+    open fun add(userId: String?, song: Song) {
         val key = "songs_${userId ?: "guest"}"
         val current = get(userId)
         val matchedExisting = current.firstOrNull { isSameMusicTrack(it, song) }
@@ -133,35 +144,48 @@ class PlaybackHistoryRepository(private val context: Context) {
         memoryHistory[key] = updated
         ioScope.launch {
             runCatching {
-                prefs.edit().putString(key, KugouSigner.gson.toJson(updated)).apply()
+                prefs?.edit()?.putString(key, KugouSigner.gson.toJson(updated))?.apply()
             }
         }
     }
 
-    fun clear(userId: String?) {
+    @Synchronized
+    open fun clear(userId: String?) {
         val key = "songs_${userId ?: "guest"}"
         memoryHistory.remove(key)
         ioScope.launch {
-            prefs.edit().remove(key).apply()
+            prefs?.edit()?.remove(key)?.apply()
         }
     }
 }
 
 /**
  * 发现页、歌单、榜单与电台曲目本地持久化秒开缓存 (Stale-While-Revalidate)
- * - 冷启动或切换模块时 0ms 同步返回内存或本地高质量快照
- * - 所有 JSON 序列化落盘均在后台 IO 线程池异步完成，杜绝主线程卡顿掉帧
+ * - 使用单线程串行调度器保证并发落盘严格保序；
+ * - 歌单详情缓存拆分为独立 JSON 文件 + LRU 淘汰，防止单 SharedPreferences XML 膨胀引发 Activity.onStop() ANR；
+ * - 支持 allowEmpty=true 覆盖写入空列表，修复取消最后一条收藏或删除最后一个歌单后重启复活的 Bug。
  */
 class DiscoverLocalCache(context: Context? = null) {
+    private val appCtx: Context? = try { context?.applicationContext } catch (_: Exception) { null }
     private val prefs: SharedPreferences? = try {
-        context?.applicationContext?.getSharedPreferences("concept_discover_swr_cache_v3", Context.MODE_PRIVATE)
+        appCtx?.getSharedPreferences("concept_discover_swr_cache_v3", Context.MODE_PRIVATE)
+    } catch (_: Exception) {
+        null
+    }
+    private val playlistCacheDir: File? = try {
+        appCtx?.cacheDir?.resolve("swr_playlists")?.apply { if (!exists()) mkdirs() }
     } catch (_: Exception) {
         null
     }
 
-    private val cacheIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val cacheIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 
-    private val memorySongListMap = ConcurrentHashMap<String, List<Song>>()
+    private val memorySongListMap: MutableMap<String, List<Song>> = Collections.synchronizedMap(
+        object : LinkedHashMap<String, List<Song>>(25, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Song>>?): Boolean = size > 25
+        }
+    )
     private val memoryRankList = ConcurrentHashMap<String, List<RankItem>>()
     private val memoryFmChannelList = ConcurrentHashMap<String, List<FmChannel>>()
     private val memoryPlaylistList = ConcurrentHashMap<String, List<Playlist>>()
@@ -192,27 +216,55 @@ class DiscoverLocalCache(context: Context? = null) {
         )
     }
 
-    private fun getSongList(key: String): List<Song> {
-        memorySongListMap[key]?.takeIf { it.isNotEmpty() }?.let { return it }
+    private fun playlistFileFor(key: String): File? {
+        val dir = playlistCacheDir ?: return null
+        val safeName = key.replace(Regex("[^a-zA-Z0-9_.-]"), "_")
+        return File(dir, "$safeName.json")
+    }
+
+    private fun getSongList(key: String, useDedicatedFile: Boolean = false): List<Song> {
+        memorySongListMap[key]?.let { return it }
         return runCatching {
-            val sp = prefs ?: return emptyList()
-            val raw = sp.getString(key, null) ?: return emptyList()
+            val raw = if (useDedicatedFile && playlistCacheDir != null) {
+                val f = playlistFileFor(key)
+                if (f != null && f.exists()) f.readText(Charsets.UTF_8) else prefs?.getString(key, null)
+            } else {
+                prefs?.getString(key, null)
+            } ?: return emptyList()
             val rawList: List<Song> = KugouSigner.gson.fromJson(raw, songListType) ?: emptyList()
             val list = rawList.map { sanitizeCachedSong(it) }
-            if (list.isNotEmpty()) {
-                memorySongListMap[key] = list
-            }
+            memorySongListMap[key] = list
             list
         }.getOrDefault(emptyList())
     }
 
-    private fun saveSongList(key: String, songs: List<Song>, maxPersistCount: Int = 120) {
-        if (songs.isEmpty()) return
+    private fun saveSongList(
+        key: String,
+        songs: List<Song>,
+        maxPersistCount: Int = 120,
+        allowEmpty: Boolean = false,
+        useDedicatedFile: Boolean = false
+    ) {
+        if (songs.isEmpty() && !allowEmpty) return
         val trimmed = songs.take(maxPersistCount)
         memorySongListMap[key] = trimmed
         cacheIoScope.launch {
             runCatching {
-                prefs?.edit()?.putString(key, KugouSigner.gson.toJson(trimmed))?.apply()
+                val json = KugouSigner.gson.toJson(trimmed)
+                if (useDedicatedFile && playlistCacheDir != null) {
+                    val f = playlistFileFor(key)
+                    if (f != null) {
+                        f.writeText(json, Charsets.UTF_8)
+                        // 淘汰超过 30 个歌单的旧文件并清理旧版 SharedPreferences 中的同名大体积项
+                        prefs?.edit()?.remove(key)?.apply()
+                        val files = playlistCacheDir.listFiles()?.filter { it.isFile && it.name.endsWith(".json") }.orEmpty()
+                        if (files.size > 30) {
+                            files.sortedBy { it.lastModified() }.take(files.size - 30).forEach { runCatching { it.delete() } }
+                        }
+                    }
+                } else {
+                    prefs?.edit()?.putString(key, json)?.apply()
+                }
             }
         }
     }
@@ -282,39 +334,37 @@ class DiscoverLocalCache(context: Context? = null) {
     }
 
     fun getRankSongs(rankId: Int): List<Song> =
-        getSongList("rank_songs_$rankId")
+        getSongList("rank_songs_$rankId", useDedicatedFile = true)
 
     fun saveRankSongs(rankId: Int, songs: List<Song>) =
-        saveSongList("rank_songs_$rankId", songs, maxPersistCount = 150)
+        saveSongList("rank_songs_$rankId", songs, maxPersistCount = 150, useDedicatedFile = true)
 
     fun getFmChannelSongs(channelId: String): List<Song> =
-        getSongList("fm_channel_songs_$channelId")
+        getSongList("fm_channel_songs_$channelId", useDedicatedFile = true)
 
     fun saveFmChannelSongs(channelId: String, songs: List<Song>) =
-        saveSongList("fm_channel_songs_$channelId", songs, maxPersistCount = 60)
+        saveSongList("fm_channel_songs_$channelId", songs, maxPersistCount = 60, useDedicatedFile = true)
 
     fun getPlaylistSongs(playlistId: String): List<Song> =
-        getSongList("playlist_songs_$playlistId")
+        getSongList("playlist_songs_$playlistId", useDedicatedFile = true)
 
-    fun savePlaylistSongs(playlistId: String, songs: List<Song>) =
-        saveSongList("playlist_songs_$playlistId", songs, maxPersistCount = 200)
+    fun savePlaylistSongs(playlistId: String, songs: List<Song>, allowEmpty: Boolean = true) =
+        saveSongList("playlist_songs_$playlistId", songs, maxPersistCount = 200, allowEmpty = allowEmpty, useDedicatedFile = true)
 
     fun getUserPlaylists(userId: String?): List<Playlist> {
         val key = "user_playlists_${userId ?: "guest"}"
-        memoryPlaylistList[key]?.takeIf { it.isNotEmpty() }?.let { return it }
+        memoryPlaylistList[key]?.let { return it }
         return runCatching {
             val sp = prefs ?: return emptyList()
             val raw = sp.getString(key, null) ?: return emptyList()
             val list: List<Playlist> = KugouSigner.gson.fromJson(raw, playlistListType) ?: emptyList()
-            if (list.isNotEmpty()) {
-                memoryPlaylistList[key] = list
-            }
+            memoryPlaylistList[key] = list
             list
         }.getOrDefault(emptyList())
     }
 
-    fun saveUserPlaylists(userId: String?, playlists: List<Playlist>) {
-        if (playlists.isEmpty()) return
+    fun saveUserPlaylists(userId: String?, playlists: List<Playlist>, allowEmpty: Boolean = true) {
+        if (playlists.isEmpty() && !allowEmpty) return
         val key = "user_playlists_${userId ?: "guest"}"
         memoryPlaylistList[key] = playlists
         cacheIoScope.launch {
@@ -327,6 +377,6 @@ class DiscoverLocalCache(context: Context? = null) {
     fun getLikedSongs(userId: String?): List<Song> =
         getSongList("liked_songs_${userId ?: "guest"}")
 
-    fun saveLikedSongs(userId: String?, songs: List<Song>) =
-        saveSongList("liked_songs_${userId ?: "guest"}", songs, maxPersistCount = 200)
+    fun saveLikedSongs(userId: String?, songs: List<Song>, allowEmpty: Boolean = true) =
+        saveSongList("liked_songs_${userId ?: "guest"}", songs, maxPersistCount = 200, allowEmpty = allowEmpty)
 }

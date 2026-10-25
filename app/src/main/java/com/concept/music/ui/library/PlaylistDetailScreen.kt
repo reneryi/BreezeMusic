@@ -119,18 +119,24 @@ fun PlaylistDetailScreen(
         else filteredAndSortedSongs.indexOfFirst { s -> viewModel.isSameSong(s, currentSong) }
     }
 
-    val currentPlaylist = remember(playlists, playlistId, songs) {
+    var lastKnownPlaylist by remember(playlistId) { mutableStateOf<Playlist?>(null) }
+    val currentPlaylist = remember(playlists, playlistId, songs, lastKnownPlaylist) {
         val matched = when (playlistId) {
             "like" -> playlists.firstOrNull { it.isLiked } ?: Playlist("like", "我喜欢的音乐", isLiked = true)
             "history" -> Playlist("history", "最近播放")
             else -> playlists.firstOrNull {
                 it.id == playlistId || it.globalCollectionId == playlistId || it.listCreateListid == playlistId
-            }
+            } ?: lastKnownPlaylist?.copy(isFavorite = false)
         }
         if (matched != null && matched.coverUrl.isBlank() && songs.isNotEmpty()) {
             matched.copy(coverUrl = songs.firstOrNull()?.coverUrl.orEmpty())
         } else {
             matched
+        }
+    }
+    LaunchedEffect(currentPlaylist) {
+        if (currentPlaylist != null && (lastKnownPlaylist == null || currentPlaylist.isFavorite)) {
+            lastKnownPlaylist = currentPlaylist
         }
     }
 
@@ -821,13 +827,37 @@ fun PlaylistDetailScreen(
     if (showCreateDialogFromAdd) {
         CreatePlaylistDialog(
             onDismiss = { showCreateDialogFromAdd = false },
-            onConfirm = { name ->
-                viewModel.createPlaylist(name) { success, msg ->
-                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                    if (success) {
-                        showCreateDialogFromAdd = false
+            onConfirmWithCallback = { name, onComplete ->
+                val pendingSingle = songToAddToPlaylist
+                val pendingBatch = if (isMultiSelectMode) songs.filter { it.id in selectedSongIds } else emptyList()
+                viewModel.createPlaylist(
+                    name = name,
+                    onCreatedPlaylist = { createdPl ->
+                        if (createdPl != null) {
+                            when {
+                                pendingSingle != null -> {
+                                    songToAddToPlaylist = null
+                                    viewModel.addSongToPlaylist(createdPl.listId, pendingSingle, createdPl.title) { _, addMsg ->
+                                        Toast.makeText(context, addMsg, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                pendingBatch.isNotEmpty() -> {
+                                    isMultiSelectMode = false
+                                    selectedSongIds = emptySet()
+                                    viewModel.addSongsToPlaylistBatch(createdPl.listId, pendingBatch, createdPl.title) { _, addMsg ->
+                                        Toast.makeText(context, addMsg, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    onResult = { success, msg ->
+                        if (!success || (pendingSingle == null && pendingBatch.isEmpty())) {
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        }
+                        onComplete(success)
                     }
-                }
+                )
             }
         )
     }

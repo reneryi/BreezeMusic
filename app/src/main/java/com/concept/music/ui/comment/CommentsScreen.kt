@@ -436,8 +436,25 @@ fun CommentsScreen(
     // 独立楼中楼详情页目标根评论 ID（仅以 ID 驱动页面开关，杜绝因 replies 异步刷新导致切换动画重复触发卡顿）
     var activeFloorCommentId by remember { mutableStateOf<String?>(null) }
     var lastOpenedFloorComment by remember { mutableStateOf<SongComment?>(null) }
-    // 超过四级评论点击「查看对话」进入的完整对话新页面
-    var activeConversationChain by remember { mutableStateOf<CommentConversationChain?>(null) }
+    // 超过四级评论点击「查看对话」进入的完整对话新页面（实时映射最新点赞与回复态）
+    var activeConversationChainRaw by remember { mutableStateOf<CommentConversationChain?>(null) }
+    val activeConversationChain = remember(activeConversationChainRaw, comments, activeFloorRootComment) {
+        val raw = activeConversationChainRaw ?: return@remember null
+        val livePool = buildList {
+            comments.forEach { root ->
+                add(root)
+                addAll(root.replies)
+            }
+            activeFloorRootComment?.let { r ->
+                add(r)
+                addAll(r.replies)
+            }
+        }.associateBy { it.id }
+        raw.copy(
+            rootComment = livePool[raw.rootComment.id] ?: raw.rootComment,
+            chainItems = raw.chainItems.map { item -> livePool[item.id] ?: item }
+        )
+    }
     var previewImageUrl by remember { mutableStateOf<String?>(null) }
 
     val activeFloorRootComment = remember(comments, activeFloorCommentId) {
@@ -452,7 +469,7 @@ fun CommentsScreen(
     BackHandler {
         when {
             previewImageUrl != null -> previewImageUrl = null
-            activeConversationChain != null -> activeConversationChain = null
+            activeConversationChain != null -> activeConversationChainRaw = null
             activeFloorCommentId != null -> activeFloorCommentId = null
             else -> onBack()
         }
@@ -877,7 +894,7 @@ fun CommentsScreen(
                     rootComment = floorComment,
                     currentUserAvatar = currentUserAvatar,
                     onBack = { activeFloorCommentId = null },
-                    onOpenConversationChain = { chain -> activeConversationChain = chain },
+                    onOpenConversationChain = { chain -> activeConversationChainRaw = chain },
                     onSyncReplyCount = { actualCnt, latestReplies ->
                         onSyncReplyCount(floorComment.id, actualCnt, latestReplies)
                     },
@@ -911,7 +928,7 @@ fun CommentsScreen(
                     song = song,
                     conversation = chain,
                     currentUserAvatar = currentUserAvatar,
-                    onBack = { activeConversationChain = null },
+                    onBack = { activeConversationChainRaw = null },
                     onPostReply = { content, replyToId, replyToUser, onResult ->
                         onPostComment(content, replyToId, replyToUser, onResult)
                     },
@@ -2812,9 +2829,18 @@ private fun CommentComposerBottomBar(
 
             Spacer(modifier = Modifier.width(8.dp))
 
+            var isSendingLocked by remember { mutableStateOf(false) }
+            LaunchedEffect(commentInputText) {
+                if (commentInputText.isEmpty()) isSendingLocked = false
+            }
             IconButton(
-                onClick = onSend,
-                enabled = commentInputText.isNotBlank(),
+                onClick = {
+                    if (!isSendingLocked && commentInputText.isNotBlank()) {
+                        isSendingLocked = true
+                        onSend()
+                    }
+                },
+                enabled = commentInputText.isNotBlank() && !isSendingLocked,
                 modifier = Modifier
                     .size(40.dp)
                     .background(

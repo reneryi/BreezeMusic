@@ -213,31 +213,58 @@ class MusicApiRepository(
     // 本地已关注歌手增量缓存（防止关注后因云端延迟未立即出现在列表中）
     private val localFollowedArtistsMap = ConcurrentHashMap<String, FollowedArtist>()
 
+    internal fun putPlaybackCacheForTest(key: String, result: PlaybackResult) {
+        playbackResultCache[key] = result
+        playbackResultCacheTimestamp[key] = System.currentTimeMillis()
+    }
+
+    fun onAccountChanged() {
+        clearPlaybackCache()
+        localFollowedArtistsMap.clear()
+        userTasteSeedsCache.clear()
+        seenPersonalFmHashes.clear()
+    }
+
     fun clearPlaybackCache(hash: String? = null) {
-        if (hash == null) {
+        if (hash.isNullOrBlank()) {
             playbackResultCache.clear()
             playbackResultCacheTimestamp.clear()
         } else {
-            val prefix = hash.lowercase()
-            playbackResultCache.keys.filter { it.startsWith(prefix) }.forEach {
+            val needle = hash.lowercase()
+            playbackResultCache.keys.filter { it.startsWith(needle) || it.contains("_${needle}_") }.forEach {
                 playbackResultCache.remove(it)
                 playbackResultCacheTimestamp.remove(it)
             }
         }
     }
 
-    private fun getValidCachedPlayback(cacheKey: String): PlaybackResult? {
-        val cached = playbackResultCache[cacheKey] ?: return null
-        val ts = playbackResultCacheTimestamp[cacheKey] ?: return cached
+    private fun getValidCachedPlayback(cacheKey: String, legacyKey: String? = null): PlaybackResult? {
+        val keyToUse = when {
+            playbackResultCache.containsKey(cacheKey) -> cacheKey
+            legacyKey != null && playbackResultCache.containsKey(legacyKey) -> legacyKey
+            else -> return null
+        }
+        val cached = playbackResultCache[keyToUse] ?: return null
+        if (cached.isFreePart) {
+            playbackResultCache.remove(keyToUse)
+            playbackResultCacheTimestamp.remove(keyToUse)
+            return null
+        }
+        val ts = playbackResultCacheTimestamp[keyToUse] ?: return cached
         if (System.currentTimeMillis() - ts <= playbackCacheTtlMs) {
             return cached
         }
-        playbackResultCache.remove(cacheKey)
-        playbackResultCacheTimestamp.remove(cacheKey)
+        playbackResultCache.remove(keyToUse)
+        playbackResultCacheTimestamp.remove(keyToUse)
         return null
     }
 
     private fun putCachedPlayback(cacheKey: String, result: PlaybackResult) {
+        if (result.isFreePart) return
+        if (playbackResultCache.size > 200) {
+            playbackResultCache.clear()
+            playbackResultCacheTimestamp.clear()
+        }
         playbackResultCache[cacheKey] = result
         playbackResultCacheTimestamp[cacheKey] = System.currentTimeMillis()
     }
@@ -1369,15 +1396,16 @@ class MusicApiRepository(
 
         val targetHash = effectiveSong.hashForQuality(preferredQuality).ifBlank { effectiveSong.hash }
         val modeSuffix = if (useAccompaniment) "_acc" else ""
-        val cacheKey = "${targetHash.lowercase()}_${preferredQuality.apiValue}$modeSuffix"
-        getValidCachedPlayback(cacheKey)?.let { return it }
-
         val session = accounts.context()?.session
+        val userScope = session?.userId ?: "guest"
+        val legacyKey = "${targetHash.lowercase()}_${preferredQuality.apiValue}$modeSuffix"
+        val cacheKey = "${userScope}_$legacyKey"
+        getValidCachedPlayback(cacheKey, legacyKey)?.let { return it }
 
         // 第一阶段：使用当前已知曲目 Hash 走概念版 VIP 专属通道 (/v6/priv_url) 与多级回退 (/v5/url)
-        val directAttempt = runCatching {
+        val directAttempt = suspendRunCatching {
             resolvePlaybackInternal(effectiveSong, session, preferredQuality)
-        }.getOrNull()
+        }.getOrNull()?.let { if (it.resolvedHash.isBlank()) it.copy(resolvedHash = targetHash) else it }
         if (directAttempt != null && directAttempt.url.isNotBlank()) {
             putCachedPlayback(cacheKey, directAttempt)
             return directAttempt
@@ -1385,13 +1413,13 @@ class MusicApiRepository(
 
         // 第二阶段：若歌曲缺少概念版 ogg_128_hash / relate_goods 多档位 Hash，主动向 /v2/get_res_privilege/lite 补全音源规格后再试
         if (!useAccompaniment) {
-            val enrichedSong = runCatching {
+            val enrichedSong = suspendRunCatching {
                 enrichSongsPrivilegeLite(listOf(effectiveSong)).firstOrNull()
             }.getOrNull()
             if (enrichedSong != null) {
-                val enrichedAttempt = runCatching {
+                val enrichedAttempt = suspendRunCatching {
                     resolvePlaybackInternal(enrichedSong, session, preferredQuality)
-                }.getOrNull()
+                }.getOrNull()?.let { if (it.resolvedHash.isBlank()) it.copy(resolvedHash = enrichedSong.hash.ifBlank { targetHash }) else it }
                 if (enrichedAttempt != null && enrichedAttempt.url.isNotBlank()) {
                     putCachedPlayback(cacheKey, enrichedAttempt)
                     return enrichedAttempt
@@ -1400,7 +1428,7 @@ class MusicApiRepository(
 
             // 第三阶段：若原曲 Hash 因版权迁移或下架失效，自动通过「歌手 + 歌名」检索同曲目可用音源替身
             if (effectiveSong.title.isNotBlank() && effectiveSong.title != "未知歌曲") {
-                val rematchedAttempt = runCatching {
+                val rematchedAttempt = suspendRunCatching {
                     val cleanTitle = extractBaseSongTitle(effectiveSong.title).ifBlank { effectiveSong.title }
                     val cleanArtist = effectiveSong.artist.takeIf { it.isNotBlank() && it != "未知歌手" }.orEmpty()
                     val queryKw = "$cleanArtist $cleanTitle".trim()
@@ -1414,7 +1442,7 @@ class MusicApiRepository(
                     if (altCandidate != null) {
                         resolvePlaybackInternal(altCandidate, session, preferredQuality)
                     } else null
-                }.getOrNull()
+                }.getOrNull()?.let { if (it.resolvedHash.isBlank()) it.copy(resolvedHash = targetHash) else it }
                 if (rematchedAttempt != null && rematchedAttempt.url.isNotBlank()) {
                     putCachedPlayback(cacheKey, rematchedAttempt)
                     return rematchedAttempt
@@ -1431,7 +1459,7 @@ class MusicApiRepository(
         preferredQuality: AudioQuality
     ): PlaybackResult {
         if (session != null && session.token.isNotBlank()) {
-            val vipResult = runCatching { resolveVipPrivResult(song, session, preferredQuality) }.getOrNull()
+            val vipResult = suspendRunCatching { resolveVipPrivResult(song, session, preferredQuality) }.getOrNull()
             if (vipResult != null && vipResult.url.isNotBlank()) {
                 return vipResult
             }
@@ -1669,7 +1697,7 @@ class MusicApiRepository(
                 "content-type" to "application/json; charset=utf-8"
             )
 
-            val response = runCatching {
+            val response = suspendRunCatching {
                 transport.callAdvanced(
                     path = "/v6/priv_url",
                     host = "https://gateway.kugou.com",
@@ -1681,10 +1709,10 @@ class MusicApiRepository(
                     sign = false,
                     includeDefaultParams = false
                 )
-            }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: runCatching {
+            }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: suspendRunCatching {
                 transport.callAdvanced(
                     path = "/v6/priv_url",
-                    host = "http://tracker.kugou.com",
+                    host = "https://tracker.kugou.com",
                     method = "POST",
                     query = query,
                     body = body,
@@ -1909,7 +1937,7 @@ class MusicApiRepository(
                 "clienttime" to clientTime.toString()
             )
 
-            val response = runCatching {
+            val response = suspendRunCatching {
                 transport.callAdvanced(
                     path = "/v5/url",
                     session = session,
@@ -1918,7 +1946,7 @@ class MusicApiRepository(
                     sign = false,
                     includeDefaultParams = false
                 )
-            }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: runCatching {
+            }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: suspendRunCatching {
                 transport.callAdvanced(
                     path = "/i/v2/",
                     host = "http://trackercdn.kugou.com",
@@ -1989,7 +2017,7 @@ class MusicApiRepository(
             "mid" to d.mid,
             "clienttime" to clientTime.toString()
         )
-        val freeResp = runCatching {
+        val freeResp = suspendRunCatching {
             transport.callAdvanced(
                 path = "/v5/url",
                 session = session,
@@ -2018,7 +2046,7 @@ class MusicApiRepository(
                 val ext = it.data.text("extName") ?: it.data.text("extname")
                 val (q, kbps) = deduceQuality(freeUrl, bRate, fSize, song.durationMs, ext, AudioQuality.STANDARD, cachedSpecs)
                 val (cStart, cEnd) = extractClimaxRange(it.data)
-                return PlaybackResult(freeUrl, q, kbps, fSize, cStart, cEnd)
+                return PlaybackResult(freeUrl, q, kbps, fSize, cStart, cEnd, isFreePart = true, resolvedHash = defaultHash)
             }
         }
 
@@ -3011,7 +3039,7 @@ class MusicApiRepository(
         val pageSize = 50
         var expectedTotal = 0
         while (page <= 10) {
-            val response = runCatching {
+            val response = suspendRunCatching {
                 transport.callAdvanced(
                     path = "/v1/album_audio/lite",
                     method = "POST",
@@ -3793,7 +3821,7 @@ class MusicApiRepository(
         val mList = runCatching {
             val response = transport.callAdvanced(
                 path = "/rank/info/",
-                host = "http://m.kugou.com",
+                host = "https://m.kugou.com",
                 query = mapOf(
                     "rankid" to rankId.toString(),
                     "page" to page.toString(),
@@ -4886,7 +4914,7 @@ class MusicApiRepository(
                         )
                     }.getOrNull()?.takeIf { (it.data.number("status") ?: it.status) == 1 } ?: transport.callAdvanced(
                         path = "/v1/get_my_userinfo",
-                        host = "http://relation.user.kugou.com",
+                        host = "https://relation.user.kugou.com",
                         method = "POST",
                         session = session,
                         body = bodyObj,
@@ -5020,7 +5048,7 @@ class MusicApiRepository(
 
                 val response = transport.callAdvanced(
                     path = "/v2/get_grade_info",
-                    host = "http://userinfo.user.kugou.com",
+                    host = "https://userinfo.user.kugou.com",
                     method = "POST",
                     session = session,
                     body = requestBody,
@@ -5217,7 +5245,7 @@ class MusicApiRepository(
             runCatching {
                 val infoResp = transport.callAdvanced(
                     path = "/app/i/getSongInfo.php",
-                    host = "http://m.kugou.com",
+                    host = "https://m.kugou.com",
                     query = mapOf("cmd" to "playInfo", "hash" to song.hash.lowercase()),
                     sign = false,
                     includeDefaultParams = false
@@ -5707,7 +5735,7 @@ class MusicApiRepository(
             runCatching {
                 val infoResp = transport.callAdvanced(
                     path = "/app/i/getSongInfo.php",
-                    host = "http://m.kugou.com",
+                    host = "https://m.kugou.com",
                     query = mapOf("cmd" to "playInfo", "hash" to cleanHash),
                     sign = false,
                     includeDefaultParams = false
@@ -6632,14 +6660,14 @@ class MusicApiRepository(
     }
 
     private fun defaultRanks(): List<RankItem> = listOf(
-        RankItem(6666, "酷狗飙升榜", "http://imge.kugou.com/commendpic/20210729/20210729175317789524.jpg", "每天更新", listOf("1. 瞬 - 告五人", "2. 奢香夫人 - 凤凰传奇", "3. 离别开出花 - 就是南方凯"), 1, "官方热榜", 100),
-        RankItem(8888, "酷狗TOP500", "http://imge.kugou.com/commendpic/20210729/20210729175249561655.jpg", "每天更新", listOf("1. 晴天 - 周杰伦", "2. 爱在西元前 - 周杰伦", "3. 篇章 - 张韶涵"), 1, "官方热榜", 500),
-        RankItem(23784, "网络红歌榜", "http://imge.kugou.com/commendpic/20210729/20210729175344315250.jpg", "每天更新", listOf("1. 悬溺 - 葛东琪", "2. 若把你 - Kirsty刘瑾睿", "3. 晚风告白 - 星野"), 1, "官方热榜", 100),
-        RankItem(31308, "华语新歌榜", "http://imge.kugou.com/commendpic/20210729/20210729175317789524.jpg", "每天更新", listOf("1. 向云端 - 小霞", "2. 笼 - 张碧晨", "3. 想见你想见你想见你 - 八三夭"), 1, "官方热榜", 100),
-        RankItem(24971, "粤语金曲榜", "http://imge.kugou.com/commendpic/20210729/20210729175409477029.jpg", "每周更新", listOf("1. 富士山下 - 陈奕迅", "2. 月半小夜曲 - 李克勤", "3. 海阔天空 - Beyond"), 2, "特色曲风", 100),
-        RankItem(33162, "欧美金曲榜", "http://imge.kugou.com/commendpic/20210729/20210729175249561655.jpg", "每周更新", listOf("1. Cruel Summer - Taylor Swift", "2. Counting Stars - OneRepublic", "3. Flowers - Miley Cyrus"), 2, "特色曲风", 100),
-        RankItem(4681, "美国BillBoard榜", "http://imge.kugou.com/commendpic/20210729/20210729175344315250.jpg", "每周更新", listOf("1. Die With A Smile - Lady Gaga", "2. Birds of a Feather - Billie Eilish", "3. Espresso - Sabrina Carpenter"), 4, "全球权威", 100),
-        RankItem(4673, "日本公信榜", "http://imge.kugou.com/commendpic/20210729/20210729175409477029.jpg", "每周更新", listOf("1. Idol - YOASOBI", "2. Lemon - 米津玄师", "3. 怪兽的花呗 - Vaundy"), 4, "全球权威", 100)
+        RankItem(6666, "酷狗飙升榜", "https://imge.kugou.com/commendpic/20210729/20210729175317789524.jpg", "每天更新", listOf("1. 瞬 - 告五人", "2. 奢香夫人 - 凤凰传奇", "3. 离别开出花 - 就是南方凯"), 1, "官方热榜", 100),
+        RankItem(8888, "酷狗TOP500", "https://imge.kugou.com/commendpic/20210729/20210729175249561655.jpg", "每天更新", listOf("1. 晴天 - 周杰伦", "2. 爱在西元前 - 周杰伦", "3. 篇章 - 张韶涵"), 1, "官方热榜", 500),
+        RankItem(23784, "网络红歌榜", "https://imge.kugou.com/commendpic/20210729/20210729175344315250.jpg", "每天更新", listOf("1. 悬溺 - 葛东琪", "2. 若把你 - Kirsty刘瑾睿", "3. 晚风告白 - 星野"), 1, "官方热榜", 100),
+        RankItem(31308, "华语新歌榜", "https://imge.kugou.com/commendpic/20210729/20210729175317789524.jpg", "每天更新", listOf("1. 向云端 - 小霞", "2. 笼 - 张碧晨", "3. 想见你想见你想见你 - 八三夭"), 1, "官方热榜", 100),
+        RankItem(24971, "粤语金曲榜", "https://imge.kugou.com/commendpic/20210729/20210729175409477029.jpg", "每周更新", listOf("1. 富士山下 - 陈奕迅", "2. 月半小夜曲 - 李克勤", "3. 海阔天空 - Beyond"), 2, "特色曲风", 100),
+        RankItem(33162, "欧美金曲榜", "https://imge.kugou.com/commendpic/20210729/20210729175249561655.jpg", "每周更新", listOf("1. Cruel Summer - Taylor Swift", "2. Counting Stars - OneRepublic", "3. Flowers - Miley Cyrus"), 2, "特色曲风", 100),
+        RankItem(4681, "美国BillBoard榜", "https://imge.kugou.com/commendpic/20210729/20210729175344315250.jpg", "每周更新", listOf("1. Die With A Smile - Lady Gaga", "2. Birds of a Feather - Billie Eilish", "3. Espresso - Sabrina Carpenter"), 4, "全球权威", 100),
+        RankItem(4673, "日本公信榜", "https://imge.kugou.com/commendpic/20210729/20210729175409477029.jpg", "每周更新", listOf("1. Idol - YOASOBI", "2. Lemon - 米津玄师", "3. 怪兽的花呗 - Vaundy"), 4, "全球权威", 100)
     )
 
     private fun defaultHotKeywords(): List<String> = listOf(
@@ -7231,6 +7259,8 @@ class MusicApiRepository(
                 headers = mapOf("x-router" to "m.comment.service.kugou.com"),
                 session = session
             )
+        } catch (c: kotlinx.coroutines.CancellationException) {
+            throw c
         } catch (e: Throwable) {
             primaryErr = e
         }
@@ -7262,6 +7292,8 @@ class MusicApiRepository(
                     query = fallbackParams,
                     session = session
                 )
+            } catch (c: kotlinx.coroutines.CancellationException) {
+                throw c
             } catch (e: Throwable) {
                 if (primaryErr is ApiFailure) throw primaryErr
                 if (e is ApiFailure) throw e
@@ -7369,11 +7401,5 @@ class MusicApiRepository(
 
         result
     }
-
-    private fun imageUrl(value: String?): String {
-        if (value.isNullOrBlank()) return ""
-        var url = value.replace("{size}", "400").replace("{param}", "400")
-        if (url.startsWith("//")) url = "https:$url"
-        return url
-    }
 }
+

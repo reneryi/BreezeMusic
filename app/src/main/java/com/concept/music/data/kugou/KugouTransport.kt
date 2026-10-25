@@ -16,6 +16,28 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+/**
+ * 全局共享的 OkHttp 客户端连接池与调度器提供者（避免多实例连接池分裂与 SSL 握手重复开销）
+ */
+object NetworkClientProvider {
+    val sharedConnectionPool = ConnectionPool(12, 5, TimeUnit.MINUTES)
+    val sharedDispatcher = Dispatcher().apply {
+        maxRequests = 64
+        maxRequestsPerHost = 16
+    }
+
+    val baseClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectionPool(sharedConnectionPool)
+            .dispatcher(sharedDispatcher)
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .callTimeout(25, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .build()
+    }
+}
+
 interface KugouTransport {
     suspend fun call(path: String, session: KugouSession? = null, query: Map<String, String> = emptyMap(),
         body: JsonObject? = null, host: String = "https://gateway.kugou.com", method: String = "GET",
@@ -38,14 +60,42 @@ interface KugouTransport {
 
 class DirectKugouTransport(
     private val identity: () -> DeviceIdentity,
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .callTimeout(25, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        .build(),
+    private val client: OkHttpClient = NetworkClientProvider.baseClient,
     private val clock: Clock = Clock.systemUTC()
 ) : KugouTransport {
+
+    companion object {
+        private val CLEARTEXT_ALLOWED_HOSTS = setOf(
+            "fs.android.kugou.com",
+            "bssdlbig.kugou.com",
+            "bssdl.kugou.com",
+            "trackercdn.kugou.com",
+            "mobilecdnbj.kugou.com"
+        )
+
+        internal fun enforceHttpsForSensitiveHost(
+            rawHost: String,
+            session: KugouSession?,
+            query: Map<String, String>,
+            body: JsonObject? = null
+        ): String {
+            if (!rawHost.startsWith("http://", ignoreCase = true)) return rawHost
+            val hostName = runCatching { rawHost.toHttpUrl().host.lowercase() }.getOrDefault("")
+            // MockWebServer in local unit tests uses localhost / 127.0.0.1
+            if (hostName == "localhost" || hostName == "127.0.0.1") return rawHost
+            val hasSensitiveParam = session != null ||
+                "token" in query || "vip_token" in query || "mobile" in query ||
+                body?.has("mobile") == true || body?.has("token") == true || body?.has("p3") == true
+            return if (hasSensitiveParam && hostName !in CLEARTEXT_ALLOWED_HOSTS) {
+                "https://" + rawHost.substring(7)
+            } else if (hostName !in CLEARTEXT_ALLOWED_HOSTS) {
+                "https://" + rawHost.substring(7)
+            } else {
+                rawHost
+            }
+        }
+    }
+
     override suspend fun call(path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
         host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?) =
         callAdvanced(path, session, query, body, host, method, web, headers, device, sign = true, includeDefaultParams = true)
@@ -107,23 +157,25 @@ class DirectKugouTransport(
         params.putAll(query)
         val payload = body?.let(KugouSigner.gson::toJson).orEmpty()
         if (sign) params["signature"] = KugouSigner.signature(params, payload, web)
-        val url = host.toHttpUrl().newBuilder().addPathSegments(path.trimStart('/')).apply {
+        val safeHost = enforceHttpsForSensitiveHost(host, session, params, body)
+        val url = safeHost.toHttpUrl().newBuilder().addPathSegments(path.trimStart('/')).apply {
             params.forEach { (key, value) -> addQueryParameter(key, value) }
         }.build()
+        val isBodylessMethod = method.equals("GET", ignoreCase = true) || method.equals("HEAD", ignoreCase = true)
         val request = Request.Builder().url(url)
             .header("User-Agent", "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi")
             .apply { if (includeDefaultParams) header("dfid", d.dfid).header("mid", d.mid).header("clienttime", params.getValue("clienttime")) }
             .header("kg-rc", "1").header("kg-thash", "5d816a0").header("kg-rec", "1")
             .header("kg-rf", "B9EDA08A64250DEFFBCADDEE00F8F25F")
             .apply { headers.forEach { (key, value) -> header(key, value) } }
-            .method(method, if (method == "GET") null else payload.toRequestBody(
+            .method(method, if (isBodylessMethod) null else payload.toRequestBody(
                 (headers.entries.firstOrNull { it.key.equals("content-type", ignoreCase = true) }?.value ?: "application/json; charset=utf-8").toMediaType())).build()
         return suspendCancellableCoroutine { continuation ->
             val call = client.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
-                    if (continuation.isActive) continuation.resumeWithException(IOException("网络连接失败，请检查网络后重试"))
+                    if (continuation.isActive) continuation.resumeWithException(IOException("网络连接失败，请检查网络后重试", e))
                 }
                 override fun onResponse(call: Call, response: Response) {
                     response.use {
@@ -134,7 +186,7 @@ class DirectKugouTransport(
                             val result = ApiResponse(root.asJsonObject, it.header("ssa-code") ?: root.asJsonObject.text("ssaCode"), it.code)
                             if (continuation.isActive) continuation.resume(result)
                         } catch (e: Exception) {
-                            if (continuation.isActive) continuation.resumeWithException(IOException("酷狗响应解析失败，请稍后重试"))
+                            if (continuation.isActive) continuation.resumeWithException(IOException("酷狗响应解析失败，请稍后重试", e))
                         }
                     }
                 }
@@ -160,32 +212,38 @@ class DirectKugouTransport(
         params.putAll(query)
         val payload = rawBody.orEmpty()
         if (sign) params["signature"] = KugouSigner.signature(params, payload, false)
-        val url = host.toHttpUrl().newBuilder().addPathSegments(path.trimStart('/')).apply {
+        val safeHost = enforceHttpsForSensitiveHost(host, session, params, null)
+        val url = safeHost.toHttpUrl().newBuilder().addPathSegments(path.trimStart('/')).apply {
             params.forEach { (key, value) -> addQueryParameter(key, value) }
         }.build()
         val contentType = headers.entries.firstOrNull { it.key.equals("content-type", ignoreCase = true) }?.value ?: "text/plain; charset=utf-8"
+        val isBodylessMethod = method.equals("GET", ignoreCase = true) || method.equals("HEAD", ignoreCase = true)
         val request = Request.Builder().url(url)
             .header("User-Agent", "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi")
             .apply { if (includeDefaultParams) header("dfid", d.dfid).header("mid", d.mid).header("clienttime", params.getValue("clienttime")) }
             .header("kg-rc", "1").header("kg-thash", "5d816a0").header("kg-rec", "1")
             .header("kg-rf", "B9EDA08A64250DEFFBCADDEE00F8F25F")
             .apply { headers.forEach { (key, value) -> header(key, value) } }
-            .method(method, if (method == "GET") null else payload.toRequestBody(contentType.toMediaType()))
+            .method(method, if (isBodylessMethod) null else payload.toRequestBody(contentType.toMediaType()))
             .build()
         suspendCancellableCoroutine { continuation ->
             val call = client.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
-                    if (continuation.isActive) continuation.resumeWithException(IOException("网络连接失败，请检查网络后重试"))
+                    if (continuation.isActive) continuation.resumeWithException(IOException("网络连接失败，请检查网络后重试", e))
                 }
                 override fun onResponse(call: Call, response: Response) {
                     response.use {
                         try {
+                            if (!it.isSuccessful) {
+                                throw IOException("HTTP ${it.code} for $url")
+                            }
                             val bytes = it.body?.bytes() ?: ByteArray(0)
                             if (continuation.isActive) continuation.resume(bytes)
                         } catch (e: Exception) {
-                            if (continuation.isActive) continuation.resumeWithException(IOException("酷狗响应读取失败"))
+                            val ioEx = e as? IOException ?: IOException("酷狗响应读取失败", e)
+                            if (continuation.isActive) continuation.resumeWithException(ioEx)
                         }
                     }
                 }

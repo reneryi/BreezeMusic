@@ -2,6 +2,7 @@ package com.concept.music.service
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.SystemClock
 import com.concept.music.data.kugou.today
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -10,13 +11,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/**
- * 「心流舱 (Focus Pod)」
- * 专注计时 × 心流场景音乐 × 程序化环境白噪音混音引擎
- * （听歌时长仅在实际播放歌曲时由播放器记录，心流计时器本身不再虚增听歌时长）
- */
 enum class FocusPreset(
     val id: String,
     val title: String,
@@ -63,6 +60,9 @@ object FocusPodManager {
     private val _state = MutableStateFlow(FocusPodState())
     val state = _state.asStateFlow()
 
+    private fun nowElapsedMs(): Long =
+        runCatching { SystemClock.elapsedRealtime() }.getOrDefault(0L).takeIf { it > 0L } ?: System.currentTimeMillis()
+
     fun init(context: Context) {
         if (prefs != null) return
         val p = context.applicationContext.getSharedPreferences("concept_focus_pod", Context.MODE_PRIVATE)
@@ -84,20 +84,22 @@ object FocusPodManager {
 
     fun selectPreset(preset: FocusPreset) {
         if (_state.value.isRunning) return
-        _state.value = _state.value.copy(
-            selectedPreset = preset,
-            remainingSeconds = preset.minutes * 60L,
-            totalSeconds = preset.minutes * 60L
-        )
+        _state.update {
+            it.copy(
+                selectedPreset = preset,
+                remainingSeconds = preset.minutes * 60L,
+                totalSeconds = preset.minutes * 60L
+            )
+        }
     }
 
     fun setAutoMixAmbient(enabled: Boolean) {
-        _state.value = _state.value.copy(autoMixAmbient = enabled)
+        _state.update { it.copy(autoMixAmbient = enabled) }
         prefs?.edit()?.putBoolean("auto_ambient", enabled)?.apply()
     }
 
     fun setAutoPlaySceneMusic(enabled: Boolean) {
-        _state.value = _state.value.copy(autoPlaySceneMusic = enabled)
+        _state.update { it.copy(autoPlaySceneMusic = enabled) }
         prefs?.edit()?.putBoolean("auto_scene_music", enabled)?.apply()
     }
 
@@ -105,11 +107,13 @@ object FocusPodManager {
         timerJob?.cancel()
         val preset = _state.value.selectedPreset
         val durationSec = preset.minutes * 60L
-        _state.value = _state.value.copy(
-            isRunning = true,
-            totalSeconds = durationSec,
-            remainingSeconds = durationSec
-        )
+        _state.update {
+            it.copy(
+                isRunning = true,
+                totalSeconds = durationSec,
+                remainingSeconds = durationSec
+            )
+        }
 
         if (_state.value.autoMixAmbient) {
             AmbientSoundManager.setSyncWithMusic(false)
@@ -120,27 +124,39 @@ object FocusPodManager {
         }
 
         timerJob = scope.launch {
-            var elapsedSec = 0L
+            val startMs = nowElapsedMs()
+            val endMs = startMs + durationSec * 1000L
+            var recordedMinutes = 0L
+
             while (_state.value.remainingSeconds > 0L) {
                 delay(1_000L)
-                val nextRem = (_state.value.remainingSeconds - 1L).coerceAtLeast(0L)
-                elapsedSec += 1L
-                _state.value = _state.value.copy(remainingSeconds = nextRem)
-
-                if (elapsedSec % 60L == 0L) {
-                    val newMins = _state.value.totalFocusMinutesToday + 1
-                    _state.value = _state.value.copy(totalFocusMinutesToday = newMins)
-                    saveStats(_state.value.completedPodsToday, newMins)
+                val now = nowElapsedMs()
+                val nextRem = if (now > startMs) {
+                    ((endMs - now + 999L) / 1000L).coerceIn(0L, durationSec)
+                } else {
+                    (_state.value.remainingSeconds - 1L).coerceAtLeast(0L)
+                }
+                val elapsedMinutes = (durationSec - nextRem) / 60L
+                val deltaMinutes = (elapsedMinutes - recordedMinutes).coerceAtLeast(0L).toInt()
+                if (deltaMinutes > 0) {
+                    recordedMinutes = elapsedMinutes
+                }
+                _state.update { cur ->
+                    val newMins = cur.totalFocusMinutesToday + deltaMinutes
+                    if (deltaMinutes > 0) saveStats(cur.completedPodsToday, newMins)
+                    cur.copy(remainingSeconds = nextRem, totalFocusMinutesToday = newMins)
                 }
             }
 
-            val newPods = _state.value.completedPodsToday + 1
-            _state.value = _state.value.copy(
-                isRunning = false,
-                remainingSeconds = preset.minutes * 60L,
-                completedPodsToday = newPods
-            )
-            saveStats(newPods, _state.value.totalFocusMinutesToday)
+            _state.update { cur ->
+                val newPods = cur.completedPodsToday + 1
+                saveStats(newPods, cur.totalFocusMinutesToday)
+                cur.copy(
+                    isRunning = false,
+                    remainingSeconds = preset.minutes * 60L,
+                    completedPodsToday = newPods
+                )
+            }
             if (_state.value.autoMixAmbient) {
                 AmbientSoundManager.setSyncWithMusic(true)
                 AmbientSoundManager.setMasterEnabled(false)
@@ -152,10 +168,12 @@ object FocusPodManager {
         timerJob?.cancel()
         timerJob = null
         val preset = _state.value.selectedPreset
-        _state.value = _state.value.copy(
-            isRunning = false,
-            remainingSeconds = preset.minutes * 60L
-        )
+        _state.update {
+            it.copy(
+                isRunning = false,
+                remainingSeconds = preset.minutes * 60L
+            )
+        }
         if (_state.value.autoMixAmbient) {
             AmbientSoundManager.setSyncWithMusic(true)
             AmbientSoundManager.setMasterEnabled(false)

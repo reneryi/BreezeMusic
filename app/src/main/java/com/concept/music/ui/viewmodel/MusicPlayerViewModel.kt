@@ -23,6 +23,7 @@ import com.concept.music.data.vip.VipManager
 import com.concept.music.service.AmbientSoundManager
 import com.concept.music.service.AudioCacheManager
 import com.concept.music.service.ConceptMusicWidgetUpdater
+import com.concept.music.service.PlaybackCoordinator
 import com.concept.music.service.PlaybackService
 import com.concept.music.service.SystemLyricBridge
 import com.google.common.util.concurrent.ListenableFuture
@@ -32,6 +33,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
@@ -241,6 +243,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private var lastPersistPosTimestamp: Long = 0L
     private var activePlayingSong: Song? = null
     private var songPlaybackStartTimestamp: Long = 0L
+    private var accumulatedPlayedMs: Long = 0L
+    private var lastAccumulateTickMs: Long = 0L
     private var nextShuffleIndex: Int = -1
     private var prefetchedNextQueueIndex: Int = -1
     private var prefetchedNextSongKey: String = ""
@@ -299,18 +303,42 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    private fun currentEffectivePlayedMs(): Long {
+        val now = System.currentTimeMillis()
+        val activeDelta = if (lastAccumulateTickMs > 0L && now > lastAccumulateTickMs) (now - lastAccumulateTickMs) else 0L
+        val total = accumulatedPlayedMs + activeDelta
+        return if (total > 0L) total else if (songPlaybackStartTimestamp > 0L) (now - songPlaybackStartTimestamp).coerceAtLeast(0L) else 0L
+    }
+
     internal fun handleSongTransition(transitionedMediaId: String, reason: Int = Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
         val currentSong = mutableState.value.currentSong
         if (currentSong != null && currentSong.id == transitionedMediaId) {
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
+                val playedMs = currentEffectivePlayedMs()
+                KugouCsccReporter.onSongEnd(currentSong, playedMs)
+                ListeningGradeManager.onSongCompleted(currentSong)
+                accumulatedPlayedMs = 0L
+                lastAccumulateTickMs = if (mutableState.value.isPlaying) System.currentTimeMillis() else 0L
+                songPlaybackStartTimestamp = System.currentTimeMillis()
+                lastClimaxSkipSongId = ""
+                mutableState.update { it.copy(climaxUnlockedForCurrentSong = false) }
+                if (mutableState.value.climaxModeEnabled) {
+                    val startPos = currentSong.effectiveClimaxStartMs
+                    activePlayer?.seekTo(startPos)
+                    triggerClimaxSmoothFadeIn()
+                }
+            }
             return
         }
 
-        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+        if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
             currentSong?.let {
-                val playedMs = (System.currentTimeMillis() - songPlaybackStartTimestamp).coerceAtLeast(0L)
+                val playedMs = currentEffectivePlayedMs()
                 KugouCsccReporter.onSongEnd(it, playedMs)
                 ListeningGradeManager.onSongCompleted(it)
             }
+            accumulatedPlayedMs = 0L
+            lastAccumulateTickMs = 0L
             if (mutableState.value.sleepPendingStopAtTrackEnd && mutableState.value.sleepTimerRemainingSec <= 0L) {
                 activePlayer?.pause()
                 activePlayer?.volume = 1f
@@ -419,6 +447,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }
             hasQueue
         }
+        PlaybackCoordinator.onTogglePlayDelegate = {
+            viewModelScope.launch(Dispatchers.Main) { togglePlayPause() }
+            true
+        }
         PlaybackService.onSkipToNextIntercepted = {
             val hasQueue = mutableState.value.playlistQueue.isNotEmpty()
             if (hasQueue) {
@@ -453,17 +485,24 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             VipManager.accounts.state.collect { state ->
                 if (currentUser != state.currentId) {
-                    val hadPreviousUser = currentUser != null
+                    val previousUser = currentUser
+                    val hadPreviousUser = previousUser != null
                     currentUser = state.currentId
-                    if (hadPreviousUser && state.currentId == null) {
+                    if (hadPreviousUser) {
                         resolveJob?.cancel()
                         lyricJob?.cancel()
                         prefetchJob?.cancel()
                         activePlayer?.pause()
+                        activePlayer?.clearMediaItems()
                         recordedMediaId = null
+                        activePlayingSong = null
+                        accumulatedPlayedMs = 0L
+                        lastAccumulateTickMs = 0L
                         songsByMediaId.clear()
+                        VipManager.music.onAccountChanged()
                         mutableState.value = PlayerUiState()
                         mutablePositionFlow.value = PlaybackPositionSnapshot()
+                        restorePersistedPlaybackState()
                     }
                 }
             }
@@ -567,7 +606,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             PlayerBackgroundStyle.valueOf(rawBg)
         }.getOrDefault(PlayerBackgroundStyle.COVER_BLUR)
         val savedDynamicAccent = prefs.getBoolean("dynamic_cover_accent_enabled", true)
-        val savedTransScale = prefs.getFloat("lyric_translation_scale", 0.82f).coerceIn(0.70f, 1.0f)
+        val savedTransScale = prefs.getFloat("lyric_translation_scale", 0.84f).coerceIn(0.65f, 0.95f)
+        val savedSpeed = prefs.getFloat("playback_speed", 1.0f).coerceIn(0.5f, 2.0f)
+        val savedPitch = prefs.getFloat("playback_pitch", 1.0f).coerceIn(0.5f, 2.0f)
+        val savedLinkPitch = prefs.getBoolean("link_pitch_to_speed", false)
+        SystemLyricBridge.playbackSpeedSnapshot = savedSpeed
         val savedSmoothFade = prefs.getBoolean("smooth_play_pause_fade", true)
         val savedPlayMode = runCatching {
             PlayMode.valueOf(prefs.getString("play_mode", PlayMode.REPEAT_ALL.name) ?: PlayMode.REPEAT_ALL.name)
@@ -606,7 +649,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val savedPauseHeadset = prefs.getBoolean("pause_on_headset_disconnect", true)
         val savedAutoPlay = prefs.getBoolean("auto_play_on_startup", false)
 
-        val queueJson = prefs.getString("saved_queue_json", null)
+        val userScopeKey = currentUser ?: "guest"
+        val queueJson = prefs.getString("saved_queue_json_$userScopeKey", null) ?: if (currentUser == null) prefs.getString("saved_queue_json", null) else null
         val restoredQueue: List<Song> = if (!queueJson.isNullOrBlank()) {
             runCatching {
                 val type = object : TypeToken<List<Song>>() {}.type
@@ -614,7 +658,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             }.getOrDefault(emptyList())
         } else emptyList()
 
-        val recentQueuesJson = prefs.getString("saved_recent_queues_json", null)
+        val recentQueuesJson = prefs.getString("saved_recent_queues_json_$userScopeKey", null) ?: if (currentUser == null) prefs.getString("saved_recent_queues_json", null) else null
         val restoredRecentQueues: List<SavedPlayQueue> = if (!recentQueuesJson.isNullOrBlank()) {
             runCatching {
                 val type = object : TypeToken<List<SavedPlayQueue>>() {}.type
@@ -642,10 +686,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             )
         }
         val sanitizedQueue = restoredQueue.map { sanitizePersistedSong(it) }
-        val savedIndex = prefs.getInt("saved_current_index", 0)
+        val savedIndex = prefs.getInt("saved_current_index_$userScopeKey", prefs.getInt("saved_current_index", 0))
             .coerceIn(0, (sanitizedQueue.size - 1).coerceAtLeast(0))
         val restoredSong = sanitizedQueue.getOrNull(savedIndex)
-        val savedPosMs = prefs.getLong("saved_position_ms", 0L).coerceAtLeast(0L)
+        val savedPosMs = prefs.getLong("saved_position_ms_$userScopeKey", prefs.getLong("saved_position_ms", 0L)).coerceAtLeast(0L)
         val savedActiveQueueId = prefs.getString("saved_active_queue_id", "").orEmpty()
 
         val (syncedRecent, activeQueueId) = syncActiveQueueInRecent(
@@ -675,6 +719,9 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             dynamicCoverAccentEnabled = savedDynamicAccent,
             lyricTranslationScale = savedTransScale,
             smoothPlayPauseFade = savedSmoothFade,
+            playbackSpeed = savedSpeed,
+            playbackPitch = savedPitch,
+            linkPitchToSpeed = savedLinkPitch,
             playMode = savedPlayMode,
             preferredQuality = savedQuality,
             currentQualityLabel = effectiveRestoredQuality.label,
@@ -722,59 +769,66 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private fun persistPlaybackStateAsync() {
         val snapshot = mutableState.value
+        val userScopeKey = currentUser ?: "guest"
         val latestPos = mutablePositionFlow.value.positionMs.takeIf { it > 0L } ?: snapshot.currentPositionMs
-        persistStateJob?.cancel()
-        persistStateJob = viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                val cleanQueue = snapshot.playlistQueue.take(150).map { it.copy(playUrl = "") }
-                val queueJson = gson.toJson(cleanQueue)
-                val recentJson = gson.toJson(
-                    snapshot.recentQueues.take(5).map { rq ->
-                        rq.copy(songs = rq.songs.take(120).map { s -> s.copy(playUrl = "") })
-                    }
-                )
-                prefs.edit()
-                    .putString("cover_style", snapshot.coverStyle.name)
-                    .putString("player_bg_style", snapshot.playerBackgroundStyle.name)
-                    .putBoolean("dynamic_cover_accent_enabled", snapshot.dynamicCoverAccentEnabled)
-                    .putFloat("lyric_translation_scale", snapshot.lyricTranslationScale)
-                    .putBoolean("smooth_play_pause_fade", snapshot.smoothPlayPauseFade)
-                    .putString("play_mode", snapshot.playMode.name)
-                    .putString("preferred_quality_v2", snapshot.preferredQuality.name)
-                    .putBoolean("show_translation_v3", snapshot.showTranslation)
-                    .putBoolean("show_phonetic_v3", snapshot.showPhonetic)
-                    .putFloat("lyric_font_size_v3", snapshot.lyricFontSize)
-                    .putBoolean("motion_orientation_sensor_enabled", snapshot.motionOrientationPermissionEnabled)
-                    .putString("lyric_alignment_v2", snapshot.lyricAlignment.name)
-                    .putBoolean("lyric_word_by_word", snapshot.lyricWordByWord)
-                    .putBoolean("lyric_blur_enabled", snapshot.lyricBlurEnabled)
-                    .putFloat("lyric_blur_intensity", snapshot.lyricBlurIntensity)
-                    .putFloat("lyric_line_spacing", snapshot.lyricLineSpacing)
-                    .putLong("lyric_offset_ms", snapshot.lyricOffsetMs)
-                    .putString("lyric_highlight_theme", snapshot.lyricHighlightTheme.name)
-                    .putFloat("lyric_bg_dim", snapshot.lyricBackgroundDim)
-                    .putBoolean("lyric_keep_screen_on", snapshot.lyricKeepScreenOn)
-                    .putBoolean("sleep_stop_after_song_pref", snapshot.sleepStopAfterCurrentSong)
-                    .putBoolean("climax_mode_enabled", snapshot.climaxModeEnabled)
-                    .putInt("crossfade_seconds", snapshot.crossfadeSeconds)
-                    .putBoolean("volume_normalization", snapshot.volumeNormalization)
-                    .putBoolean("wifi_only_lossless", snapshot.wifiOnlyLossless)
-                    .putBoolean("pause_on_headset_disconnect", snapshot.pauseOnHeadsetDisconnect)
-                    .putBoolean("auto_play_on_startup", snapshot.autoPlayOnStartup)
-                    .putString("saved_queue_json", queueJson)
-                    .putString("saved_recent_queues_json", recentJson)
-                    .putString("saved_active_queue_id", snapshot.activeQueueId)
-                    .putInt("saved_current_index", snapshot.currentIndex)
-                    .putLong("saved_position_ms", latestPos)
-                    .apply()
-            }
+        PlaybackCoordinator.syncQueueSnapshot(snapshot.playlistQueue, snapshot.currentIndex, snapshot.playMode.name)
+        PlaybackCoordinator.persistAsync(prefs) {
+            val cleanQueue = snapshot.playlistQueue.take(150).map { it.copy(playUrl = "") }
+            val queueJson = gson.toJson(cleanQueue)
+            val recentJson = gson.toJson(
+                snapshot.recentQueues.take(5).map { rq ->
+                    rq.copy(songs = rq.songs.take(120).map { s -> s.copy(playUrl = "") })
+                }
+            )
+            putString("cover_style", snapshot.coverStyle.name)
+            putString("player_bg_style", snapshot.playerBackgroundStyle.name)
+            putBoolean("dynamic_cover_accent_enabled", snapshot.dynamicCoverAccentEnabled)
+            putFloat("lyric_translation_scale", snapshot.lyricTranslationScale)
+            putBoolean("smooth_play_pause_fade", snapshot.smoothPlayPauseFade)
+            putFloat("playback_speed", snapshot.playbackSpeed)
+            putFloat("playback_pitch", snapshot.playbackPitch)
+            putBoolean("link_pitch_to_speed", snapshot.linkPitchToSpeed)
+            putString("play_mode", snapshot.playMode.name)
+            putString("preferred_quality_v2", snapshot.preferredQuality.name)
+            putBoolean("show_translation_v3", snapshot.showTranslation)
+            putBoolean("show_phonetic_v3", snapshot.showPhonetic)
+            putFloat("lyric_font_size_v3", snapshot.lyricFontSize)
+            putBoolean("motion_orientation_sensor_enabled", snapshot.motionOrientationPermissionEnabled)
+            putString("lyric_alignment_v2", snapshot.lyricAlignment.name)
+            putBoolean("lyric_word_by_word", snapshot.lyricWordByWord)
+            putBoolean("lyric_blur_enabled", snapshot.lyricBlurEnabled)
+            putFloat("lyric_blur_intensity", snapshot.lyricBlurIntensity)
+            putFloat("lyric_line_spacing", snapshot.lyricLineSpacing)
+            putLong("lyric_offset_ms", snapshot.lyricOffsetMs)
+            putString("lyric_highlight_theme", snapshot.lyricHighlightTheme.name)
+            putFloat("lyric_bg_dim", snapshot.lyricBackgroundDim)
+            putBoolean("lyric_keep_screen_on", snapshot.lyricKeepScreenOn)
+            putBoolean("sleep_stop_after_song_pref", snapshot.sleepStopAfterCurrentSong)
+            putBoolean("climax_mode_enabled", snapshot.climaxModeEnabled)
+            putInt("crossfade_seconds", snapshot.crossfadeSeconds)
+            putBoolean("volume_normalization", snapshot.volumeNormalization)
+            putBoolean("wifi_only_lossless", snapshot.wifiOnlyLossless)
+            putBoolean("pause_on_headset_disconnect", snapshot.pauseOnHeadsetDisconnect)
+            putBoolean("auto_play_on_startup", snapshot.autoPlayOnStartup)
+            putString("saved_queue_json_$userScopeKey", queueJson)
+            putString("saved_recent_queues_json_$userScopeKey", recentJson)
+            putInt("saved_current_index_$userScopeKey", snapshot.currentIndex)
+            putLong("saved_position_ms_$userScopeKey", latestPos)
+            putString("saved_queue_json", queueJson)
+            putString("saved_recent_queues_json", recentJson)
+            putString("saved_active_queue_id", snapshot.activeQueueId)
+            putInt("saved_current_index", snapshot.currentIndex)
+            putLong("saved_position_ms", latestPos)
         }
     }
 
     private fun persistPositionOnlyAsync() {
         val snapshot = mutableState.value
+        val userScopeKey = currentUser ?: "guest"
         val latestPos = mutablePositionFlow.value.positionMs.takeIf { it > 0L } ?: snapshot.currentPositionMs
         prefs.edit()
+            .putInt("saved_current_index_$userScopeKey", snapshot.currentIndex)
+            .putLong("saved_position_ms_$userScopeKey", latestPos)
             .putInt("saved_current_index", snapshot.currentIndex)
             .putLong("saved_position_ms", latestPos)
             .apply()
@@ -883,9 +937,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 list.forEach { queued -> songsByMediaId[mediaId(queued)] = queued }
                 songsByMediaId[mediaId] = resolvedSong
 
+                val streamCacheKey = AudioCacheManager.buildCacheKey(
+                    hash = playbackResult.resolvedHash.ifBlank { resolvedSong.hash },
+                    qualityApiValue = resolvedQuality.apiValue,
+                    isFreePart = playbackResult.isFreePart
+                )
                 val item = MediaItem.Builder()
                     .setMediaId(mediaId)
                     .setUri(url)
+                    .setCustomCacheKey(streamCacheKey)
                     .setMediaMetadata(
                         MediaMetadata.Builder()
                             .setTitle(resolvedSong.title)
@@ -1237,7 +1297,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     fun clearQueue() {
         activePlayingSong?.let {
-            val playedMs = (System.currentTimeMillis() - songPlaybackStartTimestamp).coerceAtLeast(0L)
+            val playedMs = currentEffectivePlayedMs()
             KugouCsccReporter.onSongEnd(it, playedMs)
         }
         activePlayingSong = null
@@ -1537,48 +1597,62 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val clampedSpeed = ((speed * 20).toInt() / 20f).coerceIn(0.5f, 2.0f)
         val current = mutableState.value
         val newPitch = if (current.linkPitchToSpeed) clampedSpeed else current.playbackPitch
-        mutableState.value = current.copy(
-            playbackSpeed = clampedSpeed,
-            playbackPitch = newPitch
-        )
+        mutableState.update {
+            it.copy(
+                playbackSpeed = clampedSpeed,
+                playbackPitch = newPitch
+            )
+        }
+        SystemLyricBridge.playbackSpeedSnapshot = clampedSpeed
         updatePositionSnapshot(
             positionMs = currentSmoothPositionMs(),
             playbackSpeed = clampedSpeed
         )
         activePlayer?.playbackParameters = PlaybackParameters(clampedSpeed, newPitch)
+        persistPlaybackStateAsync()
     }
 
     fun setPlaybackPitch(pitch: Float) {
         val clampedPitch = ((pitch * 20).toInt() / 20f).coerceIn(0.5f, 2.0f)
         val current = mutableState.value
-        mutableState.value = current.copy(
-            playbackPitch = clampedPitch,
-            linkPitchToSpeed = false
-        )
+        mutableState.update {
+            it.copy(
+                playbackPitch = clampedPitch,
+                linkPitchToSpeed = false
+            )
+        }
         activePlayer?.playbackParameters = PlaybackParameters(current.playbackSpeed, clampedPitch)
+        persistPlaybackStateAsync()
     }
 
     fun setLinkPitchToSpeed(linked: Boolean) {
         val current = mutableState.value
         val newPitch = if (linked) current.playbackSpeed else 1.0f
-        mutableState.value = current.copy(
-            linkPitchToSpeed = linked,
-            playbackPitch = newPitch
-        )
+        mutableState.update {
+            it.copy(
+                linkPitchToSpeed = linked,
+                playbackPitch = newPitch
+            )
+        }
         activePlayer?.playbackParameters = PlaybackParameters(current.playbackSpeed, newPitch)
+        persistPlaybackStateAsync()
     }
 
     fun resetSpeedAndPitch() {
-        mutableState.value = mutableState.value.copy(
-            playbackSpeed = 1.0f,
-            playbackPitch = 1.0f,
-            linkPitchToSpeed = false
-        )
+        mutableState.update {
+            it.copy(
+                playbackSpeed = 1.0f,
+                playbackPitch = 1.0f,
+                linkPitchToSpeed = false
+            )
+        }
+        SystemLyricBridge.playbackSpeedSnapshot = 1.0f
         updatePositionSnapshot(
             positionMs = currentSmoothPositionMs(),
             playbackSpeed = 1.0f
         )
         activePlayer?.playbackParameters = PlaybackParameters(1.0f, 1.0f)
+        persistPlaybackStateAsync()
     }
 
     fun setSleepStopAfterCurrentSongPreference(enabled: Boolean) {
@@ -1831,16 +1905,18 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     specialChildId = existingSpecialChildId
                 )
                 if (replies.isNotEmpty()) {
-                    val updatedList = mutableState.value.comments.map { cmt ->
-                        if (cmt.id == commentId) {
-                            val mergedReplies = (cmt.replies + replies).distinctBy { it.id }
-                            cmt.copy(
-                                replies = mergedReplies,
-                                replyCount = maxOf(cmt.replyCount, mergedReplies.size)
-                            )
-                        } else cmt
+                    mutableState.update { cur ->
+                        val updatedList = cur.comments.map { cmt ->
+                            if (cmt.id == commentId) {
+                                val mergedReplies = (cmt.replies + replies).distinctBy { it.id }
+                                cmt.copy(
+                                    replies = mergedReplies,
+                                    replyCount = maxOf(cmt.replyCount, mergedReplies.size)
+                                )
+                            } else cmt
+                        }
+                        cur.copy(comments = updatedList)
                     }
-                    mutableState.value = mutableState.value.copy(comments = updatedList)
                 }
             }
         }
@@ -2004,9 +2080,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                                 climaxEndMs = nextResult.climaxEndMs.takeIf { it > 0L } ?: nextSong.climaxEndMs
                             )
                             songsByMediaId[nextMediaId] = resolvedNextSong
+                            val nextCacheKey = AudioCacheManager.buildCacheKey(
+                                hash = nextResult.resolvedHash.ifBlank { resolvedNextSong.hash },
+                                qualityApiValue = resolvedQuality.apiValue,
+                                isFreePart = nextResult.isFreePart
+                            )
                             val nextItem = MediaItem.Builder()
                                 .setMediaId(nextMediaId)
                                 .setUri(nextResult.url)
+                                .setCustomCacheKey(nextCacheKey)
                                 .setMediaMetadata(
                                     MediaMetadata.Builder()
                                         .setTitle(nextSong.title)
@@ -2035,7 +2117,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private fun onTrackEnded() {
         val current = mutableState.value.currentSong
         if (current != null) {
-            val playedMs = (System.currentTimeMillis() - songPlaybackStartTimestamp).coerceAtLeast(0L)
+            val playedMs = currentEffectivePlayedMs()
             KugouCsccReporter.onSongEnd(current, playedMs)
             ListeningGradeManager.onSongCompleted(current)
             activePlayingSong = null
@@ -2070,12 +2152,14 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         if (song != null && player.isPlaying && recordedMediaId != mediaId) {
             val prevSong = activePlayingSong
             if (prevSong != null && prevSong.id != song.id) {
-                val playedMs = (System.currentTimeMillis() - songPlaybackStartTimestamp).coerceAtLeast(0L)
+                val playedMs = currentEffectivePlayedMs()
                 KugouCsccReporter.onSongEnd(prevSong, playedMs)
             }
 
             activePlayingSong = song
             songPlaybackStartTimestamp = System.currentTimeMillis()
+            accumulatedPlayedMs = 0L
+            lastAccumulateTickMs = System.currentTimeMillis()
             recordedMediaId = mediaId
 
             VipManager.history.add(currentUser, song)
@@ -2122,9 +2206,16 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             if (remainClimaxMs in 1L..2_500L && climaxFadeInJob?.isActive != true) {
                 player.volume = (remainClimaxMs / 2_500f).coerceIn(0.15f, 1.0f)
             } else if (pos >= climaxEnd && lastClimaxSkipSongId != song.id) {
-                lastClimaxSkipSongId = song.id
-                player.volume = 1f
-                skipToNext()
+                if (st.playMode == PlayMode.REPEAT_ONE) {
+                    lastClimaxSkipSongId = ""
+                    val climaxStart = song.effectiveClimaxStartMs
+                    seekTo(climaxStart)
+                    triggerClimaxSmoothFadeIn()
+                } else {
+                    lastClimaxSkipSongId = song.id
+                    player.volume = 1f
+                    skipToNext()
+                }
                 return
             }
         }
@@ -2240,6 +2331,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
                 if (mutableState.value.isPlaying) {
                     val now = System.currentTimeMillis()
+                    if (lastAccumulateTickMs > 0L && now > lastAccumulateTickMs) {
+                        accumulatedPlayedMs += (now - lastAccumulateTickMs).coerceAtMost(2_000L)
+                    }
+                    lastAccumulateTickMs = now
                     if (lastRecordTimestamp > 0L) {
                         val elapsedSec = (now - lastRecordTimestamp) / 1000
                         if (elapsedSec >= 1) {
@@ -2258,6 +2353,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     }
                 } else {
                     lastRecordTimestamp = 0L
+                    lastAccumulateTickMs = 0L
                 }
 
                 delay(delayMs)
@@ -2268,7 +2364,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     override fun onCleared() {
         persistPlaybackStateAsync()
         activePlayingSong?.let {
-            val playedMs = (System.currentTimeMillis() - songPlaybackStartTimestamp).coerceAtLeast(0L)
+            val playedMs = currentEffectivePlayedMs()
             KugouCsccReporter.onSongEnd(it, playedMs)
         }
         activePlayingSong = null

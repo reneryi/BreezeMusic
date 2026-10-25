@@ -959,6 +959,8 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
  * 当全屏深色沉浸式层（如全屏播放页）覆盖在浅色主题之上时，动态同步系统状态栏与导航栏图标为浅色亮字，
  * 关闭后自动恢复当前主题对应的状态栏图标明暗度。
  */
+private var forceDarkBarsOverlayCount = 0
+
 @Composable
 fun SystemBarAppearanceEffect(forceDarkBars: Boolean) {
     val context = LocalContext.current
@@ -966,14 +968,17 @@ fun SystemBarAppearanceEffect(forceDarkBars: Boolean) {
     val isDarkTheme = LocalIsDarkTheme.current
     if (!view.isInEditMode) {
         DisposableEffect(forceDarkBars, isDarkTheme) {
+            if (forceDarkBars) forceDarkBarsOverlayCount++
             val window = context.findActivity()?.window
             val controller = window?.let { WindowCompat.getInsetsController(it, view) }
-            val effectiveDark = forceDarkBars || isDarkTheme
+            val effectiveDark = forceDarkBarsOverlayCount > 0 || forceDarkBars || isDarkTheme
             controller?.isAppearanceLightStatusBars = !effectiveDark
             controller?.isAppearanceLightNavigationBars = !effectiveDark
             onDispose {
-                controller?.isAppearanceLightStatusBars = !isDarkTheme
-                controller?.isAppearanceLightNavigationBars = !isDarkTheme
+                if (forceDarkBars) forceDarkBarsOverlayCount = (forceDarkBarsOverlayCount - 1).coerceAtLeast(0)
+                val stillDark = forceDarkBarsOverlayCount > 0 || isDarkTheme
+                controller?.isAppearanceLightStatusBars = !stillDark
+                controller?.isAppearanceLightNavigationBars = !stillDark
             }
         }
     }
@@ -1012,8 +1017,9 @@ fun ConceptMusicTheme(
             val window = context.findActivity()?.window ?: return@SideEffect
             WindowCompat.setDecorFitsSystemWindows(window, false)
             val insetsController = WindowCompat.getInsetsController(window, view)
-            insetsController.isAppearanceLightStatusBars = !isDark
-            insetsController.isAppearanceLightNavigationBars = !isDark
+            val effectiveDark = isDark || forceDarkBarsOverlayCount > 0
+            insetsController.isAppearanceLightStatusBars = !effectiveDark
+            insetsController.isAppearanceLightNavigationBars = !effectiveDark
         }
     }
 

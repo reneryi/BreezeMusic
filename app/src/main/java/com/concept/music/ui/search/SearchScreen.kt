@@ -94,7 +94,21 @@ fun SearchScreen(
     val hasMore by viewModel.hasMore.collectAsState()
 
     val keyboardController = LocalSoftwareKeyboardController.current
-    val listState = rememberLazyListState()
+    val songListState = rememberLazyListState()
+    val artistListState = rememberLazyListState()
+    val albumListState = rememberLazyListState()
+    val playlistListState = rememberLazyListState()
+    val activeListState = when (selectedTab) {
+        SearchTab.SONG -> songListState
+        SearchTab.ARTIST -> artistListState
+        SearchTab.ALBUM -> albumListState
+        SearchTab.PLAYLIST -> playlistListState
+        SearchTab.COMPLEX -> songListState
+    }
+    val currentOnBack by rememberUpdatedState(onBack)
+    val currentSuggestions by rememberUpdatedState(suggestions)
+    val currentHasSearched by rememberUpdatedState(hasSearched)
+    val currentQuery by rememberUpdatedState(query)
 
     BackHandler(enabled = true) {
         if (suggestions.isNotEmpty()) {
@@ -107,18 +121,18 @@ fun SearchScreen(
         }
     }
 
-    var edgeDragStartX by remember { mutableFloatStateOf(0f) }
+    var edgeDragStartX by remember { mutableFloatStateOf(-1f) }
 
-    val shouldLoadMore by remember {
+    val shouldLoadMore by remember(activeListState) {
         derivedStateOf {
-            val totalItems = listState.layoutInfo.totalItemsCount
-            val lastVisibleIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val totalItems = activeListState.layoutInfo.totalItemsCount
+            val lastVisibleIndex = activeListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
             totalItems > 0 && lastVisibleIndex >= totalItems - 4
         }
     }
 
-    LaunchedEffect(shouldLoadMore) {
-        if (shouldLoadMore && hasMore && !loadingMore && !loading) {
+    LaunchedEffect(shouldLoadMore, hasMore, loadingMore, loading, selectedTab) {
+        if (shouldLoadMore && hasMore && !loadingMore && !loading && selectedTab != SearchTab.COMPLEX) {
             viewModel.loadMore()
         }
     }
@@ -130,23 +144,26 @@ fun SearchScreen(
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .pointerInput(Unit) {
+                    val edgeTriggerMaxPx = 40.dp.toPx()
+                    val swipeDistanceThresholdPx = 150f
                     detectHorizontalDragGestures(
                         onDragStart = { offset ->
-                            edgeDragStartX = offset.x
+                            edgeDragStartX = if (offset.x in 0f..edgeTriggerMaxPx) offset.x else -1f
                         },
-                        onDragEnd = { edgeDragStartX = 0f },
-                        onDragCancel = { edgeDragStartX = 0f },
+                        onDragEnd = { edgeDragStartX = -1f },
+                        onDragCancel = { edgeDragStartX = -1f },
                         onHorizontalDrag = { change, dragAmount ->
-                            if (edgeDragStartX in 0f..120f && dragAmount > 0) {
-                                if (change.position.x - edgeDragStartX > 150f) {
-                                    edgeDragStartX = 0f
-                                    if (suggestions.isNotEmpty()) {
+                            if (edgeDragStartX >= 0f && dragAmount > 0f) {
+                                if (change.position.x - edgeDragStartX > swipeDistanceThresholdPx) {
+                                    // 立即复位为 -1f，杜绝下一帧二次命中导致直接退出整个搜索页
+                                    edgeDragStartX = -1f
+                                    if (currentSuggestions.isNotEmpty()) {
                                         viewModel.dismissSuggestions()
-                                    } else if (hasSearched || query.isNotEmpty()) {
+                                    } else if (currentHasSearched || currentQuery.isNotEmpty()) {
                                         viewModel.clearQuery()
                                     } else {
                                         viewModel.resetTabToDefault()
-                                        onBack()
+                                        currentOnBack()
                                     }
                                 }
                             }
@@ -364,12 +381,12 @@ fun SearchScreen(
                                         val searchScope = rememberCoroutineScope()
                                         val showSongSearchScrollTop by remember(songResults.size) {
                                             derivedStateOf {
-                                                listState.firstVisibleItemIndex > 2 ||
-                                                    (listState.firstVisibleItemIndex == 2 && listState.firstVisibleItemScrollOffset > 100)
+                                                songListState.firstVisibleItemIndex > 2 ||
+                                                    (songListState.firstVisibleItemIndex == 2 && songListState.firstVisibleItemScrollOffset > 100)
                                             }
                                         }
                                         Box(modifier = Modifier.fillMaxSize()) {
-                                            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                                            LazyColumn(state = songListState, modifier = Modifier.fillMaxSize()) {
                                                 itemsIndexed(songResults, key = { idx, s -> "search_song_${s.id}_$idx" }, contentType = { _, _ -> "song_row" }) { index, song ->
                                                     SongItemRow(
                                                         song = song,
@@ -394,7 +411,7 @@ fun SearchScreen(
                                                 visible = showSongSearchScrollTop,
                                                 onClick = {
                                                     searchScope.launch {
-                                                        listState.smoothFastScrollToItem(0)
+                                                        songListState.smoothFastScrollToItem(0)
                                                     }
                                                 },
                                                 modifier = Modifier
@@ -410,7 +427,7 @@ fun SearchScreen(
                                         EmptySearchState(message = "未找到“$displayKw”的相关歌手")
                                     } else {
                                         LazyColumn(
-                                            state = listState,
+                                            state = artistListState,
                                             modifier = Modifier.fillMaxSize(),
                                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                         ) {
@@ -435,7 +452,7 @@ fun SearchScreen(
                                         EmptySearchState(message = "未找到“$displayKw”的相关专辑")
                                     } else {
                                         LazyColumn(
-                                            state = listState,
+                                            state = albumListState,
                                             modifier = Modifier.fillMaxSize(),
                                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                         ) {
@@ -460,7 +477,7 @@ fun SearchScreen(
                                         EmptySearchState(message = "未找到“$displayKw”的相关歌单")
                                     } else {
                                         LazyColumn(
-                                            state = listState,
+                                            state = playlistListState,
                                             modifier = Modifier.fillMaxSize(),
                                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                         ) {

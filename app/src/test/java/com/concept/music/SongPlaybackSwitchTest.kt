@@ -132,36 +132,25 @@ class SongPlaybackSwitchTest {
         val verification = VerificationCoordinator(dummyTransport)
         val vipRepo = VipRepository(dummyTransport, accountRepo, verification)
 
-        // 模拟 LyricRepository，预填充歌词缓存
+        // 模拟 LyricRepository，使用 internal 测试辅助方法预填充歌词缓存（零反射）
         val lyricRepo = LyricRepository(dummyTransport)
-        val lyricCacheField = LyricRepository::class.java.getDeclaredField("cache")
-        lyricCacheField.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val lyricCache = lyricCacheField.get(lyricRepo) as MutableMap<String, LyricData>
-        lyricCache[song1.id] = lyricData1
-        lyricCache[song2.id] = lyricData2
-        lyricCache[song3.id] = lyricData3
+        lyricRepo.putCacheForTest(song1.id, lyricData1)
+        lyricRepo.putCacheForTest(song2.id, lyricData2)
+        lyricRepo.putCacheForTest(song3.id, lyricData3)
 
         val musicRepo = MusicApiRepository(dummyTransport, accountRepo) { dummyStore.device() }
 
-        // 预设音频解析结果缓存
-        val playbackCacheField = MusicApiRepository::class.java.getDeclaredField("playbackResultCache")
-        playbackCacheField.isAccessible = true
-        @Suppress("UNCHECKED_CAST")
-        val playbackCache = playbackCacheField.get(musicRepo) as MutableMap<String, PlaybackResult>
-        playbackCache["hash_1_${AudioQuality.LOSSLESS.apiValue}"] = PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.LOSSLESS, 850, 20_000_000L)
-        playbackCache["hash_1_${AudioQuality.HIGH.apiValue}"] = PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.HIGH, 320, 10_000_000L)
-        playbackCache["hash_1_${AudioQuality.STANDARD.apiValue}"] = PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.STANDARD, 128, 5_000_000L)
-        playbackCache["hash_2_${AudioQuality.HI_RES.apiValue}"] = PlaybackResult("http://audio.kugou.com/2.mp3", AudioQuality.HI_RES, 1500, 40_000_000L)
-        playbackCache["hash_2_${AudioQuality.HIGH.apiValue}"] = PlaybackResult("http://audio.kugou.com/2.mp3", AudioQuality.HIGH, 320, 10_000_000L)
-        playbackCache["hash_2_${AudioQuality.STANDARD.apiValue}"] = PlaybackResult("http://audio.kugou.com/2.mp3", AudioQuality.STANDARD, 128, 4_000_000L)
-        playbackCache["hash_3_${AudioQuality.HIGH.apiValue}"] = PlaybackResult("http://audio.kugou.com/3.mp3", AudioQuality.STANDARD, 128, 6_000_000L)
-        playbackCache["hash_3_${AudioQuality.STANDARD.apiValue}"] = PlaybackResult("http://audio.kugou.com/3.mp3", AudioQuality.STANDARD, 128, 6_000_000L)
+        // 预设音频解析结果缓存（零反射）
+        musicRepo.putPlaybackCacheForTest("hash_1_${AudioQuality.LOSSLESS.apiValue}", PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.LOSSLESS, 850, 20_000_000L))
+        musicRepo.putPlaybackCacheForTest("hash_1_${AudioQuality.HIGH.apiValue}", PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.HIGH, 320, 10_000_000L))
+        musicRepo.putPlaybackCacheForTest("hash_1_${AudioQuality.STANDARD.apiValue}", PlaybackResult("http://audio.kugou.com/1.mp3", AudioQuality.STANDARD, 128, 5_000_000L))
+        musicRepo.putPlaybackCacheForTest("hash_2_${AudioQuality.HI_RES.apiValue}", PlaybackResult("http://audio.kugou.com/2.mp3", AudioQuality.HI_RES, 1500, 40_000_000L))
+        musicRepo.putPlaybackCacheForTest("hash_2_${AudioQuality.HIGH.apiValue}", PlaybackResult("http://audio.kugou.com/2.mp3", AudioQuality.HIGH, 320, 10_000_000L))
+        musicRepo.putPlaybackCacheForTest("hash_2_${AudioQuality.STANDARD.apiValue}", PlaybackResult("http://audio.kugou.com/2.mp3", AudioQuality.STANDARD, 128, 4_000_000L))
+        musicRepo.putPlaybackCacheForTest("hash_3_${AudioQuality.HIGH.apiValue}", PlaybackResult("http://audio.kugou.com/3.mp3", AudioQuality.STANDARD, 128, 6_000_000L))
+        musicRepo.putPlaybackCacheForTest("hash_3_${AudioQuality.STANDARD.apiValue}", PlaybackResult("http://audio.kugou.com/3.mp3", AudioQuality.STANDARD, 128, 6_000_000L))
 
-        val historyRepo = Proxy.newProxyInstance(
-            PlaybackHistoryRepository::class.java.classLoader,
-            arrayOf()
-        ) { _, _, _ -> null } as? PlaybackHistoryRepository ?: PlaybackHistoryRepository(app)
+        val historyRepo = PlaybackHistoryRepository(null)
 
         VipManager.initializeForTest(
             accounts = accountRepo,

@@ -397,23 +397,17 @@ private fun MiniPlayerPlayProgressButton(
     LaunchedEffect(isPlaying, positionProvider) {
         if (isPlaying) {
             while (isActive) {
-                withFrameMillis {
-                    sampledPositionMs = positionProvider()
-                }
+                sampledPositionMs = positionProvider()
+                kotlinx.coroutines.delay(100L)
             }
         } else {
             sampledPositionMs = positionProvider()
         }
     }
 
-    val rawProgressFraction = if (durationMs > 0L) {
+    val progressFraction = if (durationMs > 0L) {
         (sampledPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
-    val progressFraction by animateFloatAsState(
-        targetValue = rawProgressFraction,
-        animationSpec = tween(durationMillis = 140, easing = LinearEasing),
-        label = "miniProgressFraction"
-    )
     val playPauseMorph by animateFloatAsState(
         targetValue = if (isPlaying) 1f else 0f,
         animationSpec = ConceptMotion.expressiveSpring(),

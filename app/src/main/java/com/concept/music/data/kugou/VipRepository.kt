@@ -4,14 +4,16 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import java.io.IOException
 import java.time.Clock
+import java.util.concurrent.ConcurrentHashMap
 
 class VipRepository(private val transport: KugouTransport, private val accounts: AccountRepository,
     private val verification: VerificationCoordinator, private val clock: Clock = Clock.systemUTC(),
     private val settleDelayMs: Long = 1_000, private val onVipActivated: () -> Unit = {}) {
-    private val locks = mutableMapOf<String, Mutex>()
+    private val locks = ConcurrentHashMap<String, Mutex>()
     private val mutable = MutableStateFlow(VipUiState())
     val state = mutable.asStateFlow()
     fun clear() { mutable.value = VipUiState() }
@@ -42,13 +44,13 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
         try {
             val vip = snapshot(context)
             accounts.ensureCurrent(context)
-            mutable.value = state.value.copy(snapshot = vip, fresh = true, error = null)
+            mutable.update { it.copy(snapshot = vip, fresh = true, error = null) }
             if (vip.isVip) onVipActivated()
             val history = records(context)
             accounts.ensureCurrent(context)
-            mutable.value = state.value.copy(records = history)
+            mutable.update { it.copy(records = history) }
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { accounts.ensureCurrent(context); mutable.value = state.value.copy(fresh = false, error = "权益尚未完整刷新：${e.message}") }
+        catch (e: Exception) { accounts.ensureCurrent(context); mutable.update { it.copy(fresh = false, error = "权益尚未完整刷新：${e.message}") } }
     }
     private fun confirmed(day: String, vip: VipSnapshot, records: List<VipDayRecord>): Boolean =
         records.any { it.day == day && it.received && it.type.lowercase() == "svip" } && vip.active("svip")
@@ -71,17 +73,17 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
     }
 
     suspend fun claim(context: AccountContext, automatic: Boolean = false): VipClaimResult {
-        val lock = locks.getOrPut(context.session.userId) { Mutex() }
+        val lock = locks.computeIfAbsent(context.session.userId) { Mutex() }
         if (!lock.tryLock()) return VipClaimResult(ClaimOutcome.PENDING, "领取正在进行，请稍候")
         try {
             accounts.ensureCurrent(context)
-            mutable.value = state.value.copy(busy = true, result = null, error = null)
+            mutable.update { it.copy(busy = true, result = null, error = null) }
             val day = today(clock)
             var history = records(context)
             var vip = snapshot(context)
             if (confirmed(day, vip, history)) {
                 accounts.completed(context, day)
-                mutable.value = state.value.copy(snapshot = vip, records = history, fresh = true)
+                mutable.update { it.copy(snapshot = vip, records = history, fresh = true) }
                 onVipActivated()
                 return publish(context, ClaimOutcome.ALREADY_DONE, "今日已完成，概念版权益有效")
             }
@@ -97,8 +99,8 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
                     )
                 } catch (e: ApiFailure) {
                     if (e.code == 20028 || e.invalidSession) throw e
-                    // 备选激励广告通道 (/youth/v1/ad/play_report)，零听歌上报、不改变账号听歌时长
-                    runCatching { reportAdPlayForVip(context) }
+                    // 备选激励广告通道 (/youth/v1/ad/play_report)，使用 suspendRunCatching 确保不吞没 CancellationException
+                    suspendRunCatching { reportAdPlayForVip(context) }
                     mutate(
                         context = context,
                         automatic = automatic,
@@ -123,7 +125,7 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
                 history = records(context)
                 vip = snapshot(context)
                 accounts.ensureCurrent(context)
-                mutable.value = state.value.copy(snapshot = vip, records = history, fresh = true)
+                mutable.update { it.copy(snapshot = vip, records = history, fresh = true) }
                 if (confirmed(day, vip, history)) {
                     accounts.completed(context, day)
                     onVipActivated()
@@ -135,7 +137,6 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
             else publish(context, ClaimOutcome.PENDING, "请求已处理，权益尚未同步确认，请稍后刷新")
         } catch (e: CancellationException) { throw e }
         catch (e: IOException) {
-            // An interrupted mutation may already have reached the service. Query; never replay it here.
             refresh(context)
             val day = today(clock)
             if (state.value.fresh && confirmed(day, state.value.snapshot, state.value.records)) {
@@ -152,7 +153,7 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
         } catch (e: Exception) {
             return publish(context, ClaimOutcome.FAILED, "领取失败：${e.message}")
         } finally {
-            if (accounts.isCurrent(context)) mutable.value = state.value.copy(busy = false)
+            if (accounts.isCurrent(context)) mutable.update { it.copy(busy = false) }
             lock.unlock()
         }
     }
@@ -167,6 +168,6 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
     }
     private fun publish(context: AccountContext, outcome: ClaimOutcome, message: String): VipClaimResult {
         accounts.ensureCurrent(context)
-        return VipClaimResult(outcome, message).also { mutable.value = state.value.copy(result = it) }
+        return VipClaimResult(outcome, message).also { res -> mutable.update { it.copy(result = res) } }
     }
 }

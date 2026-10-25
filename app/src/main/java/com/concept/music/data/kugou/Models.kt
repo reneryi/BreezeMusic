@@ -1,8 +1,21 @@
 package com.concept.music.data.kugou
 
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CancellationException
 import java.time.*
 import java.time.format.DateTimeFormatter
+
+/**
+ * 协程安全异常捕获包装器：遇到 [CancellationException] 时立即重抛以保持结构化并发取消传播，
+ * 杜绝因取消协程被吞没引发的空缓存投毒与僵尸重试请求风暴。
+ */
+inline fun <R> suspendRunCatching(block: () -> R): Result<R> = try {
+    Result.success(block())
+} catch (c: CancellationException) {
+    throw c
+} catch (t: Throwable) {
+    Result.failure(t)
+}
 
 internal fun JsonObject.text(key: String): String? = get(key)?.takeIf { it.isJsonPrimitive }?.asString
 internal fun JsonObject.number(key: String): Int? = text(key)?.toIntOrNull()
@@ -110,5 +123,7 @@ data class PlaybackResult(
     val bitrateKbps: Int = 0,
     val fileSizeByte: Long = 0L,
     val climaxStartMs: Long = 0L,
-    val climaxEndMs: Long = 0L
+    val climaxEndMs: Long = 0L,
+    val isFreePart: Boolean = false,
+    val resolvedHash: String = ""
 )

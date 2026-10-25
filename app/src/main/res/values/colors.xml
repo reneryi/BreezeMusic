@@ -9,4 +9,5 @@
     <color name="white">#FFFFFFFF</color>
     <color name="concept_cyan">#FF00D2B4</color>
     <color name="concept_dark">#FF121418</color>
+    <color name="concept_window_bg">#FF0B111C</color>
 </resources>

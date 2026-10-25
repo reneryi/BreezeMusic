@@ -25,6 +25,7 @@ object VipManager {
     var discoverCache: DiscoverLocalCache = DiscoverLocalCache(null); private set
     lateinit var device: () -> DeviceIdentity; private set
 
+    @Synchronized
     fun initialize(context: Context) {
         if (::accounts.isInitialized) return
         val appCtx = context.applicationContext
@@ -56,7 +57,6 @@ object VipManager {
         discoverCache = DiscoverLocalCache(appCtx)
         ListeningGradeManager.initialize(appCtx)
 
-        // [PROTO-02] 启动时若本地尚未向远端风控网关完成 dfid 注册，在后台静默向酷狗概念版网关申请持久化 dfid
         if (!store.isDfidRegistered() || store.device().dfid == "-") {
             initScope.launch {
                 runCatching { auth.registerDevice(forceRefresh = true) }
@@ -64,6 +64,7 @@ object VipManager {
         }
     }
 
+    @Synchronized
     internal fun initializeForTest(
         accounts: AccountRepository,
         auth: AuthRepository,

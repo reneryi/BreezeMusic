@@ -98,6 +98,9 @@ object SystemLyricBridge {
     @Volatile
     internal var isPlayingSnapshot: Boolean = false
 
+    @Volatile
+    internal var playbackSpeedSnapshot: Float = 1.0f
+
     // 播放控制回调
     var onTogglePlayCallback: (() -> Unit)? = null
     var onPreviousCallback: (() -> Unit)? = null
@@ -368,9 +371,12 @@ object SystemLyricBridge {
 
                 val view = NativeDesktopLyricView(ctx) { dx, dy, isFinished ->
                     val curLp = overlayParams ?: return@NativeDesktopLyricView
-                    val maxHalfX = ((screenW - curLp.width).coerceAtLeast(0)) / 2
+                    val liveDm = ctx.resources.displayMetrics
+                    val liveW = liveDm.widthPixels.coerceAtLeast(720)
+                    val liveH = liveDm.heightPixels.coerceAtLeast(720)
+                    val maxHalfX = ((liveW - curLp.width).coerceAtLeast(0)) / 2
                     curLp.x = (curLp.x + dx).roundToInt().coerceIn(-maxHalfX, maxHalfX)
-                    curLp.y = (curLp.y + dy).roundToInt().coerceIn(36, (screenH - viewHeightOrDefault()).coerceAtLeast(80))
+                    curLp.y = (curLp.y + dy).roundToInt().coerceIn(36, (liveH - viewHeightOrDefault()).coerceAtLeast(80))
                     runCatching { wm.updateViewLayout(overlayView, curLp) }
                     if (isFinished) {
                         saveDesktopPosition(curLp.x.toFloat(), curLp.y.toFloat())
@@ -672,9 +678,26 @@ private class NativeDesktopLyricView(
         invalidate()
     }
 
+    private var lastLayoutLineIdx = -2
+    private var lastLayoutFontSize = -1f
+    private var lastLayoutLineMode: DesktopLyricLineMode? = null
+    private var lastLayoutLocked: Boolean? = null
+
     fun onPlaybackUpdated() {
-        requestLayout()
-        invalidate()
+        val st = SystemLyricBridge.state.value
+        val curIdx = SystemLyricBridge.currentLineIndexSnapshot
+        if (curIdx != lastLayoutLineIdx ||
+            st.desktopFontSize != lastLayoutFontSize ||
+            st.desktopLineMode != lastLayoutLineMode ||
+            st.floatingCapsuleLocked != lastLayoutLocked
+        ) {
+            lastLayoutLineIdx = curIdx
+            lastLayoutFontSize = st.desktopFontSize
+            lastLayoutLineMode = st.desktopLineMode
+            lastLayoutLocked = st.floatingCapsuleLocked
+            requestLayout()
+        }
+        postInvalidateOnAnimation()
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -738,7 +761,7 @@ private class NativeDesktopLyricView(
         val elapsed = if (SystemLyricBridge.isPlayingSnapshot && SystemLyricBridge.lastPositionSyncRealtimeMs > 0L) {
             (android.os.SystemClock.elapsedRealtime() - SystemLyricBridge.lastPositionSyncRealtimeMs).coerceIn(0L, 250L)
         } else 0L
-        val livePosMs = basePos + elapsed
+        val livePosMs = basePos + (elapsed * SystemLyricBridge.playbackSpeedSnapshot).toLong()
 
         val lines = SystemLyricBridge.currentLyricSnapshot.lines
         val safeIdx = SystemLyricBridge.currentLineIndexSnapshot.coerceIn(0, (lines.size - 1).coerceAtLeast(0))

@@ -106,4 +106,42 @@ class KrcLyricTest {
         assertEquals("酷狗", parsed.lines[0].text)
         assertEquals(2, parsed.lines[0].words.size)
     }
+
+    @Test
+    fun `parseLrcText merges block-separated bilingual LRC and expands multi-timestamp chorus lines`() {
+        val blockBilingualLrc = """
+            [00:10.00]Hello from the other side
+            [00:15.00][00:45.00]I must have called a thousand times
+            [00:10.00]来自另一边的问候
+            [00:15.00]我一定打过上千次电话
+            [00:45.00]我一定打过上千次电话
+        """.trimIndent()
+
+        val parsed = KrcDecoder.parseLrcText(blockBilingualLrc)
+        assertEquals(3, parsed.lines.size)
+        assertEquals(10_000L, parsed.lines[0].startTimeMs)
+        assertEquals("Hello from the other side", parsed.lines[0].text)
+        assertEquals("来自另一边的问候", parsed.lines[0].translation)
+        assertEquals(5_000L, parsed.lines[0].durationMs)
+
+        assertEquals(15_000L, parsed.lines[1].startTimeMs)
+        assertEquals("I must have called a thousand times", parsed.lines[1].text)
+        assertEquals("我一定打过上千次电话", parsed.lines[1].translation)
+        assertEquals(30_000L, parsed.lines[1].durationMs)
+
+        assertEquals(45_000L, parsed.lines[2].startTimeMs)
+        assertEquals("I must have called a thousand times", parsed.lines[2].text)
+        assertEquals("我一定打过上千次电话", parsed.lines[2].translation)
+    }
+
+    @Test
+    fun `AudioCacheManager buildCacheKey isolates hashes qualities and trial vs full stream`() {
+        val trialKey = com.concept.music.service.AudioCacheManager.buildCacheKey("abc123def", "128", isFreePart = true)
+        val fullKey = com.concept.music.service.AudioCacheManager.buildCacheKey("abc123def", "128", isFreePart = false)
+        val flacKey = com.concept.music.service.AudioCacheManager.buildCacheKey("abc123def", "flac", isFreePart = false)
+        org.junit.Assert.assertNotEquals(trialKey, fullKey)
+        org.junit.Assert.assertNotEquals(fullKey, flacKey)
+        assertEquals("kg_v2_ABC123DEF_128_trial", trialKey)
+        assertEquals("kg_v2_ABC123DEF_128_full", fullKey)
+    }
 }
