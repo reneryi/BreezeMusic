@@ -173,7 +173,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     val playbackPositionFlow = mutablePositionFlow.asStateFlow()
 
     private fun safeElapsedRealtime(): Long =
-        runCatching { SystemClock.elapsedRealtime() }.getOrDefault(0L)
+        runCatching { SystemClock.elapsedRealtime() }.getOrDefault(0L).takeIf { it > 0L } ?: System.currentTimeMillis()
 
     private fun updatePositionSnapshot(
         positionMs: Long,
@@ -248,6 +248,19 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private var nextShuffleIndex: Int = -1
     private var prefetchedNextQueueIndex: Int = -1
     private var prefetchedNextSongKey: String = ""
+    private var pendingSeekPositionMs: Long = -1L
+    private var pendingSeekElapsedMs: Long = 0L
+    @Volatile
+    private var lastSerializedQueueRef: List<Song>? = null
+    @Volatile
+    private var lastSerializedQueueJson: String = "[]"
+
+    private fun resolveEffectiveIsPlaying(player: Player, isResolving: Boolean): Boolean {
+        if (isResolving) return mutableState.value.isPlaying
+        if (player.mediaItemCount == 0) return false
+        if (player.isPlaying) return true
+        return player.playbackState == Player.STATE_BUFFERING && player.playWhenReady
+    }
 
     internal val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -321,6 +334,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 lastAccumulateTickMs = if (mutableState.value.isPlaying) System.currentTimeMillis() else 0L
                 songPlaybackStartTimestamp = System.currentTimeMillis()
                 lastClimaxSkipSongId = ""
+        pendingSeekPositionMs = -1L
                 mutableState.update { it.copy(climaxUnlockedForCurrentSong = false) }
                 if (mutableState.value.climaxModeEnabled) {
                     val startPos = currentSong.effectiveClimaxStartMs
@@ -362,6 +376,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val newIdx = q.indexOfFirst { it.id == transitionedSong.id }.takeIf { it >= 0 } ?: mutableState.value.currentIndex
         nextShuffleIndex = -1
         lastClimaxSkipSongId = ""
+        pendingSeekPositionMs = -1L
 
         val playQuality = transitionedSong.actualPlayQuality ?: transitionedSong.highestQuality
         val resolvedSong = transitionedSong.copy(
@@ -757,6 +772,16 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         if (restoredSong != null) {
             loadLyric(restoredSong)
+            if (playerOverride == null) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    val warmList = buildList {
+                        add(restoredSong)
+                        val nextIdx = (savedIndex + 1) % sanitizedQueue.size.coerceAtLeast(1)
+                        sanitizedQueue.getOrNull(nextIdx)?.let { if (it.id != restoredSong.id) add(it) }
+                    }
+                    runCatching { VipManager.music.prewarmSongsPlayback(warmList, savedQuality, maxCount = 2) }
+                }
+            }
             loadComments(isRefresh = true)
             ConceptMusicWidgetUpdater.updateState(
                 context = getApplication(),
@@ -773,8 +798,16 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val latestPos = mutablePositionFlow.value.positionMs.takeIf { it > 0L } ?: snapshot.currentPositionMs
         PlaybackCoordinator.syncQueueSnapshot(snapshot.playlistQueue, snapshot.currentIndex, snapshot.playMode.name)
         PlaybackCoordinator.persistAsync(prefs) {
-            val cleanQueue = snapshot.playlistQueue.map { it.copy(playUrl = "") }
-            val queueJson = gson.toJson(cleanQueue)
+            val queueJson = if (snapshot.playlistQueue === lastSerializedQueueRef && lastSerializedQueueJson.isNotBlank()) {
+                lastSerializedQueueJson
+            } else {
+                val cleanQueue = snapshot.playlistQueue.map { it.copy(playUrl = "") }
+                gson.toJson(cleanQueue).also {
+                    lastSerializedQueueRef = snapshot.playlistQueue
+                    lastSerializedQueueJson = it
+                }
+            }
+            // queueJson cached above
             val recentJson = gson.toJson(
                 snapshot.recentQueues.take(5).map { rq ->
                     rq.copy(songs = rq.songs.map { s -> s.copy(playUrl = "") })
@@ -847,6 +880,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         resolveJob?.cancel()
         prefetchJob?.cancel()
         lastClimaxSkipSongId = ""
+        pendingSeekPositionMs = -1L
 
         val initialPrefQuality = mutableState.value.preferredQuality
         val initialPlayQuality = if (initialPrefQuality in song.effectiveQualities) initialPrefQuality else song.highestQuality
@@ -881,11 +915,18 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             currentPositionMs = seekToPositionMs,
             durationMs = song.durationMs,
             currentQualityLabel = initialQualityLabel,
+            isPlaying = true,
             climaxUnlockedForCurrentSong = false,
             songDetail = VipManager.music.songDetail(song),
             commentTargetSong = null,
             comments = emptyList(),
             commentCount = 0
+        )
+        updatePositionSnapshot(
+            positionMs = seekToPositionMs,
+            durationMs = song.durationMs,
+            bufferedPositionMs = 0L,
+            isPlaying = true
         )
         loadLyric(song)
         loadComments(isRefresh = true)
@@ -989,7 +1030,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     positionMs = targetSeekMs,
                     durationMs = resolvedSong.durationMs,
                     bufferedPositionMs = 0L,
-                    isPlaying = player.isPlaying
+                    isPlaying = resolveEffectiveIsPlaying(player, isResolving = false) || mutableState.value.isPlaying
                 )
                 mutableState.value = mutableState.value.copy(
                     loading = false,
@@ -997,6 +1038,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     playlistQueue = updatedQueue,
                     currentPositionMs = targetSeekMs,
                     currentQualityLabel = qualityLabel,
+                    isPlaying = resolveEffectiveIsPlaying(player, isResolving = false) || mutableState.value.isPlaying,
                     songDetail = VipManager.music.songDetail(resolvedSong)
                 )
 
@@ -1098,7 +1140,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun seekTo(positionMs: Long) {
-        val clamped = positionMs.coerceAtLeast(0L)
+        val maxDur = mutableState.value.durationMs
+        val clamped = if (maxDur > 0L) positionMs.coerceIn(0L, maxDur) else positionMs.coerceAtLeast(0L)
+        pendingSeekPositionMs = clamped
+        pendingSeekElapsedMs = safeElapsedRealtime()
         val player = activePlayer
         val st = mutableState.value
         val inSleepFade = (!st.sleepStopAfterCurrentSong && st.sleepTimerRemainingSec in 1L..5L) ||
@@ -2107,6 +2152,23 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                             prefetchedNextQueueIndex = nextIndex
                             prefetchedNextSongKey = "${nextSong.id}_${nextSong.hash}"
                             player.addMediaItem(nextItem)
+                            if (playerOverride == null && !useAccompany) {
+                                viewModelScope.launch(Dispatchers.IO) {
+                                    val warmCandidates = buildList {
+                                        val secondIdx = getNextIndex(queue, nextIndex)
+                                        if (secondIdx in queue.indices && secondIdx != currentIndex && secondIdx != nextIndex) {
+                                            add(queue[secondIdx])
+                                        }
+                                        val prevIdx = if (currentIndex - 1 < 0) queue.size - 1 else currentIndex - 1
+                                        if (prevIdx in queue.indices && prevIdx != currentIndex && prevIdx != nextIndex) {
+                                            add(queue[prevIdx])
+                                        }
+                                    }
+                                    if (warmCandidates.isNotEmpty()) {
+                                        runCatching { VipManager.music.prewarmSongsPlayback(warmCandidates, prefQuality, maxCount = 2) }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -2174,10 +2236,27 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         val isResolving = resolveJob?.isActive == true
         val hasMedia = player.mediaItemCount > 0
-        val pos = if (isResolving || !hasMedia) mutablePositionFlow.value.positionMs.takeIf { it > 0L } ?: mutableState.value.currentPositionMs else player.currentPosition.coerceAtLeast(0)
+        val rawPlayerPos = if (isResolving || !hasMedia) {
+            mutablePositionFlow.value.positionMs.takeIf { it > 0L } ?: mutableState.value.currentPositionMs
+        } else {
+            player.currentPosition.coerceAtLeast(0)
+        }
+        val nowElapsed = safeElapsedRealtime()
+        val pos = if (!isResolving && pendingSeekPositionMs >= 0L && nowElapsed - pendingSeekElapsedMs in 0L..550L) {
+            if (kotlin.math.abs(rawPlayerPos - pendingSeekPositionMs) <= 800L && player.playbackState == Player.STATE_READY) {
+                val settled = rawPlayerPos
+                pendingSeekPositionMs = -1L
+                settled
+            } else {
+                pendingSeekPositionMs
+            }
+        } else {
+            if (nowElapsed - pendingSeekElapsedMs > 550L) pendingSeekPositionMs = -1L
+            rawPlayerPos
+        }
         val dur = if (isResolving || !hasMedia) (song?.durationMs ?: 0L) else (player.duration.takeIf { it > 0 } ?: song?.durationMs ?: 0L)
         val buf = if (isResolving || !hasMedia) 0L else player.bufferedPosition.coerceAtLeast(0)
-        val isPlayingNow = if (isResolving || !hasMedia) false else player.isPlaying
+        val isPlayingNow = resolveEffectiveIsPlaying(player, isResolving)
 
         val st = mutableState.value
         updatePositionSnapshot(
@@ -2208,6 +2287,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             } else if (pos >= climaxEnd && lastClimaxSkipSongId != song.id) {
                 if (st.playMode == PlayMode.REPEAT_ONE) {
                     lastClimaxSkipSongId = ""
+        pendingSeekPositionMs = -1L
                     val climaxStart = song.effectiveClimaxStartMs
                     seekTo(climaxStart)
                     triggerClimaxSmoothFadeIn()

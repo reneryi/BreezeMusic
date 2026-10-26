@@ -15,6 +15,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioTrackBufferSizeProvider
@@ -274,9 +275,9 @@ class PlaybackService : MediaSessionService() {
             .build()
 
         val bufferSizeProvider = DefaultAudioTrackBufferSizeProvider.Builder()
-            .setMinPcmBufferDurationUs(1_500_000)
-            .setMaxPcmBufferDurationUs(4_000_000)
-            .setPcmBufferMultiplicationFactor(12)
+            .setMinPcmBufferDurationUs(250_000)
+            .setMaxPcmBufferDurationUs(2_500_000)
+            .setPcmBufferMultiplicationFactor(8)
             .build()
 
         val masteringProcessor = ConceptMasteringAudioProcessor()
@@ -298,10 +299,10 @@ class PlaybackService : MediaSessionService() {
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 35_000,
+                /* minBufferMs = */ 30_000,
                 /* maxBufferMs = */ 120_000,
-                /* bufferForPlaybackMs = */ 2_800,
-                /* bufferForPlaybackAfterRebufferMs = */ 5_500
+                /* bufferForPlaybackMs = */ 280,
+                /* bufferForPlaybackAfterRebufferMs = */ 800
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
@@ -314,6 +315,7 @@ class PlaybackService : MediaSessionService() {
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(pauseOnHeadsetDisconnect)
             .setLoadControl(loadControl)
+            .setSeekParameters(SeekParameters.CLOSEST_SYNC)
             .build()
         player = exoPlayer
 

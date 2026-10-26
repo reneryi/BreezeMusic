@@ -35,7 +35,8 @@ class MusicApiRepository(
 ) {
     private val playbackResultCache = ConcurrentHashMap<String, PlaybackResult>()
     private val playbackResultCacheTimestamp = ConcurrentHashMap<String, Long>()
-    private val playbackCacheTtlMs = 12 * 60 * 1000L
+    private val playbackCacheTtlMs = 20 * 60 * 1000L
+    private val privilegeLiteObjCache = ConcurrentHashMap<String, JsonObject>()
 
     // 记录每个电台与随心听的漫游偏移游标与已推去重池，确保每次刷新/换一批/继续漫游都获取 20 首全新曲目
     private val fmChannelCursorMap = ConcurrentHashMap<String, AtomicInteger>()
@@ -220,6 +221,7 @@ class MusicApiRepository(
 
     fun onAccountChanged() {
         clearPlaybackCache()
+        privilegeLiteObjCache.clear()
         localFollowedArtistsMap.clear()
         userTasteSeedsCache.clear()
         seenPersonalFmHashes.clear()
@@ -259,14 +261,87 @@ class MusicApiRepository(
         return null
     }
 
-    private fun putCachedPlayback(cacheKey: String, result: PlaybackResult) {
+    private fun putCachedPlayback(cacheKey: String, result: PlaybackResult, vararg aliasKeys: String) {
         if (result.isFreePart) return
-        if (playbackResultCache.size > 200) {
-            playbackResultCache.clear()
-            playbackResultCacheTimestamp.clear()
+        val now = System.currentTimeMillis()
+        if (playbackResultCache.size > 512) {
+            playbackResultCacheTimestamp.entries
+                .filter { now - it.value > playbackCacheTtlMs }
+                .forEach { (k, _) ->
+                    playbackResultCache.remove(k)
+                    playbackResultCacheTimestamp.remove(k)
+                }
+            if (playbackResultCache.size > 512) {
+                playbackResultCacheTimestamp.entries
+                    .sortedBy { it.value }
+                    .take(128)
+                    .forEach { (k, _) ->
+                        playbackResultCache.remove(k)
+                        playbackResultCacheTimestamp.remove(k)
+                    }
+            }
         }
         playbackResultCache[cacheKey] = result
-        playbackResultCacheTimestamp[cacheKey] = System.currentTimeMillis()
+        playbackResultCacheTimestamp[cacheKey] = now
+        aliasKeys.forEach { alias ->
+            if (alias.isNotBlank()) {
+                playbackResultCache[alias] = result
+                playbackResultCacheTimestamp[alias] = now
+            }
+        }
+    }
+
+    /**
+     * 零延迟同步探查内存中的播放解析结果缓存：
+     * 若命中且未过期，直接返回 PlaybackResult，使点击播放无需等待异步网络解析。
+     */
+    fun peekCachedPlayback(
+        song: Song,
+        preferredQuality: AudioQuality = song.highestQuality,
+        useAccompaniment: Boolean = false
+    ): PlaybackResult? {
+        val targetHash = if (useAccompaniment) {
+            song.accompanyHash.ifBlank { song.hash }
+        } else {
+            song.hashForQuality(preferredQuality).ifBlank { song.hash }
+        }
+        if (targetHash.isBlank() && song.hash.isBlank()) return null
+        val modeSuffix = if (useAccompaniment) "_acc" else ""
+        val userScope = accounts.context()?.session?.userId ?: "guest"
+        val primaryHashLower = targetHash.ifBlank { song.hash }.lowercase()
+        val legacyKey = "${primaryHashLower}_${preferredQuality.apiValue}$modeSuffix"
+        val cacheKey = "${userScope}_$legacyKey"
+        getValidCachedPlayback(cacheKey, legacyKey)?.let { return it }
+        if (song.hash.isNotBlank() && !song.hash.equals(primaryHashLower, ignoreCase = true)) {
+            val baseLegacy = "${song.hash.lowercase()}_${preferredQuality.apiValue}$modeSuffix"
+            val baseKey = "${userScope}_$baseLegacy"
+            getValidCachedPlayback(baseKey, baseLegacy)?.let { return it }
+        }
+        return null
+    }
+
+    /**
+     * 后台静默预热列表前排歌曲的播放直链缓存，使点击列表任意首屏歌曲时直接 0ms 命中缓存起播。
+     */
+    suspend fun prewarmSongsPlayback(
+        songs: List<Song>,
+        preferredQuality: AudioQuality = AudioQuality.HIGH,
+        maxCount: Int = 3
+    ) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val candidates = songs
+            .filter { it.hash.isNotBlank() || it.hash128.isNotBlank() || it.hash320.isNotBlank() }
+            .take(maxCount.coerceIn(1, 6))
+        if (candidates.isEmpty()) return@withContext
+        coroutineScope {
+            candidates.map { song ->
+                async {
+                    val q = if (preferredQuality in song.effectiveQualities) preferredQuality else song.highestQuality
+                    if (peekCachedPlayback(song, q, useAccompaniment = false) == null) {
+                        runCatching { resolvePlayback(song, q, useAccompaniment = false) }
+                    }
+                }
+            }.forEach { it.await() }
+        }
     }
 
     private suspend fun <T> auth(block: suspend (AccountContext) -> T): T {
@@ -1012,79 +1087,96 @@ class MusicApiRepository(
             listOf(s.hash128, s.hash320, s.hashFlac, s.hashHiRes, s.hash)
                 .map { it.trim().lowercase() }
                 .filter { isValidHash(it) }
-                .forEach { h -> hashToSongMap.putIfAbsent(h, s) }
+                .forEach { h ->
+                    hashToSongMap.putIfAbsent(h, s)
+                    privilegeLiteObjCache[h]?.let { cachedObj ->
+                        enrichedByHash[h] = cachedObj
+                    }
+                }
         }
 
-        // 收集所有待查 hash，按每批最多 40 个 hash 分片请求 /v2/get_res_privilege/lite，并附带真实 album_audio_id 与 album_id
+        // 收集所有尚未命中内存缓存的待查 hash，按每批最多 80 个 hash 并发分片请求 /v2/get_res_privilege/lite
         val allQueryHashes = songs.flatMap { s ->
             val baseHash = s.hash128.ifBlank { s.hash320.ifBlank { s.hashFlac.ifBlank { s.hash } } }.trim().lowercase()
             listOf(baseHash, s.hashHiRes.trim().lowercase(), s.hashFlac.trim().lowercase(), s.hash.trim().lowercase())
-        }.filter { isValidHash(it) }.distinct()
+        }.filter { isValidHash(it) && !enrichedByHash.containsKey(it) }.distinct()
 
-        coroutineScope {
-            allQueryHashes.chunked(40).map { hashChunk ->
-                async {
-                    val resourceArr = JsonArray()
-                    for (h in hashChunk) {
-                        val owner = hashToSongMap[h]
-                        resourceArr.add(JsonObject().apply {
-                            addProperty("type", "audio")
-                            addProperty("page_id", 1)
-                            addProperty("id", 0)
+        if (allQueryHashes.isNotEmpty()) {
+            coroutineScope {
+                allQueryHashes.chunked(80).map { hashChunk ->
+                    async {
+                        val resourceArr = JsonArray()
+                        for (h in hashChunk) {
+                            val owner = hashToSongMap[h]
+                            resourceArr.add(JsonObject().apply {
+                                addProperty("type", "audio")
+                                addProperty("page_id", 1)
+                                addProperty("id", 0)
+                                addProperty("area_code", 1)
+                                addProperty("album_audio_id", owner?.albumAudioId ?: 0L)
+                                addProperty("album_id", owner?.albumId?.toLongOrNull() ?: 0L)
+                                addProperty("hash", h)
+                                add("qualities", upstreamQualitiesArr)
+                            })
+                        }
+                        if (resourceArr.size() == 0) return@async
+
+                        val d = device()
+                        val body = JsonObject().apply {
+                            addProperty("appid", KugouSigner.APP_ID)
+                            addProperty("clientver", KugouSigner.CLIENT_VERSION)
+                            addProperty("mid", d.mid)
+                            addProperty("clienttime", System.currentTimeMillis() / 1000)
+                            addProperty("support_verify", 1)
                             addProperty("area_code", 1)
-                            addProperty("album_audio_id", owner?.albumAudioId ?: 0L)
-                            addProperty("album_id", owner?.albumId?.toLongOrNull() ?: 0L)
-                            addProperty("hash", h)
+                            addProperty("behavior", "play")
+                            addProperty("need_hash_offset", 1)
+                            addProperty("relate", 1)
                             add("qualities", upstreamQualitiesArr)
-                        })
-                    }
-                    if (resourceArr.size() == 0) return@async
+                            add("qualities", upstreamQualitiesArr)
+                            add("resource", resourceArr)
+                            add("resources", resourceArr)
+                        }
 
-                    val d = device()
-                    val body = JsonObject().apply {
-                        addProperty("appid", KugouSigner.APP_ID)
-                        addProperty("clientver", KugouSigner.CLIENT_VERSION)
-                        addProperty("mid", d.mid)
-                        addProperty("clienttime", System.currentTimeMillis() / 1000)
-                        addProperty("support_verify", 1)
-                        addProperty("area_code", 1)
-                        addProperty("behavior", "play")
-                        addProperty("need_hash_offset", 1)
-                        addProperty("relate", 1)
-                        add("qualities", upstreamQualitiesArr)
-                        add("qualities", upstreamQualitiesArr)
-                        add("resource", resourceArr)
-                        add("resources", resourceArr)
-                    }
-
-                    runCatching {
-                        val resp = transport.callAdvanced(
-                            path = "/v2/get_res_privilege/lite",
-                            method = "POST",
-                            session = session,
-                            body = body,
-                            headers = mapOf("x-router" to "media.store.kugou.com"),
-                            sign = true,
-                            includeDefaultParams = true
-                        )
-                        val dataArr = resp.body.arr("data") ?: resp.data.arr("data") ?: resp.data.arr("resource")
-                        val items = dataArr?.filter { it.isJsonObject }?.map { it.asJsonObject }.orEmpty()
-                        items.forEachIndexed { idx, item ->
-                            val h = (item.text("hash") ?: "").lowercase()
-                            if (h.isNotBlank()) {
-                                enrichedByHash[h] = item
+                        runCatching {
+                            val resp = transport.callAdvanced(
+                                path = "/v2/get_res_privilege/lite",
+                                method = "POST",
+                                session = session,
+                                body = body,
+                                headers = mapOf("x-router" to "media.store.kugou.com"),
+                                sign = true,
+                                includeDefaultParams = true
+                            )
+                            val dataArr = resp.body.arr("data") ?: resp.data.arr("data") ?: resp.data.arr("resource")
+                            val items = dataArr?.filter { it.isJsonObject }?.map { it.asJsonObject }.orEmpty()
+                            if (privilegeLiteObjCache.size > 2500) {
+                                privilegeLiteObjCache.clear()
                             }
-                            hashChunk.getOrNull(idx)?.let { reqHash ->
-                                if (reqHash.isNotBlank()) enrichedByHash[reqHash] = item
-                            }
-                            item.objects("relate_goods").forEach { rg ->
-                                val rgH = (rg.text("hash") ?: "").lowercase()
-                                if (rgH.isNotBlank()) enrichedByHash[rgH] = item
+                            items.forEachIndexed { idx, item ->
+                                val h = (item.text("hash") ?: "").lowercase()
+                                if (h.isNotBlank()) {
+                                    enrichedByHash[h] = item
+                                    privilegeLiteObjCache[h] = item
+                                }
+                                hashChunk.getOrNull(idx)?.let { reqHash ->
+                                    if (reqHash.isNotBlank()) {
+                                        enrichedByHash[reqHash] = item
+                                        privilegeLiteObjCache[reqHash] = item
+                                    }
+                                }
+                                item.objects("relate_goods").forEach { rg ->
+                                    val rgH = (rg.text("hash") ?: "").lowercase()
+                                    if (rgH.isNotBlank()) {
+                                        enrichedByHash[rgH] = item
+                                        privilegeLiteObjCache[rgH] = item
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }.forEach { it.await() }
+                }.forEach { it.await() }
+            }
         }
 
         if (enrichedByHash.isEmpty()) return@withContext songs
@@ -1400,14 +1492,20 @@ class MusicApiRepository(
         val userScope = session?.userId ?: "guest"
         val legacyKey = "${targetHash.lowercase()}_${preferredQuality.apiValue}$modeSuffix"
         val cacheKey = "${userScope}_$legacyKey"
+        val baseSongHashAliasKey = if (effectiveSong.hash.isNotBlank() && !effectiveSong.hash.equals(targetHash, ignoreCase = true)) {
+            "${userScope}_${effectiveSong.hash.lowercase()}_${preferredQuality.apiValue}$modeSuffix"
+        } else ""
         getValidCachedPlayback(cacheKey, legacyKey)?.let { return it }
+        if (baseSongHashAliasKey.isNotBlank()) {
+            getValidCachedPlayback(baseSongHashAliasKey)?.let { return it }
+        }
 
         // 第一阶段：使用当前已知曲目 Hash 走概念版 VIP 专属通道 (/v6/priv_url) 与多级回退 (/v5/url)
         val directAttempt = suspendRunCatching {
             resolvePlaybackInternal(effectiveSong, session, preferredQuality)
         }.getOrNull()?.let { if (it.resolvedHash.isBlank()) it.copy(resolvedHash = targetHash) else it }
         if (directAttempt != null && directAttempt.url.isNotBlank()) {
-            putCachedPlayback(cacheKey, directAttempt)
+            putCachedPlayback(cacheKey, directAttempt, baseSongHashAliasKey)
             return directAttempt
         }
 
@@ -1416,12 +1514,19 @@ class MusicApiRepository(
             val enrichedSong = suspendRunCatching {
                 enrichSongsPrivilegeLite(listOf(effectiveSong)).firstOrNull()
             }.getOrNull()
-            if (enrichedSong != null) {
+            val hasNewHashes = enrichedSong != null && (
+                !enrichedSong.hash.equals(effectiveSong.hash, ignoreCase = true) ||
+                    !enrichedSong.hash128.equals(effectiveSong.hash128, ignoreCase = true) ||
+                    !enrichedSong.hash320.equals(effectiveSong.hash320, ignoreCase = true) ||
+                    !enrichedSong.hashFlac.equals(effectiveSong.hashFlac, ignoreCase = true) ||
+                    !enrichedSong.hashHiRes.equals(effectiveSong.hashHiRes, ignoreCase = true)
+                )
+            if (enrichedSong != null && hasNewHashes) {
                 val enrichedAttempt = suspendRunCatching {
                     resolvePlaybackInternal(enrichedSong, session, preferredQuality)
                 }.getOrNull()?.let { if (it.resolvedHash.isBlank()) it.copy(resolvedHash = enrichedSong.hash.ifBlank { targetHash }) else it }
                 if (enrichedAttempt != null && enrichedAttempt.url.isNotBlank()) {
-                    putCachedPlayback(cacheKey, enrichedAttempt)
+                    putCachedPlayback(cacheKey, enrichedAttempt, baseSongHashAliasKey)
                     return enrichedAttempt
                 }
             }
@@ -1444,7 +1549,7 @@ class MusicApiRepository(
                     } else null
                 }.getOrNull()?.let { if (it.resolvedHash.isBlank()) it.copy(resolvedHash = targetHash) else it }
                 if (rematchedAttempt != null && rematchedAttempt.url.isNotBlank()) {
-                    putCachedPlayback(cacheKey, rematchedAttempt)
+                    putCachedPlayback(cacheKey, rematchedAttempt, baseSongHashAliasKey)
                     return rematchedAttempt
                 }
             }

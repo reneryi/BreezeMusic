@@ -391,6 +391,49 @@ class SongPlaybackSwitchTest {
         testScheduler.advanceUntilIdle()
     }
 
+    @Test
+    fun testPlaySong_SetsOptimisticPlayingStateImmediately() = runTest(testDispatcher) {
+        val queue = listOf(song1, song2)
+        viewModel.playSong(song1, queue)
+
+        // 点击歌曲的同一帧（在异步协程完成前），UI 与进度快照应立即呈现播放态
+        assertTrue(viewModel.uiState.value.isPlaying)
+        assertTrue(viewModel.playbackPositionFlow.value.isPlaying)
+
+        testScheduler.advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.isPlaying)
+    }
+
+    @Test
+    fun testSeekTo_WhileBufferingWithPlayWhenReady_KeepsPlayingStateTrueAndLocksTargetPos() = runTest(testDispatcher) {
+        val queue = listOf(song1, song2)
+        viewModel.playSong(song1, queue)
+        testScheduler.advanceUntilIdle()
+        assertTrue(viewModel.uiState.value.isPlaying)
+
+        // 模拟 ExoPlayer 在 seekTo 时进入 STATE_BUFFERING（此时 player.isPlaying 为 false，但 playWhenReady 仍为 true，且底层 position 短暂滞后）
+        fakePlayerHolder.simulateBufferingOnSeek = true
+        fakePlayerHolder.lagPositionOnSeek = 12_000L
+
+        viewModel.seekTo(85_000L)
+
+        // 验证：播放状态绝不闪变为 false，且当前位置锁定在目标 85_000L 不回弹到 12_000L
+        assertTrue("Seek 缓冲期间播放态必须保持为 true，不能跳回暂停", viewModel.uiState.value.isPlaying)
+        assertTrue(viewModel.playbackPositionFlow.value.isPlaying)
+        assertEquals(85_000L, viewModel.uiState.value.currentPositionMs)
+        assertEquals(85_000L, viewModel.playbackPositionFlow.value.positionMs)
+
+        // 缓冲完成后恢复 STATE_READY 并到达目标位置
+        fakePlayerHolder.playbackState = Player.STATE_READY
+        fakePlayerHolder.isPlaying = true
+        fakePlayerHolder.currentPosition = 85_120L
+        viewModel.syncPlayer()
+        assertTrue(viewModel.uiState.value.isPlaying)
+        assertEquals(85_120L, viewModel.playbackPositionFlow.value.positionMs)
+        // Removed duplicate assertion
+        testScheduler.advanceUntilIdle()
+    }
+
     private class TestSessionStore : SessionStore {
         var rows = listOf(SavedAccount("user_1"))
         var activeKey: String? = "user_1"
@@ -414,6 +457,9 @@ class SongPlaybackSwitchTest {
 
     private class FakePlayerHolder {
         var isPlaying = false
+        var playWhenReady = false
+        var simulateBufferingOnSeek = false
+        var lagPositionOnSeek: Long? = null
         var playbackState = Player.STATE_READY
         var currentMediaItemIndex = 0
         val mediaItems = mutableListOf<MediaItem>()
@@ -432,6 +478,7 @@ class SongPlaybackSwitchTest {
         ) { proxy, method, args ->
             when (method.name) {
                 "isPlaying" -> isPlaying
+                "getPlayWhenReady" -> playWhenReady
                 "getPlaybackState" -> playbackState
                 "getCurrentMediaItemIndex" -> currentMediaItemIndex
                 "getCurrentMediaItem" -> currentMediaItem
@@ -451,18 +498,24 @@ class SongPlaybackSwitchTest {
                 }
                 "play" -> {
                     isPlaying = true
+                    playWhenReady = true
                     listeners.toList().forEach { it.onIsPlayingChanged(true) }
                     null
                 }
                 "pause" -> {
                     isPlaying = false
+                    playWhenReady = false
                     listeners.toList().forEach { it.onIsPlayingChanged(false) }
                     null
                 }
                 "prepare" -> null
                 "seekTo" -> {
                     if (args != null && args.isNotEmpty()) {
-                        currentPosition = args[0] as Long
+                        currentPosition = lagPositionOnSeek ?: (args[0] as Long)
+                        if (simulateBufferingOnSeek) {
+                            playbackState = Player.STATE_BUFFERING
+                            isPlaying = false
+                        }
                     }
                     null
                 }
@@ -493,6 +546,7 @@ class SongPlaybackSwitchTest {
                 }
                 "stop" -> {
                     isPlaying = false
+                    playWhenReady = false
                     null
                 }
                 "addListener" -> {

@@ -861,15 +861,37 @@ private fun LandscapeBottomControlDock(
 ) {
     var isInteractingWithBar by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
-    var livePosMs by remember(song.id) { mutableLongStateOf(rawPositionProvider().takeIf { it > 0L } ?: rawPositionMs) }
+    val latestDurationMs by rememberUpdatedState(durationMs)
+    val latestOnSeekTo by rememberUpdatedState(onSeekTo)
+    var settledSeekTargetMs by remember(song.id) { mutableLongStateOf(-1L) }
+    var settledSeekTimestampMs by remember(song.id) { mutableLongStateOf(0L) }
+
+    fun sampleLandscapePos(): Long {
+        val rawPos = rawPositionProvider().takeIf { it > 0L } ?: rawPositionMs
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        return if (settledSeekTargetMs >= 0L && nowElapsed - settledSeekTimestampMs in 0L..550L) {
+            if (kotlin.math.abs(rawPos - settledSeekTargetMs) <= 800L) {
+                settledSeekTargetMs = -1L
+                rawPos
+            } else {
+                settledSeekTargetMs
+            }
+        } else {
+            settledSeekTargetMs = -1L
+            rawPos
+        }
+    }
+
+    var livePosMs by remember(song.id) { mutableLongStateOf(sampleLandscapePos()) }
 
     LaunchedEffect(song.id, isPlaying, isInteractingWithBar, rawPositionMs) {
-        livePosMs = rawPositionProvider().takeIf { it > 0L } ?: rawPositionMs
+        if (!isInteractingWithBar) {
+            livePosMs = sampleLandscapePos()
+        }
         if (isPlaying && !isInteractingWithBar) {
             while (isActive) {
-                withFrameMillis {
-                    livePosMs = rawPositionProvider()
-                }
+                livePosMs = sampleLandscapePos()
+                kotlinx.coroutines.delay(50L)
             }
         }
     }
@@ -975,7 +997,11 @@ private fun LandscapeBottomControlDock(
             },
             onDrag = { dragFraction = it },
             onDragEnd = {
-                onSeekTo((dragFraction * durationMs).toLong())
+                val targetMs = (dragFraction * latestDurationMs).toLong().coerceIn(0L, latestDurationMs.coerceAtLeast(0L))
+                settledSeekTargetMs = targetMs
+                settledSeekTimestampMs = android.os.SystemClock.elapsedRealtime()
+                livePosMs = targetMs
+                latestOnSeekTo(targetMs)
                 isInteractingWithBar = false
             },
             onDragCancel = {

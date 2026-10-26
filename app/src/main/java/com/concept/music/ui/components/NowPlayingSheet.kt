@@ -47,6 +47,8 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -505,6 +507,13 @@ fun NowPlayingSheet(
         }
     }
 
+    // 顶层驻留圆角封面色散相位、呼吸脉冲与缩放弹簧状态：
+    // 置于 AnimatedContent(showLyricView) 之上，确保进出歌词页或切换横竖屏时相位与光晕状态永不销毁重置
+    val sharedRoundedCoverMotionState = rememberRoundedCoverMotionState(
+        isPlaying = isPlaying,
+        songKey = song.coverUrl.ifBlank { song.id }
+    )
+
     // 封面智能动态流光取色
     var extractedPalette by remember {
         mutableStateOf(
@@ -776,6 +785,7 @@ fun NowPlayingSheet(
                             isPlaying = isPlaying,
                             coverStyle = coverStyle,
                             rotationProvider = { rotationAnim.value % 360f },
+                            roundedCoverMotionState = sharedRoundedCoverMotionState,
                             lyricData = lyricData,
                             currentLyricIndex = currentLyricIndex,
                             currentPositionMs = effectiveLyricPositionMs,
@@ -1549,6 +1559,7 @@ private fun CoverPlayerPageContent(
     isPlaying: Boolean,
     coverStyle: CoverStyle,
     rotationProvider: () -> Float,
+    roundedCoverMotionState: RoundedCoverMotionState? = null,
     lyricData: LyricData,
     currentLyricIndex: Int,
     currentPositionMs: Long,
@@ -1608,6 +1619,7 @@ private fun CoverPlayerPageContent(
     val favScale = favBurstAnim.value
     val coverSwipeScope = rememberCoroutineScope()
     val coverDragX = remember { Animatable(0f) }
+    var scrubPreviewPositionMs by remember { mutableStateOf<Long?>(null) }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -1700,7 +1712,8 @@ private fun CoverPlayerPageContent(
                             coverUrl = song.coverUrl,
                             isPlaying = isPlaying,
                             accentColor = accentPrimary,
-                            secondaryAccentColor = accentSecondary
+                            secondaryAccentColor = accentSecondary,
+                            motionState = roundedCoverMotionState
                         )
                     }
                 }
@@ -1786,13 +1799,29 @@ private fun CoverPlayerPageContent(
 
         Spacer(modifier = Modifier.height(2.dp))
 
-        // 2. 全宽沉浸式歌词预览区（固定三行视口高度，杜绝抬高上方封面与按钮，支持 1行/2行/≥3行超长混动滚动）
+        // 2. 全宽沉浸式歌词预览区（固定三行视口高度，杜绝抬高上方封面与按钮，支持 1行/2行/≥3行超长混动滚动；无极拖动进度条时实时联动预览对应时间歌词）
+        val previewScrubPos = scrubPreviewPositionMs
+        val effectivePreviewIndex = remember(previewScrubPos, currentLyricIndex, lyricData) {
+            if (previewScrubPos != null && lyricData.lines.isNotEmpty()) {
+                lyricData.getLineIndexAt(previewScrubPos).coerceAtLeast(0)
+            } else {
+                currentLyricIndex
+            }
+        }
+        val effectivePreviewPosMs = previewScrubPos ?: currentPositionMs
+        val effectivePreviewPosProvider: () -> Long = remember(previewScrubPos, lyricPositionProvider) {
+            if (previewScrubPos != null) {
+                { previewScrubPos }
+            } else {
+                lyricPositionProvider
+            }
+        }
         FullWidthLyricPreviewSection(
             lyricData = lyricData,
-            currentLyricIndex = currentLyricIndex,
-            currentPositionMs = currentPositionMs,
-            isPlaying = isPlaying,
-            positionProvider = lyricPositionProvider,
+            currentLyricIndex = effectivePreviewIndex,
+            currentPositionMs = effectivePreviewPosMs,
+            isPlaying = isPlaying && previewScrubPos == null,
+            positionProvider = effectivePreviewPosProvider,
             showTranslation = showTranslation && showTranslationButton,
             showPhonetic = showPhonetic && showPhoneticButton,
             lyricWordByWord = lyricWordByWord,
@@ -1897,6 +1926,7 @@ private fun CoverPlayerPageContent(
             accentPrimary = accentPrimary,
             accentSecondary = accentSecondary,
             onSeekTo = onSeekTo,
+            onScrubPreviewMsChange = { scrubPreviewPositionMs = it },
             onTogglePlay = onTogglePlay,
             onPrevious = onPrevious,
             onNext = onNext,
@@ -2379,7 +2409,8 @@ private const val ROUNDED_COVER_DECEL_EXPONENT = 2.2f
 internal data class RoundedCoverMotionState(
     val dispersionPhase: Float,
     val haloPulse: Float,
-    val playTransition: Float
+    val playTransition: Float,
+    val coverScale: Float = 1.0f
 )
 
 /**
@@ -2477,6 +2508,11 @@ internal fun rememberRoundedCoverMotionState(
         animationSpec = tween(durationMillis = 560, easing = FastOutSlowInEasing),
         label = "roundedCoverPlayTransition"
     )
+    val coverScale by animateFloatAsState(
+        targetValue = if (isPlaying) 1.0f else 0.92f,
+        animationSpec = ConceptMotion.gentleBounceSpring(),
+        label = "squareCoverScale"
+    )
 
     LaunchedEffect(isPlaying, songKey) {
         val twoPi = ROUNDED_COVER_TWO_PI_RAD
@@ -2548,7 +2584,8 @@ internal fun rememberRoundedCoverMotionState(
     return RoundedCoverMotionState(
         dispersionPhase = phaseRad,
         haloPulse = haloPulse,
-        playTransition = playTransition
+        playTransition = playTransition,
+        coverScale = coverScale
     )
 }
 
@@ -2556,7 +2593,8 @@ internal fun rememberRoundedCoverMotionState(
  * 圆角封面多光谱棱镜边缘色散光晕绘制引擎 (Chromatic Dispersion Edge Halo):
  * - 同时赋能竖屏与横屏圆角封面；
  * - 将歌曲主题色分解为「青蓝短波 (Cyan-Blue)」「玫瑰品红长波 (Rose-Magenta)」「电光紫中波 (Electric-Violet)」三大色散通道；
- * - 沿圆角矩形真实轮廓向外做相位错位叠加 (BlendMode.Plus) 与棱镜流光折射环，营造灵动边缘色散光晕。
+ * - 采用满足离屏图层 Alpha 结合律的高明度预乘羽化混合 (BlendMode.SrcOver)，
+ *   确保在 AnimatedContent 进出歌词页离屏透明层切换 (alpha < 1 <-> alpha == 1) 时光晕亮度 100% 连续零闪烁。
  */
 internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
     cornerPx: Float,
@@ -2572,11 +2610,11 @@ internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
     if (w <= 4f || h <= 4f) return
     val p = playTransition.coerceIn(0f, 1f)
 
-    // 三原色棱镜色散光谱通道
-    val prismCyan = lerp(accentSecondary, Color(0xFF00F0FF), 0.56f)
-    val prismMagenta = lerp(accentPrimary, Color(0xFFFF3E8E), 0.50f)
-    val prismViolet = lerp(lerp(accentPrimary, accentSecondary, 0.5f), Color(0xFFA29BFE), 0.52f)
-    val prismGold = lerp(accentPrimary, Color(0xFFFFD166), 0.42f)
+    // 三原色高明度棱镜色散光谱通道（向高明度霓虹色偏置，保障在 SrcOver 预乘混合下通透鲜亮且不受离屏透明层突变影响）
+    val prismCyan = lerp(lerp(accentSecondary, Color(0xFF00F0FF), 0.62f), Color.White, 0.22f)
+    val prismMagenta = lerp(lerp(accentPrimary, Color(0xFFFF3E8E), 0.56f), Color.White, 0.20f)
+    val prismViolet = lerp(lerp(lerp(accentPrimary, accentSecondary, 0.5f), Color(0xFFA29BFE), 0.58f), Color.White, 0.22f)
+    val prismGold = lerp(lerp(accentPrimary, Color(0xFFFFD166), 0.48f), Color.White, 0.20f)
     val deepShadowColor = lerp(accentPrimary, Color.Black, 0.68f)
 
     // 1. 底部深邃悬浮立体暗影（随 playTransition 平滑过渡）
@@ -2604,13 +2642,13 @@ internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
 
     val maxSpreadPx = 28.dp.toPx() * haloPulse
     val shellCount = 7
-    val activityBoost = 0.62f + 0.38f * p
+    val activityBoost = 0.66f + 0.34f * p
 
     for (i in shellCount downTo 1) {
         val t = i.toFloat() / shellCount.toFloat()
         val outset = maxSpreadPx * t
-        // 越靠近封面边缘色散能量越凝聚，向外呈二次方柔和衰减
-        val shellAlpha = ((1f - t * 0.78f) * (1f - t * 0.78f) * 0.115f * activityBoost).coerceIn(0.008f, 0.16f)
+        // 越靠近封面边缘色散能量越凝聚，向外呈二次方柔和衰减；采用 BlendMode.SrcOver 消除离屏层切换闪烁
+        val shellAlpha = ((1f - t * 0.76f) * (1f - t * 0.76f) * 0.155f * activityBoost).coerceIn(0.010f, 0.20f)
         val shellSize = Size(w + outset * 2f, h + outset * 2f)
         val shellCorner = CornerRadius(cornerPx + outset, cornerPx + outset)
 
@@ -2620,23 +2658,23 @@ internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
             topLeft = Offset(-outset + cyanShift.x * t, -outset + cyanShift.y * t),
             size = shellSize,
             cornerRadius = shellCorner,
-            blendMode = BlendMode.Plus
+            blendMode = BlendMode.SrcOver
         )
         // 长波品红色散壳
         drawRoundRect(
-            color = prismMagenta.copy(alpha = shellAlpha * 0.94f),
+            color = prismMagenta.copy(alpha = shellAlpha * 0.95f),
             topLeft = Offset(-outset + magentaShift.x * t, -outset + magentaShift.y * t),
             size = shellSize,
             cornerRadius = shellCorner,
-            blendMode = BlendMode.Plus
+            blendMode = BlendMode.SrcOver
         )
         // 中波电光紫色散壳
         drawRoundRect(
-            color = prismViolet.copy(alpha = shellAlpha * 0.90f),
+            color = prismViolet.copy(alpha = shellAlpha * 0.92f),
             topLeft = Offset(-outset + violetShift.x * t, -outset + violetShift.y * t),
             size = shellSize,
             cornerRadius = shellCorner,
-            blendMode = BlendMode.Plus
+            blendMode = BlendMode.SrcOver
         )
     }
 
@@ -2646,18 +2684,18 @@ internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
     rotate(degrees = deg, pivot = center) {
         val sweepBrush = Brush.sweepGradient(
             0.00f to prismCyan,
-            0.16f to accentPrimary,
+            0.16f to lerp(accentPrimary, Color.White, 0.18f),
             0.33f to prismMagenta,
             0.50f to prismGold,
             0.66f to prismViolet,
-            0.83f to accentSecondary,
-            0.92f to Color.White.copy(alpha = 0.90f),
+            0.83f to lerp(accentSecondary, Color.White, 0.18f),
+            0.92f to Color.White.copy(alpha = 0.94f),
             1.00f to prismCyan,
             center = center
         )
         for (ring in 1..4) {
             val ringOutset = (1.2f + ring * 2.1f).dp.toPx() * haloPulse
-            val ringAlpha = ((0.38f / ring) * activityBoost).coerceIn(0.04f, 0.42f)
+            val ringAlpha = ((0.44f / ring) * activityBoost).coerceIn(0.05f, 0.48f)
             val strokeW = ((5.2f - ring * 0.9f).coerceAtLeast(1.2f)).dp.toPx()
             drawRoundRect(
                 brush = sweepBrush,
@@ -2666,7 +2704,7 @@ internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
                 cornerRadius = CornerRadius(cornerPx + ringOutset, cornerPx + ringOutset),
                 alpha = ringAlpha,
                 style = Stroke(width = strokeW),
-                blendMode = BlendMode.Plus
+                blendMode = BlendMode.SrcOver
             )
         }
     }
@@ -2760,21 +2798,17 @@ private fun StaticRoundedSquareCoverView(
     coverUrl: String,
     isPlaying: Boolean,
     accentColor: Color,
-    secondaryAccentColor: Color = ConceptCyanAccent
+    secondaryAccentColor: Color = ConceptCyanAccent,
+    motionState: RoundedCoverMotionState? = null
 ) {
-    // 播放/暂停柔和呼吸缩放：播放态 1.0f 饱满悬浮，暂停态以温润弹簧微缩至 0.92f
-    val coverScale by animateFloatAsState(
-        targetValue = if (isPlaying) 1.0f else 0.92f,
-        animationSpec = ConceptMotion.gentleBounceSpring(),
-        label = "squareCoverScale"
-    )
-    val motionState = rememberRoundedCoverMotionState(
+    val resolvedMotionState = motionState ?: rememberRoundedCoverMotionState(
         isPlaying = isPlaying,
         songKey = coverUrl
     )
-    val haloPulse = motionState.haloPulse
-    val dispersionPhase = motionState.dispersionPhase
-    val playTransition = motionState.playTransition
+    val coverScale = resolvedMotionState.coverScale
+    val haloPulse = resolvedMotionState.haloPulse
+    val dispersionPhase = resolvedMotionState.dispersionPhase
+    val playTransition = resolvedMotionState.playTransition
 
     Box(
         modifier = Modifier
@@ -3129,6 +3163,7 @@ private fun PlayerControlsSection(
     accentPrimary: Color = ConceptPrimary,
     accentSecondary: Color = ConceptCyanAccent,
     onSeekTo: (Long) -> Unit,
+    onScrubPreviewMsChange: ((Long?) -> Unit)? = null,
     onTogglePlay: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -3140,22 +3175,42 @@ private fun PlayerControlsSection(
     var dragFraction by remember { mutableFloatStateOf(0f) }
     val latestDurationMs by rememberUpdatedState(durationMs)
     val latestOnSeekTo by rememberUpdatedState(onSeekTo)
-    var sampledPositionMs by remember { mutableLongStateOf(positionProvider()) }
+    val latestOnScrubPreviewMsChange by rememberUpdatedState(onScrubPreviewMsChange)
+    var settledSeekTargetMs by remember { mutableLongStateOf(-1L) }
+    var settledSeekTimestampMs by remember { mutableLongStateOf(0L) }
+
+    fun sampleWithSeekHold(): Long {
+        val rawPos = positionProvider()
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        return if (settledSeekTargetMs >= 0L && nowElapsed - settledSeekTimestampMs in 0L..550L) {
+            if (kotlin.math.abs(rawPos - settledSeekTargetMs) <= 800L) {
+                settledSeekTargetMs = -1L
+                rawPos
+            } else {
+                settledSeekTargetMs
+            }
+        } else {
+            settledSeekTargetMs = -1L
+            rawPos
+        }
+    }
+
+    var sampledPositionMs by remember { mutableLongStateOf(sampleWithSeekHold()) }
 
     LaunchedEffect(currentPositionMs) {
         if (!isInteractingWithBar) {
-            sampledPositionMs = positionProvider()
+            sampledPositionMs = sampleWithSeekHold()
         }
     }
-    // 消除每 8ms 重建 animateFloatAsState 协程的 120Hz 全树重组风暴，按 60ms 节流采样驱动平滑进度
+    // 消除每 8ms 重建 animateFloatAsState 协程的 120Hz 全树重组风暴，按 50ms 节流采样驱动平滑进度
     LaunchedEffect(isPlaying, isInteractingWithBar, positionProvider) {
         if (isPlaying && !isInteractingWithBar) {
             while (isActive) {
-                sampledPositionMs = positionProvider()
-                kotlinx.coroutines.delay(60L)
+                sampledPositionMs = sampleWithSeekHold()
+                kotlinx.coroutines.delay(50L)
             }
         } else if (!isInteractingWithBar) {
-            sampledPositionMs = positionProvider()
+            sampledPositionMs = sampleWithSeekHold()
         }
     }
 
@@ -3189,18 +3244,28 @@ private fun PlayerControlsSection(
             accentPrimary = accentPrimary,
             accentSecondary = accentSecondary,
             onDragStart = { startFrac ->
+                val clampedFrac = startFrac.coerceIn(0f, 1f)
                 isInteractingWithBar = true
-                dragFraction = startFrac
+                dragFraction = clampedFrac
+                latestOnScrubPreviewMsChange?.invoke((clampedFrac * latestDurationMs).toLong())
             },
             onDrag = { newFrac ->
-                dragFraction = newFrac
+                val clampedFrac = newFrac.coerceIn(0f, 1f)
+                dragFraction = clampedFrac
+                latestOnScrubPreviewMsChange?.invoke((clampedFrac * latestDurationMs).toLong())
             },
             onDragEnd = {
-                latestOnSeekTo((dragFraction * latestDurationMs).toLong())
+                val targetMs = (dragFraction * latestDurationMs).toLong().coerceIn(0L, latestDurationMs.coerceAtLeast(0L))
+                settledSeekTargetMs = targetMs
+                settledSeekTimestampMs = android.os.SystemClock.elapsedRealtime()
+                sampledPositionMs = targetMs
+                latestOnSeekTo(targetMs)
                 isInteractingWithBar = false
+                latestOnScrubPreviewMsChange?.invoke(null)
             },
             onDragCancel = {
                 isInteractingWithBar = false
+                latestOnScrubPreviewMsChange?.invoke(null)
             }
         )
 
@@ -3360,35 +3425,12 @@ internal fun CometTailProgressBar(
         modifier = Modifier
             .fillMaxWidth()
             .height(if (compact) 22.dp else 40.dp)
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = { offset ->
-                        val w = size.width.toFloat().coerceAtLeast(1f)
-                        val startF = (offset.x / w).coerceIn(0f, 1f)
-                        currentOnDragStart(startF)
-                        if (tryAwaitRelease()) {
-                            currentOnDragEnd()
-                        } else {
-                            currentOnDragCancel()
-                        }
-                    }
-                )
-            }
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures(
-                    onDragStart = { offset ->
-                        val w = size.width.toFloat().coerceAtLeast(1f)
-                        currentOnDragStart((offset.x / w).coerceIn(0f, 1f))
-                    },
-                    onHorizontalDrag = { change, _ ->
-                        change.consume()
-                        val w = size.width.toFloat().coerceAtLeast(1f)
-                        currentOnDrag((change.position.x / w).coerceIn(0f, 1f))
-                    },
-                    onDragEnd = { currentOnDragEnd() },
-                    onDragCancel = { currentOnDragCancel() }
-                )
-            },
+            .steplessHorizontalScrubGesture(
+                onScrubStart = { startF -> currentOnDragStart(startF) },
+                onScrubMove = { moveF -> currentOnDrag(moveF) },
+                onScrubEnd = { currentOnDragEnd() },
+                onScrubCancel = { currentOnDragCancel() }
+            ),
         contentAlignment = Alignment.Center
     ) {
         AnimatedVisibility(
@@ -4959,6 +5001,49 @@ private fun LyricRightDockGlassButton(
 }
 
 /**
+ * 零死区无极丝滑水平进度手势引擎 (Zero-Slop Stepless Scrubbing Gesture):
+ * - 使用单一 pointerInput(awaitEachGesture) 统一处理点按直达与水平无极微调滑动，消除双 pointerInput 竞争；
+ * - 按下瞬间 (awaitFirstDown) 立即进入交互态，绕过系统 18px touchSlop 死区，实现 120Hz 亚像素跟手滑动。
+ */
+internal fun Modifier.steplessHorizontalScrubGesture(
+    onScrubStart: (Float) -> Unit,
+    onScrubMove: (Float) -> Unit,
+    onScrubEnd: () -> Unit,
+    onScrubCancel: () -> Unit
+): Modifier = this.pointerInput(Unit) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        down.consume()
+        val widthPx = size.width.toFloat().coerceAtLeast(1f)
+        val initialFraction = (down.position.x / widthPx).coerceIn(0f, 1f)
+        onScrubStart(initialFraction)
+
+        var pointerId = down.id
+        var finishedNormally = false
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == pointerId }
+                ?: event.changes.firstOrNull()
+                ?: break
+            pointerId = change.id
+            if (!change.pressed) {
+                change.consume()
+                finishedNormally = true
+                break
+            }
+            val nextFraction = (change.position.x / widthPx).coerceIn(0f, 1f)
+            change.consume()
+            onScrubMove(nextFraction)
+        }
+        if (finishedNormally) {
+            onScrubEnd()
+        } else {
+            onScrubCancel()
+        }
+    }
+}
+
+/**
  * 歌词页专属底部极简控播栏（已去除播放按钮的 `.border(...)` 边框线，并采用圆润饱满自定义播放/暂停矢量图形）
  */
 @Composable
@@ -4975,21 +5060,40 @@ private fun LyricPageMinimalBottomBar(
     var dragFraction by remember { mutableFloatStateOf(0f) }
     val latestDurationMs by rememberUpdatedState(durationMs)
     val latestOnSeekTo by rememberUpdatedState(onSeekTo)
-    var sampledPositionMs by remember { mutableLongStateOf(positionProvider()) }
+    var settledSeekTargetMs by remember { mutableLongStateOf(-1L) }
+    var settledSeekTimestampMs by remember { mutableLongStateOf(0L) }
+
+    fun sampleWithSeekHold(): Long {
+        val rawPos = positionProvider()
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        return if (settledSeekTargetMs >= 0L && nowElapsed - settledSeekTimestampMs in 0L..550L) {
+            if (kotlin.math.abs(rawPos - settledSeekTargetMs) <= 800L) {
+                settledSeekTargetMs = -1L
+                rawPos
+            } else {
+                settledSeekTargetMs
+            }
+        } else {
+            settledSeekTargetMs = -1L
+            rawPos
+        }
+    }
+
+    var sampledPositionMs by remember { mutableLongStateOf(sampleWithSeekHold()) }
 
     LaunchedEffect(currentPositionMs) {
         if (!isDragging) {
-            sampledPositionMs = positionProvider()
+            sampledPositionMs = sampleWithSeekHold()
         }
     }
     LaunchedEffect(isPlaying, isDragging, positionProvider) {
         if (isPlaying && !isDragging) {
             while (isActive) {
-                sampledPositionMs = positionProvider()
-                kotlinx.coroutines.delay(60L)
+                sampledPositionMs = sampleWithSeekHold()
+                kotlinx.coroutines.delay(50L)
             }
         } else if (!isDragging) {
-            sampledPositionMs = positionProvider()
+            sampledPositionMs = sampleWithSeekHold()
         }
     }
 
@@ -5089,42 +5193,26 @@ private fun LyricPageMinimalBottomBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(26.dp)
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onPress = { offset ->
-                                val w = size.width.toFloat().coerceAtLeast(1f)
-                                isDragging = true
-                                dragFraction = (offset.x / w).coerceIn(0f, 1f)
-                                if (tryAwaitRelease()) {
-                                    latestOnSeekTo((dragFraction * latestDurationMs).toLong())
-                                    isDragging = false
-                                } else {
-                                    isDragging = false
-                                }
-                            }
-                        )
-                    }
-                    .pointerInput(Unit) {
-                        detectHorizontalDragGestures(
-                            onDragStart = { offset ->
-                                val w = size.width.toFloat().coerceAtLeast(1f)
-                                isDragging = true
-                                dragFraction = (offset.x / w).coerceIn(0f, 1f)
-                            },
-                            onHorizontalDrag = { change, _ ->
-                                change.consume()
-                                val w = size.width.toFloat().coerceAtLeast(1f)
-                                dragFraction = (change.position.x / w).coerceIn(0f, 1f)
-                            },
-                            onDragEnd = {
-                                latestOnSeekTo((dragFraction * latestDurationMs).toLong())
-                                isDragging = false
-                            },
-                            onDragCancel = {
-                                isDragging = false
-                            }
-                        )
-                    },
+                    .steplessHorizontalScrubGesture(
+                        onScrubStart = { startF ->
+                            isDragging = true
+                            dragFraction = startF
+                        },
+                        onScrubMove = { moveF ->
+                            dragFraction = moveF
+                        },
+                        onScrubEnd = {
+                            val targetMs = (dragFraction * latestDurationMs).toLong().coerceIn(0L, latestDurationMs.coerceAtLeast(0L))
+                            settledSeekTargetMs = targetMs
+                            settledSeekTimestampMs = android.os.SystemClock.elapsedRealtime()
+                            sampledPositionMs = targetMs
+                            latestOnSeekTo(targetMs)
+                            isDragging = false
+                        },
+                        onScrubCancel = {
+                            isDragging = false
+                        }
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Canvas(

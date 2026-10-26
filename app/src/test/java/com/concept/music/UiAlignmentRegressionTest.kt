@@ -884,4 +884,24 @@ class UiAlignmentRegressionTest {
             assertEquals("减速结束时角速度必须归零", 0f, lastV, 1e-5f)
         }
     }
+
+    @Test
+    fun `圆角封面动效状态包含跨视图共享的缩放与光晕相位参数`() {
+        val statePaused = com.concept.music.ui.components.RoundedCoverMotionState(
+            dispersionPhase = 1.25f,
+            haloPulse = 0.5f,
+            playTransition = 0f,
+            coverScale = 0.88f
+        )
+        val statePlaying = com.concept.music.ui.components.RoundedCoverMotionState(
+            dispersionPhase = 2.50f,
+            haloPulse = 0.8f,
+            playTransition = 1f,
+            coverScale = 1.0f
+        )
+        assertEquals(0.88f, statePaused.coverScale, 1e-5f)
+        assertEquals(0f, statePaused.playTransition, 1e-5f)
+        assertEquals(1.0f, statePlaying.coverScale, 1e-5f)
+        assertEquals(1f, statePlaying.playTransition, 1e-5f)
+    }
 }
