@@ -484,23 +484,26 @@ fun LibraryScreen(
                             }
                         }
                     } else if (!isGridView) {
-                        itemsIndexed(currentDisplayPlaylists, key = { idx, pl -> "pl_list_${pl.id}_${pl.listId}_$idx" }) { _, pl ->
-                            val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
-                            Box(modifier = tabAnimMod) {
-                                PlaylistListItem(
-                                    playlist = pl,
-                                    onClick = { onOpenPlaylist(pl.id) }
-                                )
-                            }
+                        itemsIndexed(
+                            items = currentDisplayPlaylists,
+                            key = { idx, pl -> "pl_list_${pl.id}_${pl.listId}_$idx" },
+                            contentType = { _, _ -> "playlist_list_item" }
+                        ) { _, pl ->
+                            PlaylistListItem(
+                                playlist = pl,
+                                onClick = { onOpenPlaylist(pl.id) }
+                            )
                         }
                     } else {
                         val chunked = currentDisplayPlaylists.chunked(2)
-                        itemsIndexed(chunked, key = { idx, row -> "pl_grid_${row.first().id}_$idx" }) { _, rowItems ->
-                            val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
+                        itemsIndexed(
+                            items = chunked,
+                            key = { idx, row -> "pl_grid_${row.first().id}_$idx" },
+                            contentType = { _, _ -> "playlist_grid_row" }
+                        ) { _, rowItems ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .then(tabAnimMod)
                                     .padding(vertical = 6.dp),
                                 horizontalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
@@ -554,12 +557,14 @@ fun LibraryScreen(
                             }
                         }
                     } else {
-                        itemsIndexed(followedArtists, key = { idx, a -> "artist_${a.id}_${a.name}_$idx" }) { _, artist ->
-                            val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
+                        itemsIndexed(
+                            items = followedArtists,
+                            key = { idx, a -> "artist_${a.id}_${a.name}_$idx" },
+                            contentType = { _, _ -> "followed_artist_item" }
+                        ) { _, artist ->
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .then(tabAnimMod)
                                     .softClickable {
                                         if (artist.id.isNotBlank()) onOpenArtist(artist.id)
                                     }
@@ -1104,9 +1109,6 @@ private fun UnifiedProfileAndGradeCard(
     val mintAccent = if (isDark) Color(0xFF26DEBF) else ConceptMintAccent
 
     var syncClickSpin by remember { mutableIntStateOf(0) }
-    val progressValue = remember(userGrade) {
-        userGrade.effectiveProgressFraction
-    }
 
     val cardBrush = if (isDark) {
         Brush.linearGradient(
@@ -1237,95 +1239,64 @@ private fun UnifiedProfileAndGradeCard(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)
             )
 
-            // 下层：开放式听歌等级与累计时长进度（消除内嵌子盒子与胶囊背景）
-            Column(
+            // 下层：开放式听歌等级与累计时长展示（仅展示账号等级与累计听歌时长，移除等级进度条）
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Headphones,
-                            contentDescription = null,
-                            tint = mintAccent,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = "Lv.${userGrade.level}",
-                            color = mintAccent,
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.Black
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "·  累计听歌 ${userGrade.displayListenTimeText}",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 12.5.sp
-                            ),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .softClickable(enabled = !isGradeSyncing) {
-                                syncClickSpin += 1
-                                onSyncGrade()
-                            }
-                            .padding(horizontal = 4.dp, vertical = 2.dp)
-                    ) {
-                        ConceptFluidRefreshIcon(
-                            tint = ConceptPrimary,
-                            isRefreshing = isGradeSyncing,
-                            spinTrigger = syncClickSpin,
-                            modifier = Modifier.size(13.5.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = if (isGradeSyncing) "同步中" else "同步云端",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                color = ConceptPrimary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Rounded.Headphones,
+                        contentDescription = null,
+                        tint = mintAccent,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "Lv.${userGrade.level}",
+                        color = mintAccent,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "·  累计听歌 ${userGrade.displayListenTimeText}",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.5.sp
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier
+                        .softClickable(enabled = !isGradeSyncing) {
+                            syncClickSpin += 1
+                            onSyncGrade()
+                        }
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
                 ) {
-                    LinearProgressIndicator(
-                        progress = { progressValue },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(4.dp)
-                            .clip(CircleShape),
-                        color = ConceptPrimary,
-                        trackColor = ConceptPrimary.copy(alpha = 0.14f)
+                    ConceptFluidRefreshIcon(
+                        tint = ConceptPrimary,
+                        isRefreshing = isGradeSyncing,
+                        spinTrigger = syncClickSpin,
+                        modifier = Modifier.size(13.5.dp)
                     )
-                    val pctInt = (progressValue * 100f).toInt().coerceIn(1, 99)
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = when {
-                            userGrade.nextLevelRemainMinutes in 1L..59L -> "差 ${userGrade.nextLevelRemainMinutes} 分升 Lv.${userGrade.level + 1}"
-                            userGrade.nextLevelRemainMinutes >= 60L -> "Lv.${userGrade.level + 1} 进度 $pctInt% · 差 ${userGrade.nextLevelRemainMinutes / 60L}h"
-                            else -> "Lv.${userGrade.level + 1} 进度 $pctInt%"
-                        },
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 10.5.sp
+                        text = if (isGradeSyncing) "同步中" else "同步云端",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            color = ConceptPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
                     )
                 }
             }

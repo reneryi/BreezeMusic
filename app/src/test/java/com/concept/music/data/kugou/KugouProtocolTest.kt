@@ -126,4 +126,141 @@ class KugouProtocolTest {
         assertEquals("http://vip.kugou.com/lossless.flac", res.url)
         assertEquals(com.concept.music.data.model.AudioQuality.LOSSLESS, res.actualQuality)
     }
+
+    @Test fun standardRsaKeyAndStandardSignaturesWorkWithoutBase64Exception() {
+        val encrypted = KugouSigner.rsa("{\"clienttime_ms\":1770000000123,\"key\":\"0123456789abcdef\"}", useStandardKey = true)
+        assertEquals(256, encrypted.length)
+        assertEquals(encrypted.lowercase(), encrypted)
+
+        val stdParamsKey = KugouSigner.paramsKeyStandard(1770000000123L)
+        assertEquals(32, stdParamsKey.length)
+
+        val stdSig = KugouSigner.signatureStandard(mapOf("appid" to "1005", "clientver" to "20489"), "{\"test\":1}")
+        assertEquals(32, stdSig.length)
+    }
+
+    @Test fun userGradeInfoSelectsMaxDurationAcrossChannelsForAccurateOfficialTime() = kotlinx.coroutines.test.runTest {
+        val store = MemoryStore()
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse {
+                if (path == "/v3/get_my_info") {
+                    // Simulate Lite endpoint returning lagging 220788 minutes
+                    val json = """{"status":1,"data":{"user_y_grade":11,"dura_With_M":220788,"r_listen":17435}}"""
+                    return ApiResponse(com.google.gson.JsonParser.parseString(json).asJsonObject)
+                }
+                return ApiResponse(JsonObject())
+            }
+
+            override suspend fun callAdvanced(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?,
+                sign: Boolean, includeDefaultParams: Boolean
+            ): ApiResponse {
+                if (path == "/v4/get_grade_info") {
+                    // Simulate Standard /v4/get_grade_info returning up-to-date 221062 minutes (~3684.4h)
+                    val json = """{"status":1,"data":{"grade":11,"duration":221062,"next_grade_duration":225000}}"""
+                    return ApiResponse(com.google.gson.JsonParser.parseString(json).asJsonObject)
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+        val gradeInfo = repo.userGradeInfo()
+        assertNotNull(gradeInfo)
+        assertEquals(11, gradeInfo.level)
+        assertEquals(221062L, gradeInfo.listenDurationMinutes)
+        assertEquals("3684 小时 22 分", gradeInfo.displayListenTimeText)
+    }
+
+    @Test fun userGradeInfoAlignsWithStandardClientLocalDiffSecWhenCloudDsecIs220788Minutes() = kotlinx.coroutines.test.runTest {
+        val store = MemoryStore().apply {
+            rows = listOf(SavedAccount("874555157"))
+            activeKey = "874555157"
+            sessions["874555157"] = KugouSession("874555157", "lite-token")
+        }
+        var capturedV4AppId: String? = null
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+
+            override suspend fun callAdvanced(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?,
+                sign: Boolean, includeDefaultParams: Boolean
+            ): ApiResponse {
+                if (path == "/v4/get_grade_info") {
+                    capturedV4AppId = query["appid"]
+                    val json = """{"status":1,"error_code":0,"data":{"p_grade":11,"p_current_point":298810,"p_next_grade_point":300000,"d_sec":13247329,"duration":220788}}"""
+                    return ApiResponse(com.google.gson.JsonParser.parseString(json).asJsonObject)
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+        val gradeInfo = repo.userGradeInfo()
+        assertEquals("3116", capturedV4AppId)
+        assertEquals(11, gradeInfo.level)
+        assertEquals(13247329L, repo.lastServerRawDsec)
+        assertEquals(13263720L, gradeInfo.totalListenSeconds)
+        assertEquals(221062L, gradeInfo.listenDurationMinutes)
+        assertEquals("3684 小时 22 分", gradeInfo.displayListenTimeText)
+    }
+
+    @Test fun rankSongsAllLoadsUpTo500SongsAndStreamsProgressPerPage() = kotlinx.coroutines.test.runTest {
+        val store = MemoryStore()
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+
+            override suspend fun callAdvanced(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?,
+                sign: Boolean, includeDefaultParams: Boolean
+            ): ApiResponse {
+                if (path == "/api/v3/rank/song") {
+                    val page = query["page"]?.toIntOrNull() ?: 1
+                    val pageSize = query["pagesize"]?.toIntOrNull() ?: 100
+                    val startIdx = (page - 1) * pageSize + 1
+                    val listArr = com.google.gson.JsonArray()
+                    for (i in startIdx until (startIdx + pageSize)) {
+                        listArr.add(JsonObject().apply {
+                            addProperty("audio_id", i)
+                            addProperty("filename", "Singer $i - TopSong $i")
+                            addProperty("hash", "hash_${i}_000000000000000000000000")
+                            addProperty("duration", 200)
+                        })
+                    }
+                    val resp = JsonObject().apply {
+                        addProperty("status", 1)
+                        add("data", JsonObject().apply {
+                            addProperty("total", 500)
+                            add("info", listArr)
+                        })
+                    }
+                    return ApiResponse(resp)
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+        val progressSizes = mutableListOf<Int>()
+        val allSongs = repo.rankSongsAll(8888, maxSongs = 500) { partial ->
+            progressSizes += partial.size
+        }
+        assertEquals(500, allSongs.size)
+        assertEquals(listOf(100, 200, 300, 400, 500), progressSizes)
+    }
 }

@@ -40,18 +40,22 @@ object ListeningGradeManager {
         if (prefs != null) return
         prefs = context.applicationContext.getSharedPreferences("listening_grade_prefs", Context.MODE_PRIVATE)
         scope.launch {
+            var lastAuthState: AuthState? = null
             VipManager.accounts.state.collect { state ->
                 val newId = state.currentId
-                if (newId != currentUserId) {
+                val userChanged = newId != currentUserId
+                val authBecameReady = state.auth == AuthState.READY && lastAuthState != AuthState.READY
+                lastAuthState = state.auth
+                if (userChanged) {
                     synchronized(stateLock) {
                         currentUserId = newId
                         loadUserDataLocked(newId)
                     }
-                    if (state.auth == AuthState.READY && !newId.isNullOrEmpty()) {
-                        syncGrade(forceRefresh = true)
-                    } else if (newId.isNullOrEmpty()) {
-                        _gradeInfo.value = UserGradeInfo()
-                    }
+                }
+                if ((userChanged || authBecameReady) && state.auth == AuthState.READY && !newId.isNullOrEmpty()) {
+                    syncGrade(forceRefresh = true)
+                } else if (newId.isNullOrEmpty()) {
+                    _gradeInfo.value = UserGradeInfo()
                 }
             }
         }
@@ -68,9 +72,17 @@ object ListeningGradeManager {
             return
         }
         val sp = prefs ?: return
-        syncedOfficialListenSec = sp.getLong("official_listen_sec_v5_$userId", 0L)
-        syncedRawServerDsec = sp.getLong("raw_server_dsec_v5_$userId", syncedOfficialListenSec)
+        val cachedOfficial = sp.getLong("official_listen_sec_v5_$userId", 0L)
+        val cachedRawDsec = sp.getLong("raw_server_dsec_v5_$userId", cachedOfficial)
+        val calibratedFloorSec = if (cachedRawDsec > 0L) {
+            cachedRawDsec + VipManager.music.resolveStandardClientLocalDiffSec(userId, cachedRawDsec)
+        } else 0L
+        syncedOfficialListenSec = maxOf(cachedOfficial, calibratedFloorSec)
+        syncedRawServerDsec = cachedRawDsec
         pendingDiffSec = sp.getLong("pending_diff_v5_$userId", 0L).coerceIn(0L, 600L)
+        if (calibratedFloorSec > cachedOfficial + pendingDiffSec) {
+            pendingDiffSec = 0L
+        }
         if (syncedOfficialListenSec > 0L) {
             _gradeInfo.update { it.withUpdatedSeconds(syncedOfficialListenSec + pendingDiffSec) }
         } else {
@@ -108,25 +120,36 @@ object ListeningGradeManager {
 
     fun onOfficialProfileSynced(userId: String, officialDurationMinutes: Long, officialLevel: Int = 0) {
         if (userId.isBlank() || officialDurationMinutes <= 0L) return
+        val shouldSyncFullGrade: Boolean
         synchronized(stateLock) {
             if (currentUserId == null) {
                 currentUserId = userId
             }
             if (currentUserId != userId) return
-            val profileSec = if (officialDurationMinutes > 2_000_000L) officialDurationMinutes else officialDurationMinutes * 60L
+            val rawProfileSec = if (officialDurationMinutes > 2_000_000L) officialDurationMinutes else officialDurationMinutes * 60L
+            val profileSec = rawProfileSec + VipManager.music.resolveStandardClientLocalDiffSec(userId, rawProfileSec)
             val remainderSec = if (syncedOfficialListenSec > 0L && syncedOfficialListenSec / 60L == profileSec / 60L) {
                 syncedOfficialListenSec % 60L
             } else 0L
             val newOfficialSec = maxOf(syncedOfficialListenSec, profileSec + remainderSec)
+            if (newOfficialSec > syncedOfficialListenSec + pendingDiffSec) {
+                pendingDiffSec = 0L
+            }
             syncedOfficialListenSec = newOfficialSec
             if (syncedRawServerDsec <= 0L) {
-                syncedRawServerDsec = newOfficialSec
+                syncedRawServerDsec = rawProfileSec
             }
             saveUserDataForUser(userId, syncedOfficialListenSec, syncedRawServerDsec, pendingDiffSec, immediate = true)
             val totalSec = newOfficialSec + pendingDiffSec
             _gradeInfo.update { cur ->
                 val updatedLevel = if (officialLevel > 0) maxOf(cur.level, officialLevel) else cur.level
                 cur.copy(level = updatedLevel).withUpdatedSeconds(totalSec)
+            }
+            shouldSyncFullGrade = _gradeInfo.value.score <= 0L || syncedRawServerDsec <= rawProfileSec
+        }
+        if (shouldSyncFullGrade) {
+            scope.launch {
+                syncGrade(forceRefresh = false)
             }
         }
     }
@@ -196,6 +219,9 @@ object ListeningGradeManager {
                                 syncedOfficialListenSec % 60L
                             } else 0L
                             val candidateSec = serverQuery.totalListenSeconds + remainderSec
+                            if (candidateSec > syncedOfficialListenSec + pendingDiffSec) {
+                                pendingDiffSec = 0L
+                            }
                             syncedOfficialListenSec = if (syncedOfficialListenSec > candidateSec && syncedOfficialListenSec - candidateSec <= 36_000L) {
                                 syncedOfficialListenSec
                             } else {

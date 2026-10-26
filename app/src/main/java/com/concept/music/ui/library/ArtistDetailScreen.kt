@@ -32,6 +32,7 @@ import com.concept.music.data.model.ArtistItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.rememberProgressiveSongList
 import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
@@ -214,20 +215,14 @@ fun ArtistDetailScreen(
         }
     }
 
-    // 按需触底分页加载：彻底取代刚进入页面时的主线程死循环拉取风暴，保证进入退出歌手页丝滑满帧
-    val shouldLoadMore by remember {
-        derivedStateOf {
-            val total = listState.layoutInfo.totalItemsCount
-            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            total > 4 && lastVisible >= total - 6
-        }
-    }
-
-    LaunchedEffect(shouldLoadMore, selectedTab, loading, songsLoading) {
-        if (!shouldLoadMore || loading || songsLoading) return@LaunchedEffect
-        if (selectedTab == 0 && hasMoreSongs && !loadingMoreSongs && songPage < 25) {
+    // 后台静默全量队列推进：无需用户滑到底部触发，自动在 IO 线程静默分页拉取全部歌手单曲与专辑，并由 rememberProgressiveSongList 按 10 首微批次无感注入 UI
+    LaunchedEffect(artistId, sortMethod, loading, songsLoading) {
+        if (loading || songsLoading) return@LaunchedEffect
+        // 先避开页面进入转场动画窗口
+        delay(260L)
+        while (hasMoreSongs && songPage < 30) {
             loadingMoreSongs = true
-            withContext(Dispatchers.IO) {
+            val cont = withContext(Dispatchers.IO) {
                 try {
                     val nextPage = songPage + 1
                     val nextBatch = runCatching {
@@ -238,20 +233,31 @@ fun ArtistDetailScreen(
                     withContext(Dispatchers.Main) {
                         if (uniqueNew.isEmpty()) {
                             hasMoreSongs = false
+                            false
                         } else {
                             songs = songs + uniqueNew
                             songPage = nextPage
                             val targetTotal = artist?.songCount ?: 0
-                            hasMoreSongs = nextBatch.size >= 30 && (targetTotal == 0 || songs.size < targetTotal)
+                            val more = nextBatch.size >= 30 && (targetTotal == 0 || songs.size < targetTotal)
+                            hasMoreSongs = more
+                            more
                         }
                     }
                 } finally {
                     withContext(Dispatchers.Main) { loadingMoreSongs = false }
                 }
             }
-        } else if (selectedTab == 1 && hasMoreAlbums && !loadingMoreAlbums && albumPage < 15) {
+            if (!cont) break
+            delay(160L)
+        }
+    }
+
+    LaunchedEffect(artistId, loading) {
+        if (loading) return@LaunchedEffect
+        delay(360L)
+        while (hasMoreAlbums && albumPage < 20) {
             loadingMoreAlbums = true
-            withContext(Dispatchers.IO) {
+            val cont = withContext(Dispatchers.IO) {
                 try {
                     val nextPage = albumPage + 1
                     val nextBatch = runCatching {
@@ -267,17 +273,22 @@ fun ArtistDetailScreen(
                     withContext(Dispatchers.Main) {
                         if (uniqueNew.isEmpty()) {
                             hasMoreAlbums = false
+                            false
                         } else {
                             albums = albums + uniqueNew
                             albumPage = nextPage
                             val targetTotal = artist?.albumCount ?: 0
-                            hasMoreAlbums = nextBatch.size >= 20 && (targetTotal == 0 || albums.size < targetTotal)
+                            val more = nextBatch.size >= 20 && (targetTotal == 0 || albums.size < targetTotal)
+                            hasMoreAlbums = more
+                            more
                         }
                     }
                 } finally {
                     withContext(Dispatchers.Main) { loadingMoreAlbums = false }
                 }
             }
+            if (!cont) break
+            delay(200L)
         }
     }
 
@@ -333,6 +344,16 @@ fun ArtistDetailScreen(
                 }
             }
         ) { innerPadding ->
+            val displayedArtistSongs by rememberProgressiveSongList(
+                sourceSongs = filteredSongs,
+                listState = listState,
+                resetKey = "${artistId}_${sortMethod}_$songSearchQuery",
+                initialBatchSize = 15,
+                microBatchSize = 10
+            )
+            val latestFilteredArtistSongs by rememberUpdatedState(filteredSongs)
+            val curArtistPlayingId = currentSong?.id
+            val curArtistPlayingHash = currentSong?.hash.orEmpty()
             val showScrollToTop by remember(selectedTab, filteredSongs.size) {
                 derivedStateOf {
                     selectedTab == 0 && (
@@ -636,17 +657,18 @@ fun ArtistDetailScreen(
                                 }
                             }
                         } else {
-                            itemsIndexed(filteredSongs, key = { idx, s -> "${s.id}_${s.hash}_$idx" }) { index, song ->
-                                val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
-                                Box(modifier = tabAnimMod) {
-                                    SongItemRow(
-                                        song = song,
-                                        orderIndex = index + 1,
-                                        isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                                        onClick = { onSongClick(song, filteredSongs) },
-                                        onMoreClick = { onSongMoreClick(song) }
-                                    )
-                                }
+                            itemsIndexed(
+                                items = displayedArtistSongs,
+                                key = { idx, s -> "${s.id}_${s.hash}_$idx" },
+                                contentType = { _, _ -> "song_row" }
+                            ) { index, song ->
+                                SongItemRow(
+                                    song = song,
+                                    orderIndex = index + 1,
+                                    isPlaying = curArtistPlayingId != null && (curArtistPlayingId == song.id || (curArtistPlayingHash.isNotEmpty() && curArtistPlayingHash.equals(song.hash, ignoreCase = true))),
+                                    onClick = { onSongClick(song, latestFilteredArtistSongs) },
+                                    onMoreClick = { onSongMoreClick(song) }
+                                )
                             }
                         }
                     }
@@ -668,14 +690,15 @@ fun ArtistDetailScreen(
                                 }
                             }
                         } else {
-                            itemsIndexed(albums, key = { idx, alb -> "art_alb_${alb.id}_$idx" }) { _, albumItem ->
-                                val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
-                                Box(modifier = tabAnimMod) {
-                                    ArtistAlbumRow(
-                                        album = albumItem,
-                                        onClick = { onAlbumClick(albumItem.id) }
-                                    )
-                                }
+                            itemsIndexed(
+                                items = albums,
+                                key = { idx, alb -> "art_alb_${alb.id}_$idx" },
+                                contentType = { _, _ -> "album_row" }
+                            ) { _, albumItem ->
+                                ArtistAlbumRow(
+                                    album = albumItem,
+                                    onClick = { onAlbumClick(albumItem.id) }
+                                )
                             }
                         }
                     }

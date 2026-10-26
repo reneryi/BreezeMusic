@@ -358,8 +358,17 @@ class HomeViewModel : ViewModel() {
         list
     }
 
-    suspend fun getRankSongsAll(rankId: Int, maxSongs: Int = 500): List<Song> = withContext(Dispatchers.IO) {
-        val list = VipManager.music.rankSongsAll(rankId, maxSongs = maxSongs)
+    suspend fun getRankSongsAll(
+        rankId: Int,
+        maxSongs: Int = 500,
+        onProgress: ((List<Song>) -> Unit)? = null
+    ): List<Song> = withContext(Dispatchers.IO) {
+        val list = VipManager.music.rankSongsAll(
+            rankId = rankId,
+            maxSongs = maxSongs,
+            pageSize = 100,
+            onProgress = onProgress
+        )
         if (list.isNotEmpty()) {
             VipManager.discoverCache.saveRankSongs(rankId, list)
         }

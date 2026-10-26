@@ -37,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -56,9 +57,24 @@ import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
 
-private val SongRowOuterShape = RoundedCornerShape(16.dp)
 private val SongCoverCornerShape = RoundedCornerShape(13.dp)
-private val SongBadgeCornerShape = RoundedCornerShape(5.dp)
+private val ActiveRowBgColor = ConceptPrimary.copy(alpha = 0.12f)
+private val HqBadgeColor = ConceptPrimary.copy(alpha = 0.85f)
+
+private fun normalizeSongThumbUrl(rawUrl: String): String {
+    val trimmed = rawUrl.trim()
+    if (trimmed.isEmpty()) return ""
+    val withSize = if (trimmed.contains("{size}")) {
+        trimmed.replace("{size}", "150")
+    } else {
+        trimmed
+    }
+    return if (withSize.startsWith("http://", ignoreCase = true)) {
+        "https://" + withSize.substring(7)
+    } else {
+        withSize
+    }
+}
 
 @Composable
 fun SongItemRow(
@@ -73,14 +89,15 @@ fun SongItemRow(
     val isDark = LocalIsDarkTheme.current
     val goldTagColor = if (isDark) VipGold else Color(0xFFC47F00)
 
-    val imageModel = remember(song.coverUrl) {
-        if (song.coverUrl.isNotBlank()) {
+    val thumbUrl = remember(song.coverUrl) { normalizeSongThumbUrl(song.coverUrl) }
+    val imageModel = remember(thumbUrl, context) {
+        if (thumbUrl.isNotEmpty()) {
             ImageRequest.Builder(context)
-                .data(song.coverUrl)
-                .size(136, 136)
+                .data(thumbUrl)
+                .size(144, 144)
                 .precision(Precision.INEXACT)
-                .memoryCacheKey(song.coverUrl)
-                .diskCacheKey(song.coverUrl)
+                .memoryCacheKey(thumbUrl)
+                .diskCacheKey(thumbUrl)
                 .allowHardware(true)
                 .crossfade(false)
                 .build()
@@ -93,16 +110,29 @@ fun SongItemRow(
     val subtitleText = remember(song.artist, song.album) {
         if (song.album.isNotBlank() && song.album != "单曲") "${song.artist} · ${song.album}" else song.artist
     }
+    val qualityLabel = remember(song.isHiRes, song.isLossless, song.quality) {
+        when {
+            song.isHiRes -> "Hi-Res"
+            song.isLossless -> "SQ"
+            song.quality == "320" -> "HQ"
+            else -> ""
+        }
+    }
 
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 2.dp)
-            .clip(SongRowOuterShape)
-            .background(
-                if (isPlaying) ConceptPrimary.copy(alpha = 0.12f) else Color.Transparent
-            )
-            .softClickable(onClick = onClick)
+            .drawBehind {
+                if (isPlaying) {
+                    val r = 16.dp.toPx()
+                    drawRoundRect(
+                        color = ActiveRowBgColor,
+                        cornerRadius = CornerRadius(r, r)
+                    )
+                }
+            }
+            .softClickable(pressScale = 0.985f, pressAlpha = 0.88f, onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -180,19 +210,14 @@ fun SongItemRow(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(top = 3.dp)
             ) {
-                when {
-                    song.isHiRes -> {
-                        BadgeTag(text = "Hi-Res", color = goldTagColor)
-                        Spacer(modifier = Modifier.width(4.dp))
+                if (qualityLabel.isNotEmpty()) {
+                    val qColor = when (qualityLabel) {
+                        "Hi-Res" -> goldTagColor
+                        "SQ" -> ConceptPrimary
+                        else -> HqBadgeColor
                     }
-                    song.isLossless -> {
-                        BadgeTag(text = "SQ", color = ConceptPrimary)
-                        Spacer(modifier = Modifier.width(4.dp))
-                    }
-                    song.quality == "320" -> {
-                        BadgeTag(text = "HQ", color = ConceptPrimary.copy(alpha = 0.85f))
-                        Spacer(modifier = Modifier.width(4.dp))
-                    }
+                    BadgeTag(text = qualityLabel, color = qColor)
+                    Spacer(modifier = Modifier.width(4.dp))
                 }
                 if (song.isVip) {
                     BadgeTag(text = "VIP", color = goldTagColor)
@@ -211,7 +236,12 @@ fun SongItemRow(
         }
 
         if (onMoreClick != null) {
-            IconButton(onClick = onMoreClick, modifier = Modifier.size(38.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .softClickable(onClick = onMoreClick),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
                     imageVector = Icons.Rounded.MoreVert,
                     contentDescription = "更多",
@@ -298,16 +328,20 @@ fun PlayingAudioWaveIndicator(
 
 @Composable
 fun BadgeTag(text: String, color: Color) {
-    Surface(
-        color = color.copy(alpha = 0.16f),
-        shape = SongBadgeCornerShape
-    ) {
-        Text(
-            text = text,
-            color = color,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-        )
-    }
+    val bgColor = color.copy(alpha = 0.16f)
+    Text(
+        text = text,
+        color = color,
+        fontSize = 9.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .drawBehind {
+                val r = 5.dp.toPx()
+                drawRoundRect(
+                    color = bgColor,
+                    cornerRadius = CornerRadius(r, r)
+                )
+            }
+            .padding(horizontal = 5.dp, vertical = 1.dp)
+    )
 }

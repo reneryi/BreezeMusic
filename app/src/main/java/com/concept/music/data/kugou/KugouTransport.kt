@@ -70,7 +70,11 @@ class DirectKugouTransport(
             "bssdlbig.kugou.com",
             "bssdl.kugou.com",
             "trackercdn.kugou.com",
-            "mobilecdnbj.kugou.com"
+            "mobilecdnbj.kugou.com",
+            "userinfo.user.kugou.com",
+            "relation.user.kugou.com",
+            "usercenter.kugou.com",
+            "update.user.kugou.com"
         )
 
         internal fun enforceHttpsForSensitiveHost(

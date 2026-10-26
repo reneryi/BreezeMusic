@@ -51,6 +51,7 @@ import com.concept.music.data.model.FmChannel
 import com.concept.music.data.model.Song
 import com.concept.music.ui.components.PlayingAudioWaveIndicator
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.rememberProgressiveSongList
 import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptCoralAccent
@@ -152,7 +153,26 @@ fun RadioScreen(
             stationSongs = cached
             loading = false
         } else {
-            loadStationBatch(selectedChannelId, append = false)
+            loading = true
+            val firstBatch = viewModel.getFmChannelSongs(selectedChannelId, size = 20, forceNextBatch = true)
+            stationSongs = firstBatch
+            loading = false
+        }
+        // 静默补齐漫游队列：在首屏渲染完成后，后台静默补充 2 批电台曲目并以微批次平滑注入列表
+        for (extraRound in 1..2) {
+            kotlinx.coroutines.delay(320L)
+            if (!isActive || stationSongs.size >= 60) break
+            val moreBatch = runCatching {
+                viewModel.getFmChannelSongs(selectedChannelId, size = 20, forceNextBatch = true)
+            }.getOrDefault(emptyList())
+            if (moreBatch.isEmpty()) break
+            val existingKeys = stationSongs.map { it.hash.ifBlank { it.id }.lowercase() }.toHashSet()
+            val newUnique = moreBatch.filter { existingKeys.add(it.hash.ifBlank { it.id }.lowercase()) }
+            if (newUnique.isNotEmpty()) {
+                stationSongs = stationSongs + newUnique
+            } else {
+                break
+            }
         }
     }
 
@@ -266,6 +286,16 @@ fun RadioScreen(
         ) { innerPadding ->
             val currentCatIdx = categories.indexOf(selectedCategory).coerceAtLeast(0)
             val radioListState = rememberLazyListState()
+            val displayedRadioSongs by rememberProgressiveSongList(
+                sourceSongs = stationSongs,
+                listState = radioListState,
+                resetKey = selectedChannelId,
+                initialBatchSize = 12,
+                microBatchSize = 8
+            )
+            val latestStationSongs by rememberUpdatedState(stationSongs)
+            val curRadioPlayingId = currentSong?.id
+            val curRadioPlayingHash = currentSong?.hash.orEmpty()
             val showRadioScrollTop by remember(stationSongs.size) {
                 derivedStateOf {
                     radioListState.firstVisibleItemIndex > 2 ||
@@ -677,12 +707,16 @@ fun RadioScreen(
                         }
                     }
                 } else {
-                    itemsIndexed(stationSongs, key = { idx, s -> "fm_song_${s.id}_$idx" }, contentType = { _, _ -> "song_row" }) { index, song ->
+                    itemsIndexed(
+                        items = displayedRadioSongs,
+                        key = { idx, s -> "fm_song_${s.id}_$idx" },
+                        contentType = { _, _ -> "song_row" }
+                    ) { index, song ->
                         SongItemRow(
                             song = song,
                             orderIndex = index + 1,
-                            isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                            onClick = { onSongClick(song, stationSongs) },
+                            isPlaying = curRadioPlayingId != null && (curRadioPlayingId == song.id || (curRadioPlayingHash.isNotEmpty() && curRadioPlayingHash.equals(song.hash, ignoreCase = true))),
+                            onClick = { onSongClick(song, latestStationSongs) },
                             onMoreClick = { onSongMoreClick(song) }
                         )
                     }

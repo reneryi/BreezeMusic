@@ -39,6 +39,7 @@ import com.concept.music.data.model.Song
 import com.concept.music.ui.components.AddToPlaylistDialog
 import com.concept.music.ui.components.CreatePlaylistDialog
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.rememberProgressiveSongList
 import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptCoralAccent
@@ -247,6 +248,16 @@ fun PlaylistDetailScreen(
                     }
                 }
             ) { innerPadding ->
+                val displayedPlaylistSongs by rememberProgressiveSongList(
+                    sourceSongs = filteredAndSortedSongs,
+                    listState = listState,
+                    resetKey = "${playlistId}_${sortMode.name}_$searchQuery",
+                    initialBatchSize = 15,
+                    microBatchSize = 10
+                )
+                val latestFilteredAndSortedSongs by rememberUpdatedState(filteredAndSortedSongs)
+                val curPlaylistPlayingId = currentSong?.id
+                val curPlaylistPlayingHash = currentSong?.hash.orEmpty()
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
@@ -487,15 +498,37 @@ fun PlaylistDetailScreen(
                         }
                     }
 
-                    // 4. 歌曲列表
-                    itemsIndexed(filteredAndSortedSongs, key = { idx, s -> "${s.id}_${s.hash}_$idx" }, contentType = { _, _ -> "song_row" }) { index, song ->
-                        val isCurrentTrack = currentSong != null && viewModel.isSameSong(song, currentSong)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                    // 4. 歌曲列表（首屏 15 首瞬时渲染 + 后台 10 首微批次静默推进，非多选模式下零额外容器包裹）
+                    itemsIndexed(
+                        items = displayedPlaylistSongs,
+                        key = { idx, s -> "${s.id}_${s.hash}_$idx" },
+                        contentType = { _, _ -> "song_row" }
+                    ) { index, song ->
+                        val isCurrentTrack = curPlaylistPlayingId != null && (
+                            curPlaylistPlayingId == song.id ||
+                                (curPlaylistPlayingHash.isNotEmpty() && curPlaylistPlayingHash.equals(song.hash, ignoreCase = true))
+                            )
+                        val handleMore: () -> Unit = {
+                            if (onSongMoreClick != null) {
+                                val removeAction: (() -> Unit)? = if (isCustomCreated && currentPlaylist != null) {
+                                    {
+                                        viewModel.removeSongFromPlaylist(currentPlaylist.listId, song) { _, msg ->
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                } else null
+                                onSongMoreClick(song, removeAction)
+                            } else {
+                                selectedSongForMenu = song
+                            }
+                        }
+
+                        if (isMultiSelectMode) {
                             val songKey = song.selectionKey()
-                            if (isMultiSelectMode) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Checkbox(
                                     checked = selectedSongIds.contains(songKey),
                                     onCheckedChange = { checked ->
@@ -508,39 +541,32 @@ fun PlaylistDetailScreen(
                                     colors = CheckboxDefaults.colors(checkedColor = ConceptPrimary),
                                     modifier = Modifier.padding(start = 8.dp)
                                 )
-                            }
-                            Box(modifier = Modifier.weight(1f)) {
-                                SongItemRow(
-                                    song = song,
-                                    orderIndex = index + 1,
-                                    isPlaying = isCurrentTrack,
-                                    onClick = {
-                                        if (isMultiSelectMode) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    SongItemRow(
+                                        song = song,
+                                        orderIndex = index + 1,
+                                        isPlaying = isCurrentTrack,
+                                        onClick = {
                                             selectedSongIds = if (selectedSongIds.contains(songKey)) {
                                                 selectedSongIds - songKey
                                             } else {
                                                 selectedSongIds + songKey
                                             }
-                                        } else {
-                                            onSongClick(song, filteredAndSortedSongs)
-                                        }
-                                    },
-                                    onMoreClick = {
-                                        if (onSongMoreClick != null) {
-                                            val removeAction: (() -> Unit)? = if (isCustomCreated && currentPlaylist != null) {
-                                                {
-                                                    viewModel.removeSongFromPlaylist(currentPlaylist.listId, song) { _, msg ->
-                                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                                                    }
-                                                }
-                                            } else null
-                                            onSongMoreClick(song, removeAction)
-                                        } else {
-                                            selectedSongForMenu = song
-                                        }
-                                    }
-                                )
+                                        },
+                                        onMoreClick = handleMore
+                                    )
+                                }
                             }
+                        } else {
+                            SongItemRow(
+                                song = song,
+                                orderIndex = index + 1,
+                                isPlaying = isCurrentTrack,
+                                onClick = {
+                                    onSongClick(song, latestFilteredAndSortedSongs)
+                                },
+                                onMoreClick = handleMore
+                            )
                         }
                     }
                 }

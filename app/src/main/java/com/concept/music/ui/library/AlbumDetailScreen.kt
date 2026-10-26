@@ -33,6 +33,7 @@ import com.concept.music.data.model.AlbumItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.rememberProgressiveSongList
 import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
@@ -182,6 +183,16 @@ fun AlbumDetailScreen(
             }
         ) { innerPadding ->
             val listState = rememberLazyListState()
+            val displayedAlbumSongs by rememberProgressiveSongList(
+                sourceSongs = filteredSongs,
+                listState = listState,
+                resetKey = "${albumId}_$searchQuery",
+                initialBatchSize = 15,
+                microBatchSize = 10
+            )
+            val latestFilteredAlbumSongs by rememberUpdatedState(filteredSongs)
+            val curAlbumPlayingId = currentSong?.id
+            val curAlbumPlayingHash = currentSong?.hash.orEmpty()
             val showScrollToTop by remember(filteredSongs.size) {
                 derivedStateOf {
                     listState.firstVisibleItemIndex > 2 ||
@@ -415,12 +426,16 @@ fun AlbumDetailScreen(
                 }
 
                 // 4. 歌曲列表
-                itemsIndexed(filteredSongs, key = { idx, s -> "${s.id}_${s.hash}_$idx" }, contentType = { _, _ -> "song_row" }) { index, song ->
+                itemsIndexed(
+                    items = displayedAlbumSongs,
+                    key = { idx, s -> "${s.id}_${s.hash}_$idx" },
+                    contentType = { _, _ -> "song_row" }
+                ) { index, song ->
                     SongItemRow(
                         song = song,
                         orderIndex = index + 1,
-                        isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                        onClick = { onSongClick(song, filteredSongs) },
+                        isPlaying = curAlbumPlayingId != null && (curAlbumPlayingId == song.id || (curAlbumPlayingHash.isNotEmpty() && curAlbumPlayingHash.equals(song.hash, ignoreCase = true))),
+                        onClick = { onSongClick(song, latestFilteredAlbumSongs) },
                         onMoreClick = { onSongMoreClick(song) }
                     )
                 }

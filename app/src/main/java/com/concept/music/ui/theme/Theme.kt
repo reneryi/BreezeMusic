@@ -25,9 +25,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -79,18 +78,26 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasureResult
 import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.node.LayoutModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.PointerInputModifierNode
+import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.platform.InspectorInfo
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -98,13 +105,16 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
@@ -245,171 +255,178 @@ fun conceptSheetContainerColor(): Color {
 }
 
 /**
- * 基于轻量级 `Modifier.Node` 的零重组按压微回弹修饰节点：
- * - 按下瞬间采用 `ConceptMotion.softPressSpring()` 敏捷收敛；
- * - 松手恢复采用 `ConceptMotion.softReleaseSpring()` 赋予灵动微回弹生命力；
- * - 缩放与透明度变换通过 `placeWithLayer` 100% 在 GPU 图层阶段完成，彻底避免长列表挂载 `animateFloatAsState` 的开销。
+ * 零分配、零缓冲、零订阅的共享空 InteractionSource 单例：
+ * 传入 `Modifier.clickable(interactionSource = NoOpInteractionSource, indication = null, ...)` 时，
+ * 完全规避 `Modifier.composed` 开销与每行 `MutableInteractionSource()` 的 `SharedFlow` 分配。
  */
-private data class SoftBounceTouchElement(
-    val interactionSource: InteractionSource,
-    val enabled: Boolean,
-    val pressScale: Float,
-    val pressAlpha: Float
-) : ModifierNodeElement<SoftBounceTouchNode>() {
-    override fun create(): SoftBounceTouchNode = SoftBounceTouchNode(
-        interactionSource = interactionSource,
-        enabled = enabled,
-        pressScale = pressScale,
-        pressAlpha = pressAlpha
-    )
+private object NoOpInteractionSource : MutableInteractionSource {
+    override val interactions: Flow<Interaction> = emptyFlow()
+    override suspend fun emit(interaction: Interaction) {}
+    override fun tryEmit(interaction: Interaction): Boolean = true
+}
 
-    override fun update(node: SoftBounceTouchNode) {
+/**
+ * 基于 `ModifierNodeElement` + `PointerInputModifierNode` + `DrawModifierNode` 的零重组、惰性按压微回弹节点：
+ * - 彻底移除 `Modifier.composed` 与逐行预分配的 `MutableInteractionSource`；
+ * - 列表滑动期间：0 协程启动、0 Flow 收集、0 `Animatable` 预分配、0 离屏图层（RenderNode）分配；
+ * - 仅当手指真实按在条目上时才惰性创建 `Animatable` 并通过 `DrawModifierNode` 执行弹簧缩放，滚屏或松手立即回弹。
+ */
+private data class SoftBouncePressElement(
+    val enabled: Boolean = true,
+    val pressScale: Float = 0.93f,
+    val pressAlpha: Float = 0.76f
+) : ModifierNodeElement<SoftBouncePressNode>() {
+    override fun create(): SoftBouncePressNode {
+        return SoftBouncePressNode(
+            enabled = enabled,
+            pressScale = pressScale,
+            pressAlpha = pressAlpha
+        )
+    }
+
+    override fun update(node: SoftBouncePressNode) {
         node.updateParams(
-            newSource = interactionSource,
-            newEnabled = enabled,
-            newPressScale = pressScale,
-            newPressAlpha = pressAlpha
+            enabled = enabled,
+            pressScale = pressScale,
+            pressAlpha = pressAlpha
         )
     }
 
     override fun InspectorInfo.inspectableProperties() {
-        name = "softBounceTouch"
+        name = "softBouncePress"
         properties["enabled"] = enabled
         properties["pressScale"] = pressScale
         properties["pressAlpha"] = pressAlpha
     }
 }
 
-private class SoftBounceTouchNode(
-    var interactionSource: InteractionSource,
-    var enabled: Boolean,
-    var pressScale: Float,
-    var pressAlpha: Float
-) : Modifier.Node(), LayoutModifierNode {
-    private val scaleAnim = Animatable(1f)
-    private val alphaAnim = Animatable(1f)
-    private var interactionJob: Job? = null
+private class SoftBouncePressNode(
+    private var enabled: Boolean,
+    private var pressScale: Float,
+    private var pressAlpha: Float
+) : Modifier.Node(), PointerInputModifierNode, DrawModifierNode {
+    private var isPressed: Boolean = false
+    private var currentScale: Float = 1f
+    private var scaleAnim: Animatable<Float, *>? = null
+    private var animJob: Job? = null
 
     override val shouldAutoInvalidate: Boolean get() = false
 
-    override fun onAttach() {
-        super.onAttach()
-        observeInteractions()
+    fun updateParams(
+        enabled: Boolean,
+        pressScale: Float,
+        pressAlpha: Float
+    ) {
+        val disabledNow = this.enabled && !enabled
+        this.enabled = enabled
+        this.pressScale = pressScale
+        this.pressAlpha = pressAlpha
+        if (disabledNow && isPressed) {
+            animateToPressed(false)
+        }
     }
 
     override fun onDetach() {
-        interactionJob?.cancel()
-        interactionJob = null
+        animJob?.cancel()
+        animJob = null
+        isPressed = false
+        currentScale = 1f
         super.onDetach()
     }
 
-    fun updateParams(
-        newSource: InteractionSource,
-        newEnabled: Boolean,
-        newPressScale: Float,
-        newPressAlpha: Float
+    override fun onPointerEvent(
+        pointerEvent: PointerEvent,
+        pass: PointerEventPass,
+        bounds: IntSize
     ) {
-        val sourceChanged = interactionSource !== newSource
-        val enabledChanged = enabled != newEnabled
-        interactionSource = newSource
-        enabled = newEnabled
-        pressScale = newPressScale
-        pressAlpha = newPressAlpha
-        if (!newEnabled && isAttached) {
-            coroutineScope.launch {
-                scaleAnim.snapTo(1f)
-                alphaAnim.snapTo(1f)
+        if (!enabled) return
+        if (pass != PointerEventPass.Main) return
+        when (pointerEvent.type) {
+            PointerEventType.Press -> {
+                val change = pointerEvent.changes.firstOrNull() ?: return
+                if (!change.isConsumed &&
+                    change.position.x in 0f..bounds.width.toFloat() &&
+                    change.position.y in 0f..bounds.height.toFloat()
+                ) {
+                    animateToPressed(true)
+                }
             }
-        }
-        if ((sourceChanged || enabledChanged) && isAttached) {
-            observeInteractions()
-        }
-    }
-
-    private fun observeInteractions() {
-        interactionJob?.cancel()
-        if (!isAttached) return
-        val source = interactionSource
-        interactionJob = coroutineScope.launch {
-            var pressCount = 0
-            source.interactions.collect { interaction ->
-                when (interaction) {
-                    is PressInteraction.Press -> {
-                        pressCount++
-                        if (pressCount == 1 && enabled) {
-                            launch {
-                                scaleAnim.animateTo(
-                                    targetValue = pressScale,
-                                    animationSpec = ConceptMotion.softPressSpring()
-                                )
-                            }
-                            launch {
-                                alphaAnim.animateTo(
-                                    targetValue = pressAlpha,
-                                    animationSpec = ConceptMotion.softPressSpring()
-                                )
-                            }
-                        }
+            PointerEventType.Move -> {
+                if (isPressed) {
+                    val change = pointerEvent.changes.firstOrNull()
+                    val outOfBounds = change == null ||
+                        change.isConsumed ||
+                        !change.pressed ||
+                        change.position.x < -12f ||
+                        change.position.x > bounds.width + 12f ||
+                        change.position.y < -12f ||
+                        change.position.y > bounds.height + 12f
+                    if (outOfBounds) {
+                        animateToPressed(false)
                     }
-                    is PressInteraction.Release, is PressInteraction.Cancel -> {
-                        pressCount = (pressCount - 1).coerceAtLeast(0)
-                        if (pressCount == 0) {
-                            launch {
-                                scaleAnim.animateTo(
-                                    targetValue = 1f,
-                                    animationSpec = ConceptMotion.softReleaseSpring()
-                                )
-                            }
-                            launch {
-                                alphaAnim.animateTo(
-                                    targetValue = 1f,
-                                    animationSpec = ConceptMotion.gentleBounceSpring()
-                                )
-                            }
-                        }
-                    }
+                }
+            }
+            PointerEventType.Release, PointerEventType.Exit -> {
+                if (isPressed && pointerEvent.changes.none { it.pressed }) {
+                    animateToPressed(false)
                 }
             }
         }
     }
 
-    override fun MeasureScope.measure(
-        measurable: Measurable,
-        constraints: Constraints
-    ): MeasureResult {
-        val placeable = measurable.measure(constraints)
-        return layout(placeable.width, placeable.height) {
-            placeable.placeWithLayer(0, 0) {
-                val s = scaleAnim.value
-                scaleX = s
-                scaleY = s
-                alpha = alphaAnim.value
+    override fun onCancelPointerInput() {
+        if (isPressed) {
+            animateToPressed(false)
+        }
+    }
+
+    private fun animateToPressed(pressed: Boolean) {
+        if (isPressed == pressed) return
+        isPressed = pressed
+        if (!isAttached) {
+            currentScale = 1f
+            return
+        }
+        animJob?.cancel()
+        val anim = scaleAnim ?: Animatable(currentScale).also { scaleAnim = it }
+        val target = if (pressed) pressScale else 1f
+        val spec = if (pressed) ConceptMotion.softPressSpring<Float>() else ConceptMotion.softReleaseSpring<Float>()
+        animJob = coroutineScope.launch {
+            anim.animateTo(
+                targetValue = target,
+                animationSpec = spec
+            ) {
+                currentScale = value
+                invalidateDraw()
+            }
+        }
+    }
+
+    override fun ContentDrawScope.draw() {
+        val s = currentScale
+        if (s >= 0.999f) {
+            drawContent()
+        } else {
+            scale(scaleX = s, scaleY = s, pivot = center) {
+                this@draw.drawContent()
             }
         }
     }
 }
 
 /**
- * 柔和唯美无框点击反馈修饰符（按压敏捷收敛 + 松手微回弹 + 100% Draw 阶段图层渲染）
+ * 柔和唯美无框点击反馈修饰符（零 `Modifier.composed` 开销 + 惰性按压激活 + 100% Draw 阶段渲染）
  */
 fun Modifier.softClickable(
     enabled: Boolean = true,
     pressScale: Float = 0.93f,
     pressAlpha: Float = 0.76f,
     onClick: () -> Unit
-): Modifier = composed {
-    val interactionSource = remember { MutableInteractionSource() }
-    this
-        .then(
-            SoftBounceTouchElement(
-                interactionSource = interactionSource,
-                enabled = enabled,
-                pressScale = pressScale,
-                pressAlpha = pressAlpha
-            )
-        )
+): Modifier {
+    return this
+        .then(SoftBouncePressElement(enabled = enabled, pressScale = pressScale, pressAlpha = pressAlpha))
         .clickable(
-            interactionSource = interactionSource,
+            interactionSource = NoOpInteractionSource,
             indication = null,
             enabled = enabled,
             onClick = onClick
@@ -428,23 +445,16 @@ fun Modifier.softCardClickable(
     pressScale: Float = 0.975f,
     pressAlpha: Float = 0.90f,
     onClick: () -> Unit
-): Modifier = composed {
-    val interactionSource = remember { MutableInteractionSource() }
-    val base = this.then(
-        SoftBounceTouchElement(
-            interactionSource = interactionSource,
+): Modifier {
+    val clipped = if (clip) this.clip(shape) else this
+    return clipped
+        .then(SoftBouncePressElement(enabled = enabled, pressScale = pressScale, pressAlpha = pressAlpha))
+        .clickable(
+            interactionSource = NoOpInteractionSource,
+            indication = null,
             enabled = enabled,
-            pressScale = pressScale,
-            pressAlpha = pressAlpha
+            onClick = onClick
         )
-    )
-    val clipped = if (clip) base.clip(shape) else base
-    clipped.clickable(
-        interactionSource = interactionSource,
-        indication = null,
-        enabled = enabled,
-        onClick = onClick
-    )
 }
 
 /**
@@ -564,17 +574,22 @@ fun Modifier.horizontalCategorySwipe(
 
     this
         .graphicsLayer {
-            translationX = dragFeedbackX.value
+            val dx = dragFeedbackX.value
+            if (abs(dx) > 0.5f) {
+                translationX = dx
+            }
         }
         .pointerInput(Unit) {
             var totalDx = 0f
             var triggered = false
             val settleBack: () -> Unit = {
-                scope.launch {
-                    dragFeedbackX.animateTo(
-                        targetValue = 0f,
-                        animationSpec = ConceptMotion.gentleBounceSpring()
-                    )
+                if (abs(dragFeedbackX.value) > 0.01f) {
+                    scope.launch {
+                        dragFeedbackX.animateTo(
+                            targetValue = 0f,
+                            animationSpec = ConceptMotion.gentleBounceSpring()
+                        )
+                    }
                 }
             }
             detectHorizontalDragGestures(
@@ -595,6 +610,7 @@ fun Modifier.horizontalCategorySwipe(
                 onHorizontalDrag = { change, dragAmount ->
                     if (triggered || count <= 1) return@detectHorizontalDragGestures
                     totalDx += dragAmount
+                    if (abs(totalDx) < 14f) return@detectHorizontalDragGestures
                     val canGoNext = curIdx < count - 1
                     val canGoPrev = curIdx > 0 || onBack != null
                     val resistance = when {

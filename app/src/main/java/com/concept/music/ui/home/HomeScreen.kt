@@ -60,6 +60,7 @@ import com.concept.music.data.model.RankItem
 import com.concept.music.data.model.Song
 import com.concept.music.ui.components.BadgeTag
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.rememberProgressiveSongList
 import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
@@ -707,17 +708,33 @@ fun HomeScreen(
                         Text("暂无曲目数据，请点击右上角刷新", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
+                    val pfmListState = rememberLazyListState()
+                    val displayedPfmSongs by rememberProgressiveSongList(
+                        sourceSongs = fmPool,
+                        listState = pfmListState,
+                        resetKey = "pfm_sheet",
+                        initialBatchSize = 12,
+                        microBatchSize = 8
+                    )
+                    val latestFmPool by rememberUpdatedState(fmPool)
+                    val curId = currentSong?.id
+                    val curHash = currentSong?.hash.orEmpty()
                     LazyColumn(
+                        state = pfmListState,
                         modifier = Modifier.heightIn(max = 460.dp)
                     ) {
-                        itemsIndexed(fmPool, key = { idx, s -> "pfm_${s.id}_${s.hash}_$idx" }) { index, song ->
+                        itemsIndexed(
+                            items = displayedPfmSongs,
+                            key = { idx, s -> "pfm_${s.id}_${s.hash}_$idx" },
+                            contentType = { _, _ -> "song_row" }
+                        ) { index, song ->
                             SongItemRow(
                                 song = song,
                                 orderIndex = index + 1,
-                                isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                                isPlaying = curId != null && (curId == song.id || (curHash.isNotEmpty() && curHash.equals(song.hash, ignoreCase = true))),
                                 onClick = {
                                     viewModel.setPersonalFmIndex(index)
-                                    onSongClick(song, fmPool)
+                                    onSongClick(song, latestFmPool)
                                     showPersonalFmSheet = false
                                 },
                                 onMoreClick = { onSongMoreClick(song) }
@@ -905,14 +922,32 @@ fun HomeScreen(
                         color = ConceptPrimary
                     )
                 } else {
-                    LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                        itemsIndexed(quickFmSongs, key = { idx, s -> "qfm_${s.id}_${s.hash}_$idx" }) { index, song ->
+                    val qfmListState = rememberLazyListState()
+                    val displayedQfmSongs by rememberProgressiveSongList(
+                        sourceSongs = quickFmSongs,
+                        listState = qfmListState,
+                        resetKey = station.id,
+                        initialBatchSize = 12,
+                        microBatchSize = 8
+                    )
+                    val latestQuickFmSongs by rememberUpdatedState(quickFmSongs)
+                    val curId = currentSong?.id
+                    val curHash = currentSong?.hash.orEmpty()
+                    LazyColumn(
+                        state = qfmListState,
+                        modifier = Modifier.heightIn(max = 420.dp)
+                    ) {
+                        itemsIndexed(
+                            items = displayedQfmSongs,
+                            key = { idx, s -> "qfm_${s.id}_${s.hash}_$idx" },
+                            contentType = { _, _ -> "song_row" }
+                        ) { index, song ->
                             SongItemRow(
                                 song = song,
                                 orderIndex = index + 1,
-                                isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
+                                isPlaying = curId != null && (curId == song.id || (curHash.isNotEmpty() && curHash.equals(song.hash, ignoreCase = true))),
                                 onClick = {
-                                    onSongClick(song, quickFmSongs)
+                                    onSongClick(song, latestQuickFmSongs)
                                     quickFmStation = null
                                 },
                                 onMoreClick = { onSongMoreClick(song) }
@@ -1599,9 +1634,15 @@ private fun NewSongExpressSectionCard(
     }
 }
 
+private data class IndexedNewSong(
+    val orderIndex: Int,
+    val rawSong: Song,
+    val displaySong: Song
+)
+
 private data class DateSongGroup(
     val date: String,
-    val indexedSongs: List<Pair<Int, Song>>
+    val indexedSongs: List<IndexedNewSong>
 )
 
 /**
@@ -1628,15 +1669,6 @@ fun NewSongExpressScreen(
     val startDay = remember(endDay) { endDay.minusDays(6) }
     val periodRangeText = remember(startDay, endDay) {
         String.format("%02d.%02d - %02d.%02d", startDay.monthValue, startDay.dayOfMonth, endDay.monthValue, endDay.dayOfMonth)
-    }
-
-    val dateGroups = remember(songs, endDay) {
-        var orderCounter = 1
-        songs.groupBy { it.publishDate.ifBlank { endDay.toString() } }
-            .map { (date, list) ->
-                val indexed = list.map { song -> (orderCounter++) to song }
-                DateSongGroup(date = date, indexedSongs = indexed)
-            }
     }
 
     val collapsedDates = remember(selectedPeriod) { mutableStateMapOf<String, Boolean>() }
@@ -1693,6 +1725,35 @@ fun NewSongExpressScreen(
             val curPeriodIdx = periodKeys.indexOf(selectedPeriod).coerceAtLeast(0)
             val newSongListState = rememberLazyListState()
             val newSongScope = rememberCoroutineScope()
+            val progressiveSongs by rememberProgressiveSongList(
+                sourceSongs = songs,
+                listState = newSongListState,
+                resetKey = selectedPeriod,
+                initialBatchSize = 15,
+                microBatchSize = 10
+            )
+            val dateGroups = remember(progressiveSongs, endDay) {
+                var orderCounter = 1
+                progressiveSongs.groupBy { it.publishDate.ifBlank { endDay.toString() } }
+                    .map { (date, list) ->
+                        val indexed = list.map { song ->
+                            val displaySong = if (song.publishDate.isNotBlank()) {
+                                song.copy(
+                                    album = if (song.album.isNotBlank()) "${song.album} · ${song.publishDate}" else song.publishDate
+                                )
+                            } else song
+                            IndexedNewSong(
+                                orderIndex = orderCounter++,
+                                rawSong = song,
+                                displaySong = displaySong
+                            )
+                        }
+                        DateSongGroup(date = date, indexedSongs = indexed)
+                    }
+            }
+            val latestFullSongs by rememberUpdatedState(songs)
+            val curPlayingId = currentSong?.id
+            val curPlayingHash = currentSong?.hash.orEmpty()
             val showNewSongScrollTop by remember(songs.size) {
                 derivedStateOf {
                     newSongListState.firstVisibleItemIndex > 1 ||
@@ -1720,7 +1781,7 @@ fun NewSongExpressScreen(
                 contentPadding = PaddingValues(bottom = 112.dp)
             ) {
                 // 1. 开放式极简五维语种导航栏
-                item {
+                item(key = "ns_top_tabs", contentType = "ns_header") {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1751,7 +1812,7 @@ fun NewSongExpressScreen(
                 }
 
                 // 2. 开放式操作栏：全部播放 + 折叠/展开全部日期
-                item {
+                item(key = "ns_action_bar", contentType = "ns_action") {
                     val allCollapsed = dateGroups.isNotEmpty() && dateGroups.all { collapsedDates[it.date] == true }
                     Row(
                         modifier = Modifier
@@ -1764,7 +1825,7 @@ fun NewSongExpressScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .softClickable(enabled = songs.isNotEmpty()) {
-                                    if (songs.isNotEmpty()) onSongClick(songs.first(), songs)
+                                    if (latestFullSongs.isNotEmpty()) onSongClick(latestFullSongs.first(), latestFullSongs)
                                 }
                                 .padding(vertical = 4.dp)
                         ) {
@@ -1818,12 +1879,12 @@ fun NewSongExpressScreen(
                     }
                 }
 
-                // 3. 开放式时间轴日期分组（无卡片盒包裹，点击平滑折叠/展开）
+                // 3. 开放式时间轴日期分组（扁平化 LazyColumn 逐行虚拟化复用，彻底消除单 item 包裹数十首歌造成的滑动卡顿）
                 dateGroups.forEach { group ->
                     val pubDate = group.date
                     val isCollapsed = collapsedDates[pubDate] == true
 
-                    item(key = "header_$pubDate") {
+                    item(key = "header_$pubDate", contentType = "date_header") {
                         val arrowRotation by animateFloatAsState(
                             targetValue = if (isCollapsed) -90f else 0f,
                             animationSpec = tween(durationMillis = 240),
@@ -1885,34 +1946,21 @@ fun NewSongExpressScreen(
                         }
                     }
 
-                    item(key = "songs_body_$pubDate") {
-                        AnimatedVisibility(
-                            visible = !isCollapsed,
-                            enter = expandVertically(
-                                expandFrom = Alignment.Top,
-                                animationSpec = spring(dampingRatio = 0.80f, stiffness = Spring.StiffnessMediumLow)
-                            ) + fadeIn(animationSpec = tween(durationMillis = 210)),
-                            exit = shrinkVertically(
-                                shrinkTowards = Alignment.Top,
-                                animationSpec = spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMedium)
-                            ) + fadeOut(animationSpec = tween(durationMillis = 170))
-                        ) {
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                group.indexedSongs.forEach { (displayOrder, song) ->
-                                    Box(modifier = Modifier.padding(horizontal = 12.dp)) {
-                                        SongItemRow(
-                                            song = song.copy(
-                                                album = if (song.publishDate.isNotBlank()) {
-                                                    if (song.album.isNotBlank()) "${song.album} · ${song.publishDate}" else song.publishDate
-                                                } else song.album
-                                            ),
-                                            orderIndex = displayOrder,
-                                            isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                                            onClick = { onSongClick(song, songs) },
-                                            onMoreClick = { onSongMoreClick(song) }
-                                        )
-                                    }
-                                }
+                    if (!isCollapsed) {
+                        items(
+                            items = group.indexedSongs,
+                            key = { item -> "ns_row_${pubDate}_${item.rawSong.id}_${item.orderIndex}" },
+                            contentType = { "song_row" }
+                        ) { item ->
+                            val rawSong = item.rawSong
+                            Box(modifier = Modifier.padding(horizontal = 12.dp)) {
+                                SongItemRow(
+                                    song = item.displaySong,
+                                    orderIndex = item.orderIndex,
+                                    isPlaying = curPlayingId != null && (curPlayingId == rawSong.id || (curPlayingHash.isNotEmpty() && curPlayingHash.equals(rawSong.hash, ignoreCase = true))),
+                                    onClick = { onSongClick(rawSong, latestFullSongs) },
+                                    onMoreClick = { onSongMoreClick(rawSong) }
+                                )
                             }
                         }
                     }
@@ -2131,14 +2179,17 @@ fun RankDetailScreen(
         } else {
             loading = true
         }
-        val firstBatch = viewModel.getRankSongs(selectedRankId)
-        if (firstBatch.isNotEmpty()) {
-            rankSongs = firstBatch
-            loading = false
-        }
-        kotlinx.coroutines.delay(350L)
-        val fullBatch = viewModel.getRankSongsAll(selectedRankId, maxSongs = 300)
-        if (fullBatch.isNotEmpty() && fullBatch.size > rankSongs.size) {
+        val fullBatch = viewModel.getRankSongsAll(
+            rankId = selectedRankId,
+            maxSongs = 500,
+            onProgress = { partial ->
+                if (partial.isNotEmpty()) {
+                    rankSongs = partial
+                    loading = false
+                }
+            }
+        )
+        if (fullBatch.isNotEmpty() && fullBatch.size >= rankSongs.size) {
             rankSongs = fullBatch
         }
         loading = false
@@ -2226,6 +2277,16 @@ fun RankDetailScreen(
                 quickSwitchRanks.indexOfFirst { it.rankId == currentRank.rankId }.coerceAtLeast(0)
             }
             val rankListState = rememberLazyListState()
+            val displayedRankSongs by rememberProgressiveSongList(
+                sourceSongs = filteredSongs,
+                listState = rankListState,
+                resetKey = "${selectedRankId}_$searchQuery",
+                initialBatchSize = 15,
+                microBatchSize = 10
+            )
+            val latestFilteredRankSongs by rememberUpdatedState(filteredSongs)
+            val curRankPlayingId = currentSong?.id
+            val curRankPlayingHash = currentSong?.hash.orEmpty()
             val showRankScrollTop by remember(filteredSongs.size) {
                 derivedStateOf {
                     rankListState.firstVisibleItemIndex > 2 ||
@@ -2459,12 +2520,16 @@ fun RankDetailScreen(
                         }
                     }
                 } else {
-                    itemsIndexed(filteredSongs, key = { idx, s -> "rank_${s.id}_$idx" }, contentType = { _, _ -> "song_row" }) { index, song ->
+                    itemsIndexed(
+                        items = displayedRankSongs,
+                        key = { idx, s -> "rank_${s.id}_$idx" },
+                        contentType = { _, _ -> "song_row" }
+                    ) { index, song ->
                         SongItemRow(
                             song = song,
                             orderIndex = index + 1,
-                            isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                            onClick = { onSongClick(song, filteredSongs) },
+                            isPlaying = curRankPlayingId != null && (curRankPlayingId == song.id || (curRankPlayingHash.isNotEmpty() && curRankPlayingHash.equals(song.hash, ignoreCase = true))),
+                            onClick = { onSongClick(song, latestFilteredRankSongs) },
                             onMoreClick = { onSongMoreClick(song) }
                         )
                     }
@@ -2837,6 +2902,16 @@ fun DailyRecommendScreen(
         ) { padding ->
             val dailyListState = rememberLazyListState()
             val dailyScope = rememberCoroutineScope()
+            val displayedDailySongs by rememberProgressiveSongList(
+                sourceSongs = dailySongs,
+                listState = dailyListState,
+                resetKey = "daily_recommend",
+                initialBatchSize = 15,
+                microBatchSize = 10
+            )
+            val latestDailySongs by rememberUpdatedState(dailySongs)
+            val curDailyPlayingId = currentSong?.id
+            val curDailyPlayingHash = currentSong?.hash.orEmpty()
             val showDailyScrollTop by remember(dailySongs.size) {
                 derivedStateOf {
                     dailyListState.firstVisibleItemIndex > 2 ||
@@ -2952,13 +3027,17 @@ fun DailyRecommendScreen(
                         }
                     }
                 } else {
-                    itemsIndexed(dailySongs, key = { index, song -> "daily_page_${song.id}_$index" }, contentType = { _, _ -> "song_row" }) { index, song ->
+                    itemsIndexed(
+                        items = displayedDailySongs,
+                        key = { index, song -> "daily_page_${song.id}_$index" },
+                        contentType = { _, _ -> "song_row" }
+                    ) { index, song ->
                         Box(modifier = Modifier.padding(horizontal = 12.dp)) {
                             SongItemRow(
                                 song = song,
                                 orderIndex = index + 1,
-                                isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                                onClick = { onSongClick(song, dailySongs) },
+                                isPlaying = curDailyPlayingId != null && (curDailyPlayingId == song.id || (curDailyPlayingHash.isNotEmpty() && curDailyPlayingHash.equals(song.hash, ignoreCase = true))),
+                                onClick = { onSongClick(song, latestDailySongs) },
                                 onMoreClick = { onSongMoreClick(song) }
                             )
                         }

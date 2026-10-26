@@ -41,6 +41,7 @@ import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import com.concept.music.data.model.*
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.rememberProgressiveSongList
 import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
 import com.concept.music.ui.theme.ConceptAmberAccent
@@ -379,6 +380,16 @@ fun SearchScreen(
                                         EmptySearchState(message = "未找到“$displayKw”的相关单曲")
                                     } else {
                                         val searchScope = rememberCoroutineScope()
+                                        val displayedSearchSongs by rememberProgressiveSongList(
+                                            sourceSongs = songResults,
+                                            listState = songListState,
+                                            resetKey = displayKw,
+                                            initialBatchSize = 15,
+                                            microBatchSize = 10
+                                        )
+                                        val latestSongResults by rememberUpdatedState(songResults)
+                                        val curSearchPlayingId = currentSong?.id
+                                        val curSearchPlayingHash = currentSong?.hash.orEmpty()
                                         val showSongSearchScrollTop by remember(songResults.size) {
                                             derivedStateOf {
                                                 songListState.firstVisibleItemIndex > 2 ||
@@ -387,12 +398,16 @@ fun SearchScreen(
                                         }
                                         Box(modifier = Modifier.fillMaxSize()) {
                                             LazyColumn(state = songListState, modifier = Modifier.fillMaxSize()) {
-                                                itemsIndexed(songResults, key = { idx, s -> "search_song_${s.id}_$idx" }, contentType = { _, _ -> "song_row" }) { index, song ->
+                                                itemsIndexed(
+                                                    items = displayedSearchSongs,
+                                                    key = { idx, s -> "search_song_${s.id}_$idx" },
+                                                    contentType = { _, _ -> "song_row" }
+                                                ) { index, song ->
                                                     SongItemRow(
                                                         song = song,
                                                         orderIndex = index + 1,
-                                                        isPlaying = currentSong != null && (currentSong.id == song.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(song.hash, ignoreCase = true))),
-                                                        onClick = { onSongClick(song, songResults) },
+                                                        isPlaying = curSearchPlayingId != null && (curSearchPlayingId == song.id || (curSearchPlayingHash.isNotEmpty() && curSearchPlayingHash.equals(song.hash, ignoreCase = true))),
+                                                        onClick = { onSongClick(song, latestSongResults) },
                                                         onMoreClick = { onSongMoreClick(song) }
                                                     )
                                                 }
@@ -431,7 +446,11 @@ fun SearchScreen(
                                             modifier = Modifier.fillMaxSize(),
                                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                         ) {
-                                            items(artistResults) { artist ->
+                                            itemsIndexed(
+                                                items = artistResults,
+                                                key = { idx, artist -> "search_artist_${artist.id}_$idx" },
+                                                contentType = { _, _ -> "artist_card" }
+                                            ) { _, artist ->
                                                 ArtistSearchCard(artist = artist, onClick = { onArtistClick(artist.id) })
                                             }
                                             if (loadingMore) {
@@ -456,7 +475,11 @@ fun SearchScreen(
                                             modifier = Modifier.fillMaxSize(),
                                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                         ) {
-                                            items(albumResults) { album ->
+                                            itemsIndexed(
+                                                items = albumResults,
+                                                key = { idx, album -> "search_album_${album.id}_$idx" },
+                                                contentType = { _, _ -> "album_card" }
+                                            ) { _, album ->
                                                 AlbumCardItem(album = album, onClick = { onAlbumClick(album.id) })
                                             }
                                             if (loadingMore) {
@@ -481,7 +504,11 @@ fun SearchScreen(
                                             modifier = Modifier.fillMaxSize(),
                                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                         ) {
-                                            items(playlistResults) { playlist ->
+                                            itemsIndexed(
+                                                items = playlistResults,
+                                                key = { idx, playlist -> "search_pl_${playlist.id}_$idx" },
+                                                contentType = { _, _ -> "playlist_card" }
+                                            ) { _, playlist ->
                                                 PlaylistSearchCard(playlist = playlist, onClick = { onPlaylistClick(playlist.id) })
                                             }
                                             if (loadingMore) {

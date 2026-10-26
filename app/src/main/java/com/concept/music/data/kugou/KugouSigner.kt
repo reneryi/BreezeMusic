@@ -19,7 +19,8 @@ object KugouSigner {
     private const val ANDROID_SALT = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
     private const val WEB_SALT = "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt"
     private const val PUBLIC_KEY = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDECi0Np2UR87scwrvTr72L6oO01rBbbBPriSDFPxr3Z5syug0O24QyQO8bg27+0+4kBzTBTBOZ/WWU0WryL1JSXRTXLgFVxtzIY41Pe7lPOgsfTCn5kZcvKhYKJesKnnJDNr5/abvTGf+rHG3YRwsCHcQ08/q6ifSioBszvb3QiwIDAQAB"
-    private const val PUBLIC_KEY_STANDARD = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7Q0ELSYoIJvTFJhMpe1s/gbjDX51HBNnE15HXqTW6lQ7LC8jr9fWZTwusknp+sVGzwd40MwP6U5yDE27M/X1+UR4tvOGOqp94TJtQ1EPnWGXngpeIW5GxoQgao1rmYWAu6oi1z9XkChrsUdC6DJE5E221wf/4WLFxwAtRQIDAQAB"
+    private const val PUBLIC_KEY_STANDARD = "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDIAG7QOELSYoIJvTFJhMpe1s/gbjDJX51HBNnEl5HXqTW6lQ7LC8jr9fWZTwusknp+sVGzwd40MwP6U5yDE27M/X1+UR4tvOGOqp94TJtQ1EPnWGWXngpeIW5GxoQGao1rmYWAu6oi1z9XkChrsUdC6DJE5E221wf/4WLFxwAtRQIDAQAB"
+    const val STANDARD_SALT = "OIlwieks28dk2k092lksi2UIkp"
     val gson = GsonBuilder()
         .disableHtmlEscaping()
         .registerTypeAdapterFactory(object : com.google.gson.TypeAdapterFactory {
@@ -61,6 +62,12 @@ object KugouSigner {
         return md5(salt + ordered + body + salt)
     }
     fun paramsKey(time: Long, extra: String = ""): String = md5("$APP_ID$ANDROID_SALT$CLIENT_VERSION$time$extra")
+    fun paramsKeyStandard(time: Long, appId: Int = 1005, clientVer: Int = 20489, extra: String = ""): String =
+        md5("$appId$STANDARD_SALT$clientVer$time$extra")
+    fun signatureStandard(params: Map<String, String>, body: String = ""): String {
+        val ordered = params.toSortedMap().entries.joinToString("") { "${it.key}=${it.value}" }
+        return md5(STANDARD_SALT + ordered + body + STANDARD_SALT)
+    }
     data class Encrypted(val ciphertext: String, val key: String)
     fun encrypt(text: String, temporaryKey: String = random(16)): Encrypted {
         val key = md5(temporaryKey)
