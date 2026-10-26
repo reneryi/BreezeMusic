@@ -2,9 +2,14 @@ package com.concept.music
 
 import com.concept.music.data.kugou.*
 import com.concept.music.data.model.*
+import com.concept.music.ui.theme.CoverTonalPalette
+import com.concept.music.ui.theme.composeColorToHsv
 import com.concept.music.ui.theme.perceptualLuminance
 import com.concept.music.ui.theme.readableOnDarkSurface
 import com.concept.music.ui.theme.readableSubtleOnDarkSurface
+import com.concept.music.ui.theme.toCoverColorRoles
+import com.concept.music.ui.theme.toTonalPalette
+import com.concept.music.ui.theme.wcagContrastRatio
 import com.concept.music.ui.viewmodel.CoverStyle
 import com.concept.music.ui.viewmodel.LyricAlignment
 import com.concept.music.ui.viewmodel.LyricHighlightTheme
@@ -687,5 +692,196 @@ class UiAlignmentRegressionTest {
         assertEquals(240, history.size)
         assertEquals("song_240", history.first().id)
         assertEquals("song_1", history.last().id)
+    }
+
+    @Test
+    fun testTonalPalette13TonesMonotonicityHueLockAndDarkLightColorRolesContrast() {
+        val seeds = listOf(
+            androidx.compose.ui.graphics.Color(0xFF1E3A8A), // 图一典型深靛蓝封面种子色
+            androidx.compose.ui.graphics.Color(0xFF282088), // 深靛紫
+            androidx.compose.ui.graphics.Color(0xFF7A153B), // 深酒红
+            androidx.compose.ui.graphics.Color(0xFF135C49), // 深墨绿
+            androidx.compose.ui.graphics.Color(0xFFD97706)  // 琥珀橙
+        )
+
+        for (seed in seeds) {
+            val palette = seed.toTonalPalette()
+            val seedHue = composeColorToHsv(seed)[0]
+
+            // 1. 验证 13 级明度色阶 (Tone 0..100) 严格单调递增且色相锁定 (ΔHue < 1.5°)
+            var prevLum = -1f
+            for (tone in CoverTonalPalette.STANDARD_TONES) {
+                val c = palette.tone(tone)
+                val lum = c.perceptualLuminance()
+                assertTrue(
+                    "Tone $tone 的感知亮度 ($lum) 必须严格大于上一级 ($prevLum)",
+                    lum > prevLum
+                )
+                prevLum = lum
+
+                if (tone in 10..95) {
+                    val toneHue = composeColorToHsv(c)[0]
+                    val rawDiff = kotlin.math.abs(toneHue - seedHue)
+                    val hueDiff = minOf(rawDiff, 360f - rawDiff)
+                    // Tone 95 接近纯白 (S ≈ 0.12)，8-bit sRGB 通道整数量化步长约 3.5°
+                    val maxAllowedDiff = if (tone >= 95) 4.0f else 2.0f
+                    assertTrue(
+                        "Tone $tone 应保持基酒色相不变: seedHue=$seedHue, toneHue=$toneHue, diff=$hueDiff",
+                        hueDiff < maxAllowedDiff
+                    )
+                }
+            }
+
+            // 2. 验证深色模式 (Dark Mode) Color Roles 前背景 WCAG 对比度 (解决图一/图二深蓝叠深灰蓝看不清)
+            val darkRoles = seed.toCoverColorRoles(isDark = true)
+            val darkTitleContrast = darkRoles.onPrimaryContainer.wcagContrastRatio(darkRoles.primaryContainer)
+            val darkSubtleContrast = darkRoles.onPrimaryContainerSubtle.wcagContrastRatio(darkRoles.primaryContainer)
+            val darkPrimaryOnSheetContrast = darkRoles.primary.wcagContrastRatio(androidx.compose.ui.graphics.Color(0xFF111826))
+            assertTrue("深色模式主文案与容器对比度应 >= 4.5: $darkTitleContrast", darkTitleContrast >= 4.5f)
+            assertTrue("深色模式副文案与容器对比度应 >= 4.0: $darkSubtleContrast", darkSubtleContrast >= 4.0f)
+            assertTrue("深色模式主强调色与弹窗底色对比度应 >= 4.5: $darkPrimaryOnSheetContrast", darkPrimaryOnSheetContrast >= 4.5f)
+
+            // 3. 验证日间浅色模式 (Light Mode) Color Roles 前背景 WCAG 对比度 (解决图三浅字叠浅底看不清)
+            val lightRoles = seed.toCoverColorRoles(isDark = false)
+            val lightTitleContrast = lightRoles.onPrimaryContainer.wcagContrastRatio(lightRoles.primaryContainer)
+            val lightSubtleContrast = lightRoles.onPrimaryContainerSubtle.wcagContrastRatio(lightRoles.primaryContainer)
+            val lightPrimaryOnSheetContrast = lightRoles.primary.wcagContrastRatio(androidx.compose.ui.graphics.Color(0xFFF8FBFF))
+            assertTrue("浅色模式主文案与容器对比度应 >= 4.5: $lightTitleContrast", lightTitleContrast >= 4.5f)
+            assertTrue("浅色模式副文案与容器对比度应 >= 4.5: $lightSubtleContrast", lightSubtleContrast >= 4.5f)
+            assertTrue("浅色模式主强调色与日间弹窗底色对比度应 >= 4.5: $lightPrimaryOnSheetContrast", lightPrimaryOnSheetContrast >= 4.5f)
+        }
+    }
+
+    @Test
+    fun testUserPurchasedAlbumsPaginationAndValidPageSize20() = kotlinx.coroutines.runBlocking {
+        val store = MemoryStore()
+        val requestedPageSizes = mutableListOf<Int>()
+        val requestedPages = mutableListOf<Int>()
+
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse {
+                if (path == "/openapi/v1/copyright/get_album_goods") {
+                    val ps = body?.get("pagesize")?.asInt ?: 0
+                    val pg = body?.get("page")?.asInt ?: 0
+                    requestedPageSizes.add(ps)
+                    requestedPages.add(pg)
+                    // 模拟酷狗 OpenAPI 服务端严格参数校验：pagesize > 50 直接返回空错
+                    if (ps > 50) {
+                        return ApiResponse(com.google.gson.JsonParser.parseString("""{"status":0,"errcode":40001}""").asJsonObject)
+                    }
+                    if (pg == 1) {
+                        val arr = com.google.gson.JsonArray()
+                        for (i in 1..20) {
+                            arr.add(
+                                com.google.gson.JsonParser.parseString(
+                                    """{"album_id":"alb_$i","album_name":"已购专辑 $i","singer_name":"歌手 $i","sizable_cover":"https://imge.kugou.com/stdmusic/400/2026/a$i.jpg","song_count":10,"buy_time":"2026-10-01"}"""
+                                ).asJsonObject
+                            )
+                        }
+                        val resp = JsonObject().apply {
+                            addProperty("status", 1)
+                            add("data", arr)
+                        }
+                        return ApiResponse(resp)
+                    } else if (pg == 2) {
+                        val arr = com.google.gson.JsonArray()
+                        arr.add(
+                            com.google.gson.JsonParser.parseString(
+                                """{"album_id":"alb_21","album_name":"已购专辑 21","singer_name":"歌手 21","sizable_cover":"https://imge.kugou.com/stdmusic/400/2026/a21.jpg","song_count":12,"buy_time":"2026-10-02"}"""
+                            ).asJsonObject
+                        )
+                        val resp = JsonObject().apply {
+                            addProperty("status", 1)
+                            add("data", arr)
+                        }
+                        return ApiResponse(resp)
+                    }
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+
+        val albums = repo.userPurchasedAlbums()
+        assertEquals(21, albums.size)
+        assertTrue("每次请求的 pagesize 必须 <= 20", requestedPageSizes.all { it in 1..20 })
+        assertEquals(listOf(1, 2), requestedPages)
+        assertEquals("已购专辑 1", albums.first().albumName)
+        assertEquals("已购专辑 21", albums.last().albumName)
+    }
+
+    @Test
+    fun testRoundedCoverMotionSchemeASpinUpAndSymmetryStopContinuity() {
+        // 1. 验证初始静止角严格为 45° (π/4)，且点击播放时角速度从 0 平滑单调加速至巡航速度（绝不重置相位回 0°）
+        val initialPhase = com.concept.music.ui.components.ROUNDED_COVER_INITIAL_REST_PHASE_RAD
+        assertEquals((Math.PI / 4.0).toFloat(), initialPhase, 1e-4f)
+
+        var prevOmega = com.concept.music.ui.components.computeRoundedCoverSpinUpVelocity(0f, 0f)
+        assertEquals(0f, prevOmega, 1e-5f)
+        for (step in 1..20) {
+            val t = step * (com.concept.music.ui.components.ROUNDED_COVER_SPIN_UP_DURATION_SEC / 20f)
+            val omega = com.concept.music.ui.components.computeRoundedCoverSpinUpVelocity(0f, t)
+            assertTrue("起旋角速度必须严格单调递增: $omega >= $prevOmega", omega >= prevOmega)
+            prevOmega = omega
+        }
+        assertEquals(
+            com.concept.music.ui.components.ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC,
+            prevOmega,
+            1e-4f
+        )
+
+        // 2. 验证方案 A（播放 -> 暂停）：从任意播放角度暂停时，目标角始终为前方的 k*90° + 45° 对称交错角，
+        //    且减速全过程相位连续递增（零瞬移、零倒转）、角速度严格单调递减至 0
+        val testAnglesDeg = listOf(5f, 18f, 43f, 45f, 62f, 89f, 128f, 179f, 224f, 275f, 352f)
+        val period = com.concept.music.ui.components.ROUNDED_COVER_SYMMETRY_PERIOD_RAD
+        val offset = com.concept.music.ui.components.ROUNDED_COVER_INITIAL_REST_PHASE_RAD
+
+        for (deg in testAnglesDeg) {
+            val startPhase = (deg * Math.PI / 180.0).toFloat()
+            val targetPhase = com.concept.music.ui.components.computeRoundedCoverSymmetryStopTargetRad(
+                currentPhaseRad = startPhase
+            )
+            // 目标角必须严格在当前角度前方，且满足 (targetPhase - π/4) 是 π/2 的整数倍
+            assertTrue("目标角 ($targetPhase) 必须大于当前角 ($startPhase)", targetPhase > startPhase)
+            val kFloat = (targetPhase - offset) / period
+            assertEquals("目标角必须落在 45° (mod 90°) 对角交错格点上", kotlin.math.round(kFloat), kFloat, 1e-4f)
+
+            val deltaRad = targetPhase - startPhase
+            val durationSec = com.concept.music.ui.components.computeRoundedCoverDecelDurationSec(deltaRad)
+            assertTrue("减速时长必须在合理自然区间 [0.68s, 1.52s]: $durationSec", durationSec in 0.68f..1.52f)
+
+            // 验证 t = 0 首帧零跳变，且全程相位单调前进、角速度单调递减至 0
+            val (p0, v0) = com.concept.music.ui.components.evaluateRoundedCoverDecelerationStep(
+                startPhaseRad = startPhase,
+                targetPhaseRad = targetPhase,
+                durationSec = durationSec,
+                elapsedSec = 0f
+            )
+            assertEquals("暂停首帧相位必须与当前播放相位严格一致（零瞬移）", startPhase, p0, 1e-5f)
+
+            var lastP = p0
+            var lastV = v0
+            for (i in 1..30) {
+                val t = durationSec * (i / 30f)
+                val (pi, vi) = com.concept.music.ui.components.evaluateRoundedCoverDecelerationStep(
+                    startPhaseRad = startPhase,
+                    targetPhaseRad = targetPhase,
+                    durationSec = durationSec,
+                    elapsedSec = t
+                )
+                assertTrue("减速过程相位必须正向连续推进: $pi >= $lastP", pi >= lastP - 1e-5f)
+                assertTrue("减速过程角速度必须单调递减: $vi <= $lastV", vi <= lastV + 1e-5f)
+                lastP = pi
+                lastV = vi
+            }
+            assertEquals("减速结束时必须精准停靠在目标对角交错角", targetPhase, lastP, 1e-4f)
+            assertEquals("减速结束时角速度必须归零", 0f, lastV, 1e-5f)
+        }
     }
 }

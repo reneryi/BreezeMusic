@@ -19,7 +19,6 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -75,8 +74,8 @@ import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
-import com.concept.music.ui.theme.readableOnDarkSurface
-import com.concept.music.ui.theme.readableSubtleOnDarkSurface
+import com.concept.music.ui.theme.isConceptDarkTheme
+import com.concept.music.ui.theme.rememberCoverColorRoles
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.CoverStyle
@@ -133,11 +132,11 @@ internal fun LyricSettingsDialog(
     val textPrimary = MaterialTheme.colorScheme.onSurface
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
     val themeAccent = dynamicAccentColor
-    val readableThemeAccent = remember(themeAccent) { themeAccent.readableOnDarkSurface(minLuminance = 0.42f) }
+    val roles = rememberCoverColorRoles(themeAccent)
 
     // 一体化连续渐变玻璃底色（从顶部边缘到面板底部平滑过渡，彻底消除顶部横线区域颜色分层）
-    val panelTopColor = themeAccent.copy(alpha = 0.18f).compositeOver(baseSheetBg.copy(alpha = 0.96f))
-    val panelMidColor = themeAccent.copy(alpha = 0.07f).compositeOver(baseSheetBg.copy(alpha = 0.97f))
+    val panelTopColor = roles.primaryContainer.copy(alpha = 0.55f).compositeOver(baseSheetBg.copy(alpha = 0.96f))
+    val panelMidColor = roles.primaryContainer.copy(alpha = 0.22f).compositeOver(baseSheetBg.copy(alpha = 0.97f))
     val panelBottomColor = baseSheetBg.copy(alpha = 0.98f)
     val glassCardBg = textPrimary.copy(alpha = 0.055f).compositeOver(baseSheetBg.copy(alpha = 0.90f))
     val glassPillBg = textPrimary.copy(alpha = 0.08f)
@@ -152,7 +151,7 @@ internal fun LyricSettingsDialog(
         isLandscape = isLandscape,
         dismissDragThresholdPx = 110f
     ) {
-        // 现代玻璃拟态主窗口（入退场弹簧与遮罩渐隐由 ConceptAnimatedOverlaySheet 统一在 Draw 阶段驱动）
+        // 现代玻璃拟态主窗口（入退场弹簧与遮罩渐隐由 ConceptAnimatedOverlaySheet 统一在 Draw 阶段驱动，无外框描边）
         Box(
             modifier = Modifier
                 .then(
@@ -172,17 +171,6 @@ internal fun LyricSettingsDialog(
                     Brush.verticalGradient(
                         colors = listOf(panelTopColor, panelMidColor, panelBottomColor)
                     )
-                )
-                .border(
-                    width = 1.dp,
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            themeAccent.copy(alpha = 0.38f),
-                            Color.White.copy(alpha = 0.10f),
-                            Color.White.copy(alpha = 0.03f)
-                        )
-                    ),
-                    shape = panelShape
                 )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -237,13 +225,13 @@ internal fun LyricSettingsDialog(
                                 modifier = Modifier
                                     .size(32.dp)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(themeAccent.copy(alpha = 0.18f)),
+                                    .background(roles.secondaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Tune,
                                     contentDescription = null,
-                                    tint = readableThemeAccent,
+                                    tint = roles.onSecondaryContainer,
                                     modifier = Modifier.size(17.dp)
                                 )
                             }
@@ -270,8 +258,8 @@ internal fun LyricSettingsDialog(
                         ) {
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
-                                color = themeAccent.copy(alpha = 0.15f),
-                                contentColor = readableThemeAccent,
+                                color = roles.secondaryContainer,
+                                contentColor = roles.onSecondaryContainer,
                                 modifier = Modifier.softCardClickable(shape = RoundedCornerShape(12.dp)) {
                                     onSetFontSize(24f)
                                     onSetTranslationScale(0.84f)
@@ -290,13 +278,13 @@ internal fun LyricSettingsDialog(
                                     Icon(
                                         Icons.Rounded.RestartAlt,
                                         contentDescription = null,
-                                        tint = readableThemeAccent,
+                                        tint = roles.onSecondaryContainer,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         "恢复默认",
-                                        color = readableThemeAccent,
+                                        color = roles.onSecondaryContainer,
                                         fontSize = 11.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1
@@ -452,22 +440,19 @@ private fun LyricThemeAndAlignCompactCard(
     onSetAlignment: (LyricAlignment) -> Unit,
     onSetOffsetMs: (Long) -> Unit
 ) {
-    val readableDynamicAccent = remember(dynamicAccentColor) {
-        dynamicAccentColor.readableOnDarkSurface(minLuminance = 0.42f)
-    }
+    val roles = rememberCoverColorRoles(dynamicAccentColor)
+    val goldRoles = rememberCoverColorRoles(VipGold)
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = cardBg,
         contentColor = textPrimary,
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(0.8.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(18.dp))
+        modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // 1. 流光配色胶囊矩阵
+            // 1. 流光配色胶囊矩阵（无描边，色阶容器分离）
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -482,19 +467,12 @@ private fun LyricThemeAndAlignCompactCard(
                     } else {
                         Color(theme.primaryHex)
                     }
-                    val readableSwatch = remember(swatchColor) {
-                        swatchColor.readableOnDarkSurface(minLuminance = 0.42f)
-                    }
+                    val swatchRoles = rememberCoverColorRoles(swatchColor)
                     Surface(
                         shape = RoundedCornerShape(11.dp),
-                        color = if (selected) swatchColor.copy(alpha = 0.22f) else sheetBg,
+                        color = if (selected) swatchRoles.primaryContainer else sheetBg,
                         contentColor = textPrimary,
                         modifier = Modifier
-                            .border(
-                                width = if (selected) 1.dp else 0.dp,
-                                color = if (selected) readableSwatch.copy(alpha = 0.52f) else Color.Transparent,
-                                shape = RoundedCornerShape(11.dp)
-                            )
                             .softCardClickable(shape = RoundedCornerShape(11.dp)) {
                                 onSetHighlightTheme(theme)
                             }
@@ -507,12 +485,12 @@ private fun LyricThemeAndAlignCompactCard(
                                 modifier = Modifier
                                     .size(8.dp)
                                     .clip(CircleShape)
-                                    .background(swatchColor)
+                                    .background(if (selected) swatchRoles.primary else swatchColor)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = theme.label,
-                                color = if (selected) readableSwatch else textPrimary,
+                                color = if (selected) swatchRoles.onPrimaryContainer else textPrimary,
                                 fontSize = 11.5.sp,
                                 fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
                                 maxLines = 1,
@@ -542,20 +520,15 @@ private fun LyricThemeAndAlignCompactCard(
                         val selected = alignment == item
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = if (selected) dynamicAccentColor.copy(alpha = 0.24f) else Color.Transparent,
+                            color = if (selected) roles.primaryContainer else Color.Transparent,
                             modifier = Modifier
-                                .border(
-                                    width = if (selected) 0.8.dp else 0.dp,
-                                    color = if (selected) readableDynamicAccent.copy(alpha = 0.36f) else Color.Transparent,
-                                    shape = RoundedCornerShape(8.dp)
-                                )
                                 .softCardClickable(shape = RoundedCornerShape(8.dp)) {
                                     onSetAlignment(item)
                                 }
                         ) {
                             Text(
                                 text = item.label,
-                                color = if (selected) readableDynamicAccent else textSecondary,
+                                color = if (selected) roles.onPrimaryContainer else textSecondary,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
@@ -591,14 +564,14 @@ private fun LyricThemeAndAlignCompactCard(
                     }
                     Surface(
                         shape = RoundedCornerShape(9.dp),
-                        color = if (offsetMs != 0L) VipGold.copy(alpha = 0.18f) else dynamicAccentColor.copy(alpha = 0.15f),
+                        color = if (offsetMs != 0L) goldRoles.primaryContainer else roles.secondaryContainer,
                         modifier = Modifier.softCardClickable(shape = RoundedCornerShape(9.dp)) {
                             onSetOffsetMs(0L)
                         }
                     ) {
                         Text(
                             text = if (offsetMs == 0L) "校准 0.0s" else String.format(Locale.getDefault(), "%+.1fs", offsetMs / 1000f),
-                            color = if (offsetMs != 0L) VipGold else readableDynamicAccent,
+                            color = if (offsetMs != 0L) goldRoles.onPrimaryContainer else roles.onSecondaryContainer,
                             fontSize = 10.5.sp,
                             fontWeight = FontWeight.ExtraBold,
                             maxLines = 1,
@@ -650,9 +623,7 @@ private fun LyricSlidersCompactCard(
         shape = RoundedCornerShape(18.dp),
         color = cardBg,
         contentColor = textPrimary,
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(0.8.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(18.dp))
+        modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp),
@@ -725,7 +696,7 @@ private fun CompactInlineSliderRow(
     textPrimary: Color,
     onValueChange: (Float) -> Unit
 ) {
-    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
+    val roles = rememberCoverColorRoles(accentColor)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -747,8 +718,8 @@ private fun CompactInlineSliderRow(
             valueRange = valueRange,
             steps = steps,
             colors = SliderDefaults.colors(
-                thumbColor = readableAccent,
-                activeTrackColor = readableAccent.copy(alpha = 0.88f),
+                thumbColor = roles.primary,
+                activeTrackColor = roles.primary.copy(alpha = 0.88f),
                 inactiveTrackColor = textPrimary.copy(alpha = 0.16f)
             ),
             modifier = Modifier
@@ -759,13 +730,13 @@ private fun CompactInlineSliderRow(
             modifier = Modifier
                 .width(46.dp)
                 .clip(RoundedCornerShape(6.dp))
-                .background(accentColor.copy(alpha = 0.16f))
+                .background(roles.secondaryContainer)
                 .padding(vertical = 2.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = valueText,
-                color = readableAccent,
+                color = roles.onSecondaryContainer,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.ExtraBold,
                 maxLines = 1,
@@ -865,17 +836,11 @@ private fun CompactTogglePillTile(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
-    val readableSubtle = remember(accentColor) { accentColor.readableSubtleOnDarkSurface(minLuminance = 0.54f) }
+    val roles = rememberCoverColorRoles(accentColor)
     Surface(
         shape = RoundedCornerShape(15.dp),
-        color = if (checked) accentColor.copy(alpha = 0.16f).compositeOver(cardBg) else cardBg,
+        color = if (checked) roles.primaryContainer else cardBg,
         modifier = modifier
-            .border(
-                width = 0.8.dp,
-                color = if (checked) readableAccent.copy(alpha = 0.42f) else Color.White.copy(alpha = 0.06f),
-                shape = RoundedCornerShape(15.dp)
-            )
             .softCardClickable(shape = RoundedCornerShape(15.dp), onClick = onToggle)
     ) {
         Row(
@@ -886,14 +851,14 @@ private fun CompactTogglePillTile(
         ) {
             Surface(
                 shape = RoundedCornerShape(10.dp),
-                color = if (checked) accentColor.copy(alpha = 0.24f) else textPrimary.copy(alpha = 0.07f),
+                color = if (checked) roles.primary.copy(alpha = 0.22f) else textPrimary.copy(alpha = 0.07f),
                 modifier = Modifier.size(30.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = icon,
                         contentDescription = title,
-                        tint = if (checked) readableAccent else textSecondary,
+                        tint = if (checked) roles.onPrimaryContainer else textSecondary,
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -902,7 +867,7 @@ private fun CompactTogglePillTile(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
-                    color = if (checked) readableAccent else textPrimary,
+                    color = if (checked) roles.onPrimaryContainer else textPrimary,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 1,
@@ -911,7 +876,7 @@ private fun CompactTogglePillTile(
                 )
                 Text(
                     text = subtitle,
-                    color = if (checked) readableSubtle else textSecondary,
+                    color = if (checked) roles.onPrimaryContainerSubtle else textSecondary,
                     fontSize = 10.sp,
                     maxLines = 1,
                     softWrap = false,
@@ -923,7 +888,7 @@ private fun CompactTogglePillTile(
                 modifier = Modifier
                     .size(7.dp)
                     .clip(CircleShape)
-                    .background(if (checked) readableAccent else textSecondary.copy(alpha = 0.25f))
+                    .background(if (checked) roles.primary else textSecondary.copy(alpha = 0.25f))
             )
         }
     }
@@ -1087,16 +1052,22 @@ fun QueueBottomSheet(
         }
     }
 
+    val isDark = isConceptDarkTheme()
     val baseSheetBg = conceptSheetContainerColor()
-    val cardBg = Color.White.copy(alpha = 0.055f).compositeOver(conceptElevatedSurfaceColor())
+    val cardBg = if (isDark) {
+        Color.White.copy(alpha = 0.055f).compositeOver(conceptElevatedSurfaceColor())
+    } else {
+        conceptElevatedSurfaceColor()
+    }
     val textPrimary = MaterialTheme.colorScheme.onSurface
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
-    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
-    val readableSubtle = remember(accentColor) { accentColor.readableSubtleOnDarkSurface(minLuminance = 0.54f) }
+    val roles = rememberCoverColorRoles(accentColor)
+    val secondaryRoles = rememberCoverColorRoles(secondaryAccentColor)
+    val goldRoles = rememberCoverColorRoles(VipGold)
 
     // 从顶部横线区域到底部列表的一体化平滑连续渐变，彻底消除顶部颜色分层
-    val panelTopColor = accentColor.copy(alpha = 0.18f).compositeOver(baseSheetBg.copy(alpha = 0.96f))
-    val panelMidColor = secondaryAccentColor.copy(alpha = 0.07f).compositeOver(baseSheetBg.copy(alpha = 0.97f))
+    val panelTopColor = roles.primaryContainer.copy(alpha = 0.55f).compositeOver(baseSheetBg.copy(alpha = 0.96f))
+    val panelMidColor = secondaryRoles.primaryContainer.copy(alpha = 0.22f).compositeOver(baseSheetBg.copy(alpha = 0.97f))
     val panelBottomColor = baseSheetBg.copy(alpha = 0.99f)
     val panelShape = if (isLandscape) {
         RoundedCornerShape(28.dp)
@@ -1116,7 +1087,7 @@ fun QueueBottomSheet(
         isLandscape = isLandscape,
         dismissDragThresholdPx = 110f
     ) {
-        // 一体化连续渐变玻璃容器（入退场弹簧与遮罩渐隐由 ConceptAnimatedOverlaySheet 统一在 Draw 阶段驱动）
+        // 一体化连续渐变玻璃容器（入退场弹簧与遮罩渐隐由 ConceptAnimatedOverlaySheet 统一在 Draw 阶段驱动，无外框描边）
         Box(
             modifier = Modifier
                 .then(
@@ -1136,17 +1107,6 @@ fun QueueBottomSheet(
                     Brush.verticalGradient(
                         colors = listOf(panelTopColor, panelMidColor, panelBottomColor)
                     )
-                )
-                .border(
-                    width = 1.dp,
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            accentColor.copy(alpha = 0.38f),
-                            Color.White.copy(alpha = 0.10f),
-                            Color.White.copy(alpha = 0.03f)
-                        )
-                    ),
-                    shape = panelShape
                 )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
@@ -1179,7 +1139,7 @@ fun QueueBottomSheet(
                                 .width(40.dp)
                                 .height(4.dp)
                                 .clip(CircleShape)
-                                .background(accentColor.copy(alpha = 0.48f))
+                                .background(roles.primary.copy(alpha = 0.45f))
                         )
                     }
                 }
@@ -1197,7 +1157,7 @@ fun QueueBottomSheet(
                         if (showRecentDeckPage) {
                             Surface(
                                 shape = CircleShape,
-                                color = accentColor.copy(alpha = 0.16f),
+                                color = roles.secondaryContainer,
                                 modifier = Modifier
                                     .size(30.dp)
                                     .softClickable { showRecentDeckPage = false }
@@ -1206,7 +1166,7 @@ fun QueueBottomSheet(
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                                         contentDescription = "返回当前队列",
-                                        tint = readableAccent,
+                                        tint = roles.onSecondaryContainer,
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
@@ -1222,7 +1182,7 @@ fun QueueBottomSheet(
                         )
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = accentColor.copy(alpha = 0.16f)
+                            color = roles.secondaryContainer
                         ) {
                             Text(
                                 text = if (showRecentDeckPage) {
@@ -1230,7 +1190,7 @@ fun QueueBottomSheet(
                                 } else if (queue.isNotEmpty()) {
                                     "${(currentIndex + 1).coerceAtMost(queue.size)}/${queue.size}"
                                 } else "0/0",
-                                color = readableAccent,
+                                color = roles.onSecondaryContainer,
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
@@ -1347,7 +1307,7 @@ fun QueueBottomSheet(
                         )
                     } else {
                         Column(modifier = Modifier.fillMaxWidth()) {
-                            // 副歌速刷 + AI 漫游智能工具条
+                            // 副歌速刷 + AI 漫游智能工具条（无描边，色阶容器分离）
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1355,13 +1315,8 @@ fun QueueBottomSheet(
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(12.dp),
-                                    color = if (climaxModeEnabled) VipGold.copy(alpha = 0.22f) else cardBg,
+                                    color = if (climaxModeEnabled) goldRoles.primaryContainer else cardBg,
                                     modifier = Modifier
-                                        .border(
-                                            0.8.dp,
-                                            if (climaxModeEnabled) VipGold.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.06f),
-                                            RoundedCornerShape(12.dp)
-                                        )
                                         .softCardClickable(shape = RoundedCornerShape(12.dp)) {
                                             onToggleClimaxMode()
                                             Toast.makeText(
@@ -1378,13 +1333,13 @@ fun QueueBottomSheet(
                                         Icon(
                                             imageVector = Icons.Rounded.Whatshot,
                                             contentDescription = "副歌速刷",
-                                            tint = if (climaxModeEnabled) VipGold else readableAccent,
+                                            tint = if (climaxModeEnabled) goldRoles.onPrimaryContainer else roles.primary,
                                             modifier = Modifier.size(15.dp)
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text(
                                             text = if (climaxModeEnabled) "副歌速刷·开" else "副歌速刷",
-                                            color = if (climaxModeEnabled) VipGold else textPrimary,
+                                            color = if (climaxModeEnabled) goldRoles.onPrimaryContainer else textPrimary,
                                             fontSize = 11.5.sp,
                                             fontWeight = FontWeight.ExtraBold
                                         )
@@ -1395,9 +1350,7 @@ fun QueueBottomSheet(
                                     Surface(
                                         shape = RoundedCornerShape(12.dp),
                                         color = cardBg,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .border(0.8.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(12.dp))
+                                        modifier = Modifier.weight(1f)
                                     ) {
                                         Row(
                                             modifier = Modifier
@@ -1409,7 +1362,7 @@ fun QueueBottomSheet(
                                             Icon(
                                                 imageVector = Icons.Rounded.AutoAwesome,
                                                 contentDescription = null,
-                                                tint = readableAccent,
+                                                tint = roles.primary,
                                                 modifier = Modifier.size(13.dp)
                                             )
                                             listOf(
@@ -1420,7 +1373,7 @@ fun QueueBottomSheet(
                                                 val isSelected = activeMoodMode == modeKey
                                                 Surface(
                                                     shape = RoundedCornerShape(8.dp),
-                                                    color = if (isSelected) accentColor else accentColor.copy(alpha = 0.14f),
+                                                    color = if (isSelected) roles.primary else roles.secondaryContainer,
                                                     modifier = Modifier
                                                         .weight(1f)
                                                         .softCardClickable(shape = RoundedCornerShape(8.dp)) {
@@ -1437,7 +1390,7 @@ fun QueueBottomSheet(
                                                     ) {
                                                         Text(
                                                             text = label,
-                                                            color = if (isSelected) Color.White else readableAccent,
+                                                            color = if (isSelected) roles.onPrimary else roles.onSecondaryContainer,
                                                             fontSize = 10.5.sp,
                                                             fontWeight = FontWeight.Bold,
                                                             maxLines = 1
@@ -1558,26 +1511,11 @@ fun QueueBottomSheet(
                                                 }
                                                 .background(
                                                     when {
-                                                        isDraggingThis -> accentColor.copy(alpha = 0.22f).compositeOver(baseSheetBg)
-                                                        isPlayingThis -> accentColor.copy(alpha = 0.15f)
+                                                        isDraggingThis -> roles.primaryContainer
+                                                        isPlayingThis -> roles.primaryContainer
                                                         else -> Color.Transparent
                                                     },
                                                     shape = RoundedCornerShape(14.dp)
-                                                )
-                                                .then(
-                                                    if (isDraggingThis) {
-                                                        Modifier.border(
-                                                            1.dp,
-                                                            readableAccent.copy(alpha = 0.55f),
-                                                            RoundedCornerShape(14.dp)
-                                                        )
-                                                    } else if (isPlayingThis) {
-                                                        Modifier.border(
-                                                            0.8.dp,
-                                                            readableAccent.copy(alpha = 0.36f),
-                                                            RoundedCornerShape(14.dp)
-                                                        )
-                                                    } else Modifier
                                                 )
                                                 .pointerInput(displayQueue.size) {
                                                     detectDragGesturesAfterLongPress(
@@ -1612,7 +1550,7 @@ fun QueueBottomSheet(
                                                     contentAlignment = Alignment.CenterStart
                                                 ) {
                                                     if (isPlayingThis) {
-                                                        PlayingAudioWaveIndicator(color = readableAccent)
+                                                        PlayingAudioWaveIndicator(color = roles.onPrimaryContainer)
                                                     } else {
                                                         Text(
                                                             text = (displayOrderIndex + 1).toString().padStart(2, '0'),
@@ -1627,7 +1565,7 @@ fun QueueBottomSheet(
                                                     modifier = Modifier
                                                         .size(40.dp)
                                                         .clip(RoundedCornerShape(10.dp))
-                                                        .background(accentColor.copy(alpha = 0.12f)),
+                                                        .background(roles.secondaryContainer),
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     if (item.coverUrl.isNotBlank()) {
@@ -1641,7 +1579,7 @@ fun QueueBottomSheet(
                                                         Icon(
                                                             imageVector = Icons.Rounded.MusicNote,
                                                             contentDescription = null,
-                                                            tint = readableAccent.copy(alpha = 0.78f),
+                                                            tint = roles.onSecondaryContainer,
                                                             modifier = Modifier.size(18.dp)
                                                         )
                                                     }
@@ -1652,7 +1590,7 @@ fun QueueBottomSheet(
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text(
                                                         text = item.title,
-                                                        color = if (isPlayingThis) readableAccent else textPrimary,
+                                                        color = if (isPlayingThis) roles.onPrimaryContainer else textPrimary,
                                                         style = MaterialTheme.typography.bodyMedium.copy(
                                                             fontWeight = if (isPlayingThis) FontWeight.Bold else FontWeight.Medium,
                                                             fontSize = 14.sp
@@ -1666,12 +1604,12 @@ fun QueueBottomSheet(
                                                             BadgeTag(text = "Hi-Res", color = VipGold)
                                                             Spacer(modifier = Modifier.width(4.dp))
                                                         } else if (item.isLossless) {
-                                                            BadgeTag(text = "SQ", color = readableAccent)
+                                                            BadgeTag(text = "SQ", color = roles.primary)
                                                             Spacer(modifier = Modifier.width(4.dp))
                                                         }
                                                         Text(
                                                             text = item.artist,
-                                                            color = if (isPlayingThis) readableSubtle else textSecondary,
+                                                            color = if (isPlayingThis) roles.onPrimaryContainerSubtle else textSecondary,
                                                             fontSize = 11.5.sp,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
@@ -1704,7 +1642,7 @@ fun QueueBottomSheet(
                                                     Icon(
                                                         imageVector = Icons.Rounded.DragHandle,
                                                         contentDescription = "按住拖动排序",
-                                                        tint = if (isDraggingThis) readableAccent else textSecondary.copy(alpha = 0.45f),
+                                                        tint = if (isDraggingThis) roles.onPrimaryContainer else textSecondary.copy(alpha = 0.45f),
                                                         modifier = Modifier.size(18.dp)
                                                     )
                                                 }
@@ -1753,10 +1691,10 @@ private fun QueueRecentStackIconButton(
     accentColor: Color,
     onClick: () -> Unit
 ) {
-    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
+    val roles = rememberCoverColorRoles(accentColor)
     Surface(
         shape = RoundedCornerShape(10.dp),
-        color = if (active) accentColor else accentColor.copy(alpha = 0.14f),
+        color = if (active) roles.primary else roles.secondaryContainer,
         modifier = Modifier
             .height(32.dp)
             .softCardClickable(shape = RoundedCornerShape(10.dp), onClick = onClick)
@@ -1765,7 +1703,7 @@ private fun QueueRecentStackIconButton(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(horizontal = 9.dp)
         ) {
-            val iconColor = if (active) Color.White else readableAccent
+            val iconColor = if (active) roles.onPrimary else roles.onSecondaryContainer
             Canvas(modifier = Modifier.size(16.dp)) {
                 val strokeW = 1.4.dp.toPx()
                 drawRoundRect(
@@ -1793,7 +1731,7 @@ private fun QueueRecentStackIconButton(
             Spacer(modifier = Modifier.width(5.dp))
             Text(
                 text = if (count > 0) "最近 $count" else "最近",
-                color = if (active) Color.White else readableAccent,
+                color = iconColor,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.ExtraBold
             )
@@ -1810,7 +1748,7 @@ private fun QueueUnifiedPlayModeSmallButton(
     accentColor: Color,
     onClick: () -> Unit
 ) {
-    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
+    val roles = rememberCoverColorRoles(accentColor)
     val label = when (playMode) {
         PlayMode.REPEAT_ALL -> "列表"
         PlayMode.REPEAT_ONE -> "单曲"
@@ -1818,7 +1756,7 @@ private fun QueueUnifiedPlayModeSmallButton(
     }
     Surface(
         shape = RoundedCornerShape(10.dp),
-        color = accentColor.copy(alpha = 0.14f),
+        color = roles.secondaryContainer,
         modifier = Modifier
             .height(32.dp)
             .softCardClickable(shape = RoundedCornerShape(10.dp), onClick = onClick)
@@ -1854,12 +1792,12 @@ private fun QueueUnifiedPlayModeSmallButton(
                         }
                         drawPath(
                             path = path,
-                            color = readableAccent,
+                            color = roles.onSecondaryContainer,
                             style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
                         if (playMode == PlayMode.REPEAT_ONE) {
                             drawLine(
-                                color = readableAccent,
+                                color = roles.onSecondaryContainer,
                                 start = Offset(w * 0.5f, h * 0.39f),
                                 end = Offset(w * 0.5f, h * 0.61f),
                                 strokeWidth = stroke * 0.95f,
@@ -1887,7 +1825,7 @@ private fun QueueUnifiedPlayModeSmallButton(
                         }
                         drawPath(
                             path = path,
-                            color = readableAccent,
+                            color = roles.onSecondaryContainer,
                             style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
                     }
@@ -1896,7 +1834,7 @@ private fun QueueUnifiedPlayModeSmallButton(
             Spacer(modifier = Modifier.width(4.dp))
             Text(
                 text = label,
-                color = readableAccent,
+                color = roles.onSecondaryContainer,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.ExtraBold
             )
@@ -1924,7 +1862,7 @@ private fun RecentQueuesStaggeredDeckPage(
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current.density
-    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
+    val roles = rememberCoverColorRoles(accentColor)
 
     if (recentQueues.isEmpty()) {
         Box(
@@ -1948,7 +1886,7 @@ private fun RecentQueuesStaggeredDeckPage(
         animatedFocusIndex.snapTo(clamped)
     }
 
-    // 使用 derivedStateOf 隔离焦点索引整数态：横滑连续拖拽期间绝不触发全弹窗重组，仅在跨卡片边界时更新边框高亮
+    // 使用 derivedStateOf 隔离焦点索引整数态：横滑连续拖拽期间绝不触发全弹窗重组
     val activeFocusInt by remember(recentQueues.size) {
         derivedStateOf {
             animatedFocusIndex.value.roundToInt().coerceIn(0, (recentQueues.size - 1).coerceAtLeast(0))
@@ -2032,17 +1970,6 @@ private fun RecentQueuesStaggeredDeckPage(
                             shape = cardShape
                             clip = true
                         }
-                        .border(
-                            width = if (isFocused) 1.5.dp else 0.8.dp,
-                            brush = Brush.linearGradient(
-                                colors = if (isFocused) {
-                                    listOf(accentColor, secondaryAccentColor.copy(alpha = 0.6f))
-                                } else {
-                                    listOf(textPrimary.copy(alpha = 0.14f), Color.Transparent)
-                                }
-                            ),
-                            shape = cardShape
-                        )
                         .softCardClickable(shape = cardShape) {
                             if (!isFocused) {
                                 scope.launch {
@@ -2062,7 +1989,7 @@ private fun RecentQueuesStaggeredDeckPage(
                             .background(
                                 Brush.verticalGradient(
                                     colors = listOf(
-                                        accentColor.copy(alpha = if (isFocused) 0.22f else 0.08f),
+                                        if (isFocused) roles.primaryContainer else roles.primaryContainer.copy(alpha = 0.35f),
                                         cardBg
                                     )
                                 )
@@ -2079,7 +2006,7 @@ private fun RecentQueuesStaggeredDeckPage(
                                 modifier = Modifier
                                     .size(46.dp)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(accentColor.copy(alpha = 0.2f)),
+                                    .background(roles.secondaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (coverSong != null && coverSong.coverUrl.isNotBlank()) {
@@ -2090,7 +2017,7 @@ private fun RecentQueuesStaggeredDeckPage(
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 } else {
-                                    Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = readableAccent)
+                                    Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = roles.onSecondaryContainer)
                                 }
                             }
                             Spacer(modifier = Modifier.width(10.dp))
@@ -2098,11 +2025,11 @@ private fun RecentQueuesStaggeredDeckPage(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Surface(
                                         shape = RoundedCornerShape(5.dp),
-                                        color = if (isCurrentPlayingQueue) accentColor else textPrimary.copy(alpha = 0.1f)
+                                        color = if (isCurrentPlayingQueue) roles.primary else textPrimary.copy(alpha = 0.1f)
                                     ) {
                                         Text(
                                             text = if (isCurrentPlayingQueue) "当前队列" else "队列 #${idx + 1}",
-                                            color = if (isCurrentPlayingQueue) Color.White else textSecondary,
+                                            color = if (isCurrentPlayingQueue) roles.onPrimary else textSecondary,
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.ExtraBold,
                                             modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
@@ -2153,20 +2080,20 @@ private fun RecentQueuesStaggeredDeckPage(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(if (isCurSong) accentColor.copy(alpha = 0.14f) else Color.Transparent)
+                                        .background(if (isCurSong) roles.primaryContainer else Color.Transparent)
                                         .padding(horizontal = 6.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
                                         text = (sIdx + 1).toString().padStart(2, '0'),
-                                        color = if (isCurSong) readableAccent else textSecondary.copy(alpha = 0.6f),
+                                        color = if (isCurSong) roles.onPrimaryContainer else textSecondary.copy(alpha = 0.6f),
                                         fontSize = 10.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.width(20.dp)
                                     )
                                     Text(
                                         text = s.title,
-                                        color = if (isCurSong) readableAccent else textPrimary,
+                                        color = if (isCurSong) roles.onPrimaryContainer else textPrimary,
                                         fontSize = 12.sp,
                                         fontWeight = if (isCurSong) FontWeight.Bold else FontWeight.Medium,
                                         maxLines = 1,
@@ -2176,7 +2103,7 @@ private fun RecentQueuesStaggeredDeckPage(
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = s.artist,
-                                        color = textSecondary,
+                                        color = if (isCurSong) roles.onPrimaryContainerSubtle else textSecondary,
                                         fontSize = 10.5.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -2208,7 +2135,7 @@ private fun RecentQueuesStaggeredDeckPage(
                     label = "deckDotWidth_$idx"
                 )
                 val dotColor by animateColorAsState(
-                    targetValue = if (selected) accentColor else textSecondary.copy(alpha = 0.3f),
+                    targetValue = if (selected) roles.primary else textSecondary.copy(alpha = 0.3f),
                     animationSpec = tween(220),
                     label = "deckDotColor_$idx"
                 )
@@ -2281,8 +2208,7 @@ internal fun PlayerMoreControlSheet(
     val tileBg = conceptElevatedSurfaceColor()
     val textPrimary = MaterialTheme.colorScheme.onSurface
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
-    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
-    val readableSubtle = remember(accentColor) { accentColor.readableSubtleOnDarkSurface(minLuminance = 0.54f) }
+    val roles = rememberCoverColorRoles(accentColor)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -2330,7 +2256,7 @@ internal fun PlayerMoreControlSheet(
                                 modifier = Modifier
                                     .size(48.dp)
                                     .clip(RoundedCornerShape(13.dp))
-                                    .background(accentColor.copy(alpha = 0.14f)),
+                                    .background(roles.secondaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (song.coverUrl.isNotBlank()) {
@@ -2341,7 +2267,7 @@ internal fun PlayerMoreControlSheet(
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 } else {
-                                    Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = readableAccent)
+                                    Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = roles.onSecondaryContainer)
                                 }
                             }
                             Spacer(modifier = Modifier.width(12.dp))
@@ -2362,12 +2288,11 @@ internal fun PlayerMoreControlSheet(
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
-                            // 右侧快捷查看歌曲技术参数胶囊
+                            // 右侧快捷查看歌曲技术参数胶囊（无边框线，采用色阶容器分离）
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = accentColor.copy(alpha = 0.16f),
+                                color = roles.secondaryContainer,
                                 modifier = Modifier
-                                    .border(0.8.dp, readableAccent.copy(alpha = 0.28f), RoundedCornerShape(10.dp))
                                     .softCardClickable(
                                         shape = RoundedCornerShape(10.dp),
                                         onClick = { dismissThen(onOpenSongDetail) }
@@ -2380,13 +2305,13 @@ internal fun PlayerMoreControlSheet(
                                     Icon(
                                         imageVector = Icons.Rounded.Info,
                                         contentDescription = "音频参数",
-                                        tint = readableAccent,
+                                        tint = roles.onSecondaryContainer,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         text = "音频详情",
-                                        color = readableAccent,
+                                        color = roles.onSecondaryContainer,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -2417,14 +2342,14 @@ internal fun PlayerMoreControlSheet(
                                 ) {
                                     Surface(
                                         shape = CircleShape,
-                                        color = accentColor.copy(alpha = 0.18f),
+                                        color = roles.secondaryContainer,
                                         modifier = Modifier.size(30.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
                                                 imageVector = Icons.Rounded.PersonSearch,
                                                 contentDescription = "歌手主页",
-                                                tint = readableAccent,
+                                                tint = roles.onSecondaryContainer,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
@@ -2433,7 +2358,7 @@ internal fun PlayerMoreControlSheet(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = "歌手主页",
-                                            color = readableAccent,
+                                            color = roles.primary,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -2473,14 +2398,14 @@ internal fun PlayerMoreControlSheet(
                                 ) {
                                     Surface(
                                         shape = CircleShape,
-                                        color = accentColor.copy(alpha = 0.18f),
+                                        color = roles.secondaryContainer,
                                         modifier = Modifier.size(30.dp)
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Icon(
                                                 imageVector = Icons.Rounded.Album,
                                                 contentDescription = "专辑详情",
-                                                tint = readableAccent,
+                                                tint = roles.onSecondaryContainer,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
@@ -2489,7 +2414,7 @@ internal fun PlayerMoreControlSheet(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = "所属专辑",
-                                            color = readableAccent,
+                                            color = roles.primary,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -2586,7 +2511,7 @@ internal fun PlayerMoreControlSheet(
                     }
                 }
 
-                // 3. 整合式视觉舞台控制台（封面样式 + 智能取色 + 5款背景效果）
+                // 3. 整合式视觉舞台控制台（封面样式 + 智能取色 + 5款背景效果，无边框线，采用 13 级色阶角色分离）
                 Surface(
                     shape = RoundedCornerShape(20.dp),
                     color = tileBg,
@@ -2606,7 +2531,7 @@ internal fun PlayerMoreControlSheet(
                                 Icon(
                                     imageVector = Icons.Rounded.Palette,
                                     contentDescription = null,
-                                    tint = readableAccent,
+                                    tint = roles.primary,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
@@ -2618,16 +2543,11 @@ internal fun PlayerMoreControlSheet(
                                 )
                             }
 
-                            // 紧凑型智能取色开关胶囊
+                            // 紧凑型智能取色开关胶囊（无描边）
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = if (dynamicCoverAccentEnabled) accentColor.copy(alpha = 0.20f) else sheetBg,
+                                color = if (dynamicCoverAccentEnabled) roles.primaryContainer else sheetBg,
                                 modifier = Modifier
-                                    .border(
-                                        width = if (dynamicCoverAccentEnabled) 0.8.dp else 0.dp,
-                                        color = if (dynamicCoverAccentEnabled) readableAccent.copy(alpha = 0.34f) else Color.Transparent,
-                                        shape = RoundedCornerShape(10.dp)
-                                    )
                                     .softCardClickable(shape = RoundedCornerShape(10.dp)) {
                                         onSetDynamicCoverAccentEnabled(!dynamicCoverAccentEnabled)
                                     }
@@ -2640,12 +2560,12 @@ internal fun PlayerMoreControlSheet(
                                         modifier = Modifier
                                             .size(7.dp)
                                             .clip(CircleShape)
-                                            .background(if (dynamicCoverAccentEnabled) readableAccent else textSecondary)
+                                            .background(if (dynamicCoverAccentEnabled) roles.onPrimaryContainer else textSecondary)
                                     )
                                     Spacer(modifier = Modifier.width(5.dp))
                                     Text(
                                         text = if (dynamicCoverAccentEnabled) "智能取色 · 已开启" else "智能取色 · 已关闭",
-                                        color = if (dynamicCoverAccentEnabled) readableAccent else textSecondary,
+                                        color = if (dynamicCoverAccentEnabled) roles.onPrimaryContainer else textSecondary,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -2653,7 +2573,7 @@ internal fun PlayerMoreControlSheet(
                             }
                         }
 
-                        // 双封面样式切换
+                        // 双封面样式切换（无描边，色阶容器分离）
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2670,14 +2590,9 @@ internal fun PlayerMoreControlSheet(
                                 }
                                 Surface(
                                     shape = RoundedCornerShape(14.dp),
-                                    color = if (selected) accentColor.copy(alpha = 0.20f) else sheetBg,
+                                    color = if (selected) roles.primaryContainer else sheetBg,
                                     modifier = Modifier
                                         .weight(1f)
-                                        .border(
-                                            width = if (selected) 0.8.dp else 0.dp,
-                                            color = if (selected) readableAccent.copy(alpha = 0.34f) else Color.Transparent,
-                                            shape = RoundedCornerShape(14.dp)
-                                        )
                                         .softCardClickable(shape = RoundedCornerShape(14.dp)) {
                                             onSelectCoverStyle(style)
                                         }
@@ -2689,21 +2604,21 @@ internal fun PlayerMoreControlSheet(
                                         Icon(
                                             imageVector = icon,
                                             contentDescription = style.label,
-                                            tint = if (selected) readableAccent else textSecondary,
+                                            tint = if (selected) roles.onPrimaryContainer else textSecondary,
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = style.label,
-                                                color = if (selected) readableAccent else textPrimary,
+                                                color = if (selected) roles.onPrimaryContainer else textPrimary,
                                                 fontSize = 12.5.sp,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 maxLines = 1
                                             )
                                             Text(
                                                 text = desc,
-                                                color = if (selected) readableSubtle else textSecondary,
+                                                color = if (selected) roles.onPrimaryContainerSubtle else textSecondary,
                                                 fontSize = 10.sp,
                                                 maxLines = 1
                                             )
@@ -2732,14 +2647,9 @@ internal fun PlayerMoreControlSheet(
                                 val selected = playerBackgroundStyle == bgStyle
                                 Surface(
                                     shape = RoundedCornerShape(14.dp),
-                                    color = if (selected) accentColor.copy(alpha = 0.20f) else sheetBg,
+                                    color = if (selected) roles.primaryContainer else sheetBg,
                                     modifier = Modifier
                                         .width(106.dp)
-                                        .border(
-                                            width = if (selected) 0.8.dp else 0.dp,
-                                            color = if (selected) readableAccent.copy(alpha = 0.34f) else Color.Transparent,
-                                            shape = RoundedCornerShape(14.dp)
-                                        )
                                         .softCardClickable(shape = RoundedCornerShape(14.dp)) {
                                             onSelectPlayerBackgroundStyle(bgStyle)
                                         }
@@ -2752,7 +2662,7 @@ internal fun PlayerMoreControlSheet(
                                         ) {
                                             Text(
                                                 text = bgStyle.label,
-                                                color = if (selected) readableAccent else textPrimary,
+                                                color = if (selected) roles.onPrimaryContainer else textPrimary,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 maxLines = 1
@@ -2762,14 +2672,14 @@ internal fun PlayerMoreControlSheet(
                                                     modifier = Modifier
                                                         .size(6.dp)
                                                         .clip(CircleShape)
-                                                        .background(readableAccent)
+                                                        .background(roles.onPrimaryContainer)
                                                 )
                                             }
                                         }
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             text = bgStyle.subtitle,
-                                            color = if (selected) readableSubtle else textSecondary,
+                                            color = if (selected) roles.onPrimaryContainerSubtle else textSecondary,
                                             fontSize = 9.5.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -2800,19 +2710,13 @@ internal fun BentoControlTile(
     val tileBg = conceptElevatedSurfaceColor()
     val textPrimary = MaterialTheme.colorScheme.onSurface
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
-    val readableActiveColor = remember(activeColor) { activeColor.readableOnDarkSurface(minLuminance = 0.42f) }
-    val readableActiveSubtle = remember(activeColor) { activeColor.readableSubtleOnDarkSurface(minLuminance = 0.54f) }
+    val roles = rememberCoverColorRoles(activeColor)
 
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = if (active) activeColor.copy(alpha = 0.18f) else tileBg,
+        color = if (active) roles.primaryContainer else tileBg,
         contentColor = textPrimary,
         modifier = modifier
-            .border(
-                width = if (active) 0.8.dp else 0.dp,
-                color = if (active) readableActiveColor.copy(alpha = 0.30f) else Color.Transparent,
-                shape = RoundedCornerShape(16.dp)
-            )
             .softCardClickable(shape = RoundedCornerShape(16.dp), onClick = onClick)
     ) {
         Column(
@@ -2823,19 +2727,19 @@ internal fun BentoControlTile(
             Icon(
                 imageVector = icon,
                 contentDescription = title,
-                tint = if (active) readableActiveColor else textPrimary.copy(alpha = 0.82f),
+                tint = if (active) roles.onPrimaryContainer else textPrimary.copy(alpha = 0.82f),
                 modifier = Modifier.size(20.dp)
             )
             Text(
                 text = title,
-                color = if (active) readableActiveColor else textPrimary,
+                color = if (active) roles.onPrimaryContainer else textPrimary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1
             )
             Text(
                 text = subtitle,
-                color = if (active) readableActiveSubtle else textSecondary,
+                color = if (active) roles.onPrimaryContainerSubtle else textSecondary,
                 fontSize = 10.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -2872,11 +2776,6 @@ internal fun QualitySelectDialog(
                 .padding(horizontal = 24.dp)
                 .widthIn(max = 400.dp)
                 .fillMaxWidth()
-                .border(
-                    width = 1.dp,
-                    color = ConceptPrimary.copy(alpha = 0.28f),
-                    shape = panelShape
-                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -2995,11 +2894,6 @@ internal fun SleepTimerDialog(
                 .padding(horizontal = 24.dp)
                 .widthIn(max = 420.dp)
                 .fillMaxWidth()
-                .border(
-                    width = 1.dp,
-                    color = ConceptPrimary.copy(alpha = 0.28f),
-                    shape = panelShape
-                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -3158,11 +3052,6 @@ internal fun SpeedPitchDialog(
                 .padding(horizontal = 24.dp)
                 .widthIn(max = 420.dp)
                 .fillMaxWidth()
-                .border(
-                    width = 1.dp,
-                    color = ConceptPrimary.copy(alpha = 0.28f),
-                    shape = panelShape
-                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,

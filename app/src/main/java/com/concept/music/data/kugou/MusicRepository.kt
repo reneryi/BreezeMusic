@@ -5191,7 +5191,7 @@ class MusicApiRepository(
     }
 
     // 云端最近播放
-    suspend fun latestListenSongs(pageSize: Int = 200): List<Song> {
+    suspend fun latestListenSongs(pageSize: Int = 50): List<Song> {
         val session = accounts.context()?.session ?: return emptyList()
 
         val historyList = runCatching {
@@ -5226,7 +5226,7 @@ class MusicApiRepository(
                     "userid" to (session.userId.toLongOrNull() ?: 0L),
                     "ret_info" to 1,
                     "token" to session.token,
-                    "pagesize" to pageSize
+                    "pagesize" to pageSize.coerceIn(1, 100)
                 )
             )
             parseSongs(response.data)
@@ -5315,32 +5315,42 @@ class MusicApiRepository(
         return null
     }
 
-    // 已购单曲 (严格对齐 KuGouMusicApi: /openapi/copyright/v1/audio/get_goods + 批量补全音质标签)
-    suspend fun userPurchasedSongs(page: Int = 1, pageSize: Int = 200): List<PurchasedSongItem> {
+    // 已购单曲 (严格对齐 KuGouMusicApi: /openapi/copyright/v1/audio/get_goods + 分页拉取与批量补全音质标签)
+    suspend fun userPurchasedSongs(page: Int = 1, pageSize: Int = 50): List<PurchasedSongItem> {
         val session = accounts.context()?.session ?: return emptyList()
         val userIdNum = session.userId.toLongOrNull() ?: return emptyList()
+        val safePageSize = pageSize.coerceIn(1, 50)
         return runCatching {
-            val response = transport.callAdvanced(
-                path = "/openapi/copyright/v1/audio/get_goods",
-                method = "POST",
-                session = session,
-                body = json(
-                    "appid" to KugouSigner.APP_ID,
-                    "userid" to userIdNum,
-                    "token" to session.token,
-                    "page" to page,
-                    "pagesize" to pageSize,
-                    "clientver" to KugouSigner.CLIENT_VERSION.toString(),
-                    "deleted" to 0,
-                    "need_audio_info" to 1,
-                    "area_code" to "1"
-                ),
-                sign = true,
-                includeDefaultParams = true
-            )
-            val list = extractPurchasedJsonArray(response.data) ?: return emptyList()
+            val allRawObjects = mutableListOf<JsonObject>()
+            val pagesToFetch = if (page <= 1) (1..6) else (page..page)
+            for (curPage in pagesToFetch) {
+                val response = transport.callAdvanced(
+                    path = "/openapi/copyright/v1/audio/get_goods",
+                    method = "POST",
+                    session = session,
+                    body = json(
+                        "appid" to KugouSigner.APP_ID,
+                        "userid" to userIdNum,
+                        "token" to session.token,
+                        "page" to curPage,
+                        "pagesize" to safePageSize,
+                        "clientver" to KugouSigner.CLIENT_VERSION.toString(),
+                        "deleted" to 0,
+                        "need_audio_info" to 1,
+                        "area_code" to "1"
+                    ),
+                    sign = true,
+                    includeDefaultParams = true
+                )
+                val list = extractPurchasedJsonArray(response.data) ?: break
+                val pageObjs = list.filter { it.isJsonObject }.map { it.asJsonObject }
+                if (pageObjs.isEmpty()) break
+                allRawObjects.addAll(pageObjs)
+                if (pageObjs.size < safePageSize) break
+            }
+            if (allRawObjects.isEmpty()) return emptyList()
 
-            val rawItems = list.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull { rawObj ->
+            val rawItems = allRawObjects.mapNotNull { rawObj ->
                 val o = rawObj.obj("audio_info") ?: rawObj.obj("song_info") ?: rawObj
                 val song = parseSong(o)
                 val id = o.text("audio_id") ?: o.text("songid") ?: o.text("mixsongid")
@@ -5366,7 +5376,8 @@ class MusicApiRepository(
                     buyTime = time,
                     song = mergedSong
                 )
-            }
+            }.distinctBy { it.songId.ifBlank { it.song?.hash.orEmpty() } }
+
             val songsToEnrich = rawItems.mapNotNull { it.song }
             val enrichedSongs = runCatching { enrichSongsPrivilegeLite(songsToEnrich) }.getOrDefault(songsToEnrich)
             val enrichedMap = enrichedSongs.associateBy { it.id.ifBlank { it.hash } }
@@ -5377,71 +5388,97 @@ class MusicApiRepository(
         }.getOrDefault(emptyList())
     }
 
-    // 已购专辑 (严格对齐 KuGouMusicApi: /openapi/v1/copyright/get_album_goods)
-    suspend fun userPurchasedAlbums(page: Int = 1, pageSize: Int = 200): List<PurchasedAlbumItem> {
+    // 已购专辑 (严格对齐 KuGouMusicApi: /openapi/v1/copyright/get_album_goods，pagesize 上限为 20，采用多页分页 + 并发补全详情)
+    suspend fun userPurchasedAlbums(page: Int = 1, pageSize: Int = 20): List<PurchasedAlbumItem> {
         val session = accounts.context()?.session ?: return emptyList()
         val userIdNum = session.userId.toLongOrNull() ?: return emptyList()
+        val safePageSize = pageSize.coerceIn(1, 20)
         return runCatching {
-            val response = transport.callAdvanced(
-                path = "/openapi/v1/copyright/get_album_goods",
-                method = "POST",
-                session = session,
-                body = json(
-                    "appid" to KugouSigner.APP_ID,
-                    "userid" to userIdNum,
-                    "token" to session.token,
-                    "page" to page,
-                    "pagesize" to pageSize,
-                    "clientver" to KugouSigner.CLIENT_VERSION.toString(),
-                    "deleted" to 0
-                ),
-                sign = true,
-                includeDefaultParams = true
-            )
-            val list = extractPurchasedJsonArray(response.data) ?: return emptyList()
+            val allRawObjects = mutableListOf<JsonObject>()
+            val pagesToFetch = if (page <= 1) (1..10) else (page..page)
+            for (curPage in pagesToFetch) {
+                val response = transport.callAdvanced(
+                    path = "/openapi/v1/copyright/get_album_goods",
+                    method = "POST",
+                    session = session,
+                    body = json(
+                        "appid" to KugouSigner.APP_ID,
+                        "userid" to userIdNum,
+                        "token" to session.token,
+                        "page" to curPage,
+                        "pagesize" to safePageSize,
+                        "clientver" to KugouSigner.CLIENT_VERSION.toString(),
+                        "deleted" to 0
+                    ),
+                    sign = true,
+                    includeDefaultParams = true
+                )
+                val list = extractPurchasedJsonArray(response.data) ?: break
+                val pageObjs = list.filter { it.isJsonObject }.map { it.asJsonObject }
+                if (pageObjs.isEmpty()) break
+                allRawObjects.addAll(pageObjs)
+                if (pageObjs.size < safePageSize) break
+            }
+            if (allRawObjects.isEmpty()) return emptyList()
 
-            list.filter { it.isJsonObject }.map { it.asJsonObject }.mapNotNull { rawObj ->
+            val parsedDrafts = allRawObjects.mapNotNull { rawObj ->
                 val o = rawObj.obj("album_info") ?: rawObj.obj("goods_info") ?: rawObj
                 val id = o.text("album_id") ?: o.text("albumid") ?: o.text("AlbumID")
                     ?: rawObj.text("album_id") ?: rawObj.text("albumid") ?: rawObj.text("target_id")
                     ?: rawObj.text("res_id") ?: rawObj.text("goods_id") ?: rawObj.text("id") ?: ""
                 if (id.isBlank()) return@mapNotNull null
 
-                var name = o.text("album_name") ?: o.text("AlbumName") ?: o.text("albumname") ?: o.text("name")
+                val name = o.text("album_name") ?: o.text("AlbumName") ?: o.text("albumname") ?: o.text("name")
                     ?: rawObj.text("album_name") ?: rawObj.text("goods_name") ?: ""
-                var singer = o.text("author_name") ?: o.text("singer_name") ?: o.text("singername")
+                val singer = o.text("author_name") ?: o.text("singer_name") ?: o.text("singername")
                     ?: o.text("artist_name") ?: rawObj.text("author_name") ?: rawObj.text("singer_name") ?: ""
                 val coverRaw = o.text("sizable_cover") ?: o.text("album_img") ?: o.text("img")
                     ?: o.text("imgurl") ?: o.text("cover") ?: o.text("pic") ?: o.text("cover_url")
                     ?: rawObj.text("sizable_cover") ?: rawObj.text("album_img") ?: rawObj.text("img")
                     ?: rawObj.text("cover")
-                var coverUrl = imageUrl(coverRaw)
-                var count = o.number("song_count") ?: o.number("songcount") ?: o.number("audio_count")
+                val coverUrl = imageUrl(coverRaw)
+                val count = o.number("song_count") ?: o.number("songcount") ?: o.number("audio_count")
                     ?: rawObj.number("song_count") ?: rawObj.number("audio_count") ?: 0
                 val time = rawObj.text("buy_time") ?: rawObj.text("create_time") ?: rawObj.text("pay_time")
                     ?: rawObj.text("add_time") ?: o.text("buy_time") ?: ""
 
-                if (name.isBlank() || coverUrl.isBlank() || singer.isBlank()) {
-                    val detail = runCatching { albumDetail(id) }.getOrNull()
-                    if (detail != null) {
-                        if (name.isBlank() && detail.name.isNotBlank()) name = detail.name
-                        if (singer.isBlank() && detail.artist.isNotBlank()) singer = detail.artist
-                        if (coverUrl.isBlank() && detail.coverUrl.isNotBlank()) coverUrl = detail.coverUrl
-                        if (count <= 0 && detail.songCount > 0) count = detail.songCount
-                    }
-                }
-                if (count <= 0) {
-                    count = runCatching { albumSongs(id).size }.getOrDefault(0)
-                }
-
                 PurchasedAlbumItem(
                     albumId = id,
-                    albumName = name.ifBlank { "数字专辑" },
-                    singerName = singer.ifBlank { "群星" },
+                    albumName = name,
+                    singerName = singer,
                     coverUrl = coverUrl,
                     songCount = count,
                     buyTime = time
                 )
+            }.distinctBy { it.albumId }
+
+            coroutineScope {
+                parsedDrafts.map { draft ->
+                    async {
+                        var name = draft.albumName
+                        var singer = draft.singerName
+                        var coverUrl = draft.coverUrl
+                        var count = draft.songCount
+                        if (name.isBlank() || coverUrl.isBlank() || singer.isBlank()) {
+                            val detail = runCatching { albumDetail(draft.albumId) }.getOrNull()
+                            if (detail != null) {
+                                if (name.isBlank() && detail.name.isNotBlank()) name = detail.name
+                                if (singer.isBlank() && detail.artist.isNotBlank()) singer = detail.artist
+                                if (coverUrl.isBlank() && detail.coverUrl.isNotBlank()) coverUrl = detail.coverUrl
+                                if (count <= 0 && detail.songCount > 0) count = detail.songCount
+                            }
+                        }
+                        if (count <= 0) {
+                            count = runCatching { albumSongs(draft.albumId).size }.getOrDefault(0)
+                        }
+                        draft.copy(
+                            albumName = name.ifBlank { "数字专辑" },
+                            singerName = singer.ifBlank { "群星" },
+                            coverUrl = coverUrl,
+                            songCount = count
+                        )
+                    }
+                }.map { it.await() }
             }
         }.getOrDefault(emptyList())
     }
@@ -5451,7 +5488,7 @@ class MusicApiRepository(
      * POST /v4/follow_list, query = mapOf("plat" to "1"), headers = mapOf("x-router" to "relationuser.kugou.com"))
      * 修复此前因缺少 query plat=1 及未解析 nickname / ext_params.singerid 导致关注歌手列表为空的 Bug！
      */
-    suspend fun followedArtists(page: Int = 1, pageSize: Int = 200): List<FollowedArtist> {
+    suspend fun followedArtists(page: Int = 1, pageSize: Int = 50): List<FollowedArtist> {
         val ctx = accounts.context()
         val session = if (ctx != null) {
             runCatching { accounts.authenticated(ctx) { it } }.getOrNull() ?: ctx.session

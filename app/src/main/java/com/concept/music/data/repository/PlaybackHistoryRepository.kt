@@ -6,6 +6,8 @@ import com.concept.music.data.kugou.KugouSigner
 import com.concept.music.data.model.AudioQuality
 import com.concept.music.data.model.FmChannel
 import com.concept.music.data.model.Playlist
+import com.concept.music.data.model.PurchasedAlbumItem
+import com.concept.music.data.model.PurchasedSongItem
 import com.concept.music.data.model.RankItem
 import com.concept.music.data.model.Song
 import com.google.gson.reflect.TypeToken
@@ -237,11 +239,15 @@ class DiscoverLocalCache(context: Context? = null) {
     private val memoryRankList = ConcurrentHashMap<String, List<RankItem>>()
     private val memoryFmChannelList = ConcurrentHashMap<String, List<FmChannel>>()
     private val memoryPlaylistList = ConcurrentHashMap<String, List<Playlist>>()
+    private val memoryPurchasedAlbumList = ConcurrentHashMap<String, List<PurchasedAlbumItem>>()
+    private val memoryPurchasedSongList = ConcurrentHashMap<String, List<PurchasedSongItem>>()
 
     private val songListType = object : TypeToken<List<Song>>() {}.type
     private val rankListType = object : TypeToken<List<RankItem>>() {}.type
     private val fmChannelListType = object : TypeToken<List<FmChannel>>() {}.type
     private val playlistListType = object : TypeToken<List<Playlist>>() {}.type
+    private val purchasedAlbumListType = object : TypeToken<List<PurchasedAlbumItem>>() {}.type
+    private val purchasedSongListType = object : TypeToken<List<PurchasedSongItem>>() {}.type
 
     private fun sanitizeCachedSong(rawSong: Song): Song {
         val s = rawSong.sanitizeFromJson()
@@ -423,4 +429,50 @@ class DiscoverLocalCache(context: Context? = null) {
 
     fun saveLikedSongs(userId: String?, songs: List<Song>, allowEmpty: Boolean = true) =
         saveSongList("liked_songs_${userId ?: "guest"}", songs, allowEmpty = allowEmpty, useDedicatedFile = true)
+
+    fun getPurchasedAlbums(userId: String?): List<PurchasedAlbumItem> {
+        val key = "purchased_albums_${userId ?: "guest"}"
+        memoryPurchasedAlbumList[key]?.let { return it }
+        return runCatching {
+            val sp = prefs ?: return emptyList()
+            val raw = sp.getString(key, null) ?: return emptyList()
+            val list: List<PurchasedAlbumItem> = KugouSigner.gson.fromJson(raw, purchasedAlbumListType) ?: emptyList()
+            memoryPurchasedAlbumList[key] = list
+            list
+        }.getOrDefault(emptyList())
+    }
+
+    fun savePurchasedAlbums(userId: String?, albums: List<PurchasedAlbumItem>, allowEmpty: Boolean = false) {
+        if (albums.isEmpty() && !allowEmpty) return
+        val key = "purchased_albums_${userId ?: "guest"}"
+        memoryPurchasedAlbumList[key] = albums
+        cacheIoScope.launch {
+            runCatching {
+                prefs?.edit()?.putString(key, KugouSigner.gson.toJson(albums))?.apply()
+            }
+        }
+    }
+
+    fun getPurchasedSongs(userId: String?): List<PurchasedSongItem> {
+        val key = "purchased_songs_${userId ?: "guest"}"
+        memoryPurchasedSongList[key]?.let { return it }
+        return runCatching {
+            val sp = prefs ?: return emptyList()
+            val raw = sp.getString(key, null) ?: return emptyList()
+            val list: List<PurchasedSongItem> = KugouSigner.gson.fromJson(raw, purchasedSongListType) ?: emptyList()
+            memoryPurchasedSongList[key] = list
+            list
+        }.getOrDefault(emptyList())
+    }
+
+    fun savePurchasedSongs(userId: String?, songs: List<PurchasedSongItem>, allowEmpty: Boolean = false) {
+        if (songs.isEmpty() && !allowEmpty) return
+        val key = "purchased_songs_${userId ?: "guest"}"
+        memoryPurchasedSongList[key] = songs
+        cacheIoScope.launch {
+            runCatching {
+                prefs?.edit()?.putString(key, KugouSigner.gson.toJson(songs))?.apply()
+            }
+        }
+    }
 }

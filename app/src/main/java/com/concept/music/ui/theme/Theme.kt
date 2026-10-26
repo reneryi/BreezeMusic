@@ -78,6 +78,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -1130,6 +1131,43 @@ fun Color.perceptualLuminance(): Float {
         0.0722f * channelLinear(blue)
 }
 
+/**
+ * 计算两个颜色之间的 WCAG 2.1 对比度 (1.0 ~ 21.0)。
+ */
+fun Color.wcagContrastRatio(other: Color): Float {
+    val l1 = this.perceptualLuminance()
+    val l2 = other.perceptualLuminance()
+    val lighter = maxOf(l1, l2)
+    val darker = minOf(l1, l2)
+    return (lighter + 0.05f) / (darker + 0.05f)
+}
+
+/**
+ * 将 CIE L* 明度色阶 (Tone 0 ~ 100) 映射为 WCAG 相对感知亮度 Y (0.0 ~ 1.0)。
+ */
+internal fun toneToRelativeLuminance(tone: Int): Float {
+    val t = tone.coerceIn(0, 100).toFloat()
+    if (t <= 0f) return 0f
+    if (t >= 100f) return 1f
+    return if (t > 8f) {
+        ((t + 16f) / 116f).pow(3f).coerceIn(0f, 1f)
+    } else {
+        (t / 903.296f).coerceIn(0f, 1f)
+    }
+}
+
+/**
+ * 将 WCAG 相对感知亮度 Y (0.0 ~ 1.0) 反解为 CIE L* 明度色阶 (Tone 0.0 ~ 100.0)。
+ */
+internal fun relativeLuminanceToTone(y: Float): Float {
+    val clamped = y.coerceIn(0f, 1f)
+    return if (clamped > 0.008856f) {
+        (116f * clamped.pow(1f / 3f) - 16f).coerceIn(0f, 100f)
+    } else {
+        (903.296f * clamped).coerceIn(0f, 100f)
+    }
+}
+
 internal fun composeColorToHsv(color: Color): FloatArray {
     val r = color.red.coerceIn(0f, 1f)
     val g = color.green.coerceIn(0f, 1f)
@@ -1174,53 +1212,221 @@ internal fun hsvToComposeColor(h: Float, s: Float, v: Float, alpha: Float = 1f):
 }
 
 /**
- * 动态取色深色背景前景内容可读性增强算法：
- * - 在完全锁定原取色色相 (Hue) 不变的前提下，基于 WCAG 感知相对亮度连续自适应提亮前景色（文字、图标、徽标、动态高亮歌词）；
- * - 针对深蓝、靛紫、暗红、深紫等高饱和低感知亮度的取色，通过二分收敛在同色相下寻找满足最小感知亮度阈值 [minLuminance] 的最高饱和度点，
- *   既保留鲜明的封面取色色相特征，又消除深色卡片/背景上的阅读吃力问题。
+ * 封面种子色（Seed Color）的 13 级明度色阶调色板（Tonal Palette，Tone 0 ~ Tone 100）：
+ * - 将封面取色结果视为“基酒（Seed Color）”，完全锁定其色相（Hue, ΔHue = 0°）；
+ * - 按 CIE L* 感知明度扩展出从纯黑（Tone 0）到纯白（Tone 100）的 13 级色阶：
+ *   [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 99, 100]；
+ * - 低色阶（Tone 10~40）保留醇厚色感用于深色容器底或日间高对比前景；
+ * - 高色阶（Tone 80~99）如同按比例兑入苏打水稀释，在保留色相韵味的同时获得高明度通透可读性。
+ */
+@Immutable
+data class CoverTonalPalette(
+    val seed: Color,
+    val hue: Float,
+    val seedSaturation: Float
+) {
+    val tone0: Color = Color.Black
+    val tone10: Color by lazy(LazyThreadSafetyMode.NONE) { tone(10) }
+    val tone20: Color by lazy(LazyThreadSafetyMode.NONE) { tone(20) }
+    val tone30: Color by lazy(LazyThreadSafetyMode.NONE) { tone(30) }
+    val tone40: Color by lazy(LazyThreadSafetyMode.NONE) { tone(40) }
+    val tone50: Color by lazy(LazyThreadSafetyMode.NONE) { tone(50) }
+    val tone60: Color by lazy(LazyThreadSafetyMode.NONE) { tone(60) }
+    val tone70: Color by lazy(LazyThreadSafetyMode.NONE) { tone(70) }
+    val tone80: Color by lazy(LazyThreadSafetyMode.NONE) { tone(80) }
+    val tone90: Color by lazy(LazyThreadSafetyMode.NONE) { tone(90) }
+    val tone95: Color by lazy(LazyThreadSafetyMode.NONE) { tone(95) }
+    val tone99: Color by lazy(LazyThreadSafetyMode.NONE) { tone(99) }
+    val tone100: Color = Color.White
+
+    /**
+     * 获取指定明度色阶 (0..100) 对应的颜色，严格保持色相 [hue] 不变并对齐目标感知相对亮度。
+     */
+    fun tone(targetTone: Int): Color {
+        val clampedTone = targetTone.coerceIn(0, 100)
+        if (clampedTone <= 0) return Color.Black
+        if (clampedTone >= 100) return Color.White
+
+        val targetY = toneToRelativeLuminance(clampedTone)
+        // 无彩色/极低饱和度封面直接按目标相对亮度生成中性色阶
+        if (seedSaturation <= 0.04f) {
+            var lowV = 0f
+            var highV = 1f
+            repeat(12) {
+                val midV = (lowV + highV) * 0.5f
+                if (hsvToComposeColor(hue, seedSaturation, midV).perceptualLuminance() < targetY) {
+                    lowV = midV
+                } else {
+                    highV = midV
+                }
+            }
+            return hsvToComposeColor(hue, seedSaturation, (lowV + highV) * 0.5f)
+        }
+
+        // 基酒色度骨干：高明度色阶（Tone 80+）按比例兑入苏打水适度收敛最高饱和度上限，保证清透不刺眼
+        val baseSat = seedSaturation.coerceIn(0.48f, 0.88f)
+        val maxSatForTone = when {
+            clampedTone >= 99 -> baseSat.coerceAtMost(0.08f)
+            clampedTone >= 95 -> baseSat.coerceAtMost(0.22f)
+            clampedTone >= 90 -> baseSat.coerceAtMost(0.42f)
+            clampedTone >= 80 -> baseSat.coerceAtMost(0.66f)
+            else -> baseSat
+        }
+
+        val fullValCandidate = hsvToComposeColor(hue, maxSatForTone, 1f)
+        val fullValY = fullValCandidate.perceptualLuminance()
+
+        return if (targetY <= fullValY) {
+            // 浓缩基酒阶段：保持同色相与醇厚饱和度 maxSatForTone，二分求解明度 V 精确命中 targetY
+            var lowV = 0f
+            var highV = 1f
+            repeat(12) {
+                val midV = (lowV + highV) * 0.5f
+                val y = hsvToComposeColor(hue, maxSatForTone, midV).perceptualLuminance()
+                if (y < targetY) {
+                    lowV = midV
+                } else {
+                    highV = midV
+                }
+            }
+            hsvToComposeColor(hue, maxSatForTone, (lowV + highV) * 0.5f)
+        } else {
+            // 苏打水稀释阶段：固定明度 V = 1.0，在同色相下二分稀释饱和度 S 直至精确命中 targetY
+            var lowS = 0f
+            var highS = maxSatForTone
+            repeat(12) {
+                val midS = (lowS + highS) * 0.5f
+                val y = hsvToComposeColor(hue, midS, 1f).perceptualLuminance()
+                if (y < targetY) {
+                    // 饱和度越低，混入白光越多，相对亮度越高
+                    highS = midS
+                } else {
+                    lowS = midS
+                }
+            }
+            hsvToComposeColor(hue, (lowS + highS) * 0.5f, 1f)
+        }
+    }
+
+    companion object {
+        val STANDARD_TONES = intArrayOf(0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 99, 100)
+    }
+}
+
+/**
+ * 将任意封面取色种子色扩展为 13 级明度色阶调色板 [CoverTonalPalette]。
+ */
+fun Color.toTonalPalette(): CoverTonalPalette {
+    val hsv = composeColorToHsv(this)
+    return CoverTonalPalette(
+        seed = this,
+        hue = hsv[0],
+        seedSaturation = hsv[1]
+    )
+}
+
+/**
+ * 封面取色语义化色彩角色（Color Roles）：
+ * - 在“取色结果（Seed Color）”与“UI 渲染”之间解耦，根据深色模式/日间浅色模式分别绑定最适配的色阶；
+ * - 彻底解决深色模式下深蓝/深紫种子色叠在深色卡片上看不清、以及日间浅色模式下浅字叠浅底看不清的问题。
+ */
+@Immutable
+data class CoverColorRoles(
+    val seed: Color,
+    val palette: CoverTonalPalette,
+    val isDark: Boolean,
+    /** 主强调色（Dark: Tone 80 清透亮色；Light: Tone 40 醇厚深色），用于滑块激活轨、高亮文字、选中标签 */
+    val primary: Color,
+    /** 实心 Primary 按钮/胶囊上的文字与图标色（Dark: Tone 20；Light: Tone 100） */
+    val onPrimary: Color,
+    /** 激活态卡片/瓷砖/胶囊容器填充色（Dark: Tone 30 融合暗底；Light: Tone 90 融合浅底） */
+    val primaryContainer: Color,
+    /** 激活态容器内的主标题与主图标色（Dark: Tone 90 极清亮色；Light: Tone 20 浓郁深色） */
+    val onPrimaryContainer: Color,
+    /** 激活态容器内的副标题与次级说明色（Dark: Tone 80；Light: Tone 30） */
+    val onPrimaryContainerSubtle: Color,
+    /** 次级激活胶囊/徽标底色 */
+    val secondaryContainer: Color,
+    /** 次级激活胶囊/徽标文字与图标色 */
+    val onSecondaryContainer: Color,
+    /** 播放页深色舞台（流光封面/黑胶舞台）上的高亮歌词与前景强调色（恒取 Tone 80） */
+    val stageLyricPrimary: Color
+)
+
+/**
+ * 根据当前深浅主题模式将封面种子色映射为语义化 [CoverColorRoles]。
+ */
+fun Color.toCoverColorRoles(
+    isDark: Boolean,
+    baseSurface: Color = if (isDark) Color(0xFF111826) else Color(0xFFF8FBFF)
+): CoverColorRoles {
+    val palette = this.toTonalPalette()
+    return if (isDark) {
+        val primaryContainer = palette.tone30.copy(alpha = 0.68f).compositeOver(baseSurface)
+        val secondaryContainer = palette.tone20.copy(alpha = 0.72f).compositeOver(baseSurface)
+        CoverColorRoles(
+            seed = this,
+            palette = palette,
+            isDark = true,
+            primary = palette.tone80,
+            onPrimary = palette.tone20,
+            primaryContainer = primaryContainer,
+            onPrimaryContainer = palette.tone90,
+            onPrimaryContainerSubtle = palette.tone80,
+            secondaryContainer = secondaryContainer,
+            onSecondaryContainer = palette.tone80,
+            stageLyricPrimary = palette.tone80
+        )
+    } else {
+        val primaryContainer = palette.tone90.copy(alpha = 0.88f).compositeOver(baseSurface)
+        val secondaryContainer = palette.tone90.copy(alpha = 0.76f).compositeOver(baseSurface)
+        CoverColorRoles(
+            seed = this,
+            palette = palette,
+            isDark = false,
+            primary = palette.tone40,
+            onPrimary = palette.tone100,
+            primaryContainer = primaryContainer,
+            onPrimaryContainer = palette.tone20,
+            onPrimaryContainerSubtle = palette.tone30,
+            secondaryContainer = secondaryContainer,
+            onSecondaryContainer = palette.tone30,
+            stageLyricPrimary = palette.tone80
+        )
+    }
+}
+
+/**
+ * Composable 便捷记忆函数：自动感知当前概念版深浅主题 (`isConceptDarkTheme()`) 与弹窗基底色，
+ * 将封面种子色 [seedColor] 映射为语义化 [CoverColorRoles]。
+ */
+@Composable
+fun rememberCoverColorRoles(seedColor: Color): CoverColorRoles {
+    val isDark = isConceptDarkTheme()
+    val baseSurface = conceptSheetContainerColor()
+    return remember(seedColor, isDark, baseSurface) {
+        seedColor.toCoverColorRoles(isDark = isDark, baseSurface = baseSurface)
+    }
+}
+
+/**
+ * 动态取色深色背景前景内容可读性增强算法（基于 13 级明度色阶 Tonal Palette）：
+ * - 在完全锁定原取色色相 (Hue) 不变的前提下，将过暗的种子色映射至对应明度色阶（默认约 Tone 80），
+ *   既保留鲜明的封面取色色相特征，又消除深色舞台/背景上的阅读吃力问题。
  */
 fun Color.readableOnDarkSurface(minLuminance: Float = 0.42f): Color {
     if (this.perceptualLuminance() >= minLuminance) {
         return this
     }
-    val hsv = composeColorToHsv(this)
-    val hue = hsv[0]
-    val sat0 = hsv[1]
-    val val0 = hsv[2]
-
-    if (sat0 <= 0.04f) {
-        val liftedVal = val0.coerceAtLeast(0.90f)
-        return hsvToComposeColor(hue, sat0, liftedVal, alpha)
-    }
-
-    val targetVal = val0.coerceAtLeast(0.96f)
-    val baseSat = sat0.coerceAtMost(0.82f)
-    val initialCandidate = hsvToComposeColor(hue, baseSat, targetVal, alpha)
-    if (initialCandidate.perceptualLuminance() >= minLuminance) {
-        return initialCandidate
-    }
-
-    // 在完全保持色相 hue 不变、明度提升至 0.99f 的条件下，二分搜索满足 minLuminance 的最大饱和度
-    val highV = 0.99f
-    var lowS = 0.22f
-    var highS = baseSat
-    repeat(10) {
-        val midS = (lowS + highS) * 0.5f
-        val testColor = hsvToComposeColor(hue, midS, highV, alpha)
-        if (testColor.perceptualLuminance() >= minLuminance) {
-            lowS = midS
-        } else {
-            highS = midS
-        }
-    }
-    return hsvToComposeColor(hue, lowS, highV, alpha)
+    val targetTone = kotlin.math.ceil(relativeLuminanceToTone(minLuminance)).toInt().coerceIn(71, 95)
+    return this.toTonalPalette().tone(targetTone).copy(alpha = this.alpha)
 }
 
 /**
  * 动态取色深色卡片内次级副标题/说明文案可读性增强：
- * - 在保持同色相感知提亮的基础上融入柔和冰白高光，确保 10sp~11sp 小字号副标题在动态染色卡片上清晰通透。
+ * - 基于 13 级色阶映射至 Tone 80~92 明度区间，确保小字号副标题在深色背景上清晰通透。
  */
 fun Color.readableSubtleOnDarkSurface(minLuminance: Float = 0.54f): Color {
-    val readableBase = this.readableOnDarkSurface(minLuminance = minLuminance)
-    return lerp(readableBase, Color(0xFFF2F6FF), 0.26f).copy(alpha = 0.94f)
+    val targetTone = kotlin.math.ceil(relativeLuminanceToTone(minLuminance)).toInt().coerceIn(80, 92)
+    return this.toTonalPalette().tone(targetTone).copy(alpha = 0.94f)
 }

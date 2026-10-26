@@ -54,7 +54,11 @@ class LibraryViewModel(
     val isGridView = _isGridView.asStateFlow()
 
     fun setSelectedAssetTab(tab: Int) {
-        _selectedAssetTab.value = tab.coerceIn(0, 3)
+        val coerced = tab.coerceIn(0, 3)
+        _selectedAssetTab.value = coerced
+        if (coerced == 3 && _purchasedAlbums.value.isEmpty() && _purchasedSongs.value.isEmpty()) {
+            refreshPurchasedAssets()
+        }
     }
 
     fun toggleGridView() {
@@ -78,6 +82,7 @@ class LibraryViewModel(
     val favoriteAlbums = _favoriteAlbums.asStateFlow()
     private var accountJob: Job? = null
     private var musicLibraryJob: Job? = null
+    private var purchasedAssetsJob: Job? = null
     private var claimJob: Job? = null
     private var loginJob: Job? = null
     private var countdownJob: Job? = null
@@ -126,6 +131,14 @@ class LibraryViewModel(
         val cachedLiked = cache.getLikedSongs(userId)
         if (_likedSongs.value.isEmpty() && cachedLiked.isNotEmpty()) {
             _likedSongs.value = cachedLiked
+        }
+        val cachedPurchasedAlbums = cache.getPurchasedAlbums(userId)
+        if (_purchasedAlbums.value.isEmpty() && cachedPurchasedAlbums.isNotEmpty()) {
+            _purchasedAlbums.value = cachedPurchasedAlbums
+        }
+        val cachedPurchasedSongs = cache.getPurchasedSongs(userId)
+        if (_purchasedSongs.value.isEmpty() && cachedPurchasedSongs.isNotEmpty()) {
+            _purchasedSongs.value = cachedPurchasedSongs
         }
     }
 
@@ -337,12 +350,25 @@ class LibraryViewModel(
     fun refreshPurchasedAssets() {
         val userId = accountState.value.currentId ?: return
         if (accountState.value.auth != AuthState.READY) return
-        viewModelScope.launch {
-            val pSongs = runCatching { VipManager.music.userPurchasedSongs() }.getOrDefault(emptyList())
-            val pAlbums = runCatching { VipManager.music.userPurchasedAlbums() }.getOrDefault(emptyList())
+        purchasedAssetsJob?.cancel()
+        purchasedAssetsJob = viewModelScope.launch {
+            val songsDef = async { runCatching { VipManager.music.userPurchasedSongs() }.getOrNull() }
+            val albumsDef = async { runCatching { VipManager.music.userPurchasedAlbums() }.getOrNull() }
+            val pSongs = songsDef.await()
+            val pAlbums = albumsDef.await()
             if (accounts.state.value.currentId == userId) {
-                _purchasedSongs.value = pSongs
-                _purchasedAlbums.value = pAlbums
+                if (!pSongs.isNullOrEmpty()) {
+                    _purchasedSongs.value = pSongs
+                    VipManager.discoverCache.savePurchasedSongs(userId, pSongs)
+                } else if (_purchasedSongs.value.isEmpty()) {
+                    _purchasedSongs.value = VipManager.discoverCache.getPurchasedSongs(userId)
+                }
+                if (!pAlbums.isNullOrEmpty()) {
+                    _purchasedAlbums.value = pAlbums
+                    VipManager.discoverCache.savePurchasedAlbums(userId, pAlbums)
+                } else if (_purchasedAlbums.value.isEmpty()) {
+                    _purchasedAlbums.value = VipManager.discoverCache.getPurchasedAlbums(userId)
+                }
             }
         }
     }
@@ -454,14 +480,7 @@ class LibraryViewModel(
                 _librarySongs.value = mergedHistory
                 if (userId != null && accountState.value.auth == AuthState.READY) {
                     launch { ListeningGradeManager.syncGrade(forceRefresh = false) }
-                    launch {
-                        val pSongs = runCatching { VipManager.music.userPurchasedSongs() }.getOrDefault(emptyList())
-                        val pAlbums = runCatching { VipManager.music.userPurchasedAlbums() }.getOrDefault(emptyList())
-                        if (accounts.state.value.currentId == userId) {
-                            _purchasedSongs.value = pSongs
-                            _purchasedAlbums.value = pAlbums
-                        }
-                    }
+                    refreshPurchasedAssets()
                     launch {
                         val artists = runCatching { VipManager.music.followedArtists() }.getOrDefault(emptyList())
                         if (accounts.state.value.currentId == userId) {
@@ -524,18 +543,11 @@ class LibraryViewModel(
         musicLibraryJob = viewModelScope.launch {
             _libraryLoading.value = true; _libraryError.value = null
             try {
-                // 并行启动听歌等级、已购资产与关注歌手查询
+                // 并行启动听歌等级、已购资产（独立 Job 防止被歌单切换取消）与关注歌手查询
                 launch {
                     ListeningGradeManager.syncGrade(forceRefresh = false)
                 }
-                launch {
-                    val pSongs = runCatching { VipManager.music.userPurchasedSongs() }.getOrDefault(emptyList())
-                    val pAlbums = runCatching { VipManager.music.userPurchasedAlbums() }.getOrDefault(emptyList())
-                    if (accounts.state.value.currentId == userId) {
-                        _purchasedSongs.value = pSongs
-                        _purchasedAlbums.value = pAlbums
-                    }
-                }
+                refreshPurchasedAssets()
                 launch {
                     val artists = runCatching { VipManager.music.followedArtists() }.getOrDefault(emptyList())
                     if (accounts.state.value.currentId == userId) {

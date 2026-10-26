@@ -25,7 +25,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.*
@@ -162,35 +161,14 @@ internal fun LandscapePlayerPage(
         Color(lyricHighlightTheme.secondaryHex)
     }
 
-    // 横屏圆角封面边缘色散光晕动画参数（暂停态自动静默休眠）
-    val haloBreath: Float
-    val dispersionPhase: Float
-    if (isPlaying) {
-        val infiniteTransition = rememberInfiniteTransition(label = "landscapeCoverDispersion")
-        val animBreath by infiniteTransition.animateFloat(
-            initialValue = 0.95f,
-            targetValue = 1.06f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 3000, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "haloBreath"
-        )
-        val animPhase by infiniteTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = (2f * PI).toFloat(),
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 10000, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "dispersionPhase"
-        )
-        haloBreath = animBreath
-        dispersionPhase = animPhase
-    } else {
-        haloBreath = 0.94f
-        dispersionPhase = 0.78f
-    }
+    // 横屏圆角封面边缘色散光晕与流光框连续相位动画（暂停/播放 0 跳变，方案 A 顺势减速归位至 45° 对称交错姿态）
+    val coverMotionState = rememberRoundedCoverMotionState(
+        isPlaying = isPlaying,
+        songKey = song.id.ifBlank { song.coverUrl }
+    )
+    val haloBreath = coverMotionState.haloPulse
+    val dispersionPhase = coverMotionState.dispersionPhase
+    val playTransition = coverMotionState.playTransition
 
     val coverPlayScale by animateFloatAsState(
         targetValue = if (isPlaying) 1.0f else 0.92f,
@@ -235,7 +213,7 @@ internal fun LandscapePlayerPage(
                             modifier = Modifier
                                 .size(coverSide)
                                 .graphicsLayer {
-                                    val tilt = sin(dispersionPhase) * 1.6f
+                                    val tilt = sin(dispersionPhase) * (0.55f + 1.05f * playTransition)
                                     rotationY = tilt
                                     rotationX = -tilt * 0.50f
                                     scaleX = coverPlayScale
@@ -251,7 +229,8 @@ internal fun LandscapePlayerPage(
                                         accentSecondary = accentSecondary,
                                         dispersionPhase = dispersionPhase,
                                         haloPulse = haloBreath,
-                                        isPlaying = isPlaying
+                                        isPlaying = isPlaying,
+                                        playTransition = playTransition
                                     )
                                 }
                                 .clip(RoundedCornerShape(28.dp))
@@ -264,7 +243,8 @@ internal fun LandscapePlayerPage(
                                         accentPrimary = accentPrimary,
                                         accentSecondary = accentSecondary,
                                         dispersionPhase = dispersionPhase,
-                                        isPlaying = isPlaying
+                                        isPlaying = isPlaying,
+                                        playTransition = playTransition
                                     )
                                 },
                             contentAlignment = Alignment.Center
@@ -557,8 +537,7 @@ internal fun LandscapePlayerPage(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
-                                    color = Color(0xD90E1624),
-                                    modifier = Modifier.border(0.8.dp, activePrimaryColor.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+                                    color = Color(0xD90E1624)
                                 ) {
                                     Text(
                                         text = formatPlayerDuration(targetTimeMs),
@@ -585,9 +564,8 @@ internal fun LandscapePlayerPage(
                                 )
                                 Surface(
                                     shape = RoundedCornerShape(10.dp),
-                                    color = activePrimaryColor.copy(alpha = 0.24f),
+                                    color = activePrimaryColor.copy(alpha = 0.28f),
                                     modifier = Modifier
-                                        .border(0.8.dp, activePrimaryColor.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
                                         .softCardClickable(shape = RoundedCornerShape(10.dp)) {
                                             isUserScrubbing = false
                                             onSeekToLyricLine(scrubLineIndex)
@@ -653,9 +631,7 @@ internal fun LandscapePlayerPage(
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = Color(0xEB0E1524),
-                    modifier = Modifier
-                        .padding(top = 6.dp)
-                        .border(0.8.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(16.dp))
+                    modifier = Modifier.padding(top = 6.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),

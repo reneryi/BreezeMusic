@@ -2361,6 +2361,197 @@ private fun MasterVinylTurntableView(
     }
 }
 
+internal const val ROUNDED_COVER_INITIAL_REST_PHASE_RAD = (PI / 4.0).toFloat()
+internal const val ROUNDED_COVER_SYMMETRY_PERIOD_RAD = (PI / 2.0).toFloat()
+internal const val ROUNDED_COVER_TWO_PI_RAD = (PI * 2.0).toFloat()
+internal const val ROUNDED_COVER_MIN_STOP_GLIDE_RAD = (PI / 12.0).toFloat() // 最小前向滑行角位移 15°，避免过近急刹
+internal const val ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC = (2.0 * PI / 8.0).toFloat() // 巡航角速度 45°/s (8s/圈，每 2s 转过一个 90° 对称周期)
+internal const val ROUNDED_COVER_SPIN_UP_DURATION_SEC = 0.68f
+private const val ROUNDED_COVER_DECEL_EXPONENT = 2.2f
+
+/**
+ * 圆角方形封面流光动效连续状态容器：
+ * - [dispersionPhase]：连续相位角（弧度），暂停/播放切换时严格保持 C1 连续，绝不重置回 0°；
+ * - [haloPulse]：光晕呼吸缩放因子，随播放/暂停平滑收放；
+ * - [playTransition]：0f（静止暂停态）到 1f（饱满播放态）的连续插值因子。
+ */
+@Immutable
+internal data class RoundedCoverMotionState(
+    val dispersionPhase: Float,
+    val haloPulse: Float,
+    val playTransition: Float
+)
+
+/**
+ * 方案 A：计算「播放 -> 暂停」时顺势向前滑行归位的最近 45° (mod 90°) 对角交错对称目标角（弧度）。
+ * - 正方形流光框具有 90° (π/2) 四重旋转对称性，因此 45°、135°、225°、315° 几何形态完全一致；
+ * - 暂停瞬间绝不瞬移或倒转，而是顺着当前旋转方向锁定前方最近的 k*(π/2) + π/4 对称角平顺滑行停靠。
+ */
+internal fun computeRoundedCoverSymmetryStopTargetRad(
+    currentPhaseRad: Float,
+    currentVelocityRadPerSec: Float = ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC
+): Float {
+    val period = ROUNDED_COVER_SYMMETRY_PERIOD_RAD
+    val offset = ROUNDED_COVER_INITIAL_REST_PHASE_RAD
+    val normalizedIndex = (currentPhaseRad - offset) / period
+    val ceilIndex = kotlin.math.ceil(normalizedIndex.toDouble() - 1e-5).toInt()
+    val candidate = ceilIndex * period + offset
+    val delta = (candidate - currentPhaseRad).coerceAtLeast(0f)
+
+    if (currentVelocityRadPerSec <= 0.02f && delta < 0.02f) {
+        return candidate
+    }
+    val velocityRatio = (currentVelocityRadPerSec / ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC).coerceIn(0.25f, 1.0f)
+    val minGlide = ROUNDED_COVER_MIN_STOP_GLIDE_RAD * velocityRatio
+    return if (delta < minGlide) {
+        candidate + period
+    } else {
+        candidate
+    }
+}
+
+/**
+ * 根据前向滑行角位移 Δθ 与当前角速度计算自然的阻尼减速时长（秒）。
+ */
+internal fun computeRoundedCoverDecelDurationSec(
+    deltaRad: Float,
+    currentVelocityRadPerSec: Float = ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC
+): Float {
+    if (deltaRad <= 1e-4f) return 0f
+    val velocityFactor = (currentVelocityRadPerSec / ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC).coerceIn(0.45f, 1.15f)
+    val rawDuration = (0.58f + 0.56f * deltaRad) / velocityFactor
+    return rawDuration.coerceIn(0.68f, 1.52f)
+}
+
+/**
+ * 计算「暂停 -> 播放」渐进加速阶段在 [elapsedSec] 时刻的瞬时角速度（smoothstep S 型平滑加速，0 阶跃）。
+ */
+internal fun computeRoundedCoverSpinUpVelocity(
+    startOmegaRadPerSec: Float,
+    elapsedSec: Float,
+    targetOmegaRadPerSec: Float = ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC,
+    durationSec: Float = ROUNDED_COVER_SPIN_UP_DURATION_SEC
+): Float {
+    if (durationSec <= 0f) return targetOmegaRadPerSec
+    val u = (elapsedSec / durationSec).coerceIn(0f, 1f)
+    val smooth = u * u * (3f - 2f * u)
+    return startOmegaRadPerSec + (targetOmegaRadPerSec - startOmegaRadPerSec) * smooth
+}
+
+/**
+ * 计算「播放 -> 暂停」阻尼减速阶段在 [elapsedSec] 时刻的瞬时相位角与瞬时角速度：
+ * - 采用 p(s) = θ0 + Δθ * (1 - (1 - s)^n)，满足 p(0) = θ0, p(1) = θ_target, ω(1) = 0；
+ * - 速度导数 ω(s) 全程严格单调递减至 0，无过冲、无回弹、无瞬移。
+ */
+internal fun evaluateRoundedCoverDecelerationStep(
+    startPhaseRad: Float,
+    targetPhaseRad: Float,
+    durationSec: Float,
+    elapsedSec: Float
+): Pair<Float, Float> {
+    val deltaRad = (targetPhaseRad - startPhaseRad).coerceAtLeast(0f)
+    if (deltaRad <= 1e-5f || durationSec <= 1e-4f) {
+        return targetPhaseRad to 0f
+    }
+    val s = (elapsedSec / durationSec).coerceIn(0f, 1f)
+    val rem = 1f - s
+    val remPow = Math.pow(rem.toDouble(), ROUNDED_COVER_DECEL_EXPONENT.toDouble()).toFloat()
+    val remDerivPow = Math.pow(rem.toDouble(), (ROUNDED_COVER_DECEL_EXPONENT - 1f).toDouble()).toFloat()
+    val phase = startPhaseRad + deltaRad * (1f - remPow)
+    val velocity = if (s >= 1f) 0f else (ROUNDED_COVER_DECEL_EXPONENT * deltaRad / durationSec) * remDerivPow
+    return phase to velocity
+}
+
+@Composable
+internal fun rememberRoundedCoverMotionState(
+    isPlaying: Boolean,
+    songKey: Any? = null
+): RoundedCoverMotionState {
+    var phaseRad by remember(songKey) { mutableFloatStateOf(ROUNDED_COVER_INITIAL_REST_PHASE_RAD) }
+    var velocityRadPerSec by remember(songKey) { mutableFloatStateOf(0f) }
+    var breathPhaseRad by remember(songKey) { mutableFloatStateOf(0f) }
+    var hasEverPlayed by remember(songKey) { mutableStateOf(isPlaying) }
+
+    val playTransition by animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0f,
+        animationSpec = tween(durationMillis = 560, easing = FastOutSlowInEasing),
+        label = "roundedCoverPlayTransition"
+    )
+
+    LaunchedEffect(isPlaying, songKey) {
+        val twoPi = ROUNDED_COVER_TWO_PI_RAD
+        if (isPlaying) {
+            hasEverPlayed = true
+            val startOmega = velocityRadPerSec.coerceAtLeast(0f)
+            var elapsedSec = 0f
+            var lastFrameNanos = -1L
+            while (isActive) {
+                withFrameNanos { frameNanos ->
+                    val dt = if (lastFrameNanos < 0L) {
+                        0f
+                    } else {
+                        ((frameNanos - lastFrameNanos) / 1_000_000_000f).coerceIn(0f, 0.05f)
+                    }
+                    lastFrameNanos = frameNanos
+                    elapsedSec += dt
+                    val currentOmega = computeRoundedCoverSpinUpVelocity(
+                        startOmegaRadPerSec = startOmega,
+                        elapsedSec = elapsedSec
+                    )
+                    velocityRadPerSec = currentOmega
+                    phaseRad = (phaseRad + currentOmega * dt) % twoPi
+                    breathPhaseRad = (breathPhaseRad + dt * (twoPi / 6.0f)) % twoPi
+                }
+            }
+        } else if (hasEverPlayed || velocityRadPerSec > 0.005f) {
+            val startPhase = phaseRad
+            val startVelocity = velocityRadPerSec.coerceAtLeast(0.15f)
+            val targetPhase = computeRoundedCoverSymmetryStopTargetRad(
+                currentPhaseRad = startPhase,
+                currentVelocityRadPerSec = startVelocity
+            )
+            val deltaRad = (targetPhase - startPhase).coerceAtLeast(0f)
+            val durationSec = computeRoundedCoverDecelDurationSec(
+                deltaRad = deltaRad,
+                currentVelocityRadPerSec = startVelocity
+            )
+            if (durationSec > 0f && deltaRad > 1e-4f) {
+                var elapsedSec = 0f
+                var lastFrameNanos = -1L
+                while (isActive && elapsedSec < durationSec) {
+                    withFrameNanos { frameNanos ->
+                        val dt = if (lastFrameNanos < 0L) {
+                            0f
+                        } else {
+                            ((frameNanos - lastFrameNanos) / 1_000_000_000f).coerceIn(0f, 0.05f)
+                        }
+                        lastFrameNanos = frameNanos
+                        elapsedSec = (elapsedSec + dt).coerceAtMost(durationSec)
+                        val (nextPhase, nextVel) = evaluateRoundedCoverDecelerationStep(
+                            startPhaseRad = startPhase,
+                            targetPhaseRad = targetPhase,
+                            durationSec = durationSec,
+                            elapsedSec = elapsedSec
+                        )
+                        phaseRad = nextPhase
+                        velocityRadPerSec = nextVel
+                        breathPhaseRad = (breathPhaseRad + dt * (twoPi / 6.0f) * (1f - elapsedSec / durationSec)) % twoPi
+                    }
+                }
+            }
+            phaseRad = ((targetPhase % twoPi) + twoPi) % twoPi
+            velocityRadPerSec = 0f
+        }
+    }
+
+    val haloPulse = 0.94f + playTransition * (0.065f + 0.055f * sin(breathPhaseRad))
+    return RoundedCoverMotionState(
+        dispersionPhase = phaseRad,
+        haloPulse = haloPulse,
+        playTransition = playTransition
+    )
+}
+
 /**
  * 圆角封面多光谱棱镜边缘色散光晕绘制引擎 (Chromatic Dispersion Edge Halo):
  * - 同时赋能竖屏与横屏圆角封面；
@@ -2373,11 +2564,13 @@ internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
     accentSecondary: Color,
     dispersionPhase: Float,
     haloPulse: Float,
-    isPlaying: Boolean
+    isPlaying: Boolean,
+    playTransition: Float = if (isPlaying) 1f else 0f
 ) {
     val w = size.width
     val h = size.height
     if (w <= 4f || h <= 4f) return
+    val p = playTransition.coerceIn(0f, 1f)
 
     // 三原色棱镜色散光谱通道
     val prismCyan = lerp(accentSecondary, Color(0xFF00F0FF), 0.56f)
@@ -2386,14 +2579,14 @@ internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
     val prismGold = lerp(accentPrimary, Color(0xFFFFD166), 0.42f)
     val deepShadowColor = lerp(accentPrimary, Color.Black, 0.68f)
 
-    // 1. 底部深邃悬浮立体暗影
+    // 1. 底部深邃悬浮立体暗影（随 playTransition 平滑过渡）
     val shadowCenter = Offset(w * 0.5f, h * 0.58f)
     val shadowRadius = (w * 0.68f).coerceAtLeast(1f)
     drawCircle(
         brush = Brush.radialGradient(
             colorStops = arrayOf(
-                0.00f to deepShadowColor.copy(alpha = if (isPlaying) 0.62f else 0.42f),
-                0.64f to deepShadowColor.copy(alpha = if (isPlaying) 0.28f else 0.16f),
+                0.00f to deepShadowColor.copy(alpha = 0.42f + 0.20f * p),
+                0.64f to deepShadowColor.copy(alpha = 0.16f + 0.12f * p),
                 1.00f to Color.Transparent
             ),
             center = shadowCenter,
@@ -2404,14 +2597,14 @@ internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
     )
 
     // 2. 沿圆角矩形边缘展开的三通道色散错位光场 (Chromatic Aberration Rounded-Rect Shells)
-    val dispAmp = (if (isPlaying) 6.5.dp else 3.8.dp).toPx() * haloPulse
+    val dispAmp = (3.8f + 2.7f * p).dp.toPx() * haloPulse
     val cyanShift = Offset(cos(dispersionPhase) * dispAmp, sin(dispersionPhase) * dispAmp)
     val magentaShift = Offset(cos(dispersionPhase + 2.094f) * dispAmp, sin(dispersionPhase + 2.094f) * dispAmp)
     val violetShift = Offset(cos(dispersionPhase + 4.188f) * dispAmp, sin(dispersionPhase + 4.188f) * dispAmp)
 
     val maxSpreadPx = 28.dp.toPx() * haloPulse
     val shellCount = 7
-    val activityBoost = if (isPlaying) 1.0f else 0.62f
+    val activityBoost = 0.62f + 0.38f * p
 
     for (i in shellCount downTo 1) {
         val t = i.toFloat() / shellCount.toFloat()
@@ -2449,7 +2642,7 @@ internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
 
     // 3. 贴合圆角边缘的旋转棱镜光谱色散流光环 (Prismatic Spectral Dispersion Edge Rings)
     val center = Offset(w * 0.5f, h * 0.5f)
-    val deg = (dispersionPhase * 180f / PI.toFloat()) % 360f
+    val deg = ((dispersionPhase * 180f / PI.toFloat()) % 360f + 360f) % 360f
     rotate(degrees = deg, pivot = center) {
         val sweepBrush = Brush.sweepGradient(
             0.00f to prismCyan,
@@ -2487,11 +2680,13 @@ internal fun DrawScope.drawRoundedCoverPrismaticRim(
     accentPrimary: Color,
     accentSecondary: Color,
     dispersionPhase: Float,
-    isPlaying: Boolean
+    isPlaying: Boolean,
+    playTransition: Float = if (isPlaying) 1f else 0f
 ) {
     val w = size.width
     val h = size.height
     if (w <= 4f || h <= 4f) return
+    val p = playTransition.coerceIn(0f, 1f)
 
     val prismCyan = lerp(accentSecondary, Color(0xFF00F0FF), 0.58f)
     val prismMagenta = lerp(accentPrimary, Color(0xFFFF3E8E), 0.52f)
@@ -2526,11 +2721,11 @@ internal fun DrawScope.drawRoundedCoverPrismaticRim(
     drawRoundRect(
         brush = Brush.linearGradient(
             colors = listOf(
-                Color.White.copy(alpha = if (isPlaying) 0.72f else 0.48f),
-                prismCyan.copy(alpha = if (isPlaying) 0.68f else 0.42f),
-                prismMagenta.copy(alpha = if (isPlaying) 0.62f else 0.36f),
-                prismViolet.copy(alpha = if (isPlaying) 0.66f else 0.40f),
-                Color.White.copy(alpha = if (isPlaying) 0.54f else 0.32f)
+                Color.White.copy(alpha = 0.48f + 0.24f * p),
+                prismCyan.copy(alpha = 0.42f + 0.26f * p),
+                prismMagenta.copy(alpha = 0.36f + 0.26f * p),
+                prismViolet.copy(alpha = 0.40f + 0.26f * p),
+                Color.White.copy(alpha = 0.32f + 0.22f * p)
             ),
             start = gradStart,
             end = gradEnd
@@ -2573,34 +2768,13 @@ private fun StaticRoundedSquareCoverView(
         animationSpec = ConceptMotion.gentleBounceSpring(),
         label = "squareCoverScale"
     )
-    val haloPulse: Float
-    val dispersionPhase: Float
-    if (isPlaying) {
-        val infiniteTransition = rememberInfiniteTransition(label = "squareCoverDispersionTransition")
-        val pulse by infiniteTransition.animateFloat(
-            initialValue = 0.95f,
-            targetValue = 1.06f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 3000, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "squareCoverHaloPulse"
-        )
-        val phase by infiniteTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = (2f * PI).toFloat(),
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 10000, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "squareCoverDispersionPhase"
-        )
-        haloPulse = pulse
-        dispersionPhase = phase
-    } else {
-        haloPulse = 0.94f
-        dispersionPhase = 0.78f
-    }
+    val motionState = rememberRoundedCoverMotionState(
+        isPlaying = isPlaying,
+        songKey = coverUrl
+    )
+    val haloPulse = motionState.haloPulse
+    val dispersionPhase = motionState.dispersionPhase
+    val playTransition = motionState.playTransition
 
     Box(
         modifier = Modifier
@@ -2617,7 +2791,8 @@ private fun StaticRoundedSquareCoverView(
                     accentSecondary = secondaryAccentColor,
                     dispersionPhase = dispersionPhase,
                     haloPulse = haloPulse,
-                    isPlaying = isPlaying
+                    isPlaying = isPlaying,
+                    playTransition = playTransition
                 )
             }
             .clip(RoundedCornerShape(30.dp))
@@ -2629,7 +2804,8 @@ private fun StaticRoundedSquareCoverView(
                     accentPrimary = accentColor,
                     accentSecondary = secondaryAccentColor,
                     dispersionPhase = dispersionPhase,
-                    isPlaying = isPlaying
+                    isPlaying = isPlaying,
+                    playTransition = playTransition
                 )
             },
         contentAlignment = Alignment.Center
@@ -4013,11 +4189,6 @@ internal fun AnimatedPlayPauseCenterButton(
                         )
                     )
                 )
-                .border(
-                    width = 1.2.dp,
-                    color = Color.White.copy(alpha = 0.32f),
-                    shape = CircleShape
-                )
                 .softClickable(
                     pressScale = 0.88f,
                     onClick = onClick
@@ -4461,12 +4632,7 @@ private fun RedesignedDedicatedLyricPage(
                             Surface(
                                 shape = RoundedCornerShape(9.dp),
                                 color = Color(0xD90E1624),
-                                contentColor = Color.White,
-                                modifier = Modifier.border(
-                                    width = 0.8.dp,
-                                    color = activePrimaryColor.copy(alpha = 0.45f),
-                                    shape = RoundedCornerShape(9.dp)
-                                )
+                                contentColor = Color.White
                             ) {
                                 Text(
                                     text = formatDuration(targetTimeMs),
@@ -4511,13 +4677,8 @@ private fun RedesignedDedicatedLyricPage(
                             )
                             Surface(
                                 shape = RoundedCornerShape(11.dp),
-                                color = activePrimaryColor.copy(alpha = 0.24f),
+                                color = activePrimaryColor.copy(alpha = 0.28f),
                                 modifier = Modifier
-                                    .border(
-                                        width = 0.9.dp,
-                                        color = activePrimaryColor.copy(alpha = 0.65f),
-                                        shape = RoundedCornerShape(11.dp)
-                                    )
                                     .softCardClickable(shape = RoundedCornerShape(11.dp)) {
                                         isUserScrubbing = false
                                         onLineClick(scrubLineIndex)
