@@ -75,6 +75,7 @@ import com.concept.music.data.model.Song
 import com.concept.music.ui.theme.ConceptCyanAccent
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.readableOnDarkSurface
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.CoverStyle
@@ -147,13 +148,16 @@ internal fun LandscapePlayerPage(
     val context = LocalContext.current
     var showBgPickerMenu by remember { mutableStateOf(false) }
 
+    val readableAccentPrimary = remember(accentPrimary) { accentPrimary.readableOnDarkSurface(0.46f) }
+    val readableAccentSecondary = remember(accentSecondary) { accentSecondary.readableOnDarkSurface(0.50f) }
+
     val activePrimaryColor = if (lyricHighlightTheme == LyricHighlightTheme.DYNAMIC_COVER) {
-        lerp(accentPrimary, Color.White, 0.16f)
+        readableAccentPrimary
     } else {
         Color(lyricHighlightTheme.primaryHex)
     }
     val activeSecondaryColor = if (lyricHighlightTheme == LyricHighlightTheme.DYNAMIC_COVER) {
-        accentSecondary
+        readableAccentSecondary
     } else {
         Color(lyricHighlightTheme.secondaryHex)
     }
@@ -401,7 +405,6 @@ internal fun LandscapePlayerPage(
                     }
 
                     val supportsHardwareBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-                    val isAutoScrolling by remember { derivedStateOf { listState.isScrollInProgress } }
 
                     LazyColumn(
                         state = listState,
@@ -426,13 +429,30 @@ internal fun LandscapePlayerPage(
                                 animationSpec = ConceptMotion.spatialPageSpring(),
                                 label = "landLyricScale"
                             )
-                            val depthBlurVal = if (lyricBlurEnabled && !isUserScrubbing && !isAutoScrolling && !isCurrent) {
+                            val targetDepthBlurVal = if (lyricBlurEnabled && !isUserScrubbing && !isCurrent) {
                                 when (distance) {
-                                    1 -> 0.7f * lyricBlurIntensity
-                                    2 -> 1.4f * lyricBlurIntensity
-                                    else -> 2.4f * lyricBlurIntensity
+                                    1 -> 0.72f * lyricBlurIntensity
+                                    2 -> 1.40f * lyricBlurIntensity
+                                    else -> 2.40f * lyricBlurIntensity
                                 }.coerceIn(0f, 5f)
                             } else 0f
+                            val depthBlurVal by animateFloatAsState(
+                                targetValue = targetDepthBlurVal,
+                                animationSpec = tween(durationMillis = 360, easing = ConceptMotion.LyricSmoothScrollEasing),
+                                label = "landLyricDepthBlur"
+                            )
+                            val targetDistanceAlpha = when {
+                                isCurrent -> 1.0f
+                                isScrubTarget -> 0.92f
+                                distance == 1 -> 0.56f
+                                distance == 2 -> 0.34f
+                                else -> 0.16f
+                            }
+                            val distanceAlpha by animateFloatAsState(
+                                targetValue = targetDistanceAlpha,
+                                animationSpec = tween(durationMillis = 360, easing = ConceptMotion.LyricSmoothScrollEasing),
+                                label = "landLyricDistanceAlpha"
+                            )
 
                             Box(
                                 modifier = Modifier
@@ -444,7 +464,7 @@ internal fun LandscapePlayerPage(
                                         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
                                     }
                                     .then(
-                                        if (supportsHardwareBlur && depthBlurVal >= 0.5f) {
+                                        if (supportsHardwareBlur && depthBlurVal >= 0.05f) {
                                             Modifier.blur(depthBlurVal.dp)
                                         } else Modifier
                                     )
@@ -468,7 +488,7 @@ internal fun LandscapePlayerPage(
                                         Text(
                                             text = phoneticText,
                                             style = MaterialTheme.typography.labelSmall.copy(
-                                                color = if (isCurrent) activePrimaryColor.copy(alpha = 0.90f) else Color.White.copy(alpha = 0.38f),
+                                                color = if (isCurrent) activePrimaryColor.copy(alpha = 0.90f) else Color.White.copy(alpha = (distanceAlpha * 0.68f).coerceIn(0.12f, 0.55f)),
                                                 fontSize = phoneticFontSize.sp,
                                                 lineHeight = (phoneticFontSize * 1.38f).sp,
                                                 fontWeight = FontWeight.SemiBold
@@ -487,13 +507,6 @@ internal fun LandscapePlayerPage(
                                             activeSecondaryColor = activeSecondaryColor
                                         )
                                     } else {
-                                        val distanceAlpha = when {
-                                            isCurrent -> 1.0f
-                                            isScrubTarget -> 0.92f
-                                            distance == 1 -> 0.56f
-                                            distance == 2 -> 0.34f
-                                            else -> 0.16f
-                                        }
                                         // 固定基础字号与字重，配合外层 graphicsLayer 缩放实现 0 Relayout 丝滑过渡
                                         Text(
                                             text = line.text,
@@ -513,7 +526,7 @@ internal fun LandscapePlayerPage(
                                         Text(
                                             text = trans,
                                             style = MaterialTheme.typography.bodyMedium.copy(
-                                                color = if (isCurrent) activePrimaryColor.copy(alpha = 0.88f) else Color.White.copy(alpha = 0.38f),
+                                                color = if (isCurrent) activePrimaryColor.copy(alpha = 0.88f) else Color.White.copy(alpha = (distanceAlpha * 0.78f).coerceIn(0.14f, 0.58f)),
                                                 fontSize = transFontSize.sp,
                                                 lineHeight = (transFontSize * 1.42f).sp,
                                                 fontWeight = FontWeight.SemiBold
@@ -627,8 +640,8 @@ internal fun LandscapePlayerPage(
                 contentAlignment = Alignment.Center
             ) {
                 LandscapeBackgroundPrismCanvasIcon(
-                    accentColor = if (showBgPickerMenu) accentPrimary else Color.White.copy(alpha = 0.86f),
-                    secondaryColor = accentSecondary
+                    accentColor = if (showBgPickerMenu) readableAccentPrimary else Color.White.copy(alpha = 0.86f),
+                    secondaryColor = readableAccentSecondary
                 )
             }
 
@@ -660,7 +673,7 @@ internal fun LandscapePlayerPage(
                             ) {
                                 Text(
                                     text = bgStyle.label,
-                                    color = if (selected) accentPrimary else Color.White.copy(alpha = 0.82f),
+                                    color = if (selected) readableAccentPrimary else Color.White.copy(alpha = 0.82f),
                                     fontSize = 11.sp,
                                     fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
                                     modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
@@ -940,7 +953,7 @@ private fun LandscapeBottomControlDock(
             ) {
                 Text(
                     text = "${formatPlayerDuration(displayCurrentMs)} / ${formatPlayerDuration(durationMs)}",
-                    color = if (isInteractingWithBar) accentPrimary else Color.White.copy(alpha = 0.52f),
+                    color = if (isInteractingWithBar) accentPrimary.readableOnDarkSurface(0.45f) else Color.White.copy(alpha = 0.52f),
                     fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -1024,6 +1037,7 @@ private fun LandscapeCompactControlRow(
     onOpenQueue: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val readableAccentPrimary = remember(accentPrimary) { accentPrimary.readableOnDarkSurface(0.45f) }
     val prevNudge = remember { Animatable(0f) }
     val nextNudge = remember { Animatable(0f) }
     val morphProgressState = animateFloatAsState(
@@ -1075,8 +1089,8 @@ private fun LandscapeCompactControlRow(
                         PlayMode.REPEAT_ONE -> {
                             val pad = w * 0.14f
                             val rectSize = Size(w - pad * 2, h - pad * 2)
-                            drawArc(accentPrimary, -155f, 130f, false, Offset(pad, pad), rectSize, style = Stroke(stroke, cap = StrokeCap.Round))
-                            drawArc(accentPrimary, 25f, 130f, false, Offset(pad, pad), rectSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                            drawArc(readableAccentPrimary, -155f, 130f, false, Offset(pad, pad), rectSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                            drawArc(readableAccentPrimary, 25f, 130f, false, Offset(pad, pad), rectSize, style = Stroke(stroke, cap = StrokeCap.Round))
                             drawLine(Color.White, Offset(w * 0.50f, h * 0.34f), Offset(w * 0.50f, h * 0.66f), stroke, StrokeCap.Round)
                         }
                         PlayMode.SHUFFLE -> {
@@ -1089,7 +1103,7 @@ private fun LandscapeCompactControlRow(
                                 cubicTo(w * 0.45f, h * 0.68f, w * 0.55f, h * 0.32f, w * 0.85f, h * 0.32f)
                             }
                             drawPath(path1, tint, style = Stroke(stroke, cap = StrokeCap.Round))
-                            drawPath(path2, accentPrimary, style = Stroke(stroke, cap = StrokeCap.Round))
+                            drawPath(path2, readableAccentPrimary, style = Stroke(stroke, cap = StrokeCap.Round))
                         }
                     }
                 }
@@ -1207,9 +1221,9 @@ private fun LandscapeCompactControlRow(
                 drawLine(tint, Offset(w * 0.14f, h * 0.50f), Offset(w * 0.62f, h * 0.50f), stroke, StrokeCap.Round)
                 drawLine(tint, Offset(w * 0.14f, h * 0.74f), Offset(w * 0.48f, h * 0.74f), stroke, StrokeCap.Round)
                 val noteCenter = Offset(w * 0.72f, h * 0.74f)
-                drawCircle(accentPrimary, radius = 2.8.dp.toPx(), center = noteCenter)
-                drawLine(accentPrimary, Offset(noteCenter.x + 2.0.dp.toPx(), noteCenter.y), Offset(noteCenter.x + 2.0.dp.toPx(), h * 0.40f), stroke * 0.9f, StrokeCap.Round)
-                drawLine(accentPrimary, Offset(noteCenter.x + 2.0.dp.toPx(), h * 0.40f), Offset(w * 0.88f, h * 0.47f), stroke * 0.9f, StrokeCap.Round)
+                drawCircle(readableAccentPrimary, radius = 2.8.dp.toPx(), center = noteCenter)
+                drawLine(readableAccentPrimary, Offset(noteCenter.x + 2.0.dp.toPx(), noteCenter.y), Offset(noteCenter.x + 2.0.dp.toPx(), h * 0.40f), stroke * 0.9f, StrokeCap.Round)
+                drawLine(readableAccentPrimary, Offset(noteCenter.x + 2.0.dp.toPx(), h * 0.40f), Offset(w * 0.88f, h * 0.47f), stroke * 0.9f, StrokeCap.Round)
             }
         }
     }

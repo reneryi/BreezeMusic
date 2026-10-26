@@ -13,6 +13,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Collections
@@ -116,22 +119,56 @@ open class PlaybackHistoryRepository(private val context: Context?) {
     } catch (_: Exception) {
         null
     }
+    private val historyDir: File? = try {
+        context?.applicationContext?.filesDir?.resolve("play_history_store")?.apply {
+            if (!exists()) mkdirs()
+        }
+    } catch (_: Exception) {
+        null
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val memoryHistory = ConcurrentHashMap<String, List<Song>>()
 
+    private val _historyVersion = MutableStateFlow(0)
+    val historyVersion: StateFlow<Int> = _historyVersion.asStateFlow()
+
+    private fun historyFileFor(key: String): File? {
+        val dir = historyDir ?: return null
+        val safeName = key.replace(Regex("[^a-zA-Z0-9_.-]"), "_")
+        return File(dir, "$safeName.json")
+    }
+
     open fun get(userId: String?): List<Song> {
         val key = "songs_${userId ?: "guest"}"
         memoryHistory[key]?.let { return it }
         return runCatching {
-            val sp = prefs ?: return emptyList()
-            val raw = sp.getString(key, "[]") ?: "[]"
+            val file = historyFileFor(key)
+            val raw = when {
+                file != null && file.exists() -> file.readText(Charsets.UTF_8)
+                else -> prefs?.getString(key, "[]") ?: "[]"
+            }
             val parsed = KugouSigner.gson.fromJson<List<Song>>(raw, object : TypeToken<List<Song>>() {}.type) ?: emptyList()
             val deduped = deduplicateAndMergeSongs(parsed)
             memoryHistory[key] = deduped
             deduped
         }.getOrDefault(emptyList())
+    }
+
+    private fun persistHistoryAsync(key: String, songs: List<Song>) {
+        ioScope.launch {
+            runCatching {
+                val json = KugouSigner.gson.toJson(songs)
+                val file = historyFileFor(key)
+                if (file != null) {
+                    file.writeText(json, Charsets.UTF_8)
+                    prefs?.edit()?.remove(key)?.apply()
+                } else {
+                    prefs?.edit()?.putString(key, json)?.apply()
+                }
+            }
+        }
     }
 
     @Synchronized
@@ -140,21 +177,32 @@ open class PlaybackHistoryRepository(private val context: Context?) {
         val current = get(userId)
         val matchedExisting = current.firstOrNull { isSameMusicTrack(it, song) }
         val mergedTop = if (matchedExisting != null) mergeTrackHigherQuality(song, matchedExisting) else song
-        val updated = (listOf(mergedTop) + current.filterNot { isSameMusicTrack(it, song) }).take(100)
+        // 移除 100 首截断上限，完整保留用户全量听歌历史记录
+        val updated = listOf(mergedTop) + current.filterNot { isSameMusicTrack(it, song) }
         memoryHistory[key] = updated
-        ioScope.launch {
-            runCatching {
-                prefs?.edit()?.putString(key, KugouSigner.gson.toJson(updated))?.apply()
-            }
-        }
+        _historyVersion.value += 1
+        persistHistoryAsync(key, updated)
+    }
+
+    @Synchronized
+    open fun saveAll(userId: String?, songs: List<Song>) {
+        val key = "songs_${userId ?: "guest"}"
+        val deduped = deduplicateAndMergeSongs(songs)
+        memoryHistory[key] = deduped
+        _historyVersion.value += 1
+        persistHistoryAsync(key, deduped)
     }
 
     @Synchronized
     open fun clear(userId: String?) {
         val key = "songs_${userId ?: "guest"}"
         memoryHistory.remove(key)
+        _historyVersion.value += 1
         ioScope.launch {
-            prefs?.edit()?.remove(key)?.apply()
+            runCatching {
+                historyFileFor(key)?.takeIf { it.exists() }?.delete()
+                prefs?.edit()?.remove(key)?.apply()
+            }
         }
     }
 }
@@ -162,7 +210,7 @@ open class PlaybackHistoryRepository(private val context: Context?) {
 /**
  * 发现页、歌单、榜单与电台曲目本地持久化秒开缓存 (Stale-While-Revalidate)
  * - 使用单线程串行调度器保证并发落盘严格保序；
- * - 歌单详情缓存拆分为独立 JSON 文件 + LRU 淘汰，防止单 SharedPreferences XML 膨胀引发 Activity.onStop() ANR；
+ * - 歌单详情缓存拆分为独立 JSON 文件，防止单 SharedPreferences XML 膨胀引发 Activity.onStop() ANR；
  * - 支持 allowEmpty=true 覆盖写入空列表，修复取消最后一条收藏或删除最后一个歌单后重启复活的 Bug。
  */
 class DiscoverLocalCache(context: Context? = null) {
@@ -182,8 +230,8 @@ class DiscoverLocalCache(context: Context? = null) {
     private val cacheIoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
 
     private val memorySongListMap: MutableMap<String, List<Song>> = Collections.synchronizedMap(
-        object : LinkedHashMap<String, List<Song>>(25, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Song>>?): Boolean = size > 25
+        object : LinkedHashMap<String, List<Song>>(64, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<Song>>?): Boolean = size > 64
         }
     )
     private val memoryRankList = ConcurrentHashMap<String, List<RankItem>>()
@@ -241,26 +289,21 @@ class DiscoverLocalCache(context: Context? = null) {
     private fun saveSongList(
         key: String,
         songs: List<Song>,
-        maxPersistCount: Int = 120,
+        maxPersistCount: Int = Int.MAX_VALUE,
         allowEmpty: Boolean = false,
         useDedicatedFile: Boolean = false
     ) {
         if (songs.isEmpty() && !allowEmpty) return
-        val trimmed = songs.take(maxPersistCount)
-        memorySongListMap[key] = trimmed
+        val persisted = if (maxPersistCount < songs.size) songs.take(maxPersistCount) else songs
+        memorySongListMap[key] = persisted
         cacheIoScope.launch {
             runCatching {
-                val json = KugouSigner.gson.toJson(trimmed)
+                val json = KugouSigner.gson.toJson(persisted)
                 if (useDedicatedFile && playlistCacheDir != null) {
                     val f = playlistFileFor(key)
                     if (f != null) {
                         f.writeText(json, Charsets.UTF_8)
-                        // 淘汰超过 30 个歌单的旧文件并清理旧版 SharedPreferences 中的同名大体积项
                         prefs?.edit()?.remove(key)?.apply()
-                        val files = playlistCacheDir.listFiles()?.filter { it.isFile && it.name.endsWith(".json") }.orEmpty()
-                        if (files.size > 30) {
-                            files.sortedBy { it.lastModified() }.take(files.size - 30).forEach { runCatching { it.delete() } }
-                        }
                     }
                 } else {
                     prefs?.edit()?.putString(key, json)?.apply()
@@ -274,19 +317,19 @@ class DiscoverLocalCache(context: Context? = null) {
         getSongList("daily_rec_${userId ?: "guest"}")
 
     fun saveDailyRecommend(userId: String?, songs: List<Song>) =
-        saveSongList("daily_rec_${userId ?: "guest"}", songs, maxPersistCount = 60)
+        saveSongList("daily_rec_${userId ?: "guest"}", songs)
 
     fun getPersonalFm(userId: String?): List<Song> =
         getSongList("personal_fm_${userId ?: "guest"}")
 
     fun savePersonalFm(userId: String?, songs: List<Song>) =
-        saveSongList("personal_fm_${userId ?: "guest"}", songs, maxPersistCount = 40)
+        saveSongList("personal_fm_${userId ?: "guest"}", songs)
 
     fun getNewSongs(periodKey: String): List<Song> =
         getSongList("new_songs_${periodKey.uppercase()}")
 
     fun saveNewSongs(periodKey: String, songs: List<Song>) =
-        saveSongList("new_songs_${periodKey.uppercase()}", songs, maxPersistCount = 120)
+        saveSongList("new_songs_${periodKey.uppercase()}", songs)
 
     fun getRanks(): List<RankItem> {
         memoryRankList["ranks_all"]?.takeIf { it.isNotEmpty() }?.let { return it }
@@ -338,19 +381,19 @@ class DiscoverLocalCache(context: Context? = null) {
         getSongList("rank_songs_$rankId", useDedicatedFile = true)
 
     fun saveRankSongs(rankId: Int, songs: List<Song>) =
-        saveSongList("rank_songs_$rankId", songs, maxPersistCount = 150, useDedicatedFile = true)
+        saveSongList("rank_songs_$rankId", songs, useDedicatedFile = true)
 
     fun getFmChannelSongs(channelId: String): List<Song> =
         getSongList("fm_channel_songs_$channelId", useDedicatedFile = true)
 
     fun saveFmChannelSongs(channelId: String, songs: List<Song>) =
-        saveSongList("fm_channel_songs_$channelId", songs, maxPersistCount = 60, useDedicatedFile = true)
+        saveSongList("fm_channel_songs_$channelId", songs, useDedicatedFile = true)
 
     fun getPlaylistSongs(playlistId: String): List<Song> =
         getSongList("playlist_songs_$playlistId", useDedicatedFile = true)
 
     fun savePlaylistSongs(playlistId: String, songs: List<Song>, allowEmpty: Boolean = true) =
-        saveSongList("playlist_songs_$playlistId", songs, maxPersistCount = 200, allowEmpty = allowEmpty, useDedicatedFile = true)
+        saveSongList("playlist_songs_$playlistId", songs, allowEmpty = allowEmpty, useDedicatedFile = true)
 
     fun getUserPlaylists(userId: String?): List<Playlist> {
         val key = "user_playlists_${userId ?: "guest"}"
@@ -376,8 +419,8 @@ class DiscoverLocalCache(context: Context? = null) {
     }
 
     fun getLikedSongs(userId: String?): List<Song> =
-        getSongList("liked_songs_${userId ?: "guest"}")
+        getSongList("liked_songs_${userId ?: "guest"}", useDedicatedFile = true)
 
     fun saveLikedSongs(userId: String?, songs: List<Song>, allowEmpty: Boolean = true) =
-        saveSongList("liked_songs_${userId ?: "guest"}", songs, maxPersistCount = 200, allowEmpty = allowEmpty)
+        saveSongList("liked_songs_${userId ?: "guest"}", songs, allowEmpty = allowEmpty, useDedicatedFile = true)
 }

@@ -536,7 +536,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         existingRecent: List<SavedPlayQueue>
     ): Pair<List<SavedPlayQueue>, String> {
         if (queue.isEmpty()) return existingRecent to currentActiveId
-        val cleanSongs = queue.take(150).map { it.copy(playUrl = "") }
+        val cleanSongs = queue.map { it.copy(playUrl = "") }
         val now = System.currentTimeMillis()
         val matchedExisting = existingRecent.find { it.id == currentActiveId && isSameQueueLineage(it.songs, cleanSongs) }
             ?: existingRecent.find { isSameQueueLineage(it.songs, cleanSongs) }
@@ -773,11 +773,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val latestPos = mutablePositionFlow.value.positionMs.takeIf { it > 0L } ?: snapshot.currentPositionMs
         PlaybackCoordinator.syncQueueSnapshot(snapshot.playlistQueue, snapshot.currentIndex, snapshot.playMode.name)
         PlaybackCoordinator.persistAsync(prefs) {
-            val cleanQueue = snapshot.playlistQueue.take(150).map { it.copy(playUrl = "") }
+            val cleanQueue = snapshot.playlistQueue.map { it.copy(playUrl = "") }
             val queueJson = gson.toJson(cleanQueue)
             val recentJson = gson.toJson(
                 snapshot.recentQueues.take(5).map { rq ->
-                    rq.copy(songs = rq.songs.take(120).map { s -> s.copy(playUrl = "") })
+                    rq.copy(songs = rq.songs.map { s -> s.copy(playUrl = "") })
                 }
             )
             putString("cover_style", snapshot.coverStyle.name)

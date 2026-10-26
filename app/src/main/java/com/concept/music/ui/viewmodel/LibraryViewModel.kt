@@ -200,13 +200,16 @@ class LibraryViewModel(
                     _librarySongs.value = localHistory
                 }
                 val cloudLatest = if (userId != null && accountState.value.auth == AuthState.READY) {
-                    runCatching { VipManager.music.latestListenSongs(pageSize = 50) }.getOrDefault(emptyList())
+                    runCatching { VipManager.music.latestListenSongs(pageSize = 200) }.getOrDefault(emptyList())
                 } else emptyList()
-                _librarySongs.value = if (cloudLatest.isNotEmpty()) {
-                    deduplicateAndMergeSongs(localHistory + cloudLatest)
+                val mergedHistory = if (cloudLatest.isNotEmpty()) {
+                    deduplicateAndMergeSongs(localHistory + cloudLatest).also {
+                        VipManager.history.saveAll(userId, it)
+                    }
                 } else {
                     deduplicateAndMergeSongs(localHistory)
                 }
+                _librarySongs.value = mergedHistory
                 _libraryLoading.value = false
             }
             return
@@ -438,14 +441,17 @@ class LibraryViewModel(
             musicLibraryJob = viewModelScope.launch {
                 val localHistory = VipManager.history.get(userId)
                 val cloudLatest = if (userId != null && accountState.value.auth == AuthState.READY) {
-                    runCatching { VipManager.music.latestListenSongs(pageSize = 50) }.getOrDefault(emptyList())
+                    runCatching { VipManager.music.latestListenSongs(pageSize = 200) }.getOrDefault(emptyList())
                 } else emptyList()
 
-                _librarySongs.value = if (cloudLatest.isNotEmpty()) {
-                    deduplicateAndMergeSongs(localHistory + cloudLatest)
+                val mergedHistory = if (cloudLatest.isNotEmpty()) {
+                    deduplicateAndMergeSongs(localHistory + cloudLatest).also {
+                        VipManager.history.saveAll(userId, it)
+                    }
                 } else {
                     deduplicateAndMergeSongs(localHistory)
                 }
+                _librarySongs.value = mergedHistory
                 if (userId != null && accountState.value.auth == AuthState.READY) {
                     launch { ListeningGradeManager.syncGrade(forceRefresh = false) }
                     launch {

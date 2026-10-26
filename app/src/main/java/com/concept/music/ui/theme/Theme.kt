@@ -108,6 +108,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.pow
 import kotlin.math.sin
 
 enum class AppThemeMode(val label: String, val desc: String) {
@@ -1114,4 +1115,112 @@ fun ConceptStageBackground(
             },
         content = content
     )
+}
+
+/**
+ * 计算颜色的 WCAG 2.1 相对感知亮度 (Relative Luminance, 0.0 ~ 1.0)。
+ */
+fun Color.perceptualLuminance(): Float {
+    fun channelLinear(c: Float): Float {
+        val v = c.coerceIn(0f, 1f)
+        return if (v <= 0.04045f) v / 12.92f else ((v + 0.055f) / 1.055f).pow(2.4f)
+    }
+    return 0.2126f * channelLinear(red) +
+        0.7152f * channelLinear(green) +
+        0.0722f * channelLinear(blue)
+}
+
+internal fun composeColorToHsv(color: Color): FloatArray {
+    val r = color.red.coerceIn(0f, 1f)
+    val g = color.green.coerceIn(0f, 1f)
+    val b = color.blue.coerceIn(0f, 1f)
+    val max = maxOf(r, g, b)
+    val min = minOf(r, g, b)
+    val delta = max - min
+    val v = max
+    val s = if (max <= 1e-5f) 0f else delta / max
+    val hRaw = when {
+        delta <= 1e-5f -> 0f
+        max == r -> 60f * (((g - b) / delta) % 6f)
+        max == g -> 60f * (((b - r) / delta) + 2f)
+        else -> 60f * (((r - g) / delta) + 4f)
+    }
+    val h = if (hRaw < 0f) hRaw + 360f else hRaw
+    return floatArrayOf(h, s, v)
+}
+
+internal fun hsvToComposeColor(h: Float, s: Float, v: Float, alpha: Float = 1f): Color {
+    val cleanH = ((h % 360f) + 360f) % 360f
+    val cleanS = s.coerceIn(0f, 1f)
+    val cleanV = v.coerceIn(0f, 1f)
+    val c = cleanV * cleanS
+    val x = c * (1f - abs(((cleanH / 60f) % 2f) - 1f))
+    val m = cleanV - c
+    val sector = (cleanH / 60f).toInt().coerceIn(0, 5)
+    val (r1, g1, b1) = when (sector) {
+        0 -> Triple(c, x, 0f)
+        1 -> Triple(x, c, 0f)
+        2 -> Triple(0f, c, x)
+        3 -> Triple(0f, x, c)
+        4 -> Triple(x, 0f, c)
+        else -> Triple(c, 0f, x)
+    }
+    return Color(
+        red = (r1 + m).coerceIn(0f, 1f),
+        green = (g1 + m).coerceIn(0f, 1f),
+        blue = (b1 + m).coerceIn(0f, 1f),
+        alpha = alpha.coerceIn(0f, 1f)
+    )
+}
+
+/**
+ * 动态取色深色背景前景内容可读性增强算法：
+ * - 在完全锁定原取色色相 (Hue) 不变的前提下，基于 WCAG 感知相对亮度连续自适应提亮前景色（文字、图标、徽标、动态高亮歌词）；
+ * - 针对深蓝、靛紫、暗红、深紫等高饱和低感知亮度的取色，通过二分收敛在同色相下寻找满足最小感知亮度阈值 [minLuminance] 的最高饱和度点，
+ *   既保留鲜明的封面取色色相特征，又消除深色卡片/背景上的阅读吃力问题。
+ */
+fun Color.readableOnDarkSurface(minLuminance: Float = 0.42f): Color {
+    if (this.perceptualLuminance() >= minLuminance) {
+        return this
+    }
+    val hsv = composeColorToHsv(this)
+    val hue = hsv[0]
+    val sat0 = hsv[1]
+    val val0 = hsv[2]
+
+    if (sat0 <= 0.04f) {
+        val liftedVal = val0.coerceAtLeast(0.90f)
+        return hsvToComposeColor(hue, sat0, liftedVal, alpha)
+    }
+
+    val targetVal = val0.coerceAtLeast(0.96f)
+    val baseSat = sat0.coerceAtMost(0.82f)
+    val initialCandidate = hsvToComposeColor(hue, baseSat, targetVal, alpha)
+    if (initialCandidate.perceptualLuminance() >= minLuminance) {
+        return initialCandidate
+    }
+
+    // 在完全保持色相 hue 不变、明度提升至 0.99f 的条件下，二分搜索满足 minLuminance 的最大饱和度
+    val highV = 0.99f
+    var lowS = 0.22f
+    var highS = baseSat
+    repeat(10) {
+        val midS = (lowS + highS) * 0.5f
+        val testColor = hsvToComposeColor(hue, midS, highV, alpha)
+        if (testColor.perceptualLuminance() >= minLuminance) {
+            lowS = midS
+        } else {
+            highS = midS
+        }
+    }
+    return hsvToComposeColor(hue, lowS, highV, alpha)
+}
+
+/**
+ * 动态取色深色卡片内次级副标题/说明文案可读性增强：
+ * - 在保持同色相感知提亮的基础上融入柔和冰白高光，确保 10sp~11sp 小字号副标题在动态染色卡片上清晰通透。
+ */
+fun Color.readableSubtleOnDarkSurface(minLuminance: Float = 0.54f): Color {
+    val readableBase = this.readableOnDarkSurface(minLuminance = minLuminance)
+    return lerp(readableBase, Color(0xFFF2F6FF), 0.26f).copy(alpha = 0.94f)
 }

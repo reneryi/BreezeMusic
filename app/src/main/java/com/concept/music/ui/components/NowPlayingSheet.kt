@@ -133,6 +133,7 @@ import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
 import com.concept.music.ui.theme.conceptSheetSpringEntrance
 import com.concept.music.ui.theme.isConceptDarkTheme
+import com.concept.music.ui.theme.readableOnDarkSurface
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.CoverStyle
@@ -489,9 +490,16 @@ fun NowPlayingSheet(
                 }
             } else if (wasVinylPlaying) {
                 wasVinylPlaying = false
+                // 物理摩擦惯性减速停转：
+                // 播放态恒定角速度 ω0 = 360° / 20000ms = 18°/s；
+                // 使用起始斜率 dy/dx = 0.66 / 0.33 = 2.0、末端斜率为 0 的阻尼曲线，
+                // 搭配 Δθ = 13.5° 与 T = 1480ms，使暂停瞬间初始角速度严格等于 18°/s（零速度跳变），随后平顺滑行停稳
                 rotationAnim.animateTo(
-                    targetValue = rotationAnim.value + 16f,
-                    animationSpec = tween(durationMillis = 460, easing = ConceptMotion.EmphasizedDecelerate)
+                    targetValue = rotationAnim.value + 13.5f,
+                    animationSpec = tween(
+                        durationMillis = 1480,
+                        easing = CubicBezierEasing(0.33f, 0.66f, 0.45f, 1.0f)
+                    )
                 )
             }
         }
@@ -1740,6 +1748,8 @@ private fun CoverPlayerPageContent(
                     )
                 }
 
+                val readableAccentPrimary = remember(accentPrimary) { accentPrimary.readableOnDarkSurface(0.45f) }
+
                 Box(
                     modifier = Modifier
                         .size(38.dp)
@@ -1752,7 +1762,7 @@ private fun CoverPlayerPageContent(
                 ) {
                     PlumpPlaylistAddCanvasIcon(
                         color = Color.White.copy(alpha = 0.88f),
-                        accentColor = accentPrimary
+                        accentColor = readableAccentPrimary
                     )
                 }
 
@@ -1768,7 +1778,7 @@ private fun CoverPlayerPageContent(
                 ) {
                     PlumpPosterSparkleCanvasIcon(
                         color = Color.White.copy(alpha = 0.86f),
-                        accentColor = accentPrimary
+                        accentColor = readableAccentPrimary
                     )
                 }
             }
@@ -1796,6 +1806,8 @@ private fun CoverPlayerPageContent(
 
         // 3. 进度条上方功能栏：「横屏播放、桌面歌词、蝰蛇音效、带计数评论按钮、更多」
         // （已按需求将【音效与桌面歌词互换位置】、【评论与横屏播放互换位置】）
+        val barAccentPrimary = remember(accentPrimary) { accentPrimary.readableOnDarkSurface(0.45f) }
+        val barAccentSecondary = remember(accentSecondary) { accentSecondary.readableOnDarkSurface(0.48f) }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1808,7 +1820,7 @@ private fun CoverPlayerPageContent(
             ) {
                 PlumpLandscapeModeCanvasIcon(
                     color = Color.White.copy(alpha = 0.88f),
-                    accentColor = accentPrimary
+                    accentColor = barAccentPrimary
                 )
             }
 
@@ -1818,8 +1830,8 @@ private fun CoverPlayerPageContent(
                 Box(contentAlignment = Alignment.Center) {
                     PlumpDesktopLyricCanvasIcon(
                         enabled = desktopLyricEnabled,
-                        color = if (desktopLyricEnabled) accentPrimary else Color.White.copy(alpha = 0.88f),
-                        accentColor = accentSecondary
+                        color = if (desktopLyricEnabled) barAccentPrimary else Color.White.copy(alpha = 0.88f),
+                        accentColor = barAccentSecondary
                     )
                     if (desktopLyricEnabled) {
                         Box(
@@ -1828,7 +1840,7 @@ private fun CoverPlayerPageContent(
                                 .offset(x = 4.dp, y = (-2).dp)
                                 .size(6.dp)
                                 .clip(CircleShape)
-                                .background(accentSecondary)
+                                .background(barAccentSecondary)
                         )
                     }
                 }
@@ -1839,8 +1851,8 @@ private fun CoverPlayerPageContent(
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     PlumpAudioWaveCanvasIcon(
-                        color = if (viperEnabled) accentPrimary else Color.White.copy(alpha = 0.88f),
-                        accentColor = if (viperEnabled) accentSecondary else accentPrimary
+                        color = if (viperEnabled) barAccentPrimary else Color.White.copy(alpha = 0.88f),
+                        accentColor = if (viperEnabled) barAccentSecondary else barAccentPrimary
                     )
                     if (viperEnabled) {
                         Box(
@@ -1849,7 +1861,7 @@ private fun CoverPlayerPageContent(
                                 .offset(x = 4.dp, y = (-2).dp)
                                 .size(6.dp)
                                 .clip(CircleShape)
-                                .background(accentSecondary)
+                                .background(barAccentSecondary)
                         )
                     }
                 }
@@ -1857,7 +1869,7 @@ private fun CoverPlayerPageContent(
 
             RedesignedCommentCountButton(
                 commentCount = commentCount,
-                accentColor = accentPrimary,
+                accentColor = barAccentPrimary,
                 onClick = onOpenComments
             )
 
@@ -2029,17 +2041,27 @@ private fun MasterVinylTurntableView(
     // 液压阻尼唱臂动画（Hydraulic Damped Tonearm）：
     // - 0f 为暂停态：唱臂垂直优雅停靠在右侧唱臂托架上，完全脱离黑胶盘面；
     // - 24f 为播放态：唱臂顺时针平稳旋入黑胶黄金声轨区；
-    // - 采用 640ms 液压阻尼贝塞尔曲线，彻底告别弹簧晃动与盘面悬停尴尬。
-    val HydraulicTonearmEasing = remember { CubicBezierEasing(0.22f, 0.88f, 0.24f, 1.0f) }
+    // - 播放落针保持 640ms 液压曲线不变；暂停归位采用 1260ms 柔和缓出-阻尼归位曲线，
+    //   先微抬唱针脱离声槽，随后优雅缓慢旋回右侧托架，与黑胶 1480ms 惯性停转呼吸同频。
+    val HydraulicTonearmPlayEasing = remember { CubicBezierEasing(0.22f, 0.88f, 0.24f, 1.0f) }
+    val HydraulicTonearmPauseEasing = remember { CubicBezierEasing(0.42f, 0.04f, 0.22f, 1.0f) }
     val armAngle by animateFloatAsState(
         targetValue = if (isPlaying) 24f else 0f,
-        animationSpec = tween(durationMillis = 640, easing = HydraulicTonearmEasing),
+        animationSpec = if (isPlaying) {
+            tween(durationMillis = 640, easing = HydraulicTonearmPlayEasing)
+        } else {
+            tween(durationMillis = 1260, easing = HydraulicTonearmPauseEasing)
+        },
         label = "masterTonearmAngle"
     )
-    // 抬臂高度状态：暂停移开时先微幅抬起唱臂（投影拉远柔化），落针时贴合盘面
+    // 抬臂高度状态：暂停移开时先柔顺抬起唱臂（投影拉远柔化），落针时贴合盘面
     val stylusLift by animateFloatAsState(
         targetValue = if (isPlaying) 0f else 1f,
-        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing),
+        animationSpec = if (isPlaying) {
+            tween(durationMillis = 480, easing = FastOutSlowInEasing)
+        } else {
+            tween(durationMillis = 620, easing = FastOutSlowInEasing)
+        },
         label = "masterStylusLift"
     )
 
@@ -2676,12 +2698,12 @@ private fun FullWidthLyricPreviewSection(
     val livePositionMs = sampledPositionMs
     val density = LocalDensity.current
     val activePrimaryColor = if (lyricHighlightTheme == LyricHighlightTheme.DYNAMIC_COVER) {
-        lerp(accentPrimary, Color.White, 0.16f)
+        accentPrimary.readableOnDarkSurface(minLuminance = 0.46f)
     } else {
         Color(lyricHighlightTheme.primaryHex)
     }
     val activeSecondaryColor = if (lyricHighlightTheme == LyricHighlightTheme.DYNAMIC_COVER) {
-        accentSecondary
+        accentSecondary.readableOnDarkSurface(minLuminance = 0.50f)
     } else {
         Color(lyricHighlightTheme.secondaryHex)
     }
@@ -3006,6 +3028,8 @@ private fun PlayerControlsSection(
             }
         )
 
+        val readableControlAccent = remember(accentPrimary) { accentPrimary.readableOnDarkSurface(0.45f) }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3016,7 +3040,7 @@ private fun PlayerControlsSection(
             Text(
                 text = formatDuration(displayCurrentMs),
                 style = MaterialTheme.typography.bodySmall.copy(
-                    color = if (isInteractingWithBar) accentPrimary else Color.White.copy(alpha = 0.56f),
+                    color = if (isInteractingWithBar) readableControlAccent else Color.White.copy(alpha = 0.56f),
                     fontSize = 11.5.sp,
                     fontWeight = if (isInteractingWithBar) FontWeight.Bold else FontWeight.Medium
                 )
@@ -3042,7 +3066,7 @@ private fun PlayerControlsSection(
         ) {
             AnimatedPlayModeButton(
                 playMode = playMode,
-                accentColor = accentPrimary,
+                accentColor = readableControlAccent,
                 onClick = {
                     onCyclePlayMode()
                     val nextDesc = when (playMode) {
@@ -3072,7 +3096,7 @@ private fun PlayerControlsSection(
             )
 
             RedrawnQueueButton(
-                accentColor = accentPrimary,
+                accentColor = readableControlAccent,
                 onClick = onQueueClick
             )
         }
@@ -4111,12 +4135,12 @@ private fun RedesignedDedicatedLyricPage(
     onOpenLyricSettings: () -> Unit
 ) {
     val activePrimaryColor = if (lyricHighlightTheme == LyricHighlightTheme.DYNAMIC_COVER) {
-        lerp(dynamicCoverAccent, Color.White, 0.16f)
+        dynamicCoverAccent.readableOnDarkSurface(minLuminance = 0.46f)
     } else {
         Color(lyricHighlightTheme.primaryHex)
     }
     val activeSecondaryColor = if (lyricHighlightTheme == LyricHighlightTheme.DYNAMIC_COVER) {
-        dynamicCoverSecondary
+        dynamicCoverSecondary.readableOnDarkSurface(minLuminance = 0.50f)
     } else {
         Color(lyricHighlightTheme.secondaryHex)
     }
@@ -4261,14 +4285,43 @@ private fun RedesignedDedicatedLyricPage(
                             label = "lyricLineScale"
                         )
 
-                        // 仅对距离 >= 2 的远端静态非激活行施加柔和景深模糊，避免相邻行滚动切换瞬间触发 RenderNode 离屏重建卡顿
-                        val depthBlurVal = if (lyricBlurEnabled && !isUserScrubbing && !isCurrent && !listState.isScrollInProgress && distance >= 2) {
+                        // 连续光学景深模糊过渡：
+                        // 移除滚动期间强行归零的 `!listState.isScrollInProgress` 条件，
+                        // 并通过与歌词滚动同周期的 420ms LyricSmoothScrollEasing 连续插值，
+                        // 使正在唱完的上一句从清晰 (0dp) 自然渐变至模糊，即将唱到的下一句从模糊自然渐变至清晰 (0dp)。
+                        val targetDepthBlurVal = if (lyricBlurEnabled && !isUserScrubbing && !isCurrent) {
                             when (distance) {
-                                2 -> 1.2f * lyricBlurIntensity
-                                3 -> 2.0f * lyricBlurIntensity
-                                else -> 2.8f * lyricBlurIntensity
+                                1 -> 0.72f * lyricBlurIntensity
+                                2 -> 1.35f * lyricBlurIntensity
+                                3 -> 2.10f * lyricBlurIntensity
+                                else -> 2.85f * lyricBlurIntensity
                             }.coerceIn(0f, 5.0f)
                         } else 0f
+                        val depthBlurVal by animateFloatAsState(
+                            targetValue = targetDepthBlurVal,
+                            animationSpec = tween(
+                                durationMillis = 420,
+                                easing = ConceptMotion.LyricSmoothScrollEasing
+                            ),
+                            label = "lyricLineDepthBlur"
+                        )
+
+                        val targetDistanceAlpha = when {
+                            isCurrent -> 1.0f
+                            isScrubTarget -> 0.92f
+                            distance == 1 -> 0.58f
+                            distance == 2 -> 0.38f
+                            distance == 3 -> 0.24f
+                            else -> 0.14f
+                        }
+                        val distanceAlpha by animateFloatAsState(
+                            targetValue = targetDistanceAlpha,
+                            animationSpec = tween(
+                                durationMillis = 420,
+                                easing = ConceptMotion.LyricSmoothScrollEasing
+                            ),
+                            label = "lyricLineDistanceAlpha"
+                        )
 
                         val transformOriginX = when (lyricAlignment) {
                             LyricAlignment.LEFT -> 0f
@@ -4285,7 +4338,7 @@ private fun RedesignedDedicatedLyricPage(
                                     transformOrigin = androidx.compose.ui.graphics.TransformOrigin(transformOriginX, 0.5f)
                                 }
                                 .then(
-                                    if (supportsHardwareBlur && depthBlurVal >= 0.6f) {
+                                    if (supportsHardwareBlur && depthBlurVal >= 0.05f) {
                                         Modifier.blur(depthBlurVal.dp)
                                     } else Modifier
                                 )
@@ -4312,7 +4365,7 @@ private fun RedesignedDedicatedLyricPage(
                                     Text(
                                         text = phoneticText,
                                         style = MaterialTheme.typography.labelSmall.copy(
-                                            color = if (isCurrent) activePrimaryColor.copy(alpha = 0.90f) else Color.White.copy(alpha = 0.38f),
+                                            color = if (isCurrent) activePrimaryColor.copy(alpha = 0.90f) else Color.White.copy(alpha = (distanceAlpha * 0.68f).coerceIn(0.12f, 0.55f)),
                                             fontSize = phoneticFontSize.sp,
                                             lineHeight = (phoneticFontSize * 1.38f).sp,
                                             fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
@@ -4336,19 +4389,11 @@ private fun RedesignedDedicatedLyricPage(
                                         activeSecondaryColor = activeSecondaryColor
                                     )
                                 } else {
-                                    val distanceAlpha = when {
-                                        isCurrent -> 1.0f
-                                        isScrubTarget -> 0.92f
-                                        distance == 1 -> 0.58f
-                                        distance == 2 -> 0.38f
-                                        distance == 3 -> 0.24f
-                                        else -> 0.14f
-                                    }
                                     val textColor = if (isCurrent) activePrimaryColor else Color.White.copy(alpha = distanceAlpha)
                                     val textWeight = if (isCurrent || isScrubTarget) FontWeight.ExtraBold else FontWeight.SemiBold
                                     val lineSize = lyricFontSize.sp
 
-                                    val fallbackBlurShadow = if (!supportsHardwareBlur && depthBlurVal >= 0.5f) {
+                                    val fallbackBlurShadow = if (!supportsHardwareBlur && depthBlurVal >= 0.15f) {
                                         Shadow(
                                             color = Color.White.copy(alpha = (distanceAlpha * 0.85f).coerceIn(0f, 1f)),
                                             offset = Offset.Zero,
@@ -4380,8 +4425,7 @@ private fun RedesignedDedicatedLyricPage(
                                             color = when {
                                                 isCurrent -> activePrimaryColor.copy(alpha = 0.90f)
                                                 isScrubTarget -> Color.White.copy(alpha = 0.78f)
-                                                distance == 1 -> Color.White.copy(alpha = 0.48f)
-                                                else -> Color.White.copy(alpha = 0.24f)
+                                                else -> Color.White.copy(alpha = (distanceAlpha * 0.82f).coerceIn(0.14f, 0.62f))
                                             },
                                             fontSize = transFontSize.sp,
                                             lineHeight = (transFontSize * 1.42f).sp,
@@ -4868,7 +4912,7 @@ private fun LyricPageMinimalBottomBar(
             ) {
                 Text(
                     text = formatDuration(displayTimeMs),
-                    color = if (isDragging) accentColor else Color.White.copy(alpha = 0.56f),
+                    color = if (isDragging) accentColor.readableOnDarkSurface(0.46f) else Color.White.copy(alpha = 0.56f),
                     fontSize = 10.5.sp,
                     fontWeight = if (isDragging) FontWeight.Bold else FontWeight.Medium
                 )

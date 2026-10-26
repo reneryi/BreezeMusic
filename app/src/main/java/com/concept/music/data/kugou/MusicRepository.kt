@@ -752,7 +752,7 @@ class MusicApiRepository(
         val pageSize = 200
         var pageCount = 0
         var expectedTotal = 0
-        while (pageCount < 25) {
+        while (pageCount < 100) {
             val response = runCatching {
                 transport.call(
                     "/pubsongs/v2/get_other_list_file_nofilt",
@@ -798,7 +798,7 @@ class MusicApiRepository(
         // 备用 1：/v4/get_other_list_file 网关多页拉取
         val v4Songs = mutableListOf<Song>()
         val v4Seen = mutableSetOf<String>()
-        for (page in 1..15) {
+        for (page in 1..100) {
             val batch = runCatching {
                 val response = transport.callAdvanced(
                     path = "/v4/get_other_list_file",
@@ -835,7 +835,7 @@ class MusicApiRepository(
         if (!numericSpecialId.isNullOrBlank()) {
             val cdnSongs = mutableListOf<Song>()
             val cdnSeen = mutableSetOf<String>()
-            for (page in 1..15) {
+            for (page in 1..100) {
                 val batch = runCatching {
                     val response = transport.callAdvanced(
                         path = "/api/v3/special/song",
@@ -5191,7 +5191,7 @@ class MusicApiRepository(
     }
 
     // 云端最近播放
-    suspend fun latestListenSongs(pageSize: Int = 50): List<Song> {
+    suspend fun latestListenSongs(pageSize: Int = 200): List<Song> {
         val session = accounts.context()?.session ?: return emptyList()
 
         val historyList = runCatching {
@@ -5316,7 +5316,7 @@ class MusicApiRepository(
     }
 
     // 已购单曲 (严格对齐 KuGouMusicApi: /openapi/copyright/v1/audio/get_goods + 批量补全音质标签)
-    suspend fun userPurchasedSongs(page: Int = 1, pageSize: Int = 50): List<PurchasedSongItem> {
+    suspend fun userPurchasedSongs(page: Int = 1, pageSize: Int = 200): List<PurchasedSongItem> {
         val session = accounts.context()?.session ?: return emptyList()
         val userIdNum = session.userId.toLongOrNull() ?: return emptyList()
         return runCatching {
@@ -5378,7 +5378,7 @@ class MusicApiRepository(
     }
 
     // 已购专辑 (严格对齐 KuGouMusicApi: /openapi/v1/copyright/get_album_goods)
-    suspend fun userPurchasedAlbums(page: Int = 1, pageSize: Int = 20): List<PurchasedAlbumItem> {
+    suspend fun userPurchasedAlbums(page: Int = 1, pageSize: Int = 200): List<PurchasedAlbumItem> {
         val session = accounts.context()?.session ?: return emptyList()
         val userIdNum = session.userId.toLongOrNull() ?: return emptyList()
         return runCatching {
@@ -5451,7 +5451,7 @@ class MusicApiRepository(
      * POST /v4/follow_list, query = mapOf("plat" to "1"), headers = mapOf("x-router" to "relationuser.kugou.com"))
      * 修复此前因缺少 query plat=1 及未解析 nickname / ext_params.singerid 导致关注歌手列表为空的 Bug！
      */
-    suspend fun followedArtists(page: Int = 1, pageSize: Int = 50): List<FollowedArtist> {
+    suspend fun followedArtists(page: Int = 1, pageSize: Int = 200): List<FollowedArtist> {
         val ctx = accounts.context()
         val session = if (ctx != null) {
             runCatching { accounts.authenticated(ctx) { it } }.getOrNull() ?: ctx.session
@@ -5701,7 +5701,7 @@ class MusicApiRepository(
     // 外部歌单文本批量匹配导入
     suspend fun importExternalPlaylist(name: String, rawLines: List<String>): Int = auth { _ ->
         val cleanName = name.trim().ifBlank { "导入歌单" }
-        val cleanLines = rawLines.map { it.trim() }.filter { it.isNotBlank() }.take(100)
+        val cleanLines = rawLines.map { it.trim() }.filter { it.isNotBlank() }
         if (cleanLines.isEmpty()) return@auth 0
 
         createPlaylist(cleanName)

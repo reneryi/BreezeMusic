@@ -108,7 +108,8 @@ fun LibraryScreen(
     val myPlaylists = remember(playlists) { playlists.filter { it.isCreatedByMe && !it.isLiked } }
     val favoritePlaylists = remember(playlists) { playlists.filter { it.isFavorite } }
     val likedPlaylist = remember(playlists) { playlists.firstOrNull { it.isLiked } }
-    val historyCount = remember(account) { VipManager.history.get(account.currentId).size }
+    val historyVersion by VipManager.history.historyVersion.collectAsState()
+    val historyCount = remember(account, historyVersion) { VipManager.history.get(account.currentId).size }
 
     var showCreateDialog by remember { mutableStateOf(false) }
     var showImportDialog by remember { mutableStateOf(false) }

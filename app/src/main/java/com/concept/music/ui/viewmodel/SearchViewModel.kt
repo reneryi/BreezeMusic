@@ -164,11 +164,11 @@ class SearchViewModel(
         _selectedTab.value = SearchTab.COMPLEX
         _hasSearched.value = true
 
-        // 加入历史记录并持久化
+        // 加入历史记录并持久化（移除 15 条数量上限）
         val currentHistory = _searchHistory.value.toMutableList()
         currentHistory.remove(trimmed)
         currentHistory.add(0, trimmed)
-        val updated = currentHistory.take(15)
+        val updated = currentHistory.toList()
         _searchHistory.value = updated
         historyRepo.save(updated)
 

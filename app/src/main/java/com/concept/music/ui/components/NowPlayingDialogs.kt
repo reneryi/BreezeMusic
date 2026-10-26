@@ -75,6 +75,8 @@ import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
+import com.concept.music.ui.theme.readableOnDarkSurface
+import com.concept.music.ui.theme.readableSubtleOnDarkSurface
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.CoverStyle
@@ -131,6 +133,7 @@ internal fun LyricSettingsDialog(
     val textPrimary = MaterialTheme.colorScheme.onSurface
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
     val themeAccent = dynamicAccentColor
+    val readableThemeAccent = remember(themeAccent) { themeAccent.readableOnDarkSurface(minLuminance = 0.42f) }
 
     // 一体化连续渐变玻璃底色（从顶部边缘到面板底部平滑过渡，彻底消除顶部横线区域颜色分层）
     val panelTopColor = themeAccent.copy(alpha = 0.18f).compositeOver(baseSheetBg.copy(alpha = 0.96f))
@@ -240,7 +243,7 @@ internal fun LyricSettingsDialog(
                                 Icon(
                                     imageVector = Icons.Rounded.Tune,
                                     contentDescription = null,
-                                    tint = themeAccent,
+                                    tint = readableThemeAccent,
                                     modifier = Modifier.size(17.dp)
                                 )
                             }
@@ -268,7 +271,7 @@ internal fun LyricSettingsDialog(
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = themeAccent.copy(alpha = 0.15f),
-                                contentColor = themeAccent,
+                                contentColor = readableThemeAccent,
                                 modifier = Modifier.softCardClickable(shape = RoundedCornerShape(12.dp)) {
                                     onSetFontSize(24f)
                                     onSetTranslationScale(0.84f)
@@ -287,13 +290,13 @@ internal fun LyricSettingsDialog(
                                     Icon(
                                         Icons.Rounded.RestartAlt,
                                         contentDescription = null,
-                                        tint = themeAccent,
+                                        tint = readableThemeAccent,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         "恢复默认",
-                                        color = themeAccent,
+                                        color = readableThemeAccent,
                                         fontSize = 11.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1
@@ -449,6 +452,9 @@ private fun LyricThemeAndAlignCompactCard(
     onSetAlignment: (LyricAlignment) -> Unit,
     onSetOffsetMs: (Long) -> Unit
 ) {
+    val readableDynamicAccent = remember(dynamicAccentColor) {
+        dynamicAccentColor.readableOnDarkSurface(minLuminance = 0.42f)
+    }
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = cardBg,
@@ -476,6 +482,9 @@ private fun LyricThemeAndAlignCompactCard(
                     } else {
                         Color(theme.primaryHex)
                     }
+                    val readableSwatch = remember(swatchColor) {
+                        swatchColor.readableOnDarkSurface(minLuminance = 0.42f)
+                    }
                     Surface(
                         shape = RoundedCornerShape(11.dp),
                         color = if (selected) swatchColor.copy(alpha = 0.22f) else sheetBg,
@@ -483,7 +492,7 @@ private fun LyricThemeAndAlignCompactCard(
                         modifier = Modifier
                             .border(
                                 width = if (selected) 1.dp else 0.dp,
-                                color = if (selected) swatchColor.copy(alpha = 0.55f) else Color.Transparent,
+                                color = if (selected) readableSwatch.copy(alpha = 0.52f) else Color.Transparent,
                                 shape = RoundedCornerShape(11.dp)
                             )
                             .softCardClickable(shape = RoundedCornerShape(11.dp)) {
@@ -503,7 +512,7 @@ private fun LyricThemeAndAlignCompactCard(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = theme.label,
-                                color = if (selected) swatchColor else textPrimary,
+                                color = if (selected) readableSwatch else textPrimary,
                                 fontSize = 11.5.sp,
                                 fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
                                 maxLines = 1,
@@ -534,13 +543,19 @@ private fun LyricThemeAndAlignCompactCard(
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = if (selected) dynamicAccentColor.copy(alpha = 0.24f) else Color.Transparent,
-                            modifier = Modifier.softCardClickable(shape = RoundedCornerShape(8.dp)) {
-                                onSetAlignment(item)
-                            }
+                            modifier = Modifier
+                                .border(
+                                    width = if (selected) 0.8.dp else 0.dp,
+                                    color = if (selected) readableDynamicAccent.copy(alpha = 0.36f) else Color.Transparent,
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                                .softCardClickable(shape = RoundedCornerShape(8.dp)) {
+                                    onSetAlignment(item)
+                                }
                         ) {
                             Text(
                                 text = item.label,
-                                color = if (selected) dynamicAccentColor else textSecondary,
+                                color = if (selected) readableDynamicAccent else textSecondary,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
@@ -583,7 +598,7 @@ private fun LyricThemeAndAlignCompactCard(
                     ) {
                         Text(
                             text = if (offsetMs == 0L) "校准 0.0s" else String.format(Locale.getDefault(), "%+.1fs", offsetMs / 1000f),
-                            color = if (offsetMs != 0L) VipGold else dynamicAccentColor,
+                            color = if (offsetMs != 0L) VipGold else readableDynamicAccent,
                             fontSize = 10.5.sp,
                             fontWeight = FontWeight.ExtraBold,
                             maxLines = 1,
@@ -710,6 +725,7 @@ private fun CompactInlineSliderRow(
     textPrimary: Color,
     onValueChange: (Float) -> Unit
 ) {
+    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -731,8 +747,8 @@ private fun CompactInlineSliderRow(
             valueRange = valueRange,
             steps = steps,
             colors = SliderDefaults.colors(
-                thumbColor = accentColor,
-                activeTrackColor = accentColor,
+                thumbColor = readableAccent,
+                activeTrackColor = readableAccent.copy(alpha = 0.88f),
                 inactiveTrackColor = textPrimary.copy(alpha = 0.16f)
             ),
             modifier = Modifier
@@ -743,13 +759,13 @@ private fun CompactInlineSliderRow(
             modifier = Modifier
                 .width(46.dp)
                 .clip(RoundedCornerShape(6.dp))
-                .background(accentColor.copy(alpha = 0.14f))
+                .background(accentColor.copy(alpha = 0.16f))
                 .padding(vertical = 2.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = valueText,
-                color = accentColor,
+                color = readableAccent,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.ExtraBold,
                 maxLines = 1,
@@ -849,13 +865,15 @@ private fun CompactTogglePillTile(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
+    val readableSubtle = remember(accentColor) { accentColor.readableSubtleOnDarkSurface(minLuminance = 0.54f) }
     Surface(
         shape = RoundedCornerShape(15.dp),
         color = if (checked) accentColor.copy(alpha = 0.16f).compositeOver(cardBg) else cardBg,
         modifier = modifier
             .border(
                 width = 0.8.dp,
-                color = if (checked) accentColor.copy(alpha = 0.42f) else Color.White.copy(alpha = 0.06f),
+                color = if (checked) readableAccent.copy(alpha = 0.42f) else Color.White.copy(alpha = 0.06f),
                 shape = RoundedCornerShape(15.dp)
             )
             .softCardClickable(shape = RoundedCornerShape(15.dp), onClick = onToggle)
@@ -875,7 +893,7 @@ private fun CompactTogglePillTile(
                     Icon(
                         imageVector = icon,
                         contentDescription = title,
-                        tint = if (checked) accentColor else textSecondary,
+                        tint = if (checked) readableAccent else textSecondary,
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -884,7 +902,7 @@ private fun CompactTogglePillTile(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
-                    color = if (checked) accentColor else textPrimary,
+                    color = if (checked) readableAccent else textPrimary,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 1,
@@ -893,7 +911,7 @@ private fun CompactTogglePillTile(
                 )
                 Text(
                     text = subtitle,
-                    color = if (checked) accentColor.copy(alpha = 0.82f) else textSecondary,
+                    color = if (checked) readableSubtle else textSecondary,
                     fontSize = 10.sp,
                     maxLines = 1,
                     softWrap = false,
@@ -905,7 +923,7 @@ private fun CompactTogglePillTile(
                 modifier = Modifier
                     .size(7.dp)
                     .clip(CircleShape)
-                    .background(if (checked) accentColor else textSecondary.copy(alpha = 0.25f))
+                    .background(if (checked) readableAccent else textSecondary.copy(alpha = 0.25f))
             )
         }
     }
@@ -1073,6 +1091,8 @@ fun QueueBottomSheet(
     val cardBg = Color.White.copy(alpha = 0.055f).compositeOver(conceptElevatedSurfaceColor())
     val textPrimary = MaterialTheme.colorScheme.onSurface
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
+    val readableSubtle = remember(accentColor) { accentColor.readableSubtleOnDarkSurface(minLuminance = 0.54f) }
 
     // 从顶部横线区域到底部列表的一体化平滑连续渐变，彻底消除顶部颜色分层
     val panelTopColor = accentColor.copy(alpha = 0.18f).compositeOver(baseSheetBg.copy(alpha = 0.96f))
@@ -1186,7 +1206,7 @@ fun QueueBottomSheet(
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                                         contentDescription = "返回当前队列",
-                                        tint = accentColor,
+                                        tint = readableAccent,
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
@@ -1210,7 +1230,7 @@ fun QueueBottomSheet(
                                 } else if (queue.isNotEmpty()) {
                                     "${(currentIndex + 1).coerceAtMost(queue.size)}/${queue.size}"
                                 } else "0/0",
-                                color = accentColor,
+                                color = readableAccent,
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
@@ -1358,7 +1378,7 @@ fun QueueBottomSheet(
                                         Icon(
                                             imageVector = Icons.Rounded.Whatshot,
                                             contentDescription = "副歌速刷",
-                                            tint = if (climaxModeEnabled) VipGold else accentColor,
+                                            tint = if (climaxModeEnabled) VipGold else readableAccent,
                                             modifier = Modifier.size(15.dp)
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -1389,7 +1409,7 @@ fun QueueBottomSheet(
                                             Icon(
                                                 imageVector = Icons.Rounded.AutoAwesome,
                                                 contentDescription = null,
-                                                tint = accentColor,
+                                                tint = readableAccent,
                                                 modifier = Modifier.size(13.dp)
                                             )
                                             listOf(
@@ -1400,7 +1420,7 @@ fun QueueBottomSheet(
                                                 val isSelected = activeMoodMode == modeKey
                                                 Surface(
                                                     shape = RoundedCornerShape(8.dp),
-                                                    color = if (isSelected) accentColor else accentColor.copy(alpha = 0.12f),
+                                                    color = if (isSelected) accentColor else accentColor.copy(alpha = 0.14f),
                                                     modifier = Modifier
                                                         .weight(1f)
                                                         .softCardClickable(shape = RoundedCornerShape(8.dp)) {
@@ -1417,7 +1437,7 @@ fun QueueBottomSheet(
                                                     ) {
                                                         Text(
                                                             text = label,
-                                                            color = if (isSelected) Color.White else accentColor,
+                                                            color = if (isSelected) Color.White else readableAccent,
                                                             fontSize = 10.5.sp,
                                                             fontWeight = FontWeight.Bold,
                                                             maxLines = 1
@@ -1548,13 +1568,13 @@ fun QueueBottomSheet(
                                                     if (isDraggingThis) {
                                                         Modifier.border(
                                                             1.dp,
-                                                            accentColor.copy(alpha = 0.55f),
+                                                            readableAccent.copy(alpha = 0.55f),
                                                             RoundedCornerShape(14.dp)
                                                         )
                                                     } else if (isPlayingThis) {
                                                         Modifier.border(
                                                             0.8.dp,
-                                                            accentColor.copy(alpha = 0.32f),
+                                                            readableAccent.copy(alpha = 0.36f),
                                                             RoundedCornerShape(14.dp)
                                                         )
                                                     } else Modifier
@@ -1592,7 +1612,7 @@ fun QueueBottomSheet(
                                                     contentAlignment = Alignment.CenterStart
                                                 ) {
                                                     if (isPlayingThis) {
-                                                        PlayingAudioWaveIndicator(color = accentColor)
+                                                        PlayingAudioWaveIndicator(color = readableAccent)
                                                     } else {
                                                         Text(
                                                             text = (displayOrderIndex + 1).toString().padStart(2, '0'),
@@ -1621,7 +1641,7 @@ fun QueueBottomSheet(
                                                         Icon(
                                                             imageVector = Icons.Rounded.MusicNote,
                                                             contentDescription = null,
-                                                            tint = accentColor.copy(alpha = 0.6f),
+                                                            tint = readableAccent.copy(alpha = 0.78f),
                                                             modifier = Modifier.size(18.dp)
                                                         )
                                                     }
@@ -1632,7 +1652,7 @@ fun QueueBottomSheet(
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text(
                                                         text = item.title,
-                                                        color = if (isPlayingThis) accentColor else textPrimary,
+                                                        color = if (isPlayingThis) readableAccent else textPrimary,
                                                         style = MaterialTheme.typography.bodyMedium.copy(
                                                             fontWeight = if (isPlayingThis) FontWeight.Bold else FontWeight.Medium,
                                                             fontSize = 14.sp
@@ -1646,12 +1666,12 @@ fun QueueBottomSheet(
                                                             BadgeTag(text = "Hi-Res", color = VipGold)
                                                             Spacer(modifier = Modifier.width(4.dp))
                                                         } else if (item.isLossless) {
-                                                            BadgeTag(text = "SQ", color = accentColor)
+                                                            BadgeTag(text = "SQ", color = readableAccent)
                                                             Spacer(modifier = Modifier.width(4.dp))
                                                         }
                                                         Text(
                                                             text = item.artist,
-                                                            color = if (isPlayingThis) accentColor.copy(alpha = 0.85f) else textSecondary,
+                                                            color = if (isPlayingThis) readableSubtle else textSecondary,
                                                             fontSize = 11.5.sp,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
@@ -1684,7 +1704,7 @@ fun QueueBottomSheet(
                                                     Icon(
                                                         imageVector = Icons.Rounded.DragHandle,
                                                         contentDescription = "按住拖动排序",
-                                                        tint = if (isDraggingThis) accentColor else textSecondary.copy(alpha = 0.45f),
+                                                        tint = if (isDraggingThis) readableAccent else textSecondary.copy(alpha = 0.45f),
                                                         modifier = Modifier.size(18.dp)
                                                     )
                                                 }
@@ -1733,6 +1753,7 @@ private fun QueueRecentStackIconButton(
     accentColor: Color,
     onClick: () -> Unit
 ) {
+    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = if (active) accentColor else accentColor.copy(alpha = 0.14f),
@@ -1744,7 +1765,7 @@ private fun QueueRecentStackIconButton(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(horizontal = 9.dp)
         ) {
-            val iconColor = if (active) Color.White else accentColor
+            val iconColor = if (active) Color.White else readableAccent
             Canvas(modifier = Modifier.size(16.dp)) {
                 val strokeW = 1.4.dp.toPx()
                 drawRoundRect(
@@ -1772,7 +1793,7 @@ private fun QueueRecentStackIconButton(
             Spacer(modifier = Modifier.width(5.dp))
             Text(
                 text = if (count > 0) "最近 $count" else "最近",
-                color = if (active) Color.White else accentColor,
+                color = if (active) Color.White else readableAccent,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.ExtraBold
             )
@@ -1789,6 +1810,7 @@ private fun QueueUnifiedPlayModeSmallButton(
     accentColor: Color,
     onClick: () -> Unit
 ) {
+    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
     val label = when (playMode) {
         PlayMode.REPEAT_ALL -> "列表"
         PlayMode.REPEAT_ONE -> "单曲"
@@ -1832,12 +1854,12 @@ private fun QueueUnifiedPlayModeSmallButton(
                         }
                         drawPath(
                             path = path,
-                            color = accentColor,
+                            color = readableAccent,
                             style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
                         if (playMode == PlayMode.REPEAT_ONE) {
                             drawLine(
-                                color = accentColor,
+                                color = readableAccent,
                                 start = Offset(w * 0.5f, h * 0.39f),
                                 end = Offset(w * 0.5f, h * 0.61f),
                                 strokeWidth = stroke * 0.95f,
@@ -1865,7 +1887,7 @@ private fun QueueUnifiedPlayModeSmallButton(
                         }
                         drawPath(
                             path = path,
-                            color = accentColor,
+                            color = readableAccent,
                             style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
                         )
                     }
@@ -1874,7 +1896,7 @@ private fun QueueUnifiedPlayModeSmallButton(
             Spacer(modifier = Modifier.width(4.dp))
             Text(
                 text = label,
-                color = accentColor,
+                color = readableAccent,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.ExtraBold
             )
@@ -1902,6 +1924,7 @@ private fun RecentQueuesStaggeredDeckPage(
 ) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current.density
+    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
 
     if (recentQueues.isEmpty()) {
         Box(
@@ -2067,7 +2090,7 @@ private fun RecentQueuesStaggeredDeckPage(
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 } else {
-                                    Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = accentColor)
+                                    Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = readableAccent)
                                 }
                             }
                             Spacer(modifier = Modifier.width(10.dp))
@@ -2136,14 +2159,14 @@ private fun RecentQueuesStaggeredDeckPage(
                                 ) {
                                     Text(
                                         text = (sIdx + 1).toString().padStart(2, '0'),
-                                        color = if (isCurSong) accentColor else textSecondary.copy(alpha = 0.6f),
+                                        color = if (isCurSong) readableAccent else textSecondary.copy(alpha = 0.6f),
                                         fontSize = 10.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.width(20.dp)
                                     )
                                     Text(
                                         text = s.title,
-                                        color = if (isCurSong) accentColor else textPrimary,
+                                        color = if (isCurSong) readableAccent else textPrimary,
                                         fontSize = 12.sp,
                                         fontWeight = if (isCurSong) FontWeight.Bold else FontWeight.Medium,
                                         maxLines = 1,
@@ -2258,6 +2281,8 @@ internal fun PlayerMoreControlSheet(
     val tileBg = conceptElevatedSurfaceColor()
     val textPrimary = MaterialTheme.colorScheme.onSurface
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val readableAccent = remember(accentColor) { accentColor.readableOnDarkSurface(minLuminance = 0.42f) }
+    val readableSubtle = remember(accentColor) { accentColor.readableSubtleOnDarkSurface(minLuminance = 0.54f) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -2316,7 +2341,7 @@ internal fun PlayerMoreControlSheet(
                                         modifier = Modifier.fillMaxSize()
                                     )
                                 } else {
-                                    Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = accentColor)
+                                    Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = readableAccent)
                                 }
                             }
                             Spacer(modifier = Modifier.width(12.dp))
@@ -2340,11 +2365,13 @@ internal fun PlayerMoreControlSheet(
                             // 右侧快捷查看歌曲技术参数胶囊
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = accentColor.copy(alpha = 0.14f),
-                                modifier = Modifier.softCardClickable(
-                                    shape = RoundedCornerShape(10.dp),
-                                    onClick = { dismissThen(onOpenSongDetail) }
-                                )
+                                color = accentColor.copy(alpha = 0.16f),
+                                modifier = Modifier
+                                    .border(0.8.dp, readableAccent.copy(alpha = 0.28f), RoundedCornerShape(10.dp))
+                                    .softCardClickable(
+                                        shape = RoundedCornerShape(10.dp),
+                                        onClick = { dismissThen(onOpenSongDetail) }
+                                    )
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -2353,13 +2380,13 @@ internal fun PlayerMoreControlSheet(
                                     Icon(
                                         imageVector = Icons.Rounded.Info,
                                         contentDescription = "音频参数",
-                                        tint = accentColor,
+                                        tint = readableAccent,
                                         modifier = Modifier.size(14.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         text = "音频详情",
-                                        color = accentColor,
+                                        color = readableAccent,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -2397,7 +2424,7 @@ internal fun PlayerMoreControlSheet(
                                             Icon(
                                                 imageVector = Icons.Rounded.PersonSearch,
                                                 contentDescription = "歌手主页",
-                                                tint = accentColor,
+                                                tint = readableAccent,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
@@ -2406,7 +2433,7 @@ internal fun PlayerMoreControlSheet(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = "歌手主页",
-                                            color = accentColor,
+                                            color = readableAccent,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -2453,7 +2480,7 @@ internal fun PlayerMoreControlSheet(
                                             Icon(
                                                 imageVector = Icons.Rounded.Album,
                                                 contentDescription = "专辑详情",
-                                                tint = accentColor,
+                                                tint = readableAccent,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
@@ -2462,7 +2489,7 @@ internal fun PlayerMoreControlSheet(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = "所属专辑",
-                                            color = accentColor,
+                                            color = readableAccent,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -2579,7 +2606,7 @@ internal fun PlayerMoreControlSheet(
                                 Icon(
                                     imageVector = Icons.Rounded.Palette,
                                     contentDescription = null,
-                                    tint = accentColor,
+                                    tint = readableAccent,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
@@ -2595,9 +2622,15 @@ internal fun PlayerMoreControlSheet(
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (dynamicCoverAccentEnabled) accentColor.copy(alpha = 0.20f) else sheetBg,
-                                modifier = Modifier.softCardClickable(shape = RoundedCornerShape(10.dp)) {
-                                    onSetDynamicCoverAccentEnabled(!dynamicCoverAccentEnabled)
-                                }
+                                modifier = Modifier
+                                    .border(
+                                        width = if (dynamicCoverAccentEnabled) 0.8.dp else 0.dp,
+                                        color = if (dynamicCoverAccentEnabled) readableAccent.copy(alpha = 0.34f) else Color.Transparent,
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .softCardClickable(shape = RoundedCornerShape(10.dp)) {
+                                        onSetDynamicCoverAccentEnabled(!dynamicCoverAccentEnabled)
+                                    }
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -2607,12 +2640,12 @@ internal fun PlayerMoreControlSheet(
                                         modifier = Modifier
                                             .size(7.dp)
                                             .clip(CircleShape)
-                                            .background(if (dynamicCoverAccentEnabled) accentColor else textSecondary)
+                                            .background(if (dynamicCoverAccentEnabled) readableAccent else textSecondary)
                                     )
                                     Spacer(modifier = Modifier.width(5.dp))
                                     Text(
                                         text = if (dynamicCoverAccentEnabled) "智能取色 · 已开启" else "智能取色 · 已关闭",
-                                        color = if (dynamicCoverAccentEnabled) accentColor else textSecondary,
+                                        color = if (dynamicCoverAccentEnabled) readableAccent else textSecondary,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -2640,6 +2673,11 @@ internal fun PlayerMoreControlSheet(
                                     color = if (selected) accentColor.copy(alpha = 0.20f) else sheetBg,
                                     modifier = Modifier
                                         .weight(1f)
+                                        .border(
+                                            width = if (selected) 0.8.dp else 0.dp,
+                                            color = if (selected) readableAccent.copy(alpha = 0.34f) else Color.Transparent,
+                                            shape = RoundedCornerShape(14.dp)
+                                        )
                                         .softCardClickable(shape = RoundedCornerShape(14.dp)) {
                                             onSelectCoverStyle(style)
                                         }
@@ -2651,21 +2689,21 @@ internal fun PlayerMoreControlSheet(
                                         Icon(
                                             imageVector = icon,
                                             contentDescription = style.label,
-                                            tint = if (selected) accentColor else textSecondary,
+                                            tint = if (selected) readableAccent else textSecondary,
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = style.label,
-                                                color = if (selected) accentColor else textPrimary,
+                                                color = if (selected) readableAccent else textPrimary,
                                                 fontSize = 12.5.sp,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 maxLines = 1
                                             )
                                             Text(
                                                 text = desc,
-                                                color = if (selected) accentColor.copy(alpha = 0.8f) else textSecondary,
+                                                color = if (selected) readableSubtle else textSecondary,
                                                 fontSize = 10.sp,
                                                 maxLines = 1
                                             )
@@ -2697,6 +2735,11 @@ internal fun PlayerMoreControlSheet(
                                     color = if (selected) accentColor.copy(alpha = 0.20f) else sheetBg,
                                     modifier = Modifier
                                         .width(106.dp)
+                                        .border(
+                                            width = if (selected) 0.8.dp else 0.dp,
+                                            color = if (selected) readableAccent.copy(alpha = 0.34f) else Color.Transparent,
+                                            shape = RoundedCornerShape(14.dp)
+                                        )
                                         .softCardClickable(shape = RoundedCornerShape(14.dp)) {
                                             onSelectPlayerBackgroundStyle(bgStyle)
                                         }
@@ -2709,7 +2752,7 @@ internal fun PlayerMoreControlSheet(
                                         ) {
                                             Text(
                                                 text = bgStyle.label,
-                                                color = if (selected) accentColor else textPrimary,
+                                                color = if (selected) readableAccent else textPrimary,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.ExtraBold,
                                                 maxLines = 1
@@ -2719,14 +2762,14 @@ internal fun PlayerMoreControlSheet(
                                                     modifier = Modifier
                                                         .size(6.dp)
                                                         .clip(CircleShape)
-                                                        .background(accentColor)
+                                                        .background(readableAccent)
                                                 )
                                             }
                                         }
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             text = bgStyle.subtitle,
-                                            color = if (selected) accentColor.copy(alpha = 0.82f) else textSecondary,
+                                            color = if (selected) readableSubtle else textSecondary,
                                             fontSize = 9.5.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -2757,12 +2800,20 @@ internal fun BentoControlTile(
     val tileBg = conceptElevatedSurfaceColor()
     val textPrimary = MaterialTheme.colorScheme.onSurface
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val readableActiveColor = remember(activeColor) { activeColor.readableOnDarkSurface(minLuminance = 0.42f) }
+    val readableActiveSubtle = remember(activeColor) { activeColor.readableSubtleOnDarkSurface(minLuminance = 0.54f) }
 
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = if (active) activeColor.copy(alpha = 0.18f) else tileBg,
         contentColor = textPrimary,
-        modifier = modifier.softCardClickable(shape = RoundedCornerShape(16.dp), onClick = onClick)
+        modifier = modifier
+            .border(
+                width = if (active) 0.8.dp else 0.dp,
+                color = if (active) readableActiveColor.copy(alpha = 0.30f) else Color.Transparent,
+                shape = RoundedCornerShape(16.dp)
+            )
+            .softCardClickable(shape = RoundedCornerShape(16.dp), onClick = onClick)
     ) {
         Column(
             modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
@@ -2772,19 +2823,19 @@ internal fun BentoControlTile(
             Icon(
                 imageVector = icon,
                 contentDescription = title,
-                tint = if (active) activeColor else textPrimary.copy(alpha = 0.82f),
+                tint = if (active) readableActiveColor else textPrimary.copy(alpha = 0.82f),
                 modifier = Modifier.size(20.dp)
             )
             Text(
                 text = title,
-                color = if (active) activeColor else textPrimary,
+                color = if (active) readableActiveColor else textPrimary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1
             )
             Text(
                 text = subtitle,
-                color = if (active) activeColor.copy(alpha = 0.85f) else textSecondary,
+                color = if (active) readableActiveSubtle else textSecondary,
                 fontSize = 10.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis

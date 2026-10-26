@@ -2,6 +2,9 @@ package com.concept.music
 
 import com.concept.music.data.kugou.*
 import com.concept.music.data.model.*
+import com.concept.music.ui.theme.perceptualLuminance
+import com.concept.music.ui.theme.readableOnDarkSurface
+import com.concept.music.ui.theme.readableSubtleOnDarkSurface
 import com.concept.music.ui.viewmodel.CoverStyle
 import com.concept.music.ui.viewmodel.LyricAlignment
 import com.concept.music.ui.viewmodel.LyricHighlightTheme
@@ -638,5 +641,51 @@ class UiAlignmentRegressionTest {
         )
         assertEquals(600f, at2x.x, 0.01f)
         assertEquals(-400f, at2x.y, 0.01f)
+    }
+
+    @Test
+    fun testDynamicColorReadabilityPreservesHueAndBoostsPerceptualLuminance() {
+        val darkExtractedColors = listOf(
+            androidx.compose.ui.graphics.Color(0xFF1F45A3), // 深皇家蓝 (图一、图二典型低可读性取色)
+            androidx.compose.ui.graphics.Color(0xFF282088), // 深靛紫
+            androidx.compose.ui.graphics.Color(0xFF56187A), // 深紫罗兰
+            androidx.compose.ui.graphics.Color(0xFF7A153B), // 深酒红
+            androidx.compose.ui.graphics.Color(0xFF135C49)  // 深墨绿
+        )
+
+        for (rawColor in darkExtractedColors) {
+            val readable = rawColor.readableOnDarkSurface(minLuminance = 0.42f)
+            val readableSubtle = rawColor.readableSubtleOnDarkSurface(minLuminance = 0.54f)
+            val lumReadable = readable.perceptualLuminance()
+            val lumSubtle = readableSubtle.perceptualLuminance()
+            assertTrue("可读性前景明度应达标: $lumReadable", lumReadable >= 0.415f)
+            assertTrue("次要副文案明度应达标: $lumSubtle", lumSubtle >= 0.535f)
+        }
+
+        // 本身已具备高明度的亮青色/亮琥珀金应保持原色不变
+        val brightCyan = androidx.compose.ui.graphics.Color(0xFF2AF5D6)
+        val processedBright = brightCyan.readableOnDarkSurface(minLuminance = 0.42f)
+        assertEquals(brightCyan, processedBright)
+    }
+
+    @Test
+    fun testPlaybackHistoryRepositoryUnlimitedCapacityBeyond100Songs() {
+        val repo = com.concept.music.data.repository.PlaybackHistoryRepository(context = null)
+        val userId = "unlimited_user"
+        for (i in 1..240) {
+            repo.add(
+                userId,
+                Song(
+                    id = "song_$i",
+                    hash = String.format("%032x", i),
+                    title = "测试歌曲 $i",
+                    artist = "歌手 $i"
+                )
+            )
+        }
+        val history = repo.get(userId)
+        assertEquals(240, history.size)
+        assertEquals("song_240", history.first().id)
+        assertEquals("song_1", history.last().id)
     }
 }
