@@ -68,6 +68,7 @@ import coil.compose.AsyncImage
 import com.concept.music.data.model.AudioQuality
 import com.concept.music.data.model.Song
 import com.concept.music.service.SystemLyricBridge
+import com.concept.music.ui.settings.StatusBarLyricSettingsScreen
 import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
@@ -120,6 +121,7 @@ internal fun LyricSettingsDialog(
     onSetHighlightTheme: (LyricHighlightTheme) -> Unit,
     onSetBackgroundDim: (Float) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
+    onOpenStatusBarLyricSettings: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -127,6 +129,22 @@ internal fun LyricSettingsDialog(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val systemLyricState by SystemLyricBridge.state.collectAsState()
     val statusBarLyricEnabled = systemLyricState.statusBarBroadcastEnabled
+    var showStatusBarSubPage by remember { mutableStateOf(false) }
+
+    if (showStatusBarSubPage) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showStatusBarSubPage = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
+        ) {
+            StatusBarLyricSettingsScreen(
+                onBack = { showStatusBarSubPage = false }
+            )
+        }
+        return
+    }
 
     val baseSheetBg = conceptSheetContainerColor()
     val textPrimary = MaterialTheme.colorScheme.onSurface
@@ -347,7 +365,14 @@ internal fun LyricSettingsDialog(
                                     onSetWordByWord = onSetWordByWord,
                                     onSetBlurEnabled = onSetBlurEnabled,
                                     onSetKeepScreenOn = onSetKeepScreenOn,
-                                    onSetStatusBarLyric = { SystemLyricBridge.setStatusBarBroadcastEnabled(context, it) }
+                                    onSetStatusBarLyric = {
+                                        if (onOpenStatusBarLyricSettings != null) {
+                                            onDismiss()
+                                            onOpenStatusBarLyricSettings()
+                                        } else {
+                                            showStatusBarSubPage = true
+                                        }
+                                    }
                                 )
                             }
                             Column(
@@ -417,7 +442,14 @@ internal fun LyricSettingsDialog(
                             onSetWordByWord = onSetWordByWord,
                             onSetBlurEnabled = onSetBlurEnabled,
                             onSetKeepScreenOn = onSetKeepScreenOn,
-                            onSetStatusBarLyric = { SystemLyricBridge.setStatusBarBroadcastEnabled(context, it) }
+                            onSetStatusBarLyric = {
+                                        if (onOpenStatusBarLyricSettings != null) {
+                                            onDismiss()
+                                            onOpenStatusBarLyricSettings()
+                                        } else {
+                                            showStatusBarSubPage = true
+                                        }
+                                    }
                         )
                     }
                 }
@@ -809,8 +841,8 @@ private fun LyricTogglesGridCard(
             )
             CompactTogglePillTile(
                 icon = Icons.Rounded.NotificationsActive,
-                title = "状态栏歌词",
-                subtitle = if (statusBarLyricEnabled) "广播已开启" else "点击开启",
+                title = "状态栏歌词 >",
+                subtitle = if (statusBarLyricEnabled) "已开启 · 二级设置" else "点击进入二级设置",
                 checked = statusBarLyricEnabled,
                 accentColor = themeAccent,
                 cardBg = cardBg,

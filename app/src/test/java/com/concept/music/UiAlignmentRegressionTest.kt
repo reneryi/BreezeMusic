@@ -904,4 +904,82 @@ class UiAlignmentRegressionTest {
         assertEquals(1.0f, statePlaying.coverScale, 1e-5f)
         assertEquals(1f, statePlaying.playTransition, 1e-5f)
     }
+
+    @Test
+    fun `歌词海报超清分辨率封面URL升级与完整歌手专辑无截断排版验证`() {
+        assertEquals(2f, com.concept.music.ui.components.POSTER_EXPORT_SCALE, 1e-4f)
+        assertEquals(1080, com.concept.music.ui.components.POSTER_BASE_LOGICAL_WIDTH)
+        assertEquals(1560, com.concept.music.ui.components.POSTER_BASE_LOGICAL_HEIGHT)
+
+        val rawUrl1 = "http://imge.kugou.com/stdmusic/{size}/20261027/abc.jpg"
+        assertEquals(
+            "http://imge.kugou.com/stdmusic/1000/20261027/abc.jpg",
+            com.concept.music.ui.components.upgradePosterCoverUrl(rawUrl1)
+        )
+
+        val rawUrl2 = "https://imge.kugou.com/stdmusic/240/20261027/xyz.jpg"
+        assertEquals(
+            "https://imge.kugou.com/stdmusic/1000/20261027/xyz.jpg",
+            com.concept.music.ui.components.upgradePosterCoverUrl(rawUrl2)
+        )
+
+        val fullSub = com.concept.music.ui.components.formatPosterArtistAlbumSubtitle(
+            artist = "Kastra",
+            albumName = "Fool For You"
+        )
+        assertEquals("Kastra · 《Fool For You》", fullSub)
+
+        val noAlbumSub = com.concept.music.ui.components.formatPosterArtistAlbumSubtitle(
+            artist = "Kastra",
+            albumName = "未知专辑",
+            fallbackTagWhenNoAlbum = "24-BIT HI-RES"
+        )
+        assertEquals("Kastra · 24-BIT HI-RES", noAlbumSub)
+    }
+
+    @Test
+    fun `状态栏歌词与灵动岛多系统ROM识别及椒盐模式路由验证`() {
+        assertEquals(
+            com.concept.music.service.RomEcosystemType.HYPER_OS,
+            com.concept.music.service.SystemLyricBridge.detectRomEcosystem("Xiaomi", "Redmi", "OS2.0.1")
+        )
+        assertEquals(
+            com.concept.music.service.RomEcosystemType.COLOR_OS,
+            com.concept.music.service.SystemLyricBridge.detectRomEcosystem("OPPO", "OnePlus", "ColorOS 15")
+        )
+        assertEquals(
+            com.concept.music.service.RomEcosystemType.ORIGIN_OS,
+            com.concept.music.service.SystemLyricBridge.detectRomEcosystem("vivo", "iQOO", "OriginOS 5")
+        )
+        assertEquals(
+            com.concept.music.service.RomEcosystemType.FLYME,
+            com.concept.music.service.SystemLyricBridge.detectRomEcosystem("Meizu", "meizu", "Flyme 11")
+        )
+        assertEquals(
+            com.concept.music.service.RomEcosystemType.HARMONY_EMUI,
+            com.concept.music.service.SystemLyricBridge.detectRomEcosystem("HUAWEI", "HUAWEI", "HarmonyOS")
+        )
+
+        val baseState = SystemLyricState(statusBarBroadcastEnabled = true)
+        assertTrue(com.concept.music.service.SystemLyricBridge.shouldShowTopStatusBarOverlay(baseState))
+
+        val saltModeState = baseState.copy(
+            statusBarMode = com.concept.music.service.StatusBarLyricMode.SALT_STATUS_OVERLAY
+        )
+        assertEquals(
+            com.concept.music.service.StatusBarOverlayStyle.SALT_PURE_STATUS_BAR,
+            com.concept.music.service.SystemLyricBridge.effectiveOverlayStyle(saltModeState)
+        )
+
+        val islandModeState = baseState.copy(
+            statusBarMode = com.concept.music.service.StatusBarLyricMode.DYNAMIC_ISLAND_CAPSULE
+        )
+        assertEquals(
+            com.concept.music.service.StatusBarOverlayStyle.DYNAMIC_ISLAND,
+            com.concept.music.service.SystemLyricBridge.effectiveOverlayStyle(islandModeState)
+        )
+
+        assertEquals(0x01000000, com.concept.music.service.SystemLyricBridge.FLAG_ALWAYS_SHOW_TICKER)
+        assertEquals(0x02000000, com.concept.music.service.SystemLyricBridge.FLAG_ONLY_UPDATE_TICKER)
+    }
 }

@@ -3,11 +3,15 @@ package com.concept.music.service
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.AuxEffectInfo
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
@@ -22,6 +26,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioTrackBufferSizeProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.concept.music.MainActivity
+import com.concept.music.data.model.Song
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
@@ -258,14 +263,14 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
     private fun updateFilterCoefficientsIfNeeded(
         sampleRate: Int,
         dspActive: Boolean,
-        tenBands: List<Int>,
+        tenBands: IntArray,
         bassStrength: Int,
         bassCutoffHz: Int,
         vocalClarity: Int,
         analogWarmth: Int,
-        eqLoudnessComp: Boolean
+        loudnessComp: Boolean
     ) {
-        val bandsHash = tenBands.hashCode()
+        val bandsHash = tenBands.contentHashCode()
         if (sampleRate == cachedSampleRate &&
             dspActive == cachedDspActive &&
             bandsHash == cachedTenBandsHash &&
@@ -273,11 +278,10 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             bassCutoffHz == cachedBassCutoff &&
             vocalClarity == cachedVocalClarity &&
             analogWarmth == cachedAnalogWarmth &&
-            eqLoudnessComp == cachedEqLoudness
+            loudnessComp == cachedEqLoudness
         ) {
             return
         }
-
         cachedSampleRate = sampleRate
         cachedDspActive = dspActive
         cachedTenBandsHash = bandsHash
@@ -285,63 +289,61 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         cachedBassCutoff = bassCutoffHz
         cachedVocalClarity = vocalClarity
         cachedAnalogWarmth = analogWarmth
-        cachedEqLoudness = eqLoudnessComp
+        cachedEqLoudness = loudnessComp
 
-        // 1. 10 段参量均衡器 (31Hz ~ 16kHz, -10dB ~ +10dB) + 等响度高低频听感曲线补偿
+        if (!dspActive || sampleRate <= 0) {
+            tenBandFilters.forEach { it.setIdentity() }
+            bassSubFilter.setIdentity()
+            bassPunchFilter.setIdentity()
+            vocalPresenceFilter.setIdentity()
+            vocalAirFilter.setIdentity()
+            warmthBodyFilter.setIdentity()
+            warmthRollOffFilter.setIdentity()
+            return
+        }
+
         for (i in 0 until 10) {
-            val baseMb = if (dspActive) (tenBands.getOrNull(i) ?: 0) else 0
-            val loudnessCompMb = if (eqLoudnessComp) {
+            val rawLevel = tenBands.getOrElse(i) { 0 }.toDouble()
+            val loudnessAdd = if (loudnessComp) {
                 when (i) {
-                    0 -> 380  // +3.8 dB @ 31Hz
-                    1 -> 280  // +2.8 dB @ 62Hz
-                    2 -> 140  // +1.4 dB @ 125Hz
-                    8 -> 180  // +1.8 dB @ 8kHz
-                    9 -> 280  // +2.8 dB @ 16kHz
-                    else -> 0
+                    0 -> 2.4
+                    1 -> 1.6
+                    8 -> 1.2
+                    9 -> 2.0
+                    else -> 0.0
                 }
-            } else 0
-            val totalGainDb = ((baseMb + loudnessCompMb).coerceIn(-1200, 1200)) / 100.0
-            val freq = TEN_BAND_CENTERS_HZ[i]
+            } else 0.0
+            val gainDb = (rawLevel * 0.65 + loudnessAdd).coerceIn(-12.0, 12.0)
             when (i) {
-                0 -> tenBandFilters[i].configureLowShelf(freq, sampleRate, 0.707, totalGainDb)
-                9 -> tenBandFilters[i].configureHighShelf(freq, sampleRate, 0.707, totalGainDb)
-                else -> tenBandFilters[i].configurePeakingEq(freq, sampleRate, 1.414, totalGainDb)
+                0 -> tenBandFilters[i].configureLowShelf(TEN_BAND_CENTERS_HZ[i], sampleRate, 0.75, gainDb)
+                9 -> tenBandFilters[i].configureHighShelf(TEN_BAND_CENTERS_HZ[i], sampleRate, 0.75, gainDb)
+                else -> tenBandFilters[i].configurePeakingEq(TEN_BAND_CENTERS_HZ[i], sampleRate, 1.41, gainDb)
             }
         }
 
-        // 2. 重低音下潜与低频频点 (45Hz 深潜 / 60Hz 均衡 / 85Hz 紧凑)
-        if (dspActive && bassStrength > 0) {
-            val normBass = (bassStrength / 1000.0).coerceIn(0.0, 1.0)
-            val cutoff = bassCutoffHz.coerceIn(40, 120).toDouble()
-            val shelfDb = normBass * 6.5
-            val punchDb = normBass * 4.5
-            val punchQ = when {
-                bassCutoffHz <= 50 -> 1.35 // 45Hz 深潜下潜
-                bassCutoffHz >= 75 -> 1.65 // 85Hz 紧凑弹性
-                else -> 1.15               // 60Hz 均衡饱满
-            }
-            bassSubFilter.configureLowShelf(cutoff * 1.15, sampleRate, 0.707, shelfDb)
-            bassPunchFilter.configurePeakingEq(cutoff, sampleRate, punchQ, punchDb)
+        val bassFrac = (bassStrength / 1000.0).coerceIn(0.0, 1.0)
+        val cutoff = bassCutoffHz.coerceIn(35, 180).toDouble()
+        if (bassFrac > 0.01) {
+            bassSubFilter.configureLowShelf(cutoff, sampleRate, 0.72, bassFrac * 6.8)
+            bassPunchFilter.configurePeakingEq(cutoff * 1.35, sampleRate, 1.25, bassFrac * 3.6)
         } else {
             bassSubFilter.setIdentity()
             bassPunchFilter.setIdentity()
         }
 
-        // 3. 人声通透度 (2.6kHz 咬字解析 + 9kHz 呼吸空气泛音激励)
-        if (dspActive && vocalClarity > 0) {
-            val normVocal = (vocalClarity / 1000.0).coerceIn(0.0, 1.0)
-            vocalPresenceFilter.configurePeakingEq(2600.0, sampleRate, 1.15, normVocal * 5.2)
-            vocalAirFilter.configureHighShelf(9000.0, sampleRate, 0.75, normVocal * 3.6)
+        val clarityFrac = (vocalClarity / 100.0).coerceIn(0.0, 1.0)
+        if (clarityFrac > 0.01) {
+            vocalPresenceFilter.configurePeakingEq(2850.0, sampleRate, 1.15, clarityFrac * 4.5)
+            vocalAirFilter.configureHighShelf(9500.0, sampleRate, 0.75, clarityFrac * 4.2)
         } else {
             vocalPresenceFilter.setIdentity()
             vocalAirFilter.setIdentity()
         }
 
-        // 4. 黑胶与胆机温暖度 (220Hz 电子管醇厚中低频 + 11kHz 毛刺柔化)
-        if (dspActive && analogWarmth > 0) {
-            val normWarmth = (analogWarmth / 1000.0).coerceIn(0.0, 1.0)
-            warmthBodyFilter.configurePeakingEq(220.0, sampleRate, 0.85, normWarmth * 3.8)
-            warmthRollOffFilter.configureHighShelf(11000.0, sampleRate, 0.707, -normWarmth * 2.4)
+        val warmthFrac = (analogWarmth / 100.0).coerceIn(0.0, 1.0)
+        if (warmthFrac > 0.01) {
+            warmthBodyFilter.configurePeakingEq(210.0, sampleRate, 0.90, warmthFrac * 3.8)
+            warmthRollOffFilter.configureHighShelf(12500.0, sampleRate, 0.70, -warmthFrac * 2.2)
         } else {
             warmthBodyFilter.setIdentity()
             warmthRollOffFilter.setIdentity()
@@ -352,74 +354,10 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         val remaining = inputBuffer.remaining()
         if (remaining == 0) return
 
-        inputBuffer.order(ByteOrder.LITTLE_ENDIAN)
-
-        val state = AudioEffectManager.state.value
-        val balance = state.channelBalance.coerceIn(-1f, 1f)
-        val dspActive = state.isEnabled && state.currentPreset != EffectPreset.OFF
-        val widthFactor = if (dspActive) (state.virtualizerStrength / 1000f) * 0.52f else 0f
-        val rotSpeed = if (dspActive) state.surroundRotationSpeed else 0
-        val warmthFactor = if (dspActive) (state.analogWarmthStrength / 1000f) * 0.22f else 0f
-        val eqLoudnessComp = state.equalLoudnessCompensation
-        val volNorm = state.isEnabled && state.volumeNormalizationEnabled
-        val reverbMode = if (dspActive) state.reverbMode else ReverbMode.NONE
-        val preampDb = if (dspActive) state.preampGainDb.coerceIn(-6f, 6f) else 0f
-        val loudnessDb = if (dspActive) (state.loudnessGainMb.coerceIn(0, 1500) / 100f) * 0.65f else 0f
-        val tenBands = state.tenBandLevels
-        val hasTenBandEq = dspActive && tenBands.any { it != 0 }
-        val hasToneShaping = hasTenBandEq ||
-            (dspActive && (state.bassBoostStrength > 0 || state.vocalClarityStrength > 0 || state.analogWarmthStrength > 0)) ||
-            eqLoudnessComp
-        val antiClip = state.antiClippingEnabled && (dspActive || eqLoudnessComp || volNorm)
-
-        // 若处于 0 音染 / Bit-Perfect 原生直通态且声道平衡居中，直接零拷贝透传
-        if (abs(balance) < 0.01f && !dspActive && !eqLoudnessComp && !volNorm) {
-            val out = replaceOutputBuffer(remaining).order(ByteOrder.LITTLE_ENDIAN)
-            out.put(inputBuffer)
-            out.flip()
-            return
-        }
-
-        val sampleRate = inputAudioFormat.sampleRate.coerceAtLeast(44100)
-        if (hasToneShaping) {
-            updateFilterCoefficientsIfNeeded(
-                sampleRate = sampleRate,
-                dspActive = dspActive,
-                tenBands = tenBands,
-                bassStrength = state.bassBoostStrength,
-                bassCutoffHz = state.bassCutoffHz,
-                vocalClarity = state.vocalClarityStrength,
-                analogWarmth = state.analogWarmthStrength,
-                eqLoudnessComp = eqLoudnessComp
-            )
-        }
-
-        // 计算前置放大增益 (preampGainDb) + 动态响度增益 (loudnessGainMb) + 等响度补偿
-        val totalGainDb = preampDb + loudnessDb + (if (eqLoudnessComp) 1.2f else 0f)
-        val masterGainLinear = 10.0.pow(totalGainDb.toDouble() / 20.0).toFloat().coerceIn(0.25f, 4.0f)
-
-        val out = replaceOutputBuffer(remaining).order(ByteOrder.LITTLE_ENDIAN)
-        val targetLeftGain = (if (balance > 0f) (1f - balance).coerceIn(0f, 1f) else 1f) * masterGainLinear
-        val targetRightGain = (if (balance < 0f) (1f + balance).coerceIn(0f, 1f) else 1f) * masterGainLinear
-        val phaseStep = if (rotSpeed > 0) (2.0 * PI * (0.15 + rotSpeed * 0.012)) / sampleRate else 0.0
-
-        // 配置空间混响房间延迟与衰减反馈参数
-        val hasReverb = reverbMode != ReverbMode.NONE
-        val (revDelayMs1, revFeedback, revWetMix) = when (reverbMode) {
-            ReverbMode.NONE -> Triple(0f, 0f, 0f)
-            ReverbMode.SMALL_ROOM -> Triple(26f, 0.34f, 0.14f)
-            ReverbMode.MEDIUM_ROOM -> Triple(42f, 0.44f, 0.18f)
-            ReverbMode.LARGE_ROOM -> Triple(64f, 0.52f, 0.22f)
-            ReverbMode.MEDIUM_HALL -> Triple(88f, 0.60f, 0.26f)
-            ReverbMode.LARGE_HALL -> Triple(118f, 0.68f, 0.30f)
-            ReverbMode.PLATE -> Triple(54f, 0.62f, 0.24f)
-        }
-        val delaySamples1 = ((revDelayMs1 * sampleRate) / 1000f).toInt().coerceIn(128, reverbMaxSamples - 64)
-        val delaySamples2 = ((delaySamples1 * 1.37f).toInt()).coerceIn(192, reverbMaxSamples - 64)
-        val allpassSamples = ((11.7f * sampleRate) / 1000f).toInt().coerceIn(64, allpassBufL.size - 16)
-
         val encoding = inputAudioFormat.encoding
         val channels = inputAudioFormat.channelCount
+        val sampleRate = inputAudioFormat.sampleRate.coerceAtLeast(8000)
+
         val bytesPerSample = when (encoding) {
             C.ENCODING_PCM_16BIT -> 2
             C.ENCODING_PCM_24BIT -> 3
@@ -427,76 +365,159 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             else -> 2
         }
         val frameSize = bytesPerSample * channels
+        val frameCount = remaining / frameSize
+        if (frameCount <= 0) {
+            val out = replaceOutputBuffer(remaining)
+            out.put(inputBuffer)
+            out.flip()
+            return
+        }
 
-        while (inputBuffer.remaining() >= frameSize) {
-            val rawL = readNormalizedSample(inputBuffer, encoding)
-            val rawR = if (channels == 2) readNormalizedSample(inputBuffer, encoding) else rawL
+        val dspActive = AudioEffectManager.dspMasterActive
+        val balance = if (dspActive) AudioEffectManager.dspChannelBalance.coerceIn(-1f, 1f) else 0f
+        val stereoWidth = if (dspActive) AudioEffectManager.dspStereoWidth.coerceIn(0.5f, 2.0f) else 1.0f
+        val rotationSpeed = if (dspActive) AudioEffectManager.dspSurroundRotationSpeed.coerceIn(0f, 1f) else 0f
+        val preAmpDb = if (dspActive) AudioEffectManager.dspPreAmpDb.coerceIn(-6f, 6f) else 0f
+        val volNorm = AudioEffectManager.dspVolumeNormalization
+        val antiClip = if (dspActive) AudioEffectManager.dspAntiClipping else true
 
-            // 64 采样线性增益平滑，防止音效开关瞬间产生阶跃爆音
-            smoothLeftGain += (targetLeftGain - smoothLeftGain) * 0.03125f
-            smoothRightGain += (targetRightGain - smoothRightGain) * 0.03125f
+        val tenBands = if (dspActive) AudioEffectManager.dspTenBandGains else IntArray(10)
+        val bassStrength = if (dspActive) AudioEffectManager.dspBassStrength else 0
+        val bassCutoff = if (dspActive) AudioEffectManager.dspBassCutoffHz else 65
+        val vocalClarity = if (dspActive) AudioEffectManager.dspVocalClarity else 0
+        val analogWarmth = if (dspActive) AudioEffectManager.dspAnalogWarmth else 0
+        val reverbMix = if (dspActive) AudioEffectManager.dspReverbWetMix else 0f
+        val reverbDecay = if (dspActive) AudioEffectManager.dspReverbDecay else 0f
+        val loudnessComp = if (dspActive) AudioEffectManager.dspLoudnessCompensation else false
 
-            val normGain = if (volNorm) {
-                val frameEnergy = (abs(rawL) + abs(rawR)) * 0.5f
-                if (frameEnergy > 0.015f) {
-                    val alpha = if (frameEnergy > smoothedEnvelope) 0.0005f else 0.00015f
-                    smoothedEnvelope += alpha * (frameEnergy - smoothedEnvelope)
-                    val targetEnv = 0.24f
-                    val desiredGain = (targetEnv / smoothedEnvelope.coerceAtLeast(0.06f)).coerceIn(0.82f, 1.22f)
-                    currentNormGain += 0.0004f * (desiredGain - currentNormGain)
+        updateFilterCoefficientsIfNeeded(
+            sampleRate = sampleRate,
+            dspActive = dspActive,
+            tenBands = tenBands,
+            bassStrength = bassStrength,
+            bassCutoffHz = bassCutoff,
+            vocalClarity = vocalClarity,
+            analogWarmth = analogWarmth,
+            loudnessComp = loudnessComp
+        )
+
+        val isBypass = !dspActive && !volNorm
+        if (isBypass) {
+            val out = replaceOutputBuffer(remaining)
+            out.put(inputBuffer)
+            out.flip()
+            return
+        }
+
+        val out = replaceOutputBuffer(remaining)
+        out.order(ByteOrder.LITTLE_ENDIAN)
+        inputBuffer.order(ByteOrder.LITTLE_ENDIAN)
+
+        // 先对当前 PCM 块做一次轻量峰值扫描，用于平滑跨曲目响度均衡
+        if (volNorm) {
+            val markPos = inputBuffer.position()
+            var sumAbs = 0f
+            val stepFrames = (frameCount / 64).coerceAtLeast(1)
+            var sampled = 0
+            var fIdx = 0
+            while (fIdx < frameCount) {
+                val bytePos = markPos + fIdx * frameSize
+                if (bytePos + bytesPerSample <= inputBuffer.limit()) {
+                    inputBuffer.position(bytePos)
+                    val s = abs(readNormalizedSample(inputBuffer, encoding))
+                    sumAbs += s
+                    sampled++
                 }
-                currentNormGain
-            } else 1.0f
+                fIdx += stepFrames
+            }
+            inputBuffer.position(markPos)
+            if (sampled > 0) {
+                val avgAbs = (sumAbs / sampled).coerceIn(0.01f, 0.95f)
+                smoothedEnvelope = smoothedEnvelope * 0.94f + avgAbs * 0.06f
+                val targetGain = (0.24f / smoothedEnvelope.coerceAtLeast(0.05f)).coerceIn(0.78f, 1.38f)
+                currentNormGain = currentNormGain * 0.90f + targetGain * 0.10f
+            }
+        } else {
+            currentNormGain = 1.0f
+        }
 
-            var sigL = rawL * normGain
-            var sigR = rawR * normGain
+        val preAmpLinear = if (abs(preAmpDb) > 0.05f) {
+            10.0.pow(preAmpDb / 20.0).toFloat()
+        } else 1.0f
 
-            // 1. 10 段参量均衡器 + 重低音频点下潜 + 人声通透激励 + 胆机温暖度滤波链
-            if (hasToneShaping) {
-                if (hasTenBandEq || eqLoudnessComp) {
-                    for (b in 0 until 10) {
-                        val filter = tenBandFilters[b]
-                        sigL = filter.processLeft(sigL)
-                        sigR = filter.processRight(sigR)
-                    }
+        val leftPanGain = if (balance > 0f) (1f - balance).coerceIn(0f, 1f) else 1f
+        val rightPanGain = if (balance < 0f) (1f + balance).coerceIn(0f, 1f) else 1f
+        val targetLeftGain = preAmpLinear * currentNormGain * leftPanGain
+        val targetRightGain = preAmpLinear * currentNormGain * rightPanGain
+
+        val rampFrames = frameCount.coerceAtMost(64).coerceAtLeast(1)
+        val leftGainStep = (targetLeftGain - smoothLeftGain) / rampFrames
+        val rightGainStep = (targetRightGain - smoothRightGain) / rampFrames
+
+        val phaseStep = if (rotationSpeed > 0.01f) {
+            (2.0 * PI * (0.12 + rotationSpeed * 0.55)) / sampleRate.toDouble()
+        } else 0.0
+
+        val tubeDrive = (analogWarmth / 100f).coerceIn(0f, 1f) * 0.55f
+        val revWet = reverbMix.coerceIn(0f, 0.45f)
+        val revFeedback = reverbDecay.coerceIn(0f, 0.78f)
+        val delaySamples1 = ((sampleRate * 0.0297).toInt()).coerceIn(256, reverbMaxSamples - 1)
+        val delaySamples2 = ((sampleRate * 0.0371).toInt()).coerceIn(256, reverbMaxSamples - 1)
+        val allpassSamples = ((sampleRate * 0.0083).toInt()).coerceIn(64, allpassBufL.size - 1)
+
+        for (i in 0 until frameCount) {
+            if (i < rampFrames) {
+                smoothLeftGain += leftGainStep
+                smoothRightGain += rightGainStep
+            } else {
+                smoothLeftGain = targetLeftGain
+                smoothRightGain = targetRightGain
+            }
+
+            var inL = readNormalizedSample(inputBuffer, encoding)
+            var inR = if (channels == 2) readNormalizedSample(inputBuffer, encoding) else inL
+
+            // 1. 级联 Biquad IIR 滤波器网络（10 段 EQ + 动态超重低音 + 人声清澈度 + 模拟温暖度）
+            if (dspActive) {
+                for (band in tenBandFilters) {
+                    inL = band.processLeft(inL)
+                    inR = band.processRight(inR)
                 }
-                if (dspActive && state.bassBoostStrength > 0) {
-                    sigL = bassPunchFilter.processLeft(bassSubFilter.processLeft(sigL))
-                    sigR = bassPunchFilter.processRight(bassSubFilter.processRight(sigR))
-                }
-                if (dspActive && state.vocalClarityStrength > 0) {
-                    sigL = vocalAirFilter.processLeft(vocalPresenceFilter.processLeft(sigL))
-                    sigR = vocalAirFilter.processRight(vocalPresenceFilter.processRight(sigR))
-                }
-                if (dspActive && state.analogWarmthStrength > 0) {
-                    sigL = warmthRollOffFilter.processLeft(warmthBodyFilter.processLeft(sigL))
-                    sigR = warmthRollOffFilter.processRight(warmthBodyFilter.processRight(sigR))
+                inL = bassPunchFilter.processLeft(bassSubFilter.processLeft(inL))
+                inR = bassPunchFilter.processRight(bassSubFilter.processRight(inR))
+                inL = vocalAirFilter.processLeft(vocalPresenceFilter.processLeft(inL))
+                inR = vocalAirFilter.processRight(vocalPresenceFilter.processRight(inR))
+                inL = warmthRollOffFilter.processLeft(warmthBodyFilter.processLeft(inL))
+                inR = warmthRollOffFilter.processRight(warmthBodyFilter.processRight(inR))
+
+                // 2. 电子管偶次谐波柔化激励 (Analog Tube Saturation)
+                if (tubeDrive > 0.01f) {
+                    inL += tubeDrive * 0.18f * (inL * inL * (if (inL >= 0f) 1f else -0.6f))
+                    inR += tubeDrive * 0.18f * (inR * inR * (if (inR >= 0f) 1f else -0.6f))
                 }
             }
 
-            // 2. M/S 立体声场宽度扩展
-            val mid = (sigL + sigR) * 0.5f
-            val side = if (channels == 2) (sigL - sigR) * 0.5f * (1f + widthFactor) else 0f
-            var outL = mid + side
-            var outR = mid - side
+            var outL = inL
+            var outR = inR
 
-            // 3. 偶次谐波电子管微饱和润色 (Tube / Vinyl Even-Harmonic Saturation)
-            if (warmthFactor > 0.005f) {
-                outL += warmthFactor * (outL * outL * if (outL >= 0f) 0.38f else -0.24f)
-                outR += warmthFactor * (outR * outR * if (outR >= 0f) 0.38f else -0.24f)
+            // 3. M/S 立体声场宽度扩展 (Mid/Side Matrix)
+            if (channels == 2 && abs(stereoWidth - 1.0f) > 0.02f) {
+                val mid = (outL + outR) * 0.5f
+                val side = (outL - outR) * 0.5f * stereoWidth
+                outL = mid + side
+                outR = mid - side
             }
 
-            // 4. 空间混响处理 (Schroeder Stereo Comb + Allpass Reverb)
-            if (hasReverb) {
+            // 4. 立体声空间混响网络 (Stereo Comb + Allpass Reverb)
+            if (dspActive && revWet > 0.005f) {
                 val c1L = combBufL1[combIdx1]
                 val c1R = combBufR1[combIdx1]
                 val c2L = combBufL2[combIdx2]
                 val c2R = combBufR2[combIdx2]
 
-                reverbLpL = 0.65f * (c1L + c2L) * 0.5f + 0.35f * reverbLpL
-                reverbLpR = 0.65f * (c1R + c2R) * 0.5f + 0.35f * reverbLpR
+                reverbLpL = reverbLpL * 0.42f + (c1L + c2L) * 0.29f
+                reverbLpR = reverbLpR * 0.42f + (c1R + c2R) * 0.29f
 
-                // 立体声交叉反馈营造宽阔空间包裹感
                 combBufL1[combIdx1] = (outL + (reverbLpL * 0.82f + reverbLpR * 0.18f) * revFeedback).coerceIn(-1.5f, 1.5f)
                 combBufR1[combIdx1] = (outR + (reverbLpR * 0.82f + reverbLpL * 0.18f) * revFeedback).coerceIn(-1.5f, 1.5f)
                 combBufL2[combIdx2] = (outL * 0.9f + (reverbLpR * 0.75f + reverbLpL * 0.25f) * revFeedback * 0.92f).coerceIn(-1.5f, 1.5f)
@@ -515,8 +536,8 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
 
                 val wetL = apDelayedL - 0.5f * apInL
                 val wetR = apDelayedR - 0.5f * apInR
-                outL = outL * (1f - revWetMix * 0.35f) + wetL * revWetMix
-                outR = outR * (1f - revWetMix * 0.35f) + wetR * revWetMix
+                outL = outL * (1f - revWet * 0.35f) + wetL * revWet
+                outR = outR * (1f - revWet * 0.35f) + wetR * revWet
             }
 
             // 5. 3D 环绕头部动态轨迹旋转
@@ -606,7 +627,7 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
 
 /**
  * AndroidX Media3 官方后台播放服务
- * 提供锁屏控制、通知栏控制面板、蓝牙耳机按键拦截与 AudioFocus 音频焦点管理
+ * 提供锁屏控制、通知栏控制面板、蓝牙耳机按键拦截、AudioFocus 音频焦点管理及 MediaSession 实时歌词元数据同步
  */
 class PlaybackService : MediaSessionService() {
 
@@ -614,8 +635,19 @@ class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
 
     companion object {
+        private val mainHandler = Handler(Looper.getMainLooper())
+
         @Volatile
         private var activeServiceInstance: PlaybackService? = null
+
+        @Volatile
+        internal var liveLyricOverlaySongId: String = ""
+
+        @Volatile
+        internal var liveLyricLine: String = ""
+
+        @Volatile
+        internal var liveLyricTranslation: String = ""
 
         @Volatile
         var onSkipToPreviousIntercepted: (() -> Boolean)? = null
@@ -643,6 +675,45 @@ class PlaybackService : MediaSessionService() {
         internal fun toggleActivePlayerPlayPause(): Boolean {
             val svc = activeServiceInstance ?: return false
             return PlaybackCoordinator.handleTogglePlay(svc.applicationContext, svc.player)
+        }
+
+        /**
+         * 将实时歌词同步至 MediaSession 的 SessionExtras 与动态元数据副标题，
+         * 使车载蓝牙屏幕、系统锁屏、OriginOS 原子岛与 ColorOS 流体云能够直接读取实时歌词。
+         */
+        fun syncLiveLyricToMediaSession(
+            song: Song,
+            lyricLine: String,
+            translationLine: String = ""
+        ) {
+            liveLyricOverlaySongId = song.id
+            liveLyricLine = lyricLine.trim()
+            liveLyricTranslation = translationLine.trim()
+            val svc = activeServiceInstance ?: return
+            mainHandler.post {
+                runCatching {
+                    val extras = Bundle().apply {
+                        putString("android.media.metadata.LYRIC", liveLyricLine)
+                        putString("lyric", liveLyricLine)
+                        putString("translation", liveLyricTranslation)
+                        putString("song_title", song.title)
+                        putString("artist", song.artist)
+                    }
+                    svc.mediaSession?.setSessionExtras(extras)
+                }
+            }
+        }
+
+        fun restoreMediaMetadataTitleIfNeeded() {
+            liveLyricOverlaySongId = ""
+            liveLyricLine = ""
+            liveLyricTranslation = ""
+            val svc = activeServiceInstance ?: return
+            mainHandler.post {
+                runCatching {
+                    svc.mediaSession?.setSessionExtras(Bundle.EMPTY)
+                }
+            }
         }
     }
 
@@ -728,6 +799,28 @@ class PlaybackService : MediaSessionService() {
         )
 
         val forwardingPlayer = object : ForwardingPlayer(exoPlayer) {
+            override fun getMediaMetadata(): MediaMetadata {
+                val base = super.getMediaMetadata()
+                val curItem = currentMediaItem
+                val activeLyric = liveLyricLine
+                if (activeLyric.isNotBlank() &&
+                    SystemLyricBridge.state.value.statusBarBroadcastEnabled &&
+                    SystemLyricBridge.state.value.mediaSessionLyricSyncEnabled &&
+                    (curItem == null || curItem.mediaId == liveLyricOverlaySongId)
+                ) {
+                    val extras = Bundle(base.extras ?: Bundle.EMPTY).apply {
+                        putString("android.media.metadata.LYRIC", activeLyric)
+                        putString("lyric", activeLyric)
+                    }
+                    return base.buildUpon()
+                        .setSubtitle(activeLyric)
+                        .setDescription(liveLyricTranslation.ifBlank { base.artist })
+                        .setExtras(extras)
+                        .build()
+                }
+                return base
+            }
+
             override fun getAvailableCommands(): Player.Commands {
                 return super.getAvailableCommands()
                     .buildUpon()

@@ -314,6 +314,7 @@ fun NowPlayingSheet(
     onSetLyricKeepScreenOn: (Boolean) -> Unit = {},
     onOpenComments: () -> Unit = {},
     onOpenViperEffectPage: (() -> Unit)? = null,
+    onOpenStatusBarLyricPage: (() -> Unit)? = null,
     onSetPlaybackSpeed: (Float) -> Unit = {},
     onSetPlaybackPitch: (Float) -> Unit = {},
     onSetLinkPitchToSpeed: (Boolean) -> Unit = {},
@@ -1002,6 +1003,7 @@ fun NowPlayingSheet(
             onSetHighlightTheme = onSetLyricHighlightTheme,
             onSetBackgroundDim = onSetLyricBackgroundDim,
             onSetKeepScreenOn = onSetLyricKeepScreenOn,
+            onOpenStatusBarLyricSettings = onOpenStatusBarLyricPage,
             onDismiss = { showLyricSettingsDialog = false }
         )
     }

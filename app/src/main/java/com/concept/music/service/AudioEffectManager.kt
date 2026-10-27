@@ -423,6 +423,68 @@ object AudioEffectManager {
     val TEN_BAND_FREQUENCIES = listOf("31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k")
     val FIVE_BAND_FREQUENCIES = listOf("60Hz", "230Hz", "910Hz", "3.6kHz", "14kHz")
 
+    val dspMasterActive: Boolean
+        get() = _state.value.isEnabled && _state.value.currentPreset != EffectPreset.OFF
+
+    val dspChannelBalance: Float
+        get() = _state.value.channelBalance
+
+    val dspStereoWidth: Float
+        get() = 1.0f + (_state.value.virtualizerStrength / 1000f) * 0.8f
+
+    val dspSurroundRotationSpeed: Float
+        get() = _state.value.surroundRotationSpeed / 100f
+
+    val dspPreAmpDb: Float
+        get() = _state.value.preampGainDb
+
+    val dspVolumeNormalization: Boolean
+        get() = _state.value.isEnabled && _state.value.volumeNormalizationEnabled
+
+    val dspAntiClipping: Boolean
+        get() = _state.value.antiClippingEnabled
+
+    val dspTenBandGains: IntArray
+        get() = _state.value.tenBandLevels.toIntArray()
+
+    val dspBassStrength: Int
+        get() = _state.value.bassBoostStrength
+
+    val dspBassCutoffHz: Int
+        get() = _state.value.bassCutoffHz
+
+    val dspVocalClarity: Int
+        get() = _state.value.vocalClarityStrength
+
+    val dspAnalogWarmth: Int
+        get() = _state.value.analogWarmthStrength
+
+    val dspReverbWetMix: Float
+        get() = when (_state.value.reverbMode) {
+            ReverbMode.NONE -> 0f
+            ReverbMode.SMALL_ROOM -> 0.18f
+            ReverbMode.MEDIUM_ROOM -> 0.28f
+            ReverbMode.LARGE_ROOM -> 0.38f
+            ReverbMode.MEDIUM_HALL -> 0.48f
+            ReverbMode.LARGE_HALL -> 0.58f
+            ReverbMode.PLATE -> 0.42f
+        }
+
+    val dspReverbDecay: Float
+        get() = when (_state.value.reverbMode) {
+            ReverbMode.NONE -> 0f
+            ReverbMode.SMALL_ROOM -> 0.35f
+            ReverbMode.MEDIUM_ROOM -> 0.50f
+            ReverbMode.LARGE_ROOM -> 0.65f
+            ReverbMode.MEDIUM_HALL -> 0.75f
+            ReverbMode.LARGE_HALL -> 0.85f
+            ReverbMode.PLATE -> 0.70f
+        }
+
+    val dspLoudnessCompensation: Boolean
+        get() = _state.value.equalLoudnessCompensation
+
+
     fun init(context: Context) {
         if (prefs != null) return
         prefs = context.applicationContext.getSharedPreferences("concept_audio_effects", Context.MODE_PRIVATE)

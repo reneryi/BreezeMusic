@@ -22,6 +22,20 @@
         android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config">
 
+        <!-- 多系统状态栏歌词与实况胶囊/灵动岛声明 (Flyme / HyperOS 澎湃焦点通知 / ColorOS 流体云 / Xposed LyricGetter) -->
+        <meta-data
+            android:name="com.meizu.flyme.status_bar_lyric"
+            android:value="true" />
+        <meta-data
+            android:name="miui.focus.enable"
+            android:value="true" />
+        <meta-data
+            android:name="oplus.fluid_cloud.enable"
+            android:value="true" />
+        <meta-data
+            android:name="lyric_getter_support"
+            android:value="true" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
