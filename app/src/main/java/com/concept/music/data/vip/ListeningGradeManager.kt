@@ -156,6 +156,7 @@ object ListeningGradeManager {
 
     private var consecutiveReportFailures: Int = 0
     private const val MAX_CHUNK_SECONDS = 300L
+    private var csccCloudSyncJob: Job? = null
 
     fun recordPlaybackSeconds(seconds: Long, song: Song? = null) {
         if (song == null || seconds <= 0L) return
@@ -163,8 +164,8 @@ object ListeningGradeManager {
         synchronized(stateLock) {
             val uid = currentUserId ?: return
             if (uid.isEmpty()) return
-            val clampedSec = seconds.coerceAtMost(5L)
-            pendingDiffSec += clampedSec
+            val clampedSec = seconds.coerceIn(1L, 600L)
+            pendingDiffSec = (pendingDiffSec + clampedSec).coerceAtMost(1_800L)
             saveUserDataForUser(uid, syncedOfficialListenSec, syncedRawServerDsec, pendingDiffSec, immediate = false)
             if (syncedOfficialListenSec > 0L) {
                 val currentTotalSec = syncedOfficialListenSec + pendingDiffSec
@@ -178,6 +179,22 @@ object ListeningGradeManager {
             scope.launch {
                 syncGrade(forceRefresh = false)
             }
+        }
+    }
+
+    /**
+     * 当 KugouCsccReporter 成功向 d.kugou.com 上报 10048 end 结算报文后调用：
+     * 酷狗流式计算后台约在 10~15 秒内将 duration 毫秒数计入 /v4/get_grade_info 的 d_sec，
+     * 因此在此触发立即同步 + 12 秒后二次权威对账同步。
+     */
+    fun scheduleCloudSyncAfterCscc(reportedSec: Long) {
+        if (reportedSec <= 0L) return
+        csccCloudSyncJob?.cancel()
+        csccCloudSyncJob = scope.launch {
+            delay(2_500L)
+            runCatching { syncGrade(forceRefresh = true) }
+            delay(10_000L)
+            runCatching { syncGrade(forceRefresh = true) }
         }
     }
 
@@ -213,21 +230,26 @@ object ListeningGradeManager {
                 if (serverQuery != null && (serverQuery.level > 0 || serverQuery.totalListenSeconds > 0L)) {
                     synchronized(stateLock) {
                         if (currentUserId == targetUserId) {
+                            val rawServerNow = VipManager.music.lastServerRawDsec
+                            if (rawServerNow > 0L && syncedRawServerDsec > 0L && rawServerNow > syncedRawServerDsec) {
+                                val creditedByServer = rawServerNow - syncedRawServerDsec
+                                pendingDiffSec = (pendingDiffSec - creditedByServer).coerceAtLeast(0L)
+                            }
                             val remainderSec = if (syncedOfficialListenSec > 0L &&
                                 syncedOfficialListenSec / 60L == serverQuery.totalListenSeconds / 60L
                             ) {
                                 syncedOfficialListenSec % 60L
                             } else 0L
                             val candidateSec = serverQuery.totalListenSeconds + remainderSec
-                            if (candidateSec > syncedOfficialListenSec + pendingDiffSec) {
+                            if (candidateSec >= syncedOfficialListenSec + pendingDiffSec) {
                                 pendingDiffSec = 0L
                             }
-                            syncedOfficialListenSec = if (syncedOfficialListenSec > candidateSec && syncedOfficialListenSec - candidateSec <= 36_000L) {
-                                syncedOfficialListenSec
-                            } else {
-                                candidateSec
+                            syncedOfficialListenSec = candidateSec
+                            if (rawServerNow > 0L) {
+                                syncedRawServerDsec = rawServerNow
+                            } else if (syncedRawServerDsec <= 0L) {
+                                syncedRawServerDsec = syncedOfficialListenSec
                             }
-                            syncedRawServerDsec = VipManager.music.lastServerRawDsec.takeIf { it > 0L } ?: syncedOfficialListenSec
                             saveUserDataForUser(targetUserId, syncedOfficialListenSec, syncedRawServerDsec, pendingDiffSec, immediate = true)
                             val optimisticSec = syncedOfficialListenSec + pendingDiffSec
                             _gradeInfo.value = serverQuery.withUpdatedSeconds(optimisticSec)
@@ -248,10 +270,13 @@ object ListeningGradeManager {
                         if (currentUserId == targetUserId) {
                             if (reportResult.level > 0 || reportResult.totalListenSeconds > 0L) {
                                 consecutiveReportFailures = 0
-                                syncedRawServerDsec = VipManager.music.lastServerRawDsec.takeIf { it >= toReportDsec } ?: toReportDsec
-                                val advancedOfficialSec = syncedOfficialListenSec + toReportDiff
-                                syncedOfficialListenSec = maxOf(advancedOfficialSec, reportResult.totalListenSeconds)
-                                pendingDiffSec = (pendingDiffSec - toReportDiff).coerceAtLeast(0L)
+                                val rawAfterReport = VipManager.music.lastServerRawDsec
+                                if (rawAfterReport > 0L && syncedRawServerDsec > 0L && rawAfterReport > syncedRawServerDsec) {
+                                    val credited = rawAfterReport - syncedRawServerDsec
+                                    pendingDiffSec = (pendingDiffSec - credited).coerceAtLeast(0L)
+                                    syncedRawServerDsec = rawAfterReport
+                                    syncedOfficialListenSec = maxOf(syncedOfficialListenSec, reportResult.totalListenSeconds)
+                                }
                                 saveUserDataForUser(targetUserId, syncedOfficialListenSec, syncedRawServerDsec, pendingDiffSec, immediate = true)
                                 val displaySec = syncedOfficialListenSec + pendingDiffSec
                                 _gradeInfo.value = reportResult.withUpdatedSeconds(displaySec)
@@ -259,11 +284,6 @@ object ListeningGradeManager {
                                 consecutiveReportFailures += 1
                                 if (consecutiveReportFailures >= 3) {
                                     consecutiveReportFailures = 0
-                                    pendingDiffSec = 0L
-                                    saveUserDataForUser(targetUserId, syncedOfficialListenSec, syncedRawServerDsec, pendingDiffSec, immediate = true)
-                                    if (serverQuery != null && serverQuery.totalListenSeconds > 0L) {
-                                        _gradeInfo.value = serverQuery.withUpdatedSeconds(syncedOfficialListenSec)
-                                    }
                                 }
                             }
                         }

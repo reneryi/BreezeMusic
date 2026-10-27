@@ -5136,7 +5136,7 @@ class MusicApiRepository(
                         "dfid" to d.dfid.ifBlank { "-" },
                         "mid" to d.mid,
                         "userid" to session.userId,
-                        "uuid" to "-"
+                        "uuid" to d.guid.ifBlank { "-" }
                     )
                     val signStr = signParams.entries.joinToString("") { "${it.key}=${it.value}" }
                     val signature = KugouSigner.md5("$v4AppKey$signStr$v4BodyStr$v4AppKey")
@@ -5195,15 +5195,15 @@ class MusicApiRepository(
                     json(
                         "mid" to d.mid,
                         "type" to 1,
-                        "uuid" to "-",
+                        "uuid" to d.guid.ifBlank { "-" },
                         "userid" to userIdNum,
                         "d_sec" to dSec!!,
                         "diff_sec" to diffSec!!,
                         "y_type" to 0,
                         "m_type" to 0,
                         "p" to p,
-                        "appid" to 3116,
-                        "clientver" to clientVer,
+                        "appid" to "3116",
+                        "clientver" to clientVer.toString(),
                         "clienttime" to clientTime,
                         "key" to key
                     )
@@ -5211,11 +5211,11 @@ class MusicApiRepository(
                     json(
                         "mid" to d.mid,
                         "type" to 1,
-                        "uuid" to "-",
+                        "uuid" to d.guid.ifBlank { "-" },
                         "userid" to userIdNum,
                         "p" to p,
-                        "appid" to 3116,
-                        "clientver" to clientVer,
+                        "appid" to "3116",
+                        "clientver" to clientVer.toString(),
                         "clienttime" to clientTime,
                         "key" to key
                     )

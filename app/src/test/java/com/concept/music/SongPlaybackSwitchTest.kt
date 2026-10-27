@@ -169,6 +169,7 @@ class SongPlaybackSwitchTest {
 
     @After
     fun tearDown() {
+        KugouCsccReporter.eventObserverForTest = null
         runCatching { androidx.lifecycle.ViewModel::class.java.declaredMethods.firstOrNull { it.name.startsWith("clear") }?.apply { isAccessible = true }?.invoke(viewModel) }
         Dispatchers.resetMain()
         runCatching { VipManager.accounts.select("user_1") }
@@ -430,8 +431,140 @@ class SongPlaybackSwitchTest {
         viewModel.syncPlayer()
         assertTrue(viewModel.uiState.value.isPlaying)
         assertEquals(85_120L, viewModel.playbackPositionFlow.value.positionMs)
-        // Removed duplicate assertion
         testScheduler.advanceUntilIdle()
+    }
+
+    @Test
+    fun testBackgroundThrottledTick_DoesNotClipDurationTo2Seconds() = runTest(testDispatcher) {
+        var fakeNowMs = 1_000_000L
+        viewModel.elapsedRealtimeProviderForTest = { fakeNowMs }
+        val recordedEvents = mutableListOf<Triple<String, String, Long>>()
+        KugouCsccReporter.eventObserverForTest = { type, song, durMs, _ ->
+            recordedEvents += Triple(type, song.id, durMs)
+        }
+
+        val queue = listOf(song1, song2)
+        viewModel.playSong(song1, queue)
+        testScheduler.advanceUntilIdle()
+        viewModel.syncPlayer()
+
+        // 模拟后台息屏协程被系统冻结 45 秒后才唤醒一次（旧逻辑 coerceAtMost(2_000L) 会截断为 2000ms）
+        fakeNowMs += 45_000L
+        fakePlayerHolder.currentPosition = 45_000L
+        viewModel.syncPlayer()
+
+        assertEquals(45_000L, viewModel.currentEffectivePlayedMs())
+
+        // 切歌结算，验证完整上报 45_000ms 而非被截断的 2_000ms
+        viewModel.skipToNext()
+        testScheduler.advanceUntilIdle()
+
+        val endEvents = recordedEvents.filter { it.first == "end" && it.second == "song_1" }
+        assertEquals(1, endEvents.size)
+        assertEquals(45_000L, endEvents.single().third)
+    }
+
+    @Test
+    fun testPauseAfter10Seconds_ImmediatelySettlesCsccAndResumeStartsNewSegment() = runTest(testDispatcher) {
+        var fakeNowMs = 2_000_000L
+        viewModel.elapsedRealtimeProviderForTest = { fakeNowMs }
+        val recordedEvents = mutableListOf<Triple<String, String, Long>>()
+        KugouCsccReporter.eventObserverForTest = { type, song, durMs, _ ->
+            recordedEvents += Triple(type, song.id, durMs)
+        }
+
+        val queue = listOf(song1, song2)
+        viewModel.playSong(song1, queue)
+        testScheduler.advanceUntilIdle()
+        viewModel.syncPlayer()
+
+        // 播放 25 秒后点击暂停（如用户暂停去官方酷狗查看时长）
+        fakeNowMs += 25_000L
+        fakePlayerHolder.currentPosition = 25_000L
+        viewModel.togglePlayPause()
+        viewModel.syncPlayer()
+
+        val pauseEnds = recordedEvents.filter { it.first == "end" && it.second == "song_1" }
+        assertEquals("暂停满 10 秒必须立即结算 CSCC end", 1, pauseEnds.size)
+        assertEquals(25_000L, pauseEnds.single().third)
+
+        // 暂停期间经过 30 秒，不应计入播放时长
+        fakeNowMs += 30_000L
+        viewModel.syncPlayer()
+        assertEquals(0L, viewModel.currentEffectivePlayedMs())
+
+        // 恢复播放并再听 18 秒后切歌
+        viewModel.togglePlayPause()
+        viewModel.syncPlayer()
+        val startsForSong1 = recordedEvents.filter { it.first == "start" && it.second == "song_1" }
+        assertEquals("从已结算暂停恢复播放时必须重新发送 CSCC start 开启新闭环", 2, startsForSong1.size)
+
+        fakeNowMs += 18_000L
+        fakePlayerHolder.currentPosition = 43_000L
+        viewModel.skipToNext()
+        testScheduler.advanceUntilIdle()
+
+        val allEndsForSong1 = recordedEvents.filter { it.first == "end" && it.second == "song_1" }
+        assertEquals(2, allEndsForSong1.size)
+        assertEquals(listOf(25_000L, 18_000L), allEndsForSong1.map { it.third })
+    }
+
+    @Test
+    fun testAutoTransition_ReportsCsccEndExactlyOnceWithoutDuplicate() = runTest(testDispatcher) {
+        var fakeNowMs = 3_000_000L
+        viewModel.elapsedRealtimeProviderForTest = { fakeNowMs }
+        val recordedEvents = mutableListOf<Triple<String, String, Long>>()
+        KugouCsccReporter.eventObserverForTest = { type, song, durMs, _ ->
+            recordedEvents += Triple(type, song.id, durMs)
+        }
+
+        val queue = listOf(song1, song2)
+        viewModel.playSong(song1, queue)
+        testScheduler.advanceUntilIdle()
+        viewModel.syncPlayer()
+        viewModel.songsByMediaId[song2.id] = song2
+
+        // 模拟第一首播放 50 秒后由 ExoPlayer 自动切到第二首 (onMediaItemTransition 依次调用 handleSongTransition + syncPlayer)
+        fakeNowMs += 50_000L
+        val song2Item = MediaItem.Builder().setMediaId(song2.id).build()
+        fakePlayerHolder.mediaItems.clear()
+        fakePlayerHolder.mediaItems.add(song2Item)
+        fakePlayerHolder.currentMediaItemIndex = 0
+        viewModel.listener.onMediaItemTransition(song2Item, Player.MEDIA_ITEM_TRANSITION_REASON_AUTO)
+        testScheduler.advanceUntilIdle()
+
+        val endEventsForSong1 = recordedEvents.filter { it.first == "end" && it.second == "song_1" }
+        assertEquals("自动切歌时绝不能重复发送两次 CSCC end", 1, endEventsForSong1.size)
+        assertEquals(50_000L, endEventsForSong1.single().third)
+    }
+
+    @Test
+    fun testRepeatOne_StartsNewCsccSegmentOnEachRepeat() = runTest(testDispatcher) {
+        var fakeNowMs = 4_000_000L
+        viewModel.elapsedRealtimeProviderForTest = { fakeNowMs }
+        val recordedEvents = mutableListOf<Triple<String, String, Long>>()
+        KugouCsccReporter.eventObserverForTest = { type, song, durMs, _ ->
+            recordedEvents += Triple(type, song.id, durMs)
+        }
+
+        viewModel.playSong(song1, listOf(song1))
+        testScheduler.advanceUntilIdle()
+        viewModel.syncPlayer()
+
+        // 第一遍播放 55 秒后触发单曲循环重播
+        fakeNowMs += 55_000L
+        viewModel.handleSongTransition(song1.id, Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+        viewModel.syncPlayer()
+
+        // 第二遍播放 40 秒后暂停
+        fakeNowMs += 40_000L
+        viewModel.togglePlayPause()
+        viewModel.syncPlayer()
+
+        val startCount = recordedEvents.count { it.first == "start" && it.second == "song_1" }
+        val endDurations = recordedEvents.filter { it.first == "end" && it.second == "song_1" }.map { it.third }
+        assertEquals("单曲循环每一遍都必须发送 start 事件", 2, startCount)
+        assertEquals(listOf(55_000L, 40_000L), endDurations)
     }
 
     private class TestSessionStore : SessionStore {

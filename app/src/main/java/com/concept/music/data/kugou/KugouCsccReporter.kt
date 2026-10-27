@@ -59,6 +59,12 @@ object KugouCsccReporter {
     internal var currentPlayingSongId: String? = null
     @Volatile
     internal var songStartTimeMs: Long = 0L
+    @Volatile
+    private var lastPostedSec: Long = 0L
+    @Volatile
+    private var lastPostWallMs: Long = 0L
+
+    internal var eventObserverForTest: ((eventType: String, song: Song, durationMs: Long, state: String) -> Unit)? = null
 
     /**
      * 歌曲开始播放时上报 start 事件
@@ -67,12 +73,14 @@ object KugouCsccReporter {
         val songId = song.id
         currentPlayingSongId = songId
         songStartTimeMs = System.currentTimeMillis()
+        eventObserverForTest?.invoke("start", song, 0L, "开始播放")
+        if (eventObserverForTest != null) return
 
         scope.launch {
             val mixSongId = resolveMixSongId(song)
             if (mixSongId > 0L) {
                 runCatching {
-                    sendEvent(mixSongId = mixSongId, isStart = true, durationMs = 0L)
+                    sendEvent(mixSongId = mixSongId, isStart = true, durationMs = 0L, state = "开始播放")
                 }.onFailure { Log.e(TAG, "CSCC start 上报异常: ${it.message}") }
             }
         }
@@ -81,7 +89,7 @@ object KugouCsccReporter {
     /**
      * 歌曲切歌、暂停或结束时上报 end 事件 (真实播放时长大于 10 秒才计入)
      */
-    fun onSongEnd(song: Song, playedDurationMs: Long = 0L) {
+    fun onSongEnd(song: Song, playedDurationMs: Long = 0L, state: String = "完整播放") {
         val startSnapshot = songStartTimeMs
         val actualPlayedMs = if (playedDurationMs > 0L) {
             playedDurationMs
@@ -101,12 +109,23 @@ object KugouCsccReporter {
             return
         }
 
+        eventObserverForTest?.invoke("end", song, actualPlayedMs, state)
+        if (eventObserverForTest != null) return
+
         scope.launch {
             val mixSongId = resolveMixSongId(song)
             if (mixSongId > 0L) {
                 runCatching {
-                    sendEvent(mixSongId = mixSongId, isStart = false, durationMs = actualPlayedMs)
-                    Log.d(TAG, "CSCC end 上报成功: ${song.title}, 时长=${actualPlayedMs / 1000}秒")
+                    val settled = sendEvent(
+                        mixSongId = mixSongId,
+                        isStart = false,
+                        durationMs = actualPlayedMs,
+                        state = state
+                    )
+                    if (settled) {
+                        Log.d(TAG, "CSCC end 上报成功: ${song.title}, 时长=${actualPlayedMs / 1000}秒, state=$state")
+                        com.concept.music.data.vip.ListeningGradeManager.scheduleCloudSyncAfterCscc(actualPlayedMs / 1000L)
+                    }
                 }.onFailure { Log.e(TAG, "CSCC end 上报异常: ${it.message}") }
             }
         }
@@ -204,31 +223,73 @@ object KugouCsccReporter {
         newSession
     }
 
-    private suspend fun sendEvent(mixSongId: Long, isStart: Boolean, durationMs: Long) = withContext(serialDispatcher) {
-        val sessionContext = VipManager.accounts.context() ?: return@withContext
+    private fun nextPacketEpochSec(): Long {
+        val rawSec = System.currentTimeMillis() / 1000L
+        val nextSec = if (rawSec <= lastPostedSec) lastPostedSec + 1L else rawSec
+        lastPostedSec = nextSec
+        return nextSec
+    }
+
+    private suspend fun postPacketWithRetry(
+        device: DeviceIdentity,
+        userId: String,
+        businessId: Int,
+        fieldsBuilder: (nowMs: Long, nowSec: Long) -> String
+    ): Boolean {
+        val elapsedSinceLast = System.currentTimeMillis() - lastPostWallMs
+        if (elapsedSinceLast in 0L..349L) {
+            delay(350L - elapsedSinceLast)
+        }
+        val session1 = getOrCreateSession(device)
+        val sec1 = nextPacketEpochSec()
+        val ms1 = sec1 * 1000L + (System.currentTimeMillis() % 1000L)
+        lastPostWallMs = System.currentTimeMillis()
+        if (postPacket(session1, device, userId, sec1, businessId, fieldsBuilder(ms1, sec1))) {
+            return true
+        }
+        // 会话过期或被拒绝时自动清理缓存会话并重试一次
+        cachedSession = null
+        delay(450L)
+        val session2 = getOrCreateSession(device)
+        val sec2 = nextPacketEpochSec()
+        val ms2 = sec2 * 1000L + (System.currentTimeMillis() % 1000L)
+        lastPostWallMs = System.currentTimeMillis()
+        return postPacket(session2, device, userId, sec2, businessId, fieldsBuilder(ms2, sec2))
+    }
+
+    private suspend fun sendEvent(
+        mixSongId: Long,
+        isStart: Boolean,
+        durationMs: Long,
+        state: String = "完整播放"
+    ): Boolean = withContext(serialDispatcher) {
+        val sessionContext = VipManager.accounts.context() ?: return@withContext false
         val session = sessionContext.session
         val device = VipManager.device()
         val userId = session.userId
-
-        val csccSession = getOrCreateSession(device)
-        val now = System.currentTimeMillis()
-        val nowSec = now / 1000
         val durationSec = (durationMs / 1000L).coerceAtLeast(10L)
 
         if (isStart) {
-            val startFields = "type_id=20431&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&spt=0&sty=手动&mixsongid=$mixSongId&source=46&ivar1=1&fo=/专辑播放页&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$now&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
-            postPacket(csccSession, device, userId, nowSec, 10048, startFields)
+            postPacketWithRetry(device, userId, 10048) { nowMs, _ ->
+                "type_id=20431&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&spt=0&sty=手动&mixsongid=$mixSongId&source=46&ivar1=1&fo=/专辑播放页&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$nowMs&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
+            }
         } else {
-            // 1. 播放完成事件 (10048 / type_id=4)
-            val endFields = "type_id=4&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&duration=$durationMs&svar3=0&svar2=0&fo=我的音乐/主态/自建歌单/RU&sty=手动&state=完整播放&mixsongid=$mixSongId&source=46&ivar3=0&type=1&fs=1.0&ivar1=1&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$now&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
-            postPacket(csccSession, device, userId, nowSec, 10048, endFields)
+            // 1. 核心播放结算事件 (10048 / type_id=4)，决定云端 d_sec 1:1 入账
+            val settled10048 = postPacketWithRetry(device, userId, 10048) { nowMs, _ ->
+                "type_id=4&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&duration=$durationMs&svar3=0&svar2=0&fo=我的音乐/主态/自建歌单/RU&sty=手动&state=$state&mixsongid=$mixSongId&source=46&ivar3=0&type=1&fs=1.0&ivar1=1&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$nowMs&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
+            }
 
             // 2. 对齐 KuGouMusicApi (user_listen_report.js)：上报 30025 单曲听歌明细与 12904 听歌时长心跳
-            val songEventFields = "type_id=30025&time=$now&mid=${device.mid}&uuid=${device.guid}&Check=0&net=1&ver=$CSCC_VERSION&channelid=18&mod=${device.dev}&sys=14&userid=$userId&gitversion=8767fd9&ip=0.0.0.0&action=play&ivar1=1&ivar3=0&svar1=音频&svar2=0&svar3=0&svar6=正式播放&svar8=-1&svar9=否&svar10=未知&svar12=否&svar16=默认音质&svar20=音乐&svar21=否&svar22=无&svar24=2&svar28=-999&svar34=手动切歌&svar38=原始&svar39=关&svar40=0&svar41=主包&svar42=1&svar43=0&svar44=1&svar47=无效果&svar60=普通歌曲&svar61=关闭&svar66=0&svar81=否&svar86=0&svar93=0&svar102=${now - durationMs}&svar103=$now&svar106=1&svar128=否&svar133=已登录&svar138=长按&bvar1=$durationSec&bvar2=1&bvar5=$durationSec&bvar9=$durationSec&duration=$durationMs&mxid=$mixSongId&source=2&sty=手动&state=切换歌曲&play_Check=1&fo=搜索/搜索结果页&fo3=3149,3366,4455,6377&fs=1.0&ss1=1&ss2=1&ss3=${md5(UUID.randomUUID().toString())}"
-            postPacket(csccSession, device, userId, nowSec, 30025, songEventFields)
-
-            val hbFields = "type_id=12904&time=$now&mid=${device.mid}&uuid=${device.guid}&Check=0&net=1&ver=$CSCC_VERSION&channelid=18&mod=${device.dev}&sys=14&userid=$userId&gitversion=8767fd9&ip=0.0.0.0&ivar1=10&ivar2=1&ivar4=0&ivar5=${nowSec - 10}&ivar6=$nowSec&ivar7=$durationSec&ivar9=1&svar1=音频&svar3=音乐&svar4=概念版&svar5=手动播放&svar7=否&svar8=前台&svar9=主应用&svar10=扬声器&svar14=否&svar19=未知&mxid=$mixSongId&source=2&fo=搜索/搜索结果页&fo3=3149,3366,4455,6377&ss1=1&ss2=1&ss3=${md5(UUID.randomUUID().toString())}"
-            postPacket(csccSession, device, userId, nowSec, 12904, hbFields)
+            val detailState = if (state == "完整播放") "播放完成" else "切换歌曲"
+            runCatching {
+                postPacketWithRetry(device, userId, 30025) { nowMs, _ ->
+                    "type_id=30025&time=$nowMs&mid=${device.mid}&uuid=${device.guid}&Check=0&net=1&ver=$CSCC_VERSION&channelid=18&mod=${device.dev}&sys=14&userid=$userId&gitversion=8767fd9&ip=0.0.0.0&action=play&ivar1=1&ivar3=0&svar1=音频&svar2=0&svar3=0&svar6=正式播放&svar8=-1&svar9=否&svar10=未知&svar12=否&svar16=默认音质&svar20=音乐&svar21=否&svar22=无&svar24=2&svar28=-999&svar34=手动切歌&svar38=原始&svar39=关&svar40=0&svar41=主包&svar42=1&svar43=0&svar44=1&svar47=无效果&svar60=普通歌曲&svar61=关闭&svar66=0&svar81=否&svar86=0&svar93=0&svar102=${nowMs - durationMs}&svar103=$nowMs&svar106=1&svar128=否&svar133=已登录&svar138=长按&bvar1=$durationSec&bvar2=1&bvar5=$durationSec&bvar9=$durationSec&duration=$durationMs&mxid=$mixSongId&source=2&sty=手动&state=$detailState&play_Check=1&fo=搜索/搜索结果页&fo3=3149,3366,4455,6377&fs=1.0&ss1=1&ss2=1&ss3=${md5(UUID.randomUUID().toString())}"
+                }
+                postPacketWithRetry(device, userId, 12904) { nowMs, nowSec ->
+                    "type_id=12904&time=$nowMs&mid=${device.mid}&uuid=${device.guid}&Check=0&net=1&ver=$CSCC_VERSION&channelid=18&mod=${device.dev}&sys=14&userid=$userId&gitversion=8767fd9&ip=0.0.0.0&ivar1=$durationSec&ivar2=1&ivar4=0&ivar5=${nowSec - durationSec}&ivar6=$nowSec&ivar7=$durationSec&ivar9=1&svar1=音频&svar3=音乐&svar4=概念版&svar5=手动播放&svar7=否&svar8=前台&svar9=主应用&svar10=扬声器&svar14=否&svar19=未知&mxid=$mixSongId&source=2&fo=搜索/搜索结果页&fo3=3149,3366,4455,6377&ss1=1&ss2=1&ss3=${md5(UUID.randomUUID().toString())}"
+                }
+            }
+            settled10048
         }
     }
 
@@ -239,7 +300,7 @@ object KugouCsccReporter {
         nowSec: Long,
         businessId: Int,
         fields: String
-    ) {
+    ): Boolean {
         val eventBuffer = fields.toByteArray(Charsets.UTF_8)
         val deflatedEvent = deflate(eventBuffer)
 
@@ -276,8 +337,16 @@ object KugouCsccReporter {
             .post(encrypted.toRequestBody("application/octet-stream".toMediaType()))
             .build()
 
-        client.newCall(postReq).execute().use { resp ->
-            Log.d(TAG, "CSCC businessId=$businessId 响应码: ${resp.code}")
+        return client.newCall(postReq).execute().use { resp ->
+            val bodyStr = resp.body?.string().orEmpty()
+            val ok = runCatching {
+                val obj = com.google.gson.JsonParser.parseString(bodyStr).asJsonObject
+                val status = obj.get("status")?.asInt ?: if (resp.isSuccessful) 1 else 0
+                val errcode = obj.get("errcode")?.asInt ?: 0
+                status == 1 && errcode == 0
+            }.getOrDefault(resp.isSuccessful)
+            Log.d(TAG, "CSCC businessId=$businessId 响应码: ${resp.code}, body=$bodyStr")
+            ok
         }
     }
 

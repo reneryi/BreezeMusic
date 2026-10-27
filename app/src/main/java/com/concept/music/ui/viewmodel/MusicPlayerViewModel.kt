@@ -172,8 +172,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private val mutablePositionFlow = MutableStateFlow(PlaybackPositionSnapshot())
     val playbackPositionFlow = mutablePositionFlow.asStateFlow()
 
+    internal var elapsedRealtimeProviderForTest: (() -> Long)? = null
+
     private fun safeElapsedRealtime(): Long =
-        runCatching { SystemClock.elapsedRealtime() }.getOrDefault(0L).takeIf { it > 0L } ?: System.currentTimeMillis()
+        elapsedRealtimeProviderForTest?.invoke()
+            ?: runCatching { SystemClock.elapsedRealtime() }.getOrDefault(0L).takeIf { it > 0L }
+            ?: System.currentTimeMillis()
 
     private fun updatePositionSnapshot(
         positionMs: Long,
@@ -245,6 +249,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private var songPlaybackStartTimestamp: Long = 0L
     private var accumulatedPlayedMs: Long = 0L
     private var lastAccumulateTickMs: Long = 0L
+    private var csccSegmentOpen: Boolean = false
     private var nextShuffleIndex: Int = -1
     private var prefetchedNextQueueIndex: Int = -1
     private var prefetchedNextSongKey: String = ""
@@ -316,25 +321,102 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    private fun currentEffectivePlayedMs(): Long {
-        val now = System.currentTimeMillis()
-        val activeDelta = if (lastAccumulateTickMs > 0L && now > lastAccumulateTickMs) (now - lastAccumulateTickMs) else 0L
-        val total = accumulatedPlayedMs + activeDelta
-        return if (total > 0L) total else if (songPlaybackStartTimestamp > 0L) (now - songPlaybackStartTimestamp).coerceAtLeast(0L) else 0L
+    private fun accumulateActiveSlice(nowElapsed: Long = safeElapsedRealtime()) {
+        if (lastAccumulateTickMs > 0L && nowElapsed > lastAccumulateTickMs) {
+            accumulatedPlayedMs += (nowElapsed - lastAccumulateTickMs)
+            lastAccumulateTickMs = nowElapsed
+        }
+    }
+
+    private fun flushGradePlaybackSeconds(nowElapsed: Long = safeElapsedRealtime(), songOverride: Song? = null) {
+        val targetSong = songOverride ?: activePlayingSong ?: mutableState.value.currentSong ?: return
+        if (lastRecordTimestamp > 0L && nowElapsed > lastRecordTimestamp) {
+            val elapsedSec = (nowElapsed - lastRecordTimestamp) / 1000L
+            if (elapsedSec >= 1L) {
+                lastRecordTimestamp += elapsedSec * 1000L
+                ListeningGradeManager.recordPlaybackSeconds(elapsedSec, targetSong)
+            }
+        }
+    }
+
+    internal fun currentEffectivePlayedMs(): Long {
+        val nowElapsed = safeElapsedRealtime()
+        val activeDelta = if (lastAccumulateTickMs > 0L && nowElapsed > lastAccumulateTickMs) {
+            nowElapsed - lastAccumulateTickMs
+        } else 0L
+        return (accumulatedPlayedMs + activeDelta).coerceAtLeast(0L)
+    }
+
+    private fun startNewPlaybackSegment(song: Song, mediaIdValue: String?, recordHistory: Boolean) {
+        val nowElapsed = safeElapsedRealtime()
+        activePlayingSong = song
+        recordedMediaId = mediaIdValue
+        songPlaybackStartTimestamp = nowElapsed
+        accumulatedPlayedMs = 0L
+        lastAccumulateTickMs = nowElapsed
+        lastRecordTimestamp = nowElapsed
+        csccSegmentOpen = true
+
+        if (recordHistory) {
+            VipManager.history.add(currentUser, song)
+        }
+        KugouCsccReporter.onSongStart(song)
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { VipManager.music.uploadPlayHistory(song) }
+        }
+        if (recordHistory) {
+            AudioCacheManager.refreshCacheSize(getApplication())
+        }
+    }
+
+    internal fun settleCurrentPlaybackSegment(
+        state: String = "完整播放",
+        clearActiveSong: Boolean = true,
+        notifySongCompleted: Boolean = false
+    ): Long {
+        val nowElapsed = safeElapsedRealtime()
+        accumulateActiveSlice(nowElapsed)
+        val targetSong = activePlayingSong ?: mutableState.value.currentSong
+        if (targetSong != null) {
+            flushGradePlaybackSeconds(nowElapsed, targetSong)
+        }
+        val playedMs = accumulatedPlayedMs.coerceAtLeast(0L)
+        if (targetSong != null && csccSegmentOpen && playedMs >= 10_000L) {
+            KugouCsccReporter.onSongEnd(targetSong, playedMs, state = state)
+            accumulatedPlayedMs = 0L
+            songPlaybackStartTimestamp = 0L
+            csccSegmentOpen = false
+        } else if (clearActiveSong) {
+            accumulatedPlayedMs = 0L
+            songPlaybackStartTimestamp = 0L
+            csccSegmentOpen = false
+        }
+        lastAccumulateTickMs = 0L
+        lastRecordTimestamp = 0L
+        if (notifySongCompleted && targetSong != null) {
+            ListeningGradeManager.onSongCompleted(targetSong)
+        }
+        if (clearActiveSong) {
+            activePlayingSong = null
+            recordedMediaId = null
+        }
+        return playedMs
     }
 
     internal fun handleSongTransition(transitionedMediaId: String, reason: Int = Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
         val currentSong = mutableState.value.currentSong
         if (currentSong != null && currentSong.id == transitionedMediaId) {
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
-                val playedMs = currentEffectivePlayedMs()
-                KugouCsccReporter.onSongEnd(currentSong, playedMs)
-                ListeningGradeManager.onSongCompleted(currentSong)
-                accumulatedPlayedMs = 0L
-                lastAccumulateTickMs = if (mutableState.value.isPlaying) System.currentTimeMillis() else 0L
-                songPlaybackStartTimestamp = System.currentTimeMillis()
+                settleCurrentPlaybackSegment(
+                    state = "完整播放",
+                    clearActiveSong = false,
+                    notifySongCompleted = true
+                )
+                if (activePlayer?.isPlaying == true || mutableState.value.isPlaying) {
+                    startNewPlaybackSegment(currentSong, transitionedMediaId, recordHistory = false)
+                }
                 lastClimaxSkipSongId = ""
-        pendingSeekPositionMs = -1L
+                pendingSeekPositionMs = -1L
                 mutableState.update { it.copy(climaxUnlockedForCurrentSong = false) }
                 if (mutableState.value.climaxModeEnabled) {
                     val startPos = currentSong.effectiveClimaxStartMs
@@ -346,13 +428,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
 
         if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
-            currentSong?.let {
-                val playedMs = currentEffectivePlayedMs()
-                KugouCsccReporter.onSongEnd(it, playedMs)
-                ListeningGradeManager.onSongCompleted(it)
-            }
-            accumulatedPlayedMs = 0L
-            lastAccumulateTickMs = 0L
+            settleCurrentPlaybackSegment(
+                state = "完整播放",
+                clearActiveSong = true,
+                notifySongCompleted = true
+            )
             if (mutableState.value.sleepPendingStopAtTrackEnd && mutableState.value.sleepTimerRemainingSec <= 0L) {
                 activePlayer?.pause()
                 activePlayer?.volume = 1f
@@ -504,15 +584,16 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                     val hadPreviousUser = previousUser != null
                     currentUser = state.currentId
                     if (hadPreviousUser) {
+                        settleCurrentPlaybackSegment(
+                            state = "手动停止",
+                            clearActiveSong = true,
+                            notifySongCompleted = false
+                        )
                         resolveJob?.cancel()
                         lyricJob?.cancel()
                         prefetchJob?.cancel()
                         activePlayer?.pause()
                         activePlayer?.clearMediaItems()
-                        recordedMediaId = null
-                        activePlayingSong = null
-                        accumulatedPlayedMs = 0L
-                        lastAccumulateTickMs = 0L
                         songsByMediaId.clear()
                         VipManager.music.onAccountChanged()
                         mutableState.value = PlayerUiState()
@@ -877,6 +958,14 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val index = list.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
         val userId = VipManager.accounts.state.value.currentId
 
+        if (activePlayingSong != null) {
+            settleCurrentPlaybackSegment(
+                state = "切换下一首",
+                clearActiveSong = activePlayingSong?.id != song.id,
+                notifySongCompleted = false
+            )
+        }
+
         resolveJob?.cancel()
         prefetchJob?.cancel()
         lastClimaxSkipSongId = ""
@@ -1100,6 +1189,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         playPauseFadeJob?.cancel()
         val useSmoothFade = state.smoothPlayPauseFade && playerOverride == null
         if (player.isPlaying) {
+            settleCurrentPlaybackSegment(
+                state = "手动停止",
+                clearActiveSong = false,
+                notifySongCompleted = false
+            )
             if (useSmoothFade) {
                 playPauseFadeJob = viewModelScope.launch {
                     val startVol = player.volume.coerceIn(0.15f, 1.0f)
@@ -1341,12 +1435,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun clearQueue() {
-        activePlayingSong?.let {
-            val playedMs = currentEffectivePlayedMs()
-            KugouCsccReporter.onSongEnd(it, playedMs)
-        }
-        activePlayingSong = null
-        songPlaybackStartTimestamp = 0L
+        settleCurrentPlaybackSegment(
+            state = "手动停止",
+            clearActiveSong = true,
+            notifySongCompleted = false
+        )
         activePlayer?.stop()
         activePlayer?.clearMediaItems()
         songsByMediaId.clear()
@@ -2178,12 +2271,13 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private fun onTrackEnded() {
         val current = mutableState.value.currentSong
+        val isRepeatOne = mutableState.value.playMode == PlayMode.REPEAT_ONE
         if (current != null) {
-            val playedMs = currentEffectivePlayedMs()
-            KugouCsccReporter.onSongEnd(current, playedMs)
-            ListeningGradeManager.onSongCompleted(current)
-            activePlayingSong = null
-            songPlaybackStartTimestamp = 0L
+            settleCurrentPlaybackSegment(
+                state = "完整播放",
+                clearActiveSong = !isRepeatOne,
+                notifySongCompleted = true
+            )
         }
         if (mutableState.value.sleepPendingStopAtTrackEnd && mutableState.value.sleepTimerRemainingSec <= 0L) {
             activePlayer?.pause()
@@ -2199,6 +2293,9 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             PlayMode.REPEAT_ONE -> {
                 activePlayer?.seekTo(0)
                 activePlayer?.play()
+                if (current != null && (activePlayer?.isPlaying == true || mutableState.value.isPlaying)) {
+                    startNewPlaybackSegment(current, activePlayer?.currentMediaItem?.mediaId ?: mediaId(current), recordHistory = false)
+                }
             }
             PlayMode.REPEAT_ALL, PlayMode.SHUFFLE -> {
                 skipToNext()
@@ -2209,33 +2306,52 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     internal fun syncPlayer() {
         val player = activePlayer ?: return
         val mediaId = player.currentMediaItem?.mediaId
-
         val song = mutableState.value.currentSong
-        if (song != null && player.isPlaying && recordedMediaId != mediaId) {
-            val prevSong = activePlayingSong
-            if (prevSong != null && prevSong.id != song.id) {
-                val playedMs = currentEffectivePlayedMs()
-                KugouCsccReporter.onSongEnd(prevSong, playedMs)
-            }
-
-            activePlayingSong = song
-            songPlaybackStartTimestamp = System.currentTimeMillis()
-            accumulatedPlayedMs = 0L
-            lastAccumulateTickMs = System.currentTimeMillis()
-            recordedMediaId = mediaId
-
-            VipManager.history.add(currentUser, song)
-            KugouCsccReporter.onSongStart(song)
-
-            viewModelScope.launch(Dispatchers.IO) {
-                runCatching { VipManager.music.uploadPlayHistory(song) }
-            }
-
-            AudioCacheManager.refreshCacheSize(getApplication())
-        }
-
         val isResolving = resolveJob?.isActive == true
         val hasMedia = player.mediaItemCount > 0
+        val isBufferingWithPlayIntent = hasMedia && player.playbackState == Player.STATE_BUFFERING && player.playWhenReady
+        val isAudiblyPlaying = !isResolving && hasMedia && player.isPlaying
+
+        if (song != null && isAudiblyPlaying) {
+            if (recordedMediaId != mediaId || activePlayingSong?.id != song.id) {
+                if (activePlayingSong != null && activePlayingSong?.id != song.id) {
+                    settleCurrentPlaybackSegment(
+                        state = "切换下一首",
+                        clearActiveSong = true,
+                        notifySongCompleted = false
+                    )
+                }
+                startNewPlaybackSegment(song, mediaId, recordHistory = true)
+            } else if (!csccSegmentOpen) {
+                startNewPlaybackSegment(song, mediaId, recordHistory = false)
+            } else {
+                val nowElapsed = safeElapsedRealtime()
+                if (lastAccumulateTickMs == 0L) {
+                    lastAccumulateTickMs = nowElapsed
+                } else {
+                    accumulateActiveSlice(nowElapsed)
+                }
+                if (lastRecordTimestamp == 0L) {
+                    lastRecordTimestamp = nowElapsed
+                } else {
+                    flushGradePlaybackSeconds(nowElapsed, song)
+                }
+            }
+        } else if (activePlayingSong != null) {
+            val nowElapsed = safeElapsedRealtime()
+            accumulateActiveSlice(nowElapsed)
+            flushGradePlaybackSeconds(nowElapsed, activePlayingSong)
+            lastAccumulateTickMs = 0L
+            lastRecordTimestamp = 0L
+            if (!isResolving && !isBufferingWithPlayIntent && !player.isPlaying) {
+                settleCurrentPlaybackSegment(
+                    state = "手动停止",
+                    clearActiveSong = false,
+                    notifySongCompleted = false
+                )
+            }
+        }
+
         val rawPlayerPos = if (isResolving || !hasMedia) {
             mutablePositionFlow.value.positionMs.takeIf { it > 0L } ?: mutableState.value.currentPositionMs
         } else {
@@ -2257,6 +2373,18 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val dur = if (isResolving || !hasMedia) (song?.durationMs ?: 0L) else (player.duration.takeIf { it > 0 } ?: song?.durationMs ?: 0L)
         val buf = if (isResolving || !hasMedia) 0L else player.bufferedPosition.coerceAtLeast(0)
         val isPlayingNow = resolveEffectiveIsPlaying(player, isResolving)
+
+        if (song != null && isAudiblyPlaying && csccSegmentOpen) {
+            val remainTrackForCheckpoint = if (dur > 0L) (dur - pos) else Long.MAX_VALUE
+            if (currentEffectivePlayedMs() >= 60_000L && remainTrackForCheckpoint >= 20_000L) {
+                settleCurrentPlaybackSegment(
+                    state = "完整播放",
+                    clearActiveSong = false,
+                    notifySongCompleted = false
+                )
+                startNewPlaybackSegment(song, mediaId, recordHistory = false)
+            }
+        }
 
         val st = mutableState.value
         updatePositionSnapshot(
@@ -2410,30 +2538,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 syncPlayer()
 
                 if (mutableState.value.isPlaying) {
-                    val now = System.currentTimeMillis()
-                    if (lastAccumulateTickMs > 0L && now > lastAccumulateTickMs) {
-                        accumulatedPlayedMs += (now - lastAccumulateTickMs).coerceAtMost(2_000L)
-                    }
-                    lastAccumulateTickMs = now
-                    if (lastRecordTimestamp > 0L) {
-                        val elapsedSec = (now - lastRecordTimestamp) / 1000
-                        if (elapsedSec >= 1) {
-                            lastRecordTimestamp = now
-                            mutableState.value.currentSong?.let { song ->
-                                ListeningGradeManager.recordPlaybackSeconds(elapsedSec, song)
-                            }
-                        }
-                    } else {
-                        lastRecordTimestamp = now
-                    }
-
+                    val now = safeElapsedRealtime()
                     if (now - lastPersistPosTimestamp >= 5_000L) {
                         lastPersistPosTimestamp = now
                         persistPositionOnlyAsync()
                     }
-                } else {
-                    lastRecordTimestamp = 0L
-                    lastAccumulateTickMs = 0L
                 }
 
                 delay(delayMs)
@@ -2443,11 +2552,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     override fun onCleared() {
         persistPlaybackStateAsync()
-        activePlayingSong?.let {
-            val playedMs = currentEffectivePlayedMs()
-            KugouCsccReporter.onSongEnd(it, playedMs)
-        }
-        activePlayingSong = null
+        settleCurrentPlaybackSegment(
+            state = "手动停止",
+            clearActiveSong = true,
+            notifySongCompleted = false
+        )
         resolveJob?.cancel()
         lyricJob?.cancel()
         commentsJob?.cancel()
