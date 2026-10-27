@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.Song
+import com.concept.music.data.vip.VipManager
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptSheetContainerColor
@@ -55,6 +56,30 @@ fun SongActionBottomSheet(
                 runCatching { sheetState.hide() }
                 onDismiss()
                 action()
+            }
+        }
+    }
+
+    val initialAlbumName = remember(song) {
+        runCatching { VipManager.music.peekCachedAlbumName(song) }.getOrDefault(song.album.trim())
+    }
+    var resolvedAlbumName by remember(song.id, song.hash, song.album, song.albumId) {
+        mutableStateOf(initialAlbumName)
+    }
+    var resolvedAlbumId by remember(song.id, song.hash, song.albumId) {
+        mutableStateOf(song.albumId.trim().takeIf { it != "0" }.orEmpty())
+    }
+
+    LaunchedEffect(song.id, song.hash, song.album, song.albumId, song.albumAudioId, song.audioId) {
+        if (resolvedAlbumName.isBlank()) {
+            val (fetchedName, fetchedId) = runCatching {
+                VipManager.music.resolveSongAlbumMeta(song)
+            }.getOrDefault("" to resolvedAlbumId)
+            if (fetchedName.isNotBlank()) {
+                resolvedAlbumName = fetchedName
+            }
+            if (resolvedAlbumId.isBlank() && fetchedId.isNotBlank()) {
+                resolvedAlbumId = fetchedId
             }
         }
     }
@@ -141,7 +166,7 @@ fun SongActionBottomSheet(
                             Spacer(modifier = Modifier.width(4.dp))
                         }
                         Text(
-                            text = if (song.album.isNotBlank()) "${song.artist} · ${song.album}" else song.artist,
+                            text = if (resolvedAlbumName.isNotBlank()) "${song.artist} · $resolvedAlbumName" else song.artist,
                             style = MaterialTheme.typography.bodySmall.copy(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             ),
@@ -229,10 +254,10 @@ fun SongActionBottomSheet(
                 )
             }
 
-            if (onOpenAlbum != null && song.albumId.isNotBlank() && song.albumId != "0") {
+            if (onOpenAlbum != null) {
                 SongActionMenuItem(
                     icon = Icons.Rounded.Album,
-                    title = "查看专辑：${song.album.ifBlank { "未知专辑" }}",
+                    title = "查看专辑：${resolvedAlbumName.ifBlank { "未知专辑" }}",
                     onClick = {
                         dismissWithAction { onOpenAlbum() }
                     }

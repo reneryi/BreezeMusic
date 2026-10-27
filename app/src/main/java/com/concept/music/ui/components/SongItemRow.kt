@@ -107,8 +107,11 @@ fun SongItemRow(
     val orderLabel = remember(orderIndex) {
         orderIndex?.toString()?.padStart(2, '0').orEmpty()
     }
-    val subtitleText = remember(song.artist, song.album) {
-        if (song.album.isNotBlank() && song.album != "单曲") "${song.artist} · ${song.album}" else song.artist
+    val subtitleText = remember(song.artist, song.album, song.albumId, song.albumAudioId) {
+        val displayAlbum = song.album.ifBlank {
+            runCatching { com.concept.music.data.vip.VipManager.music.peekCachedAlbumName(song) }.getOrDefault("")
+        }
+        if (displayAlbum.isNotBlank() && displayAlbum != "单曲" && displayAlbum != "未知专辑") "${song.artist} · $displayAlbum" else song.artist
     }
     val qualityLabel = remember(song.isHiRes, song.isLossless, song.quality) {
         when {

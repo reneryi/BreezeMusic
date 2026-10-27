@@ -292,22 +292,27 @@ fun MainContent(
         if (directAlbumId.isNotBlank() && directAlbumId != "0") {
             openSubRouteFromContext("album_detail/$directAlbumId")
         } else {
-            val kw = "${targetSong.album.ifBlank { targetSong.title }} ${targetSong.artist}".trim()
             Toast.makeText(context, "正在定位所属专辑...", Toast.LENGTH_SHORT).show()
             mainScope.launch {
                 val resolvedAlbumId = withContext(Dispatchers.IO) {
                     runCatching {
-                        val fromSearch = VipManager.music.searchSongs(
-                            "${targetSong.title} ${targetSong.artist}".trim(),
-                            page = 1,
-                            pageSize = 6
-                        ).songs.firstOrNull { it.albumId.isNotBlank() && it.albumId != "0" }?.albumId
-                        if (!fromSearch.isNullOrBlank()) {
-                            fromSearch
+                        val (_, metaAlbumId) = VipManager.music.resolveSongAlbumMeta(targetSong)
+                        if (metaAlbumId.isNotBlank() && metaAlbumId != "0") {
+                            metaAlbumId
                         } else {
-                            VipManager.music.searchAlbums(kw, page = 1, pageSize = 5)
-                                .firstOrNull { it.id.isNotBlank() && it.id != "0" }
-                                ?.id
+                            val kw = "${targetSong.album.ifBlank { targetSong.title }} ${targetSong.artist}".trim()
+                            val fromSearch = VipManager.music.searchSongs(
+                                "${targetSong.title} ${targetSong.artist}".trim(),
+                                page = 1,
+                                pageSize = 6
+                            ).songs.firstOrNull { it.albumId.isNotBlank() && it.albumId != "0" }?.albumId
+                            if (!fromSearch.isNullOrBlank()) {
+                                fromSearch
+                            } else {
+                                VipManager.music.searchAlbums(kw, page = 1, pageSize = 5)
+                                    .firstOrNull { it.id.isNotBlank() && it.id != "0" }
+                                    ?.id
+                            }
                         }
                     }.getOrNull()
                 }

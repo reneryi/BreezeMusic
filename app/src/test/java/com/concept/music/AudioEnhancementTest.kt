@@ -489,4 +489,104 @@ class AudioEnhancementTest {
         assertEquals("", copied.accompanyHash)
         assertNotNull(copied.availableQualities)
     }
+
+    @Test
+    fun testAlbumNameResolutionFromRemarkAndKmrBatch() = kotlinx.coroutines.test.runTest {
+        val store = MemoryStore()
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ) = ApiResponse(JsonObject())
+
+            override suspend fun callAdvanced(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?,
+                sign: Boolean, includeDefaultParams: Boolean
+            ): ApiResponse {
+                if (path == "/kmr/v2/albums") {
+                    val mock = "{\"status\":1,\"data\":[{\"album_id\":\"90088\",\"album_name\":\"October Light\",\"publish_date\":\"2026-10-01\"}]}"
+                    return ApiResponse(com.google.gson.JsonParser.parseString(mock).asJsonObject)
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+        val repo = MusicApiRepository(transport, AccountRepository(store, AuthRepository(transport, store), transport))
+
+        // 1. parseSong 能直接从 remark 提取专辑名
+        val rawWithRemark = com.google.gson.JsonParser.parseString(
+            "{\"songname\":\"Test Remark Song\",\"singername\":\"MIKS\",\"hash\":\"11111111111111111111111111111111\",\"album_id\":\"90089\",\"remark\":\"Remark Album Title\"}"
+        ).asJsonObject
+        val parsedRemarkSong = repo.parseSong(rawWithRemark)
+        assertEquals("Remark Album Title", parsedRemarkSong.album)
+
+        // 2. 列表接口未返回 album_name 但有 album_id 时，enrichSongsAlbumNamesBatch / resolveSongAlbumMeta 自动通过 /kmr/v2/albums 补全
+        val missingAlbumSong = Song(
+            id = "s_oct",
+            hash = "22222222222222222222222222222222",
+            title = "October Light - Slowed",
+            artist = "MIKS",
+            album = "",
+            albumId = "90088"
+        )
+        val (resolvedName, resolvedId) = repo.resolveSongAlbumMeta(missingAlbumSong)
+        assertEquals("October Light", resolvedName)
+        assertEquals("90088", resolvedId)
+    }
+
+    @Test
+    fun testViperPresetAndParametricEqDspProcessing() {
+        val manager = com.concept.music.service.AudioEffectManager
+        try {
+            // 1. 预设切换与自定义微调保留独立 10 段推杆且切换预设时保留当前预设开启态
+            manager.setPreset(EffectPreset.VIPER_BLACK_DIAMOND)
+            assertTrue(manager.state.value.isEnabled)
+            assertEquals(EffectPreset.VIPER_BLACK_DIAMOND, manager.state.value.currentPreset)
+            assertEquals(200, manager.state.value.bassBoostStrength)
+            assertEquals(ReverbMode.SMALL_ROOM, manager.state.value.reverbMode)
+
+            // 调节单段 10-band EQ 推杆（如第 0 段 31Hz +6dB），不影响相邻频段推杆独立性
+            manager.setTenBandLevel(0, 600)
+            assertEquals(EffectPreset.CUSTOM, manager.state.value.currentPreset)
+            assertEquals(600, manager.state.value.tenBandLevels[0])
+
+            // 调节前置增益后切换回其他预设时，preampGainDb 自动归零（不污染官方预设）
+            manager.setPreampGainDb(4.5f)
+            assertEquals(4.5f, manager.state.value.preampGainDb, 0.01f)
+            manager.setPreset(EffectPreset.VIPER_3D)
+            assertEquals(0f, manager.state.value.preampGainDb, 0.01f)
+
+            // 2. 验证 ConceptMasteringAudioProcessor 实时 DSP 管线对 10 段 EQ、重低音、空间混响与声道平衡的处理
+            val processor = com.concept.music.service.ConceptMasteringAudioProcessor()
+            val format = androidx.media3.common.audio.AudioProcessor.AudioFormat(44100, 2, androidx.media3.common.C.ENCODING_PCM_16BIT)
+            processor.configure(format)
+            processor.flush()
+
+            val frameCount = 256
+            val input = java.nio.ByteBuffer.allocate(frameCount * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            for (i in 0 until frameCount) {
+                val sample = (kotlin.math.sin(2.0 * kotlin.math.PI * 60.0 * i / 44100.0) * 8000.0).toInt().toShort()
+                input.putShort(sample)
+                input.putShort(sample)
+            }
+            input.flip()
+
+            manager.setPreset(EffectPreset.VIPER_BASS)
+            manager.setReverbMode(ReverbMode.MEDIUM_HALL)
+            processor.queueInput(input)
+            val output = processor.output.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            assertEquals(frameCount * 4, output.remaining())
+
+            var maxOutAbs = 0
+            while (output.remaining() >= 2) {
+                val s = kotlin.math.abs(output.short.toInt())
+                if (s > maxOutAbs) maxOutAbs = s
+            }
+            // 开启超重低音 (60Hz 激励) 后，60Hz 正弦波幅值应明显高于原始 8000
+            assertTrue("60Hz sine wave should be boosted by VIPER_BASS DSP, got $maxOutAbs", maxOutAbs > 9500)
+        } finally {
+            manager.setEnabled(false)
+            manager.setChannelBalance(0f)
+        }
+    }
 }

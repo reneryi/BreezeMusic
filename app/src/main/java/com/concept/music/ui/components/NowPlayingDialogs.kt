@@ -2209,6 +2209,22 @@ internal fun PlayerMoreControlSheet(
     val textPrimary = MaterialTheme.colorScheme.onSurface
     val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
     val roles = rememberCoverColorRoles(accentColor)
+    var resolvedAlbumName by remember(song.id, song.hash, song.album, song.albumId) {
+        mutableStateOf(
+            runCatching { com.concept.music.data.vip.VipManager.music.peekCachedAlbumName(song) }
+                .getOrDefault(song.album.trim())
+        )
+    }
+    LaunchedEffect(song.id, song.hash, song.album, song.albumId, song.albumAudioId, song.audioId) {
+        if (resolvedAlbumName.isBlank()) {
+            val (fetchedName, _) = runCatching {
+                com.concept.music.data.vip.VipManager.music.resolveSongAlbumMeta(song)
+            }.getOrDefault("" to "")
+            if (fetchedName.isNotBlank()) {
+                resolvedAlbumName = fetchedName
+            }
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -2281,7 +2297,7 @@ internal fun PlayerMoreControlSheet(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "${song.artist} · ${song.album.ifBlank { "单曲发行" }}",
+                                    text = "${song.artist} · ${resolvedAlbumName.ifBlank { "未知专辑" }}",
                                     color = textSecondary,
                                     fontSize = 11.5.sp,
                                     maxLines = 1,
@@ -2419,7 +2435,7 @@ internal fun PlayerMoreControlSheet(
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = song.album.ifBlank { song.title },
+                                            text = resolvedAlbumName.ifBlank { "未知专辑" },
                                             color = textPrimary,
                                             fontSize = 12.5.sp,
                                             fontWeight = FontWeight.ExtraBold,

@@ -639,7 +639,14 @@ object AudioEffectManager {
 
     fun setPreset(preset: EffectPreset) {
         val p = profileForPreset(preset)
-        _state.value = _state.value.copy(
+        val cur = _state.value
+        val nextTenBands = if (preset == EffectPreset.CUSTOM && cur.tenBandLevels.size == 10) {
+            cur.tenBandLevels
+        } else {
+            expandFiveToTenBands(p.bands)
+        }
+        val nextPreampDb = if (preset == EffectPreset.CUSTOM) cur.preampGainDb else 0f
+        _state.value = cur.copy(
             isEnabled = preset != EffectPreset.OFF,
             currentPreset = preset,
             bassBoostStrength = p.bass,
@@ -649,9 +656,10 @@ object AudioEffectManager {
             analogWarmthStrength = p.warmth,
             surroundRotationSpeed = p.rotationSpeed,
             loudnessGainMb = p.loudness,
+            preampGainDb = nextPreampDb,
             reverbMode = p.reverb,
             bandLevels = p.bands,
-            tenBandLevels = expandFiveToTenBands(p.bands)
+            tenBandLevels = nextTenBands
         )
         applyCurrentState()
         saveToPrefs()
@@ -699,10 +707,14 @@ object AudioEffectManager {
         }
     }
 
+    private fun activeOrCustomPreset(current: EffectPreset): EffectPreset =
+        if (current == EffectPreset.OFF) EffectPreset.CUSTOM else current
+
     fun setBassBoostStrength(strength: Int) {
         val s = strength.coerceIn(0, 1000)
         _state.value = _state.value.copy(
             isEnabled = true,
+            currentPreset = activeOrCustomPreset(_state.value.currentPreset),
             bassBoostStrength = s
         )
         applyCurrentState()
@@ -713,6 +725,7 @@ object AudioEffectManager {
         val c = cutoffHz.coerceIn(40, 120)
         _state.value = _state.value.copy(
             isEnabled = true,
+            currentPreset = activeOrCustomPreset(_state.value.currentPreset),
             bassCutoffHz = c
         )
         applyCurrentState()
@@ -723,6 +736,7 @@ object AudioEffectManager {
         val s = strength.coerceIn(0, 1000)
         _state.value = _state.value.copy(
             isEnabled = true,
+            currentPreset = activeOrCustomPreset(_state.value.currentPreset),
             virtualizerStrength = s
         )
         applyCurrentState()
@@ -733,6 +747,7 @@ object AudioEffectManager {
         val s = strength.coerceIn(0, 1000)
         _state.value = _state.value.copy(
             isEnabled = true,
+            currentPreset = activeOrCustomPreset(_state.value.currentPreset),
             vocalClarityStrength = s
         )
         applyCurrentState()
@@ -743,6 +758,7 @@ object AudioEffectManager {
         val s = strength.coerceIn(0, 1000)
         _state.value = _state.value.copy(
             isEnabled = true,
+            currentPreset = activeOrCustomPreset(_state.value.currentPreset),
             analogWarmthStrength = s
         )
         applyCurrentState()
@@ -753,6 +769,7 @@ object AudioEffectManager {
         val s = speed.coerceIn(0, 100)
         _state.value = _state.value.copy(
             isEnabled = true,
+            currentPreset = activeOrCustomPreset(_state.value.currentPreset),
             surroundRotationSpeed = s
         )
         applyCurrentState()
@@ -763,6 +780,7 @@ object AudioEffectManager {
         val g = gainMb.coerceIn(0, 1500)
         _state.value = _state.value.copy(
             isEnabled = true,
+            currentPreset = activeOrCustomPreset(_state.value.currentPreset),
             loudnessGainMb = g
         )
         applyCurrentState()
@@ -773,6 +791,7 @@ object AudioEffectManager {
         val g = gainDb.coerceIn(-6f, 6f)
         _state.value = _state.value.copy(
             isEnabled = true,
+            currentPreset = activeOrCustomPreset(_state.value.currentPreset),
             preampGainDb = g
         )
         applyCurrentState()
@@ -807,6 +826,7 @@ object AudioEffectManager {
     fun setReverbMode(mode: ReverbMode) {
         _state.value = _state.value.copy(
             isEnabled = true,
+            currentPreset = activeOrCustomPreset(_state.value.currentPreset),
             reverbMode = mode
         )
         applyCurrentState()
@@ -815,84 +835,21 @@ object AudioEffectManager {
 
     private fun applyCurrentState() {
         val s = _state.value
-        if (!s.isEnabled || s.currentPreset == EffectPreset.OFF) {
+        if (!s.isEnabled && !s.equalLoudnessCompensation) {
             releaseEffects()
             return
         }
 
-        ensureEffectsCreated()
-
-        // 综合计算 5 段硬件 EQ（叠加人声通透激励、模拟温暖度、低频频点修正及前置增益与防削波保护）
-        val clarityBoostMidHigh = (s.vocalClarityStrength / 10) // 0..100 mB
-        val warmthBoostLowMid = (s.analogWarmthStrength / 12)   // 0..83 mB
-        val preampOffsetMb = (s.preampGainDb * 100f).toInt()
-        val loudnessCurveLow = if (s.equalLoudnessCompensation) 55 else 0
-        val loudnessCurveHigh = if (s.equalLoudnessCompensation) 40 else 0
-        val effectiveBands = s.bandLevels.mapIndexed { idx, baseLevel ->
-            val mod = when (idx) {
-                0 -> (if (s.bassCutoffHz <= 50) 40 else 0) + warmthBoostLowMid / 2 + loudnessCurveLow
-                1 -> warmthBoostLowMid + loudnessCurveLow / 3
-                2 -> clarityBoostMidHigh / 2
-                3 -> clarityBoostMidHigh + loudnessCurveHigh / 2
-                4 -> (clarityBoostMidHigh * 2 / 3) - (warmthBoostLowMid / 2) + loudnessCurveHigh
-                else -> 0
-            }
-            val rawTarget = baseLevel + mod + preampOffsetMb
-            val antiClipped = if (s.antiClippingEnabled && rawTarget > 180) rawTarget - 60 else rawTarget
-            antiClipped.coerceIn(-1000, 1000)
-        }
-
-        val hasEqSignal = effectiveBands.any { it != 0 }
-        equalizer?.let { eq ->
-            runCatching {
-                val numBands = eq.numberOfBands.toInt()
-                effectiveBands.forEachIndexed { index, level ->
-                    if (index < numBands) {
-                        val min = eq.bandLevelRange[0]
-                        val max = eq.bandLevelRange[1]
-                        val target = level.toShort().coerceIn(min, max)
-                        eq.setBandLevel(index.toShort(), target)
-                    }
-                }
-                eq.enabled = hasEqSignal
-            }
-        }
-
-        bassBoost?.let { bb ->
-            runCatching {
-                val active = s.bassBoostStrength > 0
-                if (active && bb.strengthSupported) {
-                    bb.setStrength(s.bassBoostStrength.toShort())
-                }
-                bb.enabled = active
-            }
-        }
-
-        virtualizer?.let { vz ->
-            runCatching {
-                // 由自研 ConceptMasteringAudioProcessor 统一负责 M/S 立体声场扩展，避免硬件 Virtualizer 叠加引起双重梳状滤波失真
-                vz.enabled = false
-            }
-        }
-
-        loudnessEnhancer?.let { le ->
-            runCatching {
-                val effectiveLoudness = (s.loudnessGainMb + (s.preampGainDb.coerceAtLeast(0f) * 80f).toInt())
-                    .coerceIn(0, if (s.antiClippingEnabled) 1200 else 1500)
-                val active = effectiveLoudness > 0
-                le.setTargetGain(if (active) effectiveLoudness else 0)
-                le.enabled = active
-            }
-        }
-
-        presetReverb?.let { pr ->
-            runCatching {
-                val active = s.reverbMode != ReverbMode.NONE
-                pr.preset = s.reverbMode.preset
-                pr.enabled = active
-                onAuxEffectChanged?.invoke(if (active) pr.id else 0, if (active) 0.36f else 0f)
-            }
-        }
+        // 所有 10 段参量均衡 (31Hz~16kHz)、可调频点重低音 (45/60/85Hz)、3D 环绕声场、空间混响、
+        // 人声通透激励、黑胶/胆机温暖度、动态响度增益、前置放大增益、等响度补偿与声道平衡
+        // 均由自研 ConceptMasteringAudioProcessor 在 PCM 管线内实时高精度处理，
+        // 彻底避免系统硬件 5 段 Equalizer / BassBoost / PresetReverb 在不同 ROM 上不生效或引发的双重滤波失真。
+        equalizer?.let { runCatching { it.enabled = false } }
+        bassBoost?.let { runCatching { it.enabled = false } }
+        virtualizer?.let { runCatching { it.enabled = false } }
+        loudnessEnhancer?.let { runCatching { it.enabled = false } }
+        presetReverb?.let { runCatching { it.enabled = false } }
+        onAuxEffectChanged?.invoke(0, 0f)
     }
 
     internal fun releaseEffects() {

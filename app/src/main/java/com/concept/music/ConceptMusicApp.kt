@@ -24,6 +24,7 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
         super.onCreate()
         ThemeManager.init(this)
         VipManager.initialize(this)
+        com.concept.music.service.AudioEffectManager.init(this)
         AmbientSoundManager.init(this)
         FocusPodManager.init(this)
         SystemLyricBridge.init(this)

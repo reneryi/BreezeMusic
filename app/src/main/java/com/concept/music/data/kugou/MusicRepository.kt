@@ -50,6 +50,33 @@ class MusicApiRepository(
     private val rankLatestVolMap = ConcurrentHashMap<String, Int>()
     private val albumPublishDateCache = ConcurrentHashMap<String, String>()
     private val albumCompanyCache = ConcurrentHashMap<String, String>()
+    private val albumNameCache = ConcurrentHashMap<String, String>()
+
+    internal fun cleanResolvedAlbumName(raw: String?): String {
+        if (raw.isNullOrBlank()) return ""
+        val cleaned = raw.replace("<em>", "").replace("</em>", "").trim()
+        if (cleaned.isEmpty() || cleaned == "0" || cleaned == "未知专辑" || cleaned == "精选专辑" || cleaned.equals("null", ignoreCase = true)) {
+            return ""
+        }
+        return cleaned
+    }
+
+    fun peekCachedAlbumName(song: Song): String {
+        val direct = cleanResolvedAlbumName(song.album)
+        if (direct.isNotBlank()) return direct
+        val aid = song.albumId.trim()
+        if (aid.isNotBlank() && aid != "0") {
+            albumNameCache[aid]?.let { if (it.isNotBlank()) return it }
+        }
+        val aaid = song.albumAudioId.takeIf { it > 0L } ?: song.audioId.takeIf { it > 0L } ?: 0L
+        if (aaid > 0L) {
+            albumNameCache["aaid_$aaid"]?.let { if (it.isNotBlank()) return it }
+        }
+        val fromTech = listOf(song.id, song.hash, song.hash128, song.hash320, song.hashFlac, song.hashHiRes)
+            .map { it.trim().lowercase() }
+            .firstNotNullOfOrNull { k -> if (k.isNotBlank()) songTechMetaCache[k]?.albumName?.takeIf { it.isNotBlank() } else null }
+        return cleanResolvedAlbumName(fromTech)
+    }
 
     internal data class SongStreamSpec(
         val hash: String,
@@ -1198,9 +1225,9 @@ class MusicApiRepository(
             }
         }
 
-        if (enrichedByHash.isEmpty()) return@withContext songs
+        if (enrichedByHash.isEmpty()) return@withContext enrichSongsAlbumNamesBatch(songs)
 
-        songs.map { s ->
+        val privMappedSongs = songs.map { s ->
             val matchedPrivObjs = listOf(s.hash128, s.hash320, s.hashFlac, s.hashHiRes, s.hash)
                 .map { it.trim().lowercase() }
                 .filter { it.isNotBlank() }
@@ -1445,20 +1472,42 @@ class MusicApiRepository(
                     ?: transParam?.text("union_cover")
                     ?: privObj.obj("album_info")?.text("sizable_cover")
             )
-            val privAlbumId = (privObj.text("album_id") ?: privObj.obj("album_info")?.text("album_id") ?: "")
+            val privAlbumId = (privObj.text("album_id") ?: privObj.text("albumid") ?: privObj.text("AlbumID")
+                ?: privObj.obj("album_info")?.text("album_id") ?: privObj.obj("album_info")?.text("id")
+                ?: relateGoods.firstNotNullOfOrNull { rg ->
+                    (rg.text("album_id") ?: rg.text("albumid") ?: rg.obj("info")?.text("album_id"))?.takeIf { it.isNotBlank() && it != "0" }
+                } ?: "")
                 .takeIf { it != "0" }.orEmpty()
-            val privAlbumName = (privObj.text("album_name") ?: privObj.obj("album_info")?.text("album_name") ?: "").trim()
+            val resolvedAid = s.albumId.ifBlank { privAlbumId }.trim()
+            val privAlbumName = cleanResolvedAlbumName(
+                privObj.text("album_name") ?: privObj.text("albumname") ?: privObj.text("AlbumName")
+                    ?: privObj.obj("album_info")?.text("album_name") ?: privObj.obj("album_info")?.text("albumname")
+                    ?: privObj.obj("album_info")?.text("name")
+                    ?: privObj.text("remark") ?: privObj.text("Remark")
+                    ?: relateGoods.firstNotNullOfOrNull { rg ->
+                        cleanResolvedAlbumName(
+                            rg.text("album_name") ?: rg.text("albumname") ?: rg.text("remark")
+                                ?: rg.obj("info")?.text("album_name") ?: rg.obj("info")?.text("albumname")
+                                ?: rg.obj("info")?.text("remark")
+                        ).takeIf { it.isNotBlank() }
+                    }
+                    ?: if (resolvedAid.isNotBlank()) albumNameCache[resolvedAid] else null
+            )
+            if (resolvedAid.isNotBlank() && privAlbumName.isNotBlank()) {
+                albumNameCache[resolvedAid] = privAlbumName
+            }
             val privPubDate = normalizePublishDate(
                 privObj.text("publish_date") ?: privObj.text("publish_time") ?: privObj.text("publishtime")
                     ?: privObj.obj("album_info")?.text("publish_date")
                     ?: transParam?.text("publish_date")
             )
 
+            val mergedAlbumName = cleanResolvedAlbumName(s.album).ifBlank { privAlbumName }
             cacheSongTechMeta(
                 keys = listOf(s.id, primaryHash, stdHash, hqHash, sqHash, resHash),
                 meta = SongTechMeta(
                     specs = specsMap,
-                    albumName = privAlbumName.ifBlank { s.album },
+                    albumName = mergedAlbumName,
                     publishDate = privPubDate.ifBlank { s.publishDate },
                     durationMs = effectiveDurMs
                 )
@@ -1470,8 +1519,8 @@ class MusicApiRepository(
                 hash320 = hqHash,
                 hashFlac = sqHash,
                 hashHiRes = if (hasHiRes) resHash else "",
-                album = s.album.ifBlank { privAlbumName },
-                albumId = s.albumId.ifBlank { privAlbumId },
+                album = mergedAlbumName,
+                albumId = resolvedAid,
                 coverUrl = s.coverUrl.ifBlank { privCover },
                 durationMs = effectiveDurMs,
                 isHiRes = hasHiRes,
@@ -1485,6 +1534,240 @@ class MusicApiRepository(
                 publishDate = s.publishDate.ifBlank { privPubDate }
             )
         }
+        return@withContext enrichSongsAlbumNamesBatch(privMappedSongs)
+    }
+
+    /**
+     * 对齐 MakcRe/KuGouMusicApi module/album.js (/kmr/v2/albums) 与 module/krm_audio.js (/kmr/v2/audio):
+     * 针对拥有有效 albumId 或 albumAudioId 但列表接口未返回 album_name 的歌曲（如日推、随心听、部分歌单），
+     * 批量补全真实专辑名称与 albumId，彻底解决点击更多菜单时显示“查看专辑：未知专辑”但点击又能进专辑页的问题。
+     */
+    suspend fun enrichSongsAlbumNamesBatch(songs: List<Song>): List<Song> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (songs.isEmpty()) return@withContext songs
+
+        // 第一阶段：收集所有有 albumId 但缺少 album 名称且尚未命中缓存的 albumId，批量请求 /kmr/v2/albums
+        val missingAlbumIds = songs
+            .filter { cleanResolvedAlbumName(it.album).isBlank() && it.albumId.isNotBlank() && it.albumId != "0" }
+            .map { it.albumId.trim() }
+            .distinct()
+            .filterNot { albumNameCache.containsKey(it) }
+
+        if (missingAlbumIds.isNotEmpty()) {
+            val session = accounts.context()?.session
+            coroutineScope {
+                missingAlbumIds.chunked(45).map { chunk ->
+                    async {
+                        runCatching {
+                            val itemArr = JsonArray().apply {
+                                chunk.forEach { aid ->
+                                    add(JsonObject().apply {
+                                        val numId = aid.toLongOrNull()
+                                        if (numId != null) addProperty("album_id", numId)
+                                        else addProperty("album_id", aid)
+                                    })
+                                }
+                            }
+                            val body = JsonObject().apply {
+                                add("data", itemArr)
+                                addProperty("is_buy", 0)
+                                addProperty("fields", "album_id,album_name,publish_date,sizable_cover,author_name,publish_company")
+                            }
+                            val resp = transport.callAdvanced(
+                                path = "/kmr/v2/albums",
+                                method = "POST",
+                                session = session,
+                                body = body,
+                                headers = mapOf(
+                                    "x-router" to "openapi.kugou.com",
+                                    "kg-tid" to "255"
+                                ),
+                                sign = true,
+                                includeDefaultParams = true
+                            )
+                            val arr = resp.data.arr("data") ?: resp.body.arr("data")
+                            arr?.filter { it.isJsonObject }?.map { it.asJsonObject }?.forEach { obj ->
+                                val aid = (obj.text("album_id") ?: obj.text("albumid") ?: "").trim()
+                                val aName = cleanResolvedAlbumName(obj.text("album_name") ?: obj.text("albumname") ?: obj.text("name"))
+                                val pub = normalizePublishDate(
+                                    obj.text("publish_date") ?: obj.text("publishtime") ?: obj.text("publish_time")
+                                )
+                                val comp = (obj.text("publish_company") ?: obj.text("company") ?: "").trim()
+                                if (aid.isNotBlank() && aid != "0") {
+                                    if (aName.isNotBlank()) albumNameCache[aid] = aName
+                                    if (pub.isNotBlank()) albumPublishDateCache[aid] = pub
+                                    if (comp.isNotBlank()) albumCompanyCache[aid] = comp
+                                }
+                            }
+                        }
+                    }
+                }.forEach { it.await() }
+            }
+        }
+
+        val afterAlbumIdPass = songs.map { s ->
+            val aid = s.albumId.trim()
+            val curAlb = cleanResolvedAlbumName(s.album)
+            val resolvedAlb = curAlb.ifBlank { if (aid.isNotBlank()) albumNameCache[aid].orEmpty() else "" }
+            val resolvedPub = s.publishDate.ifBlank { if (aid.isNotBlank()) albumPublishDateCache[aid].orEmpty() else "" }
+            if (resolvedAlb != s.album || resolvedPub != s.publishDate) {
+                if (resolvedAlb.isNotBlank()) {
+                    cacheSongTechMeta(
+                        keys = listOf(s.id, s.hash, s.hash128, s.hash320, s.hashFlac, s.hashHiRes),
+                        meta = SongTechMeta(albumName = resolvedAlb, publishDate = resolvedPub)
+                    )
+                }
+                s.copy(album = resolvedAlb, publishDate = resolvedPub)
+            } else s
+        }
+
+        // 第二阶段：对仍缺少专辑名称但有有效 albumAudioId / audioId 的歌曲，通过 /kmr/v2/audio 批量查询 base,album_info
+        val missingAudioEntityIds = afterAlbumIdPass
+            .filter { cleanResolvedAlbumName(it.album).isBlank() && (it.albumAudioId > 0L || it.audioId > 0L) }
+            .map { if (it.albumAudioId > 0L) it.albumAudioId else it.audioId }
+            .distinct()
+            .filterNot { albumNameCache.containsKey("aaid_$it") }
+
+        if (missingAudioEntityIds.isNotEmpty()) {
+            val session = accounts.context()?.session
+            coroutineScope {
+                missingAudioEntityIds.chunked(40).map { chunk ->
+                    async {
+                        runCatching {
+                            val dataArr = JsonArray().apply {
+                                chunk.forEach { entityId ->
+                                    add(JsonObject().apply { addProperty("entity_id", entityId) })
+                                }
+                            }
+                            val body = JsonObject().apply {
+                                add("data", dataArr)
+                                addProperty("fields", "base,album_info")
+                            }
+                            val resp = transport.callAdvanced(
+                                path = "/kmr/v2/audio",
+                                method = "POST",
+                                session = session,
+                                body = body,
+                                headers = mapOf(
+                                    "x-router" to "openapi.kugou.com",
+                                    "kg-tid" to "36"
+                                ),
+                                sign = true,
+                                includeDefaultParams = true
+                            )
+                            val arr = resp.data.arr("data") ?: resp.body.arr("data")
+                            arr?.filter { it.isJsonObject }?.map { it.asJsonObject }?.forEach { item ->
+                                val baseObj = item.obj("base") ?: item
+                                val albObj = item.obj("album_info")
+                                val aaid = baseObj.number("album_audio_id")?.toLong()
+                                    ?: item.number("album_audio_id")?.toLong()
+                                    ?: item.number("entity_id")?.toLong()
+                                    ?: baseObj.number("audio_id")?.toLong() ?: 0L
+                                val aid = (albObj?.text("album_id") ?: baseObj.text("album_id") ?: item.text("album_id") ?: "")
+                                    .trim().takeIf { it != "0" }.orEmpty()
+                                val aName = cleanResolvedAlbumName(
+                                    albObj?.text("album_name") ?: albObj?.text("albumname") ?: albObj?.text("name")
+                                        ?: baseObj.text("album_name") ?: baseObj.text("albumname")
+                                        ?: item.text("album_name") ?: item.text("remark")
+                                )
+                                val pub = normalizePublishDate(
+                                    baseObj.text("publish_date") ?: baseObj.text("publish_time")
+                                        ?: albObj?.text("publish_date") ?: item.text("publish_date")
+                                )
+                                if (aaid > 0L) {
+                                    if (aName.isNotBlank()) albumNameCache["aaid_$aaid"] = aName
+                                    if (aid.isNotBlank()) albumNameCache["aaid_id_$aaid"] = aid
+                                    if (pub.isNotBlank()) albumPublishDateCache["aaid_$aaid"] = pub
+                                }
+                                if (aid.isNotBlank() && aName.isNotBlank()) {
+                                    albumNameCache[aid] = aName
+                                }
+                            }
+                        }
+                    }
+                }.forEach { it.await() }
+            }
+        }
+
+        return@withContext afterAlbumIdPass.map { s ->
+            val entityId = if (s.albumAudioId > 0L) s.albumAudioId else s.audioId
+            val resolvedAid = s.albumId.ifBlank {
+                if (entityId > 0L) albumNameCache["aaid_id_$entityId"].orEmpty() else ""
+            }.trim()
+            val curAlb = cleanResolvedAlbumName(s.album)
+            val resolvedAlb = curAlb.ifBlank {
+                (if (resolvedAid.isNotBlank()) albumNameCache[resolvedAid] else null)
+                    ?: (if (entityId > 0L) albumNameCache["aaid_$entityId"] else null)
+                    ?: ""
+            }
+            val resolvedPub = s.publishDate.ifBlank {
+                (if (resolvedAid.isNotBlank()) albumPublishDateCache[resolvedAid] else null)
+                    ?: (if (entityId > 0L) albumPublishDateCache["aaid_$entityId"] else null)
+                    ?: ""
+            }
+            if (resolvedAlb != s.album || resolvedAid != s.albumId || resolvedPub != s.publishDate) {
+                if (resolvedAlb.isNotBlank()) {
+                    cacheSongTechMeta(
+                        keys = listOf(s.id, s.hash, s.hash128, s.hash320, s.hashFlac, s.hashHiRes),
+                        meta = SongTechMeta(albumName = resolvedAlb, publishDate = resolvedPub)
+                    )
+                }
+                s.copy(album = resolvedAlb, albumId = resolvedAid, publishDate = resolvedPub)
+            } else s
+        }
+    }
+
+    /**
+     * 针对单曲实时解析真实专辑名与 albumId（用于点击列表更多菜单 SongActionBottomSheet 或播放页更多弹窗时兜底补全）：
+     * 优先命中内存缓存 -> /kmr/v2/albums -> /kmr/v2/audio -> /api/v3/album/info
+     * 若歌曲确实无关联专辑，则返回空字符串 "" 与空 albumId ""。
+     */
+    suspend fun resolveSongAlbumMeta(song: Song): Pair<String, String> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val cachedName = peekCachedAlbumName(song)
+        val initialAid = song.albumId.trim().takeIf { it != "0" }.orEmpty()
+        if (cachedName.isNotBlank() && initialAid.isNotBlank()) {
+            return@withContext cachedName to initialAid
+        }
+
+        val batchEnriched = runCatching { enrichSongsAlbumNamesBatch(listOf(song)).firstOrNull() }.getOrNull() ?: song
+        var resolvedName = cleanResolvedAlbumName(batchEnriched.album)
+        var resolvedAid = batchEnriched.albumId.trim().takeIf { it != "0" }.orEmpty()
+
+        if (resolvedName.isBlank() && resolvedAid.isNotBlank()) {
+            val detail = runCatching { albumDetail(resolvedAid) }.getOrNull()
+            val detailName = cleanResolvedAlbumName(detail?.name)
+            if (detailName.isNotBlank()) {
+                resolvedName = detailName
+                albumNameCache[resolvedAid] = detailName
+            }
+        }
+
+        if (resolvedName.isBlank() && (song.hash.isNotBlank() || song.albumAudioId > 0L || song.audioId > 0L)) {
+            val privEnriched = runCatching { enrichSongsPrivilegeLite(listOf(batchEnriched)).firstOrNull() }.getOrNull()
+            if (privEnriched != null) {
+                if (resolvedName.isBlank()) resolvedName = cleanResolvedAlbumName(privEnriched.album)
+                if (resolvedAid.isBlank()) resolvedAid = privEnriched.albumId.trim().takeIf { it != "0" }.orEmpty()
+            }
+        }
+
+        if (resolvedName.isBlank() && resolvedAid.isNotBlank()) {
+            val detail = runCatching { albumDetail(resolvedAid) }.getOrNull()
+            val detailName = cleanResolvedAlbumName(detail?.name)
+            if (detailName.isNotBlank()) {
+                resolvedName = detailName
+                albumNameCache[resolvedAid] = detailName
+            }
+        }
+
+        if (resolvedName.isNotBlank()) {
+            if (resolvedAid.isNotBlank()) albumNameCache[resolvedAid] = resolvedName
+            val entityId = if (song.albumAudioId > 0L) song.albumAudioId else song.audioId
+            if (entityId > 0L) albumNameCache["aaid_$entityId"] = resolvedName
+            cacheSongTechMeta(
+                keys = listOf(song.id, song.hash, song.hash128, song.hash320, song.hashFlac, song.hashHiRes),
+                meta = SongTechMeta(albumName = resolvedName)
+            )
+        }
+        resolvedName to resolvedAid
     }
 
     suspend fun resolvePlayback(
@@ -3322,6 +3605,9 @@ class MusicApiRepository(
             val pubDate = (obj.text("publish_date") ?: obj.text("publishtime") ?: "").take(10)
             val count = obj.number("song_count") ?: obj.number("songcount") ?: 0
             val company = obj.text("publish_company") ?: obj.text("company") ?: ""
+            if (id.isNotBlank() && cleanResolvedAlbumName(name).isNotBlank()) {
+                albumNameCache[id.trim()] = cleanResolvedAlbumName(name)
+            }
             if (name.isBlank() && cover.isBlank()) {
                 null
             } else {
@@ -3353,8 +3639,12 @@ class MusicApiRepository(
                 includeDefaultParams = false
             ).requireSuccess()
             val obj = response.data.obj("data") ?: response.data
-            val id = obj.text("albumid") ?: obj.text("album_id") ?: albumId
-            val name = obj.text("albumname") ?: obj.text("album_name") ?: "精选专辑"
+                        val id = obj.text("albumid") ?: obj.text("album_id") ?: albumId
+            val rawCdnName = obj.text("albumname") ?: obj.text("album_name") ?: ""
+            if (id.isNotBlank() && cleanResolvedAlbumName(rawCdnName).isNotBlank()) {
+                albumNameCache[id.trim()] = cleanResolvedAlbumName(rawCdnName)
+            }
+            val name = rawCdnName.ifBlank { "精选专辑" }
             val author = obj.text("singername") ?: obj.text("author_name") ?: "群星"
             val cover = imageUrl(obj.text("imgurl") ?: obj.text("sizable_cover") ?: obj.text("pic"))
             val intro = obj.text("intro") ?: ""
@@ -7060,16 +7350,28 @@ class MusicApiRepository(
         artist = artist.replace("<em>", "").replace("</em>", "").trim()
         if (artist.isBlank()) artist = "群星"
 
-        val album = (o.text("album_name") ?: o.text("AlbumName")
-            ?: albumInfo?.text("album_name") ?: albumInfo?.text("name")
-            ?: base?.text("album_name") ?: "")
-            .replace("<em>", "").replace("</em>", "").trim()
-
-        val albumId = (o.text("album_id") ?: o.text("AlbumID")
-            ?: base?.text("album_id")
-            ?: albumInfo?.text("album_id") ?: albumInfo?.text("id")
+        val albumId = (o.text("album_id") ?: o.text("AlbumID") ?: o.text("albumid")
+            ?: base?.text("album_id") ?: base?.text("albumid")
+            ?: audioInfo?.text("album_id") ?: audioInfo?.text("albumid")
+            ?: albumInfo?.text("album_id") ?: albumInfo?.text("albumid") ?: albumInfo?.text("id")
+            ?: replaceAudioInfo?.text("album_id")
             ?: deprecated?.text("album_id") ?: "")
-            .takeIf { it != "0" }.orEmpty()
+            .trim().takeIf { it != "0" }.orEmpty()
+
+        val rawAlbumCandidate = o.text("album_name") ?: o.text("AlbumName") ?: o.text("albumname")
+            ?: albumInfo?.text("album_name") ?: albumInfo?.text("albumname") ?: albumInfo?.text("name") ?: albumInfo?.text("AlbumName")
+            ?: base?.text("album_name") ?: base?.text("albumname")
+            ?: audioInfo?.text("album_name") ?: audioInfo?.text("albumname") ?: audioInfo?.text("remark")
+            ?: replaceAudioInfo?.text("album_name") ?: replaceAudioInfo?.text("albumname")
+            ?: deprecated?.text("album_name") ?: deprecated?.text("albumname")
+            ?: transParam?.text("album_name")
+            ?: o.text("remark") ?: o.text("Remark")
+            ?: (if (albumId.isNotBlank()) albumNameCache[albumId] else null)
+            ?: ""
+        val album = cleanResolvedAlbumName(rawAlbumCandidate)
+        if (albumId.isNotBlank() && album.isNotBlank()) {
+            albumNameCache[albumId] = album
+        }
 
         val coverRaw = o.text("Image") ?: o.text("image") ?: o.text("cover") ?: o.text("Cover")
             ?: o.text("album_sizable_cover") ?: o.text("sizable_cover") ?: o.text("album_img") ?: o.text("union_cover")

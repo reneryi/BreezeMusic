@@ -312,14 +312,19 @@ internal fun LandscapePlayerPage(
             }
 
             // =========================================================================
-            // 右区 (weight 0.55f)：全高沉浸式 KRC 逐字流光歌词（零重排 GPU 缩放 + 黄金焦点平滑滚动）
+            // 右区 (weight 0.55f)：全高沉浸式 KRC 逐字流光歌词（零重排 GPU 缩放 + 视觉正中央自然滚动）
             // =========================================================================
-            Box(
+            BoxWithConstraints(
                 modifier = Modifier
                     .weight(0.55f)
                     .fillMaxHeight()
                     .padding(start = 10.dp)
             ) {
+                val containerHeightDp = maxHeight
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                val estimatedHalfItemDp = ((lyricFontSize + 18f) * 0.5f).dp
+                val dynamicVerticalPadDp = ((containerHeightDp * 0.5f) - estimatedHalfItemDp).coerceAtLeast(88.dp)
+
                 if (lyricData.lines.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
@@ -346,25 +351,63 @@ internal fun LandscapePlayerPage(
                             isUserScrubbing = false
                         }
                     }
-                    LaunchedEffect(currentLyricIndex, isUserScrubbing) {
-                        if (!isUserScrubbing && currentLyricIndex in lyricData.lines.indices) {
+
+                    // 切歌或歌词源更新时，立即定位到当前歌词居中位置（歌曲开头第 0 句亦依靠顶部留白自然居中）
+                    LaunchedEffect(song.id, lyricData.lines.size) {
+                        if (lyricData.lines.isNotEmpty()) {
+                            val initIdx = currentLyricIndex.coerceIn(0, lyricData.lines.lastIndex)
+                            listState.scrollToItem(index = initIdx, scrollOffset = 0)
+                        }
+                    }
+
+                    LaunchedEffect(currentLyricIndex, isUserScrubbing, lyricData.lines.size) {
+                        if (!isUserScrubbing && lyricData.lines.isNotEmpty()) {
+                            val targetIdx = currentLyricIndex.coerceIn(0, lyricData.lines.lastIndex)
                             val layoutInfo = listState.layoutInfo
-                            val viewportH = (layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset).takeIf { it > 0 } ?: 420
-                            val goldenFocusOffset = -(viewportH * 0.28f).toInt()
-                            val targetItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == currentLyricIndex }
+                            val viewportStart = layoutInfo.viewportStartOffset
+                            val viewportEnd = layoutInfo.viewportEndOffset
+                            val viewportH = (viewportEnd - viewportStart).takeIf { it > 0 }
+                                ?: with(density) { containerHeightDp.toPx().toInt() }.coerceAtLeast(320)
+                            val viewportCenterY = (viewportStart + viewportEnd) / 2
+                            val targetItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == targetIdx }
+
                             if (targetItem != null) {
-                                val deltaPx = (targetItem.offset - goldenFocusOffset).toFloat()
+                                val itemCenterY = targetItem.offset + (targetItem.size / 2)
+                                val deltaPx = (itemCenterY - viewportCenterY).toFloat()
                                 if (abs(deltaPx) > 2f) {
                                     listState.animateScrollBy(
                                         value = deltaPx,
-                                        animationSpec = tween(durationMillis = 360, easing = ConceptMotion.LyricSmoothScrollEasing)
+                                        animationSpec = tween(durationMillis = 380, easing = ConceptMotion.LyricSmoothScrollEasing)
                                     )
                                 }
                             } else {
+                                // 当目标歌词行尚未在可见视口内时，计算相对于 contentPadding 起点的居中偏移量
+                                val avgItemHeightPx = layoutInfo.visibleItemsInfo
+                                    .takeIf { it.isNotEmpty() }
+                                    ?.map { it.size }
+                                    ?.average()
+                                    ?.toInt()
+                                    ?: with(density) { (lyricFontSize + 28f).dp.toPx().toInt() }
+                                val topPadPx = layoutInfo.beforeContentPadding
+                                val desiredTopInViewport = (viewportH - avgItemHeightPx) / 2
+                                val centerScrollOffset = topPadPx - desiredTopInViewport
                                 listState.animateScrollToItem(
-                                    index = currentLyricIndex,
-                                    scrollOffset = goldenFocusOffset
+                                    index = targetIdx,
+                                    scrollOffset = centerScrollOffset
                                 )
+                                // 待布局稳定后二次微调，确保多行长歌词也能精确垂直居中
+                                val settledLayout = listState.layoutInfo
+                                val settledCenter = (settledLayout.viewportStartOffset + settledLayout.viewportEndOffset) / 2
+                                val settledItem = settledLayout.visibleItemsInfo.firstOrNull { it.index == targetIdx }
+                                if (settledItem != null) {
+                                    val fineDelta = ((settledItem.offset + settledItem.size / 2) - settledCenter).toFloat()
+                                    if (abs(fineDelta) > 2f) {
+                                        listState.animateScrollBy(
+                                            value = fineDelta,
+                                            animationSpec = tween(durationMillis = 220, easing = ConceptMotion.LyricSmoothScrollEasing)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -390,14 +433,42 @@ internal fun LandscapePlayerPage(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(end = 36.dp),
-                        contentPadding = PaddingValues(vertical = 120.dp),
+                            .padding(end = 36.dp)
+                            .graphicsLayer { alpha = 0.99f }
+                            .drawWithContent {
+                                drawContent()
+                                val fadeH = (size.height * 0.14f).coerceIn(24.dp.toPx(), 64.dp.toPx())
+                                // 顶部与底部边缘柔化渐隐遮罩，使歌词滚入/滚出更加自然优雅
+                                drawRect(
+                                    brush = Brush.verticalGradient(
+                                        0.0f to Color.Transparent,
+                                        1.0f to Color.Black,
+                                        startY = 0f,
+                                        endY = fadeH
+                                    ),
+                                    size = Size(size.width, fadeH),
+                                    blendMode = androidx.compose.ui.graphics.BlendMode.DstIn
+                                )
+                                drawRect(
+                                    brush = Brush.verticalGradient(
+                                        0.0f to Color.Black,
+                                        1.0f to Color.Transparent,
+                                        startY = (size.height - fadeH).coerceAtLeast(0f),
+                                        endY = size.height
+                                    ),
+                                    topLeft = Offset(0f, (size.height - fadeH).coerceAtLeast(0f)),
+                                    size = Size(size.width, fadeH),
+                                    blendMode = androidx.compose.ui.graphics.BlendMode.DstIn
+                                )
+                            },
+                        contentPadding = PaddingValues(vertical = dynamicVerticalPadDp),
                         horizontalAlignment = Alignment.Start
                     ) {
                         itemsIndexed(lyricData.lines, key = { idx, item -> "land_${idx}_${item.startTimeMs}" }) { index, line ->
-                            val isCurrent = index == currentLyricIndex
+                            val effectiveActiveIdx = currentLyricIndex.coerceAtLeast(0)
+                            val isCurrent = index == effectiveActiveIdx
                             val isScrubTarget = isUserScrubbing && index == scrubLineIndex
-                            val distance = abs(index - currentLyricIndex)
+                            val distance = abs(index - effectiveActiveIdx)
 
                             // 统一使用 GPU 弹性缩放表达主次焦点，彻底消除字号跳变引发的 Text Relayout
                             val lineScaleState = animateFloatAsState(
