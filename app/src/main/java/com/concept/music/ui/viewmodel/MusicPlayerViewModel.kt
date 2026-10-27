@@ -248,8 +248,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private var activePlayingSong: Song? = null
     private var songPlaybackStartTimestamp: Long = 0L
     private var accumulatedPlayedMs: Long = 0L
+    private var currentSegmentRecordedGradeSec: Long = 0L
     private var lastAccumulateTickMs: Long = 0L
     private var csccSegmentOpen: Boolean = false
+    private var isPausingWithFade: Boolean = false
     private var nextShuffleIndex: Int = -1
     private var prefetchedNextQueueIndex: Int = -1
     private var prefetchedNextSongKey: String = ""
@@ -261,6 +263,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private var lastSerializedQueueJson: String = "[]"
 
     private fun resolveEffectiveIsPlaying(player: Player, isResolving: Boolean): Boolean {
+        if (isPausingWithFade) return false
         if (isResolving) return mutableState.value.isPlaying
         if (player.mediaItemCount == 0) return false
         if (player.isPlaying) return true
@@ -330,17 +333,18 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private fun flushGradePlaybackSeconds(nowElapsed: Long = safeElapsedRealtime(), songOverride: Song? = null) {
         val targetSong = songOverride ?: activePlayingSong ?: mutableState.value.currentSong ?: return
-        if (lastRecordTimestamp > 0L && nowElapsed > lastRecordTimestamp) {
-            val elapsedSec = (nowElapsed - lastRecordTimestamp) / 1000L
-            if (elapsedSec >= 1L) {
-                lastRecordTimestamp += elapsedSec * 1000L
-                ListeningGradeManager.recordPlaybackSeconds(elapsedSec, targetSong)
-            }
+        val effectiveMs = currentEffectivePlayedMs(nowElapsed)
+        if (effectiveMs < 10_000L) return
+        val totalEligibleSec = effectiveMs / 1000L
+        val deltaSec = totalEligibleSec - currentSegmentRecordedGradeSec
+        if (deltaSec >= 1L) {
+            currentSegmentRecordedGradeSec = totalEligibleSec
+            lastRecordTimestamp = nowElapsed
+            ListeningGradeManager.recordPlaybackSeconds(deltaSec, targetSong)
         }
     }
 
-    internal fun currentEffectivePlayedMs(): Long {
-        val nowElapsed = safeElapsedRealtime()
+    internal fun currentEffectivePlayedMs(nowElapsed: Long = safeElapsedRealtime()): Long {
         val activeDelta = if (lastAccumulateTickMs > 0L && nowElapsed > lastAccumulateTickMs) {
             nowElapsed - lastAccumulateTickMs
         } else 0L
@@ -353,6 +357,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         recordedMediaId = mediaIdValue
         songPlaybackStartTimestamp = nowElapsed
         accumulatedPlayedMs = 0L
+        currentSegmentRecordedGradeSec = 0L
         lastAccumulateTickMs = nowElapsed
         lastRecordTimestamp = nowElapsed
         csccSegmentOpen = true
@@ -384,10 +389,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         if (targetSong != null && csccSegmentOpen && playedMs >= 10_000L) {
             KugouCsccReporter.onSongEnd(targetSong, playedMs, state = state)
             accumulatedPlayedMs = 0L
+            currentSegmentRecordedGradeSec = 0L
             songPlaybackStartTimestamp = 0L
             csccSegmentOpen = false
         } else if (clearActiveSong) {
             accumulatedPlayedMs = 0L
+            currentSegmentRecordedGradeSec = 0L
             songPlaybackStartTimestamp = 0L
             csccSegmentOpen = false
         }
@@ -968,6 +975,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
         resolveJob?.cancel()
         prefetchJob?.cancel()
+        playPauseFadeJob?.cancel()
+        isPausingWithFade = false
         lastClimaxSkipSongId = ""
         pendingSeekPositionMs = -1L
 
@@ -1188,30 +1197,38 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
         playPauseFadeJob?.cancel()
         val useSmoothFade = state.smoothPlayPauseFade && playerOverride == null
-        if (player.isPlaying) {
+        if (player.isPlaying && !isPausingWithFade) {
+            isPausingWithFade = useSmoothFade
             settleCurrentPlaybackSegment(
                 state = "手动停止",
                 clearActiveSong = false,
                 notifySongCompleted = false
             )
             if (useSmoothFade) {
+                syncPlayer()
                 playPauseFadeJob = viewModelScope.launch {
-                    val startVol = player.volume.coerceIn(0.15f, 1.0f)
-                    val steps = 4
-                    for (step in 1..steps) {
-                        activePlayer?.volume = (startVol * (1f - step * 0.22f)).coerceIn(0.06f, 1.0f)
-                        delay(28L)
+                    try {
+                        val startVol = player.volume.coerceIn(0.15f, 1.0f)
+                        val steps = 4
+                        for (step in 1..steps) {
+                            activePlayer?.volume = (startVol * (1f - step * 0.22f)).coerceIn(0.06f, 1.0f)
+                            delay(28L)
+                        }
+                        activePlayer?.pause()
+                        activePlayer?.volume = 1f
+                        persistPlaybackStateAsync()
+                    } finally {
+                        isPausingWithFade = false
                     }
-                    activePlayer?.pause()
-                    activePlayer?.volume = 1f
-                    persistPlaybackStateAsync()
                 }
             } else {
+                isPausingWithFade = false
                 player.pause()
                 player.volume = 1f
                 persistPlaybackStateAsync()
             }
         } else {
+            isPausingWithFade = false
             if (player.playbackState == Player.STATE_ENDED) {
                 player.seekTo(0)
             }
@@ -1253,6 +1270,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         )
         mutableState.value = st.copy(currentPositionMs = clamped)
         if (player != null && player.mediaItemCount > 0) {
+            if (!player.isPlaying || isPausingWithFade) {
+                lastAccumulateTickMs = 0L
+                lastRecordTimestamp = 0L
+            }
             player.seekTo(clamped)
             syncPlayer()
         }
@@ -2309,8 +2330,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val song = mutableState.value.currentSong
         val isResolving = resolveJob?.isActive == true
         val hasMedia = player.mediaItemCount > 0
-        val isBufferingWithPlayIntent = hasMedia && player.playbackState == Player.STATE_BUFFERING && player.playWhenReady
-        val isAudiblyPlaying = !isResolving && hasMedia && player.isPlaying
+        val isBufferingWithPlayIntent = !isPausingWithFade && hasMedia && player.playbackState == Player.STATE_BUFFERING && player.playWhenReady
+        val isAudiblyPlaying = !isResolving && !isPausingWithFade && hasMedia && player.isPlaying
 
         if (song != null && isAudiblyPlaying) {
             if (recordedMediaId != mediaId || activePlayingSong?.id != song.id) {
@@ -2343,7 +2364,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             flushGradePlaybackSeconds(nowElapsed, activePlayingSong)
             lastAccumulateTickMs = 0L
             lastRecordTimestamp = 0L
-            if (!isResolving && !isBufferingWithPlayIntent && !player.isPlaying) {
+            if (!isResolving && !isBufferingWithPlayIntent && (!player.isPlaying || isPausingWithFade)) {
                 settleCurrentPlaybackSegment(
                     state = "手动停止",
                     clearActiveSong = false,

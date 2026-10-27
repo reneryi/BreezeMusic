@@ -77,10 +77,10 @@ object ListeningGradeManager {
         val calibratedFloorSec = if (cachedRawDsec > 0L) {
             cachedRawDsec + VipManager.music.resolveStandardClientLocalDiffSec(userId, cachedRawDsec)
         } else 0L
-        syncedOfficialListenSec = maxOf(cachedOfficial, calibratedFloorSec)
+        syncedOfficialListenSec = if (calibratedFloorSec > 0L) calibratedFloorSec else cachedOfficial
         syncedRawServerDsec = cachedRawDsec
         pendingDiffSec = sp.getLong("pending_diff_v5_$userId", 0L).coerceIn(0L, 600L)
-        if (calibratedFloorSec > cachedOfficial + pendingDiffSec) {
+        if (calibratedFloorSec > 0L && cachedOfficial > calibratedFloorSec) {
             pendingDiffSec = 0L
         }
         if (syncedOfficialListenSec > 0L) {
@@ -128,10 +128,10 @@ object ListeningGradeManager {
             if (currentUserId != userId) return
             val rawProfileSec = if (officialDurationMinutes > 2_000_000L) officialDurationMinutes else officialDurationMinutes * 60L
             val profileSec = rawProfileSec + VipManager.music.resolveStandardClientLocalDiffSec(userId, rawProfileSec)
-            val remainderSec = if (syncedOfficialListenSec > 0L && syncedOfficialListenSec / 60L == profileSec / 60L) {
+            val remainderSec = if (profileSec % 60L == 0L && syncedOfficialListenSec > 0L && syncedOfficialListenSec / 60L == profileSec / 60L) {
                 syncedOfficialListenSec % 60L
             } else 0L
-            val newOfficialSec = maxOf(syncedOfficialListenSec, profileSec + remainderSec)
+            val newOfficialSec = if (profileSec > 0L) profileSec + remainderSec else syncedOfficialListenSec
             if (newOfficialSec > syncedOfficialListenSec + pendingDiffSec) {
                 pendingDiffSec = 0L
             }
@@ -235,12 +235,7 @@ object ListeningGradeManager {
                                 val creditedByServer = rawServerNow - syncedRawServerDsec
                                 pendingDiffSec = (pendingDiffSec - creditedByServer).coerceAtLeast(0L)
                             }
-                            val remainderSec = if (syncedOfficialListenSec > 0L &&
-                                syncedOfficialListenSec / 60L == serverQuery.totalListenSeconds / 60L
-                            ) {
-                                syncedOfficialListenSec % 60L
-                            } else 0L
-                            val candidateSec = serverQuery.totalListenSeconds + remainderSec
+                            val candidateSec = serverQuery.totalListenSeconds
                             if (candidateSec >= syncedOfficialListenSec + pendingDiffSec) {
                                 pendingDiffSec = 0L
                             }
@@ -249,6 +244,9 @@ object ListeningGradeManager {
                                 syncedRawServerDsec = rawServerNow
                             } else if (syncedRawServerDsec <= 0L) {
                                 syncedRawServerDsec = syncedOfficialListenSec
+                            }
+                            if (forceRefresh && rawServerNow > 0L && rawServerNow == syncedRawServerDsec) {
+                                pendingDiffSec = 0L
                             }
                             saveUserDataForUser(targetUserId, syncedOfficialListenSec, syncedRawServerDsec, pendingDiffSec, immediate = true)
                             val optimisticSec = syncedOfficialListenSec + pendingDiffSec

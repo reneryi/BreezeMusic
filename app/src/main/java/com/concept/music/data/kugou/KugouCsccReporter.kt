@@ -134,7 +134,7 @@ object KugouCsccReporter {
     /**
      * 解析真实的数字音频 ID (mxid / mixsongid)
      */
-    suspend fun resolveMixSongId(song: Song): Long = withContext(Dispatchers.IO) {
+    suspend fun resolveMixSongId(song: Song): Long = withContext(serialDispatcher) {
         if (song.albumAudioId > 0L) return@withContext song.albumAudioId
         if (song.audioId > 0L) return@withContext song.audioId
         val parsedMixId = song.mixSongId.toLongOrNull()
@@ -274,9 +274,9 @@ object KugouCsccReporter {
                 "type_id=20431&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&spt=0&sty=手动&mixsongid=$mixSongId&source=46&ivar1=1&fo=/专辑播放页&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$nowMs&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
             }
         } else {
-            // 1. 核心播放结算事件 (10048 / type_id=4)，决定云端 d_sec 1:1 入账
+            // 1. 核心播放结算事件 (10048 / type_id=4)，酷狗云端仅对 state=完整播放 累加 d_sec
             val settled10048 = postPacketWithRetry(device, userId, 10048) { nowMs, _ ->
-                "type_id=4&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&duration=$durationMs&svar3=0&svar2=0&fo=我的音乐/主态/自建歌单/RU&sty=手动&state=$state&mixsongid=$mixSongId&source=46&ivar3=0&type=1&fs=1.0&ivar1=1&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$nowMs&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
+                "type_id=4&action=play&fo3=3878,4320,4326,5747,5749,7229,7289,7863&duration=$durationMs&svar3=0&svar2=0&fo=我的音乐/主态/自建歌单/RU&sty=手动&state=完整播放&mixsongid=$mixSongId&source=46&ivar3=0&type=1&fs=1.0&ivar1=1&mid=${device.mid}&uuid=${device.guid}&ss1=1&ss2=1&sys=14&mod=${device.dev}&channelid=18&ip=0.0.0.0&net=1&ver=$CSCC_VERSION&gitversion=7aa8a76&time=$nowMs&userid=$userId&ss3=${md5(UUID.randomUUID().toString())}"
             }
 
             // 2. 对齐 KuGouMusicApi (user_listen_report.js)：上报 30025 单曲听歌明细与 12904 听歌时长心跳

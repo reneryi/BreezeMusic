@@ -567,6 +567,47 @@ class SongPlaybackSwitchTest {
         assertEquals(listOf(55_000L, 40_000L), endDurations)
     }
 
+    @Test
+    fun testSeekToWhilePausedDoesNotAccumulateDurationOrReopenSegment() = runTest(testDispatcher) {
+        var fakeNowMs = 5_000_000L
+        viewModel.elapsedRealtimeProviderForTest = { fakeNowMs }
+        val recordedEvents = mutableListOf<Triple<String, String, Long>>()
+        KugouCsccReporter.eventObserverForTest = { event, song, dur, _ ->
+            recordedEvents.add(Triple(event, song.id, dur))
+        }
+
+        viewModel.playSong(song1, listOf(song1))
+        testScheduler.advanceUntilIdle()
+        viewModel.syncPlayer()
+
+        // 正常播放 25 秒
+        fakeNowMs += 25_000L
+        viewModel.syncPlayer()
+
+        // 点击暂停
+        viewModel.togglePlayPause()
+        testScheduler.advanceUntilIdle()
+        viewModel.syncPlayer()
+
+        val eventsAfterPause = recordedEvents.toList()
+        assertEquals("应上报 start 与 25s 的 end 事件", 2, eventsAfterPause.size)
+        assertEquals(Triple("start", "song_1", 0L), eventsAfterPause[0])
+        assertEquals(Triple("end", "song_1", 25_000L), eventsAfterPause[1])
+
+        // 暂停状态下多次拖动进度条
+        fakeNowMs += 5_000L
+        viewModel.seekTo(10_000L)
+        fakeNowMs += 5_000L
+        viewModel.seekTo(50_000L)
+        fakeNowMs += 10_000L
+        viewModel.seekTo(80_000L)
+        testScheduler.advanceUntilIdle()
+        viewModel.syncPlayer()
+
+        // 验证暂停拖动期间绝不上报新的 start/end 事件，也不虚增时长
+        assertEquals("暂停拖拽期间绝不能重新开启 segment 或触发 CSCC 事件", 2, recordedEvents.size)
+    }
+
     private class TestSessionStore : SessionStore {
         var rows = listOf(SavedAccount("user_1"))
         var activeKey: String? = "user_1"
