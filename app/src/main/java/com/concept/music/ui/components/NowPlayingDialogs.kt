@@ -107,12 +107,11 @@ internal fun LyricSettingsDialog(
     highlightTheme: LyricHighlightTheme,
     backgroundDim: Float,
     keepScreenOn: Boolean,
-    dynamicPulse: Boolean = true,
     dynamicAccentColor: Color = ConceptPrimary,
     onSetFontSize: (Float) -> Unit,
     onSetTranslationScale: (Float) -> Unit = {},
     onSetAlignment: (LyricAlignment) -> Unit,
-    onSetWordByWord: (Boolean) -> Unit,
+    onSetWordByWord: (Boolean) -> Unit = {},
     onSetBlurEnabled: (Boolean) -> Unit,
     onSetBlurIntensity: (Float) -> Unit,
     onSetLineSpacing: (Float) -> Unit,
@@ -120,7 +119,6 @@ internal fun LyricSettingsDialog(
     onSetHighlightTheme: (LyricHighlightTheme) -> Unit,
     onSetBackgroundDim: (Float) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
-    onSetDynamicPulse: (Boolean) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -267,7 +265,6 @@ internal fun LyricSettingsDialog(
                                     onSetBlurIntensity(1.0f)
                                     onSetBackgroundDim(0.72f)
                                     onSetOffsetMs(0L)
-                                    onSetDynamicPulse(true)
                                 }
                             ) {
                                 Row(
@@ -335,18 +332,14 @@ internal fun LyricSettingsDialog(
                                     onSetOffsetMs = onSetOffsetMs
                                 )
                                 LyricTogglesGridCard(
-                                    wordByWord = wordByWord,
                                     blurEnabled = blurEnabled,
                                     keepScreenOn = keepScreenOn,
-                                    dynamicPulse = dynamicPulse,
                                     themeAccent = themeAccent,
                                     cardBg = glassCardBg,
                                     textPrimary = textPrimary,
                                     textSecondary = textSecondary,
-                                    onSetWordByWord = onSetWordByWord,
                                     onSetBlurEnabled = onSetBlurEnabled,
-                                    onSetKeepScreenOn = onSetKeepScreenOn,
-                                    onSetDynamicPulse = onSetDynamicPulse
+                                    onSetKeepScreenOn = onSetKeepScreenOn
                                 )
                             }
                             Column(
@@ -405,18 +398,14 @@ internal fun LyricSettingsDialog(
                         )
 
                         LyricTogglesGridCard(
-                            wordByWord = wordByWord,
                             blurEnabled = blurEnabled,
                             keepScreenOn = keepScreenOn,
-                            dynamicPulse = dynamicPulse,
                             themeAccent = themeAccent,
                             cardBg = glassCardBg,
                             textPrimary = textPrimary,
                             textSecondary = textSecondary,
-                            onSetWordByWord = onSetWordByWord,
                             onSetBlurEnabled = onSetBlurEnabled,
-                            onSetKeepScreenOn = onSetKeepScreenOn,
-                            onSetDynamicPulse = onSetDynamicPulse
+                            onSetKeepScreenOn = onSetKeepScreenOn
                         )
                     }
                 }
@@ -747,78 +736,43 @@ private fun CompactInlineSliderRow(
 
 @Composable
 private fun LyricTogglesGridCard(
-    wordByWord: Boolean,
     blurEnabled: Boolean,
     keepScreenOn: Boolean,
-    dynamicPulse: Boolean,
     themeAccent: Color,
     cardBg: Color,
     textPrimary: Color,
     textSecondary: Color,
-    onSetWordByWord: (Boolean) -> Unit,
     onSetBlurEnabled: (Boolean) -> Unit,
-    onSetKeepScreenOn: (Boolean) -> Unit,
-    onSetDynamicPulse: (Boolean) -> Unit
+    onSetKeepScreenOn: (Boolean) -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            CompactTogglePillTile(
-                icon = Icons.Rounded.AutoAwesome,
-                title = "KRC 逐字流光",
-                subtitle = if (wordByWord) "已开启扫光" else "整行高亮",
-                checked = wordByWord,
-                accentColor = themeAccent,
-                cardBg = cardBg,
-                textPrimary = textPrimary,
-                textSecondary = textSecondary,
-                onToggle = { onSetWordByWord(!wordByWord) },
-                modifier = Modifier.weight(1f)
-            )
-            CompactTogglePillTile(
-                icon = Icons.Rounded.BlurOn,
-                title = "阶梯景深虚化",
-                subtitle = if (blurEnabled) "远端自然虚化" else "已关闭虚化",
-                checked = blurEnabled,
-                accentColor = themeAccent,
-                cardBg = cardBg,
-                textPrimary = textPrimary,
-                textSecondary = textSecondary,
-                onToggle = { onSetBlurEnabled(!blurEnabled) },
-                modifier = Modifier.weight(1f)
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            CompactTogglePillTile(
-                icon = Icons.Rounded.LightMode,
-                title = "歌词屏幕常亮",
-                subtitle = if (keepScreenOn) "播放不息屏" else "跟随系统",
-                checked = keepScreenOn,
-                accentColor = themeAccent,
-                cardBg = cardBg,
-                textPrimary = textPrimary,
-                textSecondary = textSecondary,
-                onToggle = { onSetKeepScreenOn(!keepScreenOn) },
-                modifier = Modifier.weight(1f)
-            )
-            CompactTogglePillTile(
-                icon = Icons.Rounded.GraphicEq,
-                title = "灵动音律跃动",
-                subtitle = if (dynamicPulse) "字浮辉光 · 间奏波点" else "静态平滑文字",
-                checked = dynamicPulse,
-                accentColor = themeAccent,
-                cardBg = cardBg,
-                textPrimary = textPrimary,
-                textSecondary = textSecondary,
-                onToggle = { onSetDynamicPulse(!dynamicPulse) },
-                modifier = Modifier.weight(1f)
-            )
-        }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        CompactTogglePillTile(
+            icon = Icons.Rounded.BlurOn,
+            title = "阶梯景深虚化",
+            subtitle = if (blurEnabled) "远端自然虚化" else "已关闭虚化",
+            checked = blurEnabled,
+            accentColor = themeAccent,
+            cardBg = cardBg,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            onToggle = { onSetBlurEnabled(!blurEnabled) },
+            modifier = Modifier.weight(1f)
+        )
+        CompactTogglePillTile(
+            icon = Icons.Rounded.LightMode,
+            title = "歌词屏幕常亮",
+            subtitle = if (keepScreenOn) "播放不息屏" else "跟随系统",
+            checked = keepScreenOn,
+            accentColor = themeAccent,
+            cardBg = cardBg,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            onToggle = { onSetKeepScreenOn(!keepScreenOn) },
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 

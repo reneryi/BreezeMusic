@@ -49,9 +49,8 @@ fun SettingsScreen(
     val lyricFontSize = uiState.lyricFontSize
     val lyricTranslationScale = uiState.lyricTranslationScale
     val lyricAlignment = uiState.lyricAlignment
-    val lyricWordByWord = uiState.lyricWordByWord
     val lyricBlurEnabled = uiState.lyricBlurEnabled
-    val lyricDynamicPulse = uiState.lyricDynamicPulse
+    val lyricKeepScreenOn = uiState.lyricKeepScreenOn
     val playbackSpeed = uiState.playbackSpeed
     val playbackPitch = uiState.playbackPitch
     val linkPitchToSpeed = uiState.linkPitchToSpeed
@@ -497,19 +496,10 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         SettingToggleRow(
-                            title = "KRC 逐字流光染色",
-                            subtitle = "歌词随人声逐字高亮扫光",
-                            checked = lyricWordByWord,
-                            onCheckedChange = { viewModel.setLyricWordByWord(it) }
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        SettingToggleRow(
-                            title = "灵动音律跃动",
-                            subtitle = "KRC 逐字弹性上浮、长音尾韵辉光与前奏/间奏三点呼吸波点",
-                            checked = lyricDynamicPulse,
-                            onCheckedChange = { viewModel.setLyricDynamicPulse(it) }
+                            title = "歌词屏幕常亮",
+                            subtitle = "处于全屏歌词页或横屏播放页时保持屏幕常亮不息屏",
+                            checked = lyricKeepScreenOn,
+                            onCheckedChange = { viewModel.setLyricKeepScreenOn(it) }
                         )
                     }
                 }

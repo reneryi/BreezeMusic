@@ -125,7 +125,6 @@ internal fun LandscapePlayerPage(
     lyricBlurIntensity: Float,
     lyricLineSpacing: Float,
     lyricHighlightTheme: LyricHighlightTheme,
-    lyricDynamicPulse: Boolean = true,
     climaxStartMs: Long,
     climaxEndMs: Long,
     highlightClimaxRange: Boolean,
@@ -534,17 +533,18 @@ internal fun LandscapePlayerPage(
                                     .padding(vertical = (lyricLineSpacing * 0.85f).dp, horizontal = 8.dp)
                             ) {
                                 Column(modifier = Modifier.fillMaxWidth()) {
-                                    if (lyricDynamicPulse && index == 0 && currentLyricIndex <= 0) {
+                                    if (index == 0 && currentLyricIndex <= 0) {
                                         LyricInterludeBreathingIndicator(
                                             lyricData = lyricData,
                                             lineIndex = -1,
                                             initialPositionMs = currentPositionMs,
                                             isPlaying = isPlaying,
                                             lyricPositionProvider = lyricPositionProvider,
+                                            lyricFontSize = lyricFontSize,
                                             accentPrimary = activePrimaryColor,
                                             accentSecondary = activeSecondaryColor,
                                             horizontalAlignment = Alignment.Start,
-                                            modifier = Modifier.padding(bottom = 6.dp)
+                                            modifier = Modifier.padding(bottom = 8.dp)
                                         )
                                     }
 
@@ -569,7 +569,6 @@ internal fun LandscapePlayerPage(
                                             isPlaying = isPlaying,
                                             lyricPositionProvider = lyricPositionProvider,
                                             lyricFontSize = lyricFontSize,
-                                            lyricDynamicPulse = lyricDynamicPulse,
                                             activePrimaryColor = activePrimaryColor,
                                             activeSecondaryColor = activeSecondaryColor
                                         )
@@ -601,17 +600,18 @@ internal fun LandscapePlayerPage(
                                         )
                                     }
 
-                                    if (lyricDynamicPulse && isCurrent) {
+                                    if (isCurrent) {
                                         LyricInterludeBreathingIndicator(
                                             lyricData = lyricData,
                                             lineIndex = index,
                                             initialPositionMs = currentPositionMs,
                                             isPlaying = isPlaying,
                                             lyricPositionProvider = lyricPositionProvider,
+                                            lyricFontSize = lyricFontSize,
                                             accentPrimary = activePrimaryColor,
                                             accentSecondary = activeSecondaryColor,
                                             horizontalAlignment = Alignment.Start,
-                                            modifier = Modifier.padding(top = 6.dp)
+                                            modifier = Modifier.padding(top = 8.dp)
                                         )
                                     }
                                 }
@@ -859,7 +859,6 @@ private fun LandscapeActiveKaraokeWords(
     isPlaying: Boolean,
     lyricPositionProvider: () -> Long,
     lyricFontSize: Float,
-    lyricDynamicPulse: Boolean = true,
     activePrimaryColor: Color,
     activeSecondaryColor: Color
 ) {
@@ -908,8 +907,8 @@ private fun LandscapeActiveKaraokeWords(
                     ) { append(word.text) }
                 }
             }
-            val wave = if (lyricDynamicPulse && isSinging) sin(wordProgress * PI.toFloat()) else 0f
-            val isLongNote = lyricDynamicPulse && word.durationMs >= 700L && isSinging
+            val wave = if (isSinging) sin(wordProgress * PI.toFloat()) else 0f
+            val isLongNote = word.durationMs >= 700L && isSinging
             val shimmer = if (isLongNote) 0.85f + 0.15f * sin(wordProgress * PI.toFloat() * 3f) else 1f
             Text(
                 text = annotatedWord,

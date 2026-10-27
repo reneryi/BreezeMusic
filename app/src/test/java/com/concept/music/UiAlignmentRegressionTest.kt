@@ -940,7 +940,7 @@ class UiAlignmentRegressionTest {
     @Test
     fun `KRC灵动音律跃动与前奏间奏呼吸波点进度计算验证`() {
         val defaultState = PlayerUiState()
-        assertTrue("灵动音律跃动应默认开启", defaultState.lyricDynamicPulse)
+        assertTrue("KRC逐字流光与弹性跃动应作为项目默认设计开启", defaultState.lyricWordByWord)
 
         val desktopState = SystemLyricState()
         assertFalse("桌面歌词悬浮胶囊应默认关闭", desktopState.floatingCapsuleEnabled)
