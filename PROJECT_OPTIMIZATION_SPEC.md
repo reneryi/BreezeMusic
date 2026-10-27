@@ -134,8 +134,8 @@
     - 提供桌面小组件 ([ConceptMusicWidgetUpdater.kt](file:///e:/vibe%20coding/kugougainianban/app/src/main/java/com/concept/music/service/ConceptMusicWidgetUpdater.kt))，展示当前曲目、逐行歌词、播放控制及「今日概念 VIP 已守护」角标。
 - [x] **[INNOV-04] 「心流环境音混音舱」（Flow State Ambient Mixer）**
   - **产品形态**：在音效面板内提供可与主音乐叠加播放的程序化 DSP 环境白噪音层（雨夜窗台、黑胶底噪、林间篝火、深海潮汐），支持独立音量滑杆与一键场景预设 ([AmbientSoundManager.kt](file:///e:/vibe%20coding/kugougainianban/app/src/main/java/com/concept/music/service/AmbientSoundManager.kt))。
-- [x] **[INNOV-05] 系统级 KRC 逐字悬浮歌词与状态栏歌词广播**
-  - **产品形态**：利用已有的 [KrcDecoder.kt](file:///e:/vibe%20coding/kugougainianban/app/src/main/java/com/concept/music/data/kugou/KrcDecoder.kt) 毫秒级逐字数据，提供全局可拖拽 KRC 逐字流光歌词胶囊 ([FloatingLyricOverlay.kt](file:///e:/vibe%20coding/kugougainianban/app/src/main/java/com/concept/music/ui/components/FloatingLyricOverlay.kt))，并兼容主流定制系统状态栏歌词广播协议 ([SystemLyricBridge.kt](file:///e:/vibe%20coding/kugougainianban/app/src/main/java/com/concept/music/service/SystemLyricBridge.kt))。
+- [x] **[INNOV-05] 系统级 KRC 逐字桌面悬浮歌词与灵动音律跃动引擎**
+  - **产品形态**：利用已有的 [KrcDecoder.kt](file:///e:/vibe%20coding/kugougainianban/app/src/main/java/com/concept/music/data/kugou/KrcDecoder.kt) 毫秒级逐字与行级持续时长数据，提供全局可拖拽 KRC 逐字流光桌面歌词胶囊 ([FloatingLyricOverlay.kt](file:///e:/vibe%20coding/kugougainianban/app/src/main/java/com/concept/music/ui/components/FloatingLyricOverlay.kt) / [SystemLyricBridge.kt](file:///e:/vibe%20coding/kugougainianban/app/src/main/java/com/concept/music/service/SystemLyricBridge.kt))，并在歌词设置中内置「灵动音律跃动」（KRC 逐字弹性上浮、长音谐波辉光与前奏/器乐间奏三点呼吸波点倒计时）。
 
 ---
 
@@ -155,4 +155,4 @@
 ### 阶段三：酷狗概念版灵魂创新落地（Phase 3） ✅ 已完成
 1. 上线「副歌刷刷」高潮速听模式（`[INNOV-01]`）。
 2. 上线「透明机械磁带 / 杂志大字海报 / 流光黑胶 / 极简圆盘」多态播放机芯（`[INNOV-02]`）。
-3. 上线每日自动领 VIP 静默守护与概念版桌面小组件（`[INNOV-03]`）、「心流环境音混音舱」（`[INNOV-04]`）及「全局悬浮逐字歌词与状态栏歌词广播」（`[INNOV-05]`）。
+3. 上线每日自动领 VIP 静默守护与概念版桌面小组件（`[INNOV-03]`）、「心流环境音混音舱」（`[INNOV-04]`）及「全局桌面悬浮逐字歌词与灵动音律跃动引擎」（`[INNOV-05]`）。

@@ -67,8 +67,6 @@ import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.concept.music.data.model.AudioQuality
 import com.concept.music.data.model.Song
-import com.concept.music.service.SystemLyricBridge
-import com.concept.music.ui.settings.StatusBarLyricSettingsScreen
 import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
@@ -109,6 +107,7 @@ internal fun LyricSettingsDialog(
     highlightTheme: LyricHighlightTheme,
     backgroundDim: Float,
     keepScreenOn: Boolean,
+    dynamicPulse: Boolean = true,
     dynamicAccentColor: Color = ConceptPrimary,
     onSetFontSize: (Float) -> Unit,
     onSetTranslationScale: (Float) -> Unit = {},
@@ -121,30 +120,11 @@ internal fun LyricSettingsDialog(
     onSetHighlightTheme: (LyricHighlightTheme) -> Unit,
     onSetBackgroundDim: (Float) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
-    onOpenStatusBarLyricSettings: (() -> Unit)? = null,
+    onSetDynamicPulse: (Boolean) -> Unit = {},
     onDismiss: () -> Unit
 ) {
-    val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val systemLyricState by SystemLyricBridge.state.collectAsState()
-    val statusBarLyricEnabled = systemLyricState.statusBarBroadcastEnabled
-    var showStatusBarSubPage by remember { mutableStateOf(false) }
-
-    if (showStatusBarSubPage) {
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { showStatusBarSubPage = false },
-            properties = androidx.compose.ui.window.DialogProperties(
-                usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = false
-            )
-        ) {
-            StatusBarLyricSettingsScreen(
-                onBack = { showStatusBarSubPage = false }
-            )
-        }
-        return
-    }
 
     val baseSheetBg = conceptSheetContainerColor()
     val textPrimary = MaterialTheme.colorScheme.onSurface
@@ -287,6 +267,7 @@ internal fun LyricSettingsDialog(
                                     onSetBlurIntensity(1.0f)
                                     onSetBackgroundDim(0.72f)
                                     onSetOffsetMs(0L)
+                                    onSetDynamicPulse(true)
                                 }
                             ) {
                                 Row(
@@ -357,7 +338,7 @@ internal fun LyricSettingsDialog(
                                     wordByWord = wordByWord,
                                     blurEnabled = blurEnabled,
                                     keepScreenOn = keepScreenOn,
-                                    statusBarLyricEnabled = statusBarLyricEnabled,
+                                    dynamicPulse = dynamicPulse,
                                     themeAccent = themeAccent,
                                     cardBg = glassCardBg,
                                     textPrimary = textPrimary,
@@ -365,14 +346,7 @@ internal fun LyricSettingsDialog(
                                     onSetWordByWord = onSetWordByWord,
                                     onSetBlurEnabled = onSetBlurEnabled,
                                     onSetKeepScreenOn = onSetKeepScreenOn,
-                                    onSetStatusBarLyric = {
-                                        if (onOpenStatusBarLyricSettings != null) {
-                                            onDismiss()
-                                            onOpenStatusBarLyricSettings()
-                                        } else {
-                                            showStatusBarSubPage = true
-                                        }
-                                    }
+                                    onSetDynamicPulse = onSetDynamicPulse
                                 )
                             }
                             Column(
@@ -434,7 +408,7 @@ internal fun LyricSettingsDialog(
                             wordByWord = wordByWord,
                             blurEnabled = blurEnabled,
                             keepScreenOn = keepScreenOn,
-                            statusBarLyricEnabled = statusBarLyricEnabled,
+                            dynamicPulse = dynamicPulse,
                             themeAccent = themeAccent,
                             cardBg = glassCardBg,
                             textPrimary = textPrimary,
@@ -442,14 +416,7 @@ internal fun LyricSettingsDialog(
                             onSetWordByWord = onSetWordByWord,
                             onSetBlurEnabled = onSetBlurEnabled,
                             onSetKeepScreenOn = onSetKeepScreenOn,
-                            onSetStatusBarLyric = {
-                                        if (onOpenStatusBarLyricSettings != null) {
-                                            onDismiss()
-                                            onOpenStatusBarLyricSettings()
-                                        } else {
-                                            showStatusBarSubPage = true
-                                        }
-                                    }
+                            onSetDynamicPulse = onSetDynamicPulse
                         )
                     }
                 }
@@ -783,7 +750,7 @@ private fun LyricTogglesGridCard(
     wordByWord: Boolean,
     blurEnabled: Boolean,
     keepScreenOn: Boolean,
-    statusBarLyricEnabled: Boolean,
+    dynamicPulse: Boolean,
     themeAccent: Color,
     cardBg: Color,
     textPrimary: Color,
@@ -791,7 +758,7 @@ private fun LyricTogglesGridCard(
     onSetWordByWord: (Boolean) -> Unit,
     onSetBlurEnabled: (Boolean) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit,
-    onSetStatusBarLyric: (Boolean) -> Unit
+    onSetDynamicPulse: (Boolean) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
@@ -840,15 +807,15 @@ private fun LyricTogglesGridCard(
                 modifier = Modifier.weight(1f)
             )
             CompactTogglePillTile(
-                icon = Icons.Rounded.NotificationsActive,
-                title = "状态栏歌词 >",
-                subtitle = if (statusBarLyricEnabled) "已开启 · 二级设置" else "点击进入二级设置",
-                checked = statusBarLyricEnabled,
+                icon = Icons.Rounded.GraphicEq,
+                title = "灵动音律跃动",
+                subtitle = if (dynamicPulse) "字浮辉光 · 间奏波点" else "静态平滑文字",
+                checked = dynamicPulse,
                 accentColor = themeAccent,
                 cardBg = cardBg,
                 textPrimary = textPrimary,
                 textSecondary = textSecondary,
-                onToggle = { onSetStatusBarLyric(!statusBarLyricEnabled) },
+                onToggle = { onSetDynamicPulse(!dynamicPulse) },
                 modifier = Modifier.weight(1f)
             )
         }

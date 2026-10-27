@@ -938,48 +938,44 @@ class UiAlignmentRegressionTest {
     }
 
     @Test
-    fun `状态栏歌词与灵动岛多系统ROM识别及椒盐模式路由验证`() {
-        assertEquals(
-            com.concept.music.service.RomEcosystemType.HYPER_OS,
-            com.concept.music.service.SystemLyricBridge.detectRomEcosystem("Xiaomi", "Redmi", "OS2.0.1")
-        )
-        assertEquals(
-            com.concept.music.service.RomEcosystemType.COLOR_OS,
-            com.concept.music.service.SystemLyricBridge.detectRomEcosystem("OPPO", "OnePlus", "ColorOS 15")
-        )
-        assertEquals(
-            com.concept.music.service.RomEcosystemType.ORIGIN_OS,
-            com.concept.music.service.SystemLyricBridge.detectRomEcosystem("vivo", "iQOO", "OriginOS 5")
-        )
-        assertEquals(
-            com.concept.music.service.RomEcosystemType.FLYME,
-            com.concept.music.service.SystemLyricBridge.detectRomEcosystem("Meizu", "meizu", "Flyme 11")
-        )
-        assertEquals(
-            com.concept.music.service.RomEcosystemType.HARMONY_EMUI,
-            com.concept.music.service.SystemLyricBridge.detectRomEcosystem("HUAWEI", "HUAWEI", "HarmonyOS")
-        )
+    fun `KRC灵动音律跃动与前奏间奏呼吸波点进度计算验证`() {
+        val defaultState = PlayerUiState()
+        assertTrue("灵动音律跃动应默认开启", defaultState.lyricDynamicPulse)
 
-        val baseState = SystemLyricState(statusBarBroadcastEnabled = true)
-        assertTrue(com.concept.music.service.SystemLyricBridge.shouldShowTopStatusBarOverlay(baseState))
+        val desktopState = SystemLyricState()
+        assertFalse("桌面歌词悬浮胶囊应默认关闭", desktopState.floatingCapsuleEnabled)
 
-        val saltModeState = baseState.copy(
-            statusBarMode = com.concept.music.service.StatusBarLyricMode.SALT_STATUS_OVERLAY
+        val line1 = LyricLine(
+            startTimeMs = 5_000L,
+            durationMs = 3_000L,
+            text = "微风掠过星河",
+            words = listOf(
+                com.concept.music.data.model.LyricWord(5_000L, 1_500L, "微风"),
+                com.concept.music.data.model.LyricWord(6_500L, 1_500L, "掠过星河")
+            )
         )
-        assertEquals(
-            com.concept.music.service.StatusBarOverlayStyle.SALT_PURE_STATUS_BAR,
-            com.concept.music.service.SystemLyricBridge.effectiveOverlayStyle(saltModeState)
+        val line2 = LyricLine(
+            startTimeMs = 14_000L,
+            durationMs = 4_000L,
+            text = "点亮概念之夜",
+            words = listOf(
+                com.concept.music.data.model.LyricWord(14_000L, 4_000L, "点亮概念之夜")
+            )
         )
+        val krcData = LyricData(lines = listOf(line1, line2), isKrc = true)
 
-        val islandModeState = baseState.copy(
-            statusBarMode = com.concept.music.service.StatusBarLyricMode.DYNAMIC_ISLAND_CAPSULE
-        )
-        assertEquals(
-            com.concept.music.service.StatusBarOverlayStyle.DYNAMIC_ISLAND,
-            com.concept.music.service.SystemLyricBridge.effectiveOverlayStyle(islandModeState)
-        )
+        // 1. 前奏区间 (0ms ~ 5000ms)
+        val preludeProgress = krcData.getInterludeProgressAt(positionMs = 2_500L)
+        assertEquals(0.5f, preludeProgress, 0.01f)
+        assertEquals(3, krcData.getInterludeRemainingSecondsAt(positionMs = 2_500L))
 
-        assertEquals(0x01000000, com.concept.music.service.SystemLyricBridge.FLAG_ALWAYS_SHOW_TICKER)
-        assertEquals(0x02000000, com.concept.music.service.SystemLyricBridge.FLAG_ONLY_UPDATE_TICKER)
+        // 2. 第一句人声演唱中 (5000ms ~ 8000ms)：不显示间奏波点
+        assertEquals(-1f, krcData.getInterludeProgressAt(positionMs = 6_200L), 0.001f)
+        assertEquals(0, krcData.getInterludeRemainingSecondsAt(positionMs = 6_200L))
+
+        // 3. 行间器乐间奏区间 (8000ms ~ 14000ms，间隔 6000ms >= 4000ms)
+        val interludeMidProgress = krcData.getInterludeProgressAt(positionMs = 11_000L)
+        assertEquals(0.5f, interludeMidProgress, 0.01f)
+        assertEquals(3, krcData.getInterludeRemainingSecondsAt(positionMs = 11_000L))
     }
 }

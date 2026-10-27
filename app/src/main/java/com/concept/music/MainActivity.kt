@@ -79,7 +79,6 @@ import com.concept.music.ui.navigation.BottomNavBar
 import com.concept.music.ui.navigation.Screen
 import com.concept.music.ui.search.SearchScreen
 import com.concept.music.ui.settings.SettingsScreen
-import com.concept.music.ui.settings.StatusBarLyricSettingsScreen
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptMusicTheme
 import com.concept.music.ui.viewmodel.HomeViewModel
@@ -186,7 +185,6 @@ fun MainContent(
     var showGlobalQueueSheet by remember { mutableStateOf(false) }
     var showCommentsScreen by remember { mutableStateOf(false) }
     var showViperEffectOverlay by remember { mutableStateOf(false) }
-    var showStatusBarLyricOverlay by remember { mutableStateOf(false) }
 
     // 记录从全屏播放页跳转到子页面（如歌手主页/专辑详情）前的底层回退栈 Entry ID，
     // 当用户在子页面点击左上角返回或触发系统手势返回到该 Entry 时，自动恢复打开全屏播放页
@@ -213,7 +211,6 @@ fun MainContent(
 
         showCommentsScreen = false
         showViperEffectOverlay = false
-        showStatusBarLyricOverlay = false
         if (isSameArtist || isSameAlbum) {
             if (wasInPlayer) {
                 reopenNowPlayingOnSameRouteBack = true
@@ -359,15 +356,13 @@ fun MainContent(
         currentRoute == "search" ||
         currentRoute == "settings" ||
         currentRoute == "vip_center" ||
-        currentRoute == "viper_effect" ||
-        currentRoute == "status_bar_lyric"
+        currentRoute == "viper_effect"
 
     val showFloatingMiniBar = currentRoute != "login" &&
         currentRoute != "accounts" &&
         currentRoute != "settings" &&
         currentRoute != "vip_center" &&
-        currentRoute != "viper_effect" &&
-        currentRoute != "status_bar_lyric"
+        currentRoute != "viper_effect"
 
     // 根容器铺设主题背景色，且主界面保持 100% 满幅尺寸不内缩，彻底杜绝全屏浮层进出时四周露出窗口白边
     Box(
@@ -610,17 +605,7 @@ fun MainContent(
                         onBackClick = { navController.popBackStack() },
                         onOpenViperEffect = {
                             navController.navigate("viper_effect") { launchSingleTop = true }
-                        },
-                        onOpenStatusBarLyricSettings = {
-                            navController.navigate("status_bar_lyric") { launchSingleTop = true }
                         }
-                    )
-                }
-
-                // 状态栏歌词与灵动岛二级页面路由
-                composable("status_bar_lyric") {
-                    StatusBarLyricSettingsScreen(
-                        onBack = { navController.popBackStack() }
                     )
                 }
 
@@ -733,7 +718,7 @@ fun MainContent(
 
         // 底部「发现 / 我的」主导航栏（采用无回弹柔顺曲线升降，杜绝进出播放页时抖动）
         AnimatedVisibility(
-            visible = showFloatingMiniBar && !isSubDetail && !showNowPlaying && !showViperEffectOverlay && !showStatusBarLyricOverlay,
+            visible = showFloatingMiniBar && !isSubDetail && !showNowPlaying && !showViperEffectOverlay,
             modifier = Modifier.align(Alignment.BottomCenter),
             enter = slideInVertically(
                 initialOffsetY = { it },
@@ -792,7 +777,7 @@ fun MainContent(
 
                 // 控制条进出播放页：移除引发抖动与阴影白边的 scaleIn/scaleOut 与欠阻尼弹簧，改用平滑升降渐隐
                 AnimatedVisibility(
-                    visible = currentSong != null && !showNowPlaying && !showViperEffectOverlay && !showStatusBarLyricOverlay,
+                    visible = currentSong != null && !showNowPlaying && !showViperEffectOverlay,
                     enter = slideInVertically(
                         initialOffsetY = { (it * 0.65f).toInt() },
                         animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
@@ -866,9 +851,6 @@ fun MainContent(
                 onOpenViperEffectPage = {
                     showViperEffectOverlay = true
                 },
-                onOpenStatusBarLyricPage = {
-                    showStatusBarLyricOverlay = true
-                },
                 onOpenArtist = navigateToSongArtist,
                 onOpenAlbum = navigateToSongAlbum
             )
@@ -888,23 +870,6 @@ fun MainContent(
         ) {
             ViperSoundEffectScreen(
                 onBack = { showViperEffectOverlay = false }
-            )
-        }
-
-        // 从播放页歌词设置进入的独立全屏「状态栏歌词与灵动岛」二级页面
-        AnimatedVisibility(
-            visible = showStatusBarLyricOverlay,
-            enter = slideInHorizontally(
-                initialOffsetX = { it },
-                animationSpec = tween(durationMillis = 440, easing = ConceptMotion.GentleSpatialEnterEasing)
-            ) + fadeIn(tween(durationMillis = 360, easing = ConceptMotion.GentleSpatialEnterEasing)),
-            exit = slideOutHorizontally(
-                targetOffsetX = { it },
-                animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialExitEasing)
-            ) + fadeOut(tween(durationMillis = 300, easing = ConceptMotion.GentleSpatialExitEasing))
-        ) {
-            StatusBarLyricSettingsScreen(
-                onBack = { showStatusBarLyricOverlay = false }
             )
         }
 
@@ -1083,7 +1048,6 @@ private fun IsolatedNowPlayingHost(
     onAddToPlaylist: (Song) -> Unit,
     onOpenComments: () -> Unit,
     onOpenViperEffectPage: () -> Unit,
-    onOpenStatusBarLyricPage: () -> Unit = {},
     onOpenArtist: (Song) -> Unit = {},
     onOpenAlbum: (Song) -> Unit = {}
 ) {
@@ -1130,6 +1094,7 @@ private fun IsolatedNowPlayingHost(
         lyricHighlightTheme = playerUiState.lyricHighlightTheme,
         lyricBackgroundDim = playerUiState.lyricBackgroundDim,
         lyricKeepScreenOn = playerUiState.lyricKeepScreenOn,
+        lyricDynamicPulse = playerUiState.lyricDynamicPulse,
         commentCount = playerUiState.commentCount,
         playbackSpeed = playerUiState.playbackSpeed,
         playbackPitch = playerUiState.playbackPitch,
@@ -1160,9 +1125,9 @@ private fun IsolatedNowPlayingHost(
         onSetLyricHighlightTheme = { musicPlayerViewModel.setLyricHighlightTheme(it) },
         onSetLyricBackgroundDim = { musicPlayerViewModel.setLyricBackgroundDim(it) },
         onSetLyricKeepScreenOn = { musicPlayerViewModel.setLyricKeepScreenOn(it) },
+        onSetLyricDynamicPulse = { musicPlayerViewModel.setLyricDynamicPulse(it) },
         onOpenComments = onOpenComments,
         onOpenViperEffectPage = onOpenViperEffectPage,
-        onOpenStatusBarLyricPage = onOpenStatusBarLyricPage,
         onSetPlaybackSpeed = { musicPlayerViewModel.setPlaybackSpeed(it) },
         onSetPlaybackPitch = { musicPlayerViewModel.setPlaybackPitch(it) },
         onSetLinkPitchToSpeed = { musicPlayerViewModel.setLinkPitchToSpeed(it) },

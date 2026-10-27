@@ -137,6 +137,7 @@ data class PlayerUiState(
     val lyricHighlightTheme: LyricHighlightTheme = LyricHighlightTheme.ICE_BLUE,
     val lyricBackgroundDim: Float = 0.72f,
     val lyricKeepScreenOn: Boolean = true,
+    val lyricDynamicPulse: Boolean = true,
     val smoothPlayPauseFade: Boolean = true,
     val playbackSpeed: Float = 1.0f,
     val playbackPitch: Float = 1.0f,
@@ -741,6 +742,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }.getOrDefault(LyricHighlightTheme.ICE_BLUE)
         val savedBgDim = prefs.getFloat("lyric_bg_dim", 0.72f).coerceIn(0.35f, 0.92f)
         val savedKeepScreenOn = prefs.getBoolean("lyric_keep_screen_on", true)
+        val savedDynamicPulse = prefs.getBoolean("lyric_dynamic_pulse", true)
 
         val savedSleepStopAfterSong = prefs.getBoolean("sleep_stop_after_song_pref", false)
 
@@ -841,6 +843,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             lyricHighlightTheme = savedHighlightTheme,
             lyricBackgroundDim = savedBgDim,
             lyricKeepScreenOn = savedKeepScreenOn,
+            lyricDynamicPulse = savedDynamicPulse,
             sleepStopAfterCurrentSong = savedSleepStopAfterSong,
             climaxModeEnabled = savedClimaxMode,
             crossfadeSeconds = savedCrossfade,
@@ -924,6 +927,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             putString("lyric_highlight_theme", snapshot.lyricHighlightTheme.name)
             putFloat("lyric_bg_dim", snapshot.lyricBackgroundDim)
             putBoolean("lyric_keep_screen_on", snapshot.lyricKeepScreenOn)
+            putBoolean("lyric_dynamic_pulse", snapshot.lyricDynamicPulse)
             putBoolean("sleep_stop_after_song_pref", snapshot.sleepStopAfterCurrentSong)
             putBoolean("climax_mode_enabled", snapshot.climaxModeEnabled)
             putInt("crossfade_seconds", snapshot.crossfadeSeconds)
@@ -1489,6 +1493,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             lyricHighlightTheme = st.lyricHighlightTheme,
             lyricBackgroundDim = st.lyricBackgroundDim,
             lyricKeepScreenOn = st.lyricKeepScreenOn,
+            lyricDynamicPulse = st.lyricDynamicPulse,
             sleepStopAfterCurrentSong = st.sleepStopAfterCurrentSong,
             climaxModeEnabled = st.climaxModeEnabled,
             crossfadeSeconds = st.crossfadeSeconds,
@@ -1722,6 +1727,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     fun setLyricKeepScreenOn(enabled: Boolean) {
         mutableState.value = mutableState.value.copy(lyricKeepScreenOn = enabled)
+        persistPlaybackStateAsync()
+    }
+
+    fun setLyricDynamicPulse(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(lyricDynamicPulse = enabled)
         persistPlaybackStateAsync()
     }
 

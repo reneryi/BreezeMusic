@@ -8,11 +8,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -54,22 +49,17 @@ import com.concept.music.data.model.LyricLine
 import com.concept.music.data.model.Song
 import com.concept.music.service.DesktopLyricColorScheme
 import com.concept.music.service.DesktopLyricLineMode
-import com.concept.music.service.StatusBarHorizontalAnchor
-import com.concept.music.service.StatusBarOverlayStyle
 import com.concept.music.service.SystemLyricBridge
-import com.concept.music.service.SystemLyricState
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.softClickable
 import kotlinx.coroutines.isActive
-import kotlin.math.abs
-import kotlin.math.sin
 
 /**
- * 全新重构「桌面歌词 + 顶部状态栏歌词 / 灵动岛胶囊」双引擎宿主组件：
+ * 桌面悬浮歌词宿主组件：
  * 1. 自动向 `SystemLyricBridge` 同步实时毫秒级进度、歌词与控播回调，驱动 Android 系统级全局悬浮窗 (`WindowManager`)；
- * 2. 若已授予「显示在其他应用上层」权限，直接由系统级 `NativeStatusBarIslandView` / `NativeDesktopLyricView` 跨应用全局渲染，本组件内对应图层自动隐退防重叠；
- * 3. 若尚未授予系统悬浮窗权限，无缝在应用内顶部渲染同款「椒盐风状态栏悬浮歌词 / iPhone 灵动岛音乐胶囊」，确保开启即刻生效！
+ * 2. 若已授予「显示在其他应用上层」权限，直接由系统级 `NativeDesktopLyricView` 跨应用全局渲染，本组件内对应图层自动隐退防重叠；
+ * 3. 若尚未授予系统悬浮窗权限，无缝在应用内渲染同款桌面悬浮歌词胶囊。
  */
 @Composable
 fun FloatingLyricOverlay(
@@ -102,27 +92,7 @@ fun FloatingLyricOverlay(
         )
     }
 
-    // 1. 顶部状态栏歌词 / 灵动岛胶囊（当未挂载系统级跨应用状态栏悬浮窗时，提供应用内零门槛实时渲染）
-    val showInAppTopStatusBarIsland = !state.statusBarOverlayActive &&
-        SystemLyricBridge.shouldShowTopStatusBarOverlay(state) &&
-        (song != null || state.lastBroadcastedLine.isNotBlank())
-
-    if (showInAppTopStatusBarIsland) {
-        InAppTopStatusBarIslandOverlay(
-            state = state,
-            song = song,
-            lyricData = lyricData,
-            currentLyricIndex = currentLyricIndex,
-            positionProvider = positionProvider,
-            isPlaying = isPlaying,
-            onTogglePlay = onTogglePlay,
-            onPrevious = onPrevious,
-            onNext = onNext,
-            onClickCapsule = onClickCapsule
-        )
-    }
-
-    // 2. 若系统级桌面歌词全局悬浮窗已激活，则不重复渲染应用内桌面歌词图层
+    // 若系统级桌面歌词全局悬浮窗已激活，则不重复渲染应用内桌面歌词图层
     if (state.systemOverlayActive) {
         return
     }
@@ -710,263 +680,6 @@ fun FloatingLyricOverlay(
                                 contentDescription = "解锁桌面歌词",
                                 tint = VipGold,
                                 modifier = Modifier.size(14.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * 应用内顶部「灵动岛音乐胶囊 / 椒盐风状态栏歌词」实时叠加层（当未授予跨应用悬浮窗权限时无缝生效）
- */
-@Composable
-private fun InAppTopStatusBarIslandOverlay(
-    state: SystemLyricState,
-    song: Song?,
-    lyricData: LyricData,
-    currentLyricIndex: Int,
-    positionProvider: () -> Long,
-    isPlaying: Boolean,
-    onTogglePlay: () -> Unit,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-    onClickCapsule: () -> Unit
-) {
-    val density = LocalDensity.current
-    val style = SystemLyricBridge.effectiveOverlayStyle(state)
-    val scheme = state.statusBarColorScheme
-    val startColor = Color(scheme.playedStartHex)
-    val endColor = Color(scheme.playedEndHex)
-    val unplayedColor = Color(scheme.unplayedHex).copy(alpha = 0.88f)
-    val shadow = remember(scheme) {
-        Shadow(
-            color = Color(scheme.strokeHex).copy(alpha = 0.90f),
-            offset = Offset(0f, 1.5f),
-            blurRadius = 4f
-        )
-    }
-
-    val lines = lyricData.lines
-    val safeIdx = currentLyricIndex.coerceIn(0, (lines.size - 1).coerceAtLeast(0))
-    val currentLine = lines.getOrNull(safeIdx)
-    val fallbackText = state.lastBroadcastedLine.ifBlank {
-        if (song != null) "${song.title} - ${song.artist}" else "微风音乐 · 状态栏歌词就绪"
-    }
-    val subText = if (state.statusBarShowTranslation) {
-        currentLine?.translation?.takeIf { it.isNotBlank() } ?: state.lastBroadcastedSubLine
-    } else ""
-
-    val boxAlignment = when (state.statusBarAnchor) {
-        StatusBarHorizontalAnchor.LEFT_PUNCH_HOLE -> Alignment.TopStart
-        StatusBarHorizontalAnchor.RIGHT_STATUS -> Alignment.TopEnd
-        StatusBarHorizontalAnchor.CENTER -> Alignment.TopCenter
-    }
-
-    val offsetXPx = with(density) { state.statusBarOffsetX.dp.toPx() }
-    val offsetYPx = with(density) { state.statusBarOffsetY.dp.toPx() }
-
-    val infiniteTransition = rememberInfiniteTransition(label = "islandWave")
-    val wavePhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 6.283f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "islandWavePhase"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 8.dp),
-        contentAlignment = boxAlignment
-    ) {
-        val isExpanded = state.statusBarExpandedIsland && style == StatusBarOverlayStyle.DYNAMIC_ISLAND && !state.statusBarTouchThrough
-        val targetWidthMod = if (isExpanded) {
-            Modifier.fillMaxWidth(0.94f)
-        } else {
-            Modifier.width(state.statusBarWidthDp.dp)
-        }
-
-        val bgAlpha = if (style == StatusBarOverlayStyle.DYNAMIC_ISLAND) {
-            state.statusBarBgAlpha.coerceIn(0.24f, 0.96f)
-        } else {
-            state.statusBarBgAlpha
-        }
-
-        val capsuleShape = if (isExpanded) RoundedCornerShape(24.dp) else CircleShape
-
-        Column(
-            modifier = targetWidthMod
-                .graphicsLayer {
-                    translationX = if (isExpanded) 0f else offsetXPx
-                    translationY = offsetYPx
-                }
-                .clip(capsuleShape)
-                .background(Color(0xFF060A12).copy(alpha = bgAlpha))
-                .then(
-                    if (bgAlpha > 0.12f) {
-                        Modifier.border(
-                            width = 1.dp,
-                            color = startColor.copy(alpha = 0.42f),
-                            shape = capsuleShape
-                        )
-                    } else Modifier
-                )
-                .then(
-                    if (!state.statusBarTouchThrough) {
-                        Modifier.clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            if (style == StatusBarOverlayStyle.DYNAMIC_ISLAND) {
-                                SystemLyricBridge.setStatusBarExpandedIsland(!state.statusBarExpandedIsland)
-                            } else {
-                                onClickCapsule()
-                            }
-                        }
-                    } else Modifier
-                )
-                .padding(
-                    horizontal = if (isExpanded) 14.dp else 10.dp,
-                    vertical = if (isExpanded) 10.dp else 4.dp
-                )
-        ) {
-            if (isExpanded) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .softClickable {
-                                SystemLyricBridge.setStatusBarExpandedIsland(false)
-                                onClickCapsule()
-                            }
-                    ) {
-                        Text(
-                            text = song?.title ?: "微风音乐",
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = if (song != null) {
-                                if (song.album.isNotBlank()) "${song.artist} · 《${song.album}》" else song.artist
-                            } else "灵动岛控制舱",
-                            color = startColor.copy(alpha = 0.85f),
-                            fontSize = 10.5.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        IconButton(onClick = onPrevious, modifier = Modifier.size(26.dp)) {
-                            Icon(Icons.Rounded.SkipPrevious, contentDescription = "上一首", tint = Color.White, modifier = Modifier.size(16.dp))
-                        }
-                        IconButton(onClick = onTogglePlay, modifier = Modifier.size(28.dp)) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Rounded.PauseCircleFilled else Icons.Rounded.PlayCircleFilled,
-                                contentDescription = "播放/暂停",
-                                tint = startColor,
-                                modifier = Modifier.size(21.dp)
-                            )
-                        }
-                        IconButton(onClick = onNext, modifier = Modifier.size(26.dp)) {
-                            Icon(Icons.Rounded.SkipNext, contentDescription = "下一首", tint = Color.White, modifier = Modifier.size(16.dp))
-                        }
-                        IconButton(
-                            onClick = { SystemLyricBridge.setStatusBarExpandedIsland(false) },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Rounded.KeyboardArrowUp, contentDescription = "收起灵动岛", tint = Color.White.copy(alpha = 0.75f), modifier = Modifier.size(16.dp))
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(6.dp))
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                if (style == StatusBarOverlayStyle.DYNAMIC_ISLAND && state.statusBarShowIslandMedia && !isExpanded) {
-                    Box(
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF141C2B))
-                            .border(1.dp, startColor.copy(alpha = 0.65f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(startColor)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                }
-
-                Column(
-                    modifier = Modifier.weight(1f),
-                    horizontalAlignment = if (state.statusBarAnchor == StatusBarHorizontalAnchor.CENTER && !isExpanded) {
-                        Alignment.CenterHorizontally
-                    } else {
-                        Alignment.Start
-                    }
-                ) {
-                    DesktopKrcKaraokeLineText(
-                        line = currentLine,
-                        fallbackText = fallbackText,
-                        isActiveLine = state.statusBarWordByWord,
-                        isPlaying = isPlaying,
-                        positionProvider = positionProvider,
-                        fontSizeSp = state.statusBarFontSize,
-                        playedStartColor = startColor,
-                        playedEndColor = endColor,
-                        unplayedColor = unplayedColor,
-                        textShadow = shadow,
-                        textAlign = if (state.statusBarAnchor == StatusBarHorizontalAnchor.CENTER && !isExpanded) TextAlign.Center else TextAlign.Start
-                    )
-                    if (subText.isNotBlank()) {
-                        Text(
-                            text = subText,
-                            color = unplayedColor.copy(alpha = 0.82f),
-                            fontSize = (state.statusBarFontSize - 3f).coerceAtLeast(9.5f).sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                if (style == StatusBarOverlayStyle.DYNAMIC_ISLAND && state.statusBarShowIslandMedia && !isExpanded) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        for (i in 0 until 4) {
-                            val amp = if (isPlaying) (0.35f + 0.65f * abs(sin(wavePhase + i * 0.9f))) else 0.25f
-                            Box(
-                                modifier = Modifier
-                                    .width(2.dp)
-                                    .height((13f * amp).coerceAtLeast(4f).dp)
-                                    .clip(CircleShape)
-                                    .background(if (i % 2 == 0) startColor else endColor)
                             )
                         }
                     }

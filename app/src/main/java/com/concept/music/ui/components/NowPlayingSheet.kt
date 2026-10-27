@@ -275,6 +275,7 @@ fun NowPlayingSheet(
     lyricHighlightTheme: LyricHighlightTheme = LyricHighlightTheme.ICE_BLUE,
     lyricBackgroundDim: Float = 0.72f,
     lyricKeepScreenOn: Boolean = true,
+    lyricDynamicPulse: Boolean = true,
     commentCount: Int = 0,
     songDetail: SongDetailInfo? = null,
     playbackSpeed: Float = 1.0f,
@@ -312,9 +313,9 @@ fun NowPlayingSheet(
     onSetLyricHighlightTheme: (LyricHighlightTheme) -> Unit = {},
     onSetLyricBackgroundDim: (Float) -> Unit = {},
     onSetLyricKeepScreenOn: (Boolean) -> Unit = {},
+    onSetLyricDynamicPulse: (Boolean) -> Unit = {},
     onOpenComments: () -> Unit = {},
     onOpenViperEffectPage: (() -> Unit)? = null,
-    onOpenStatusBarLyricPage: (() -> Unit)? = null,
     onSetPlaybackSpeed: (Float) -> Unit = {},
     onSetPlaybackPitch: (Float) -> Unit = {},
     onSetLinkPitchToSpeed: (Boolean) -> Unit = {},
@@ -652,6 +653,7 @@ fun NowPlayingSheet(
                     lyricBlurIntensity = lyricBlurIntensity,
                     lyricLineSpacing = lyricLineSpacing,
                     lyricHighlightTheme = lyricHighlightTheme,
+                    lyricDynamicPulse = lyricDynamicPulse,
                     climaxStartMs = song.effectiveClimaxStartMs,
                     climaxEndMs = song.effectiveClimaxEndMs,
                     highlightClimaxRange = climaxModeEnabled && !climaxUnlockedForCurrentSong,
@@ -798,6 +800,7 @@ fun NowPlayingSheet(
                             showPhonetic = showPhonetic,
                             showPhoneticButton = showPhoneticBtn,
                             lyricWordByWord = lyricWordByWord,
+                            lyricDynamicPulse = lyricDynamicPulse,
                             lyricHighlightTheme = lyricHighlightTheme,
                             isFavorite = isFavorite,
                             playMode = playMode,
@@ -859,6 +862,7 @@ fun NowPlayingSheet(
                             lyricBlurIntensity = lyricBlurIntensity,
                             lyricLineSpacing = lyricLineSpacing,
                             lyricHighlightTheme = lyricHighlightTheme,
+                            lyricDynamicPulse = lyricDynamicPulse,
                             dynamicCoverAccent = activeAccentColor,
                             dynamicCoverSecondary = activeSecondaryAccent,
                             onLineClick = onSeekToLyricLine,
@@ -991,6 +995,7 @@ fun NowPlayingSheet(
             highlightTheme = lyricHighlightTheme,
             backgroundDim = lyricBackgroundDim,
             keepScreenOn = lyricKeepScreenOn,
+            dynamicPulse = lyricDynamicPulse,
             dynamicAccentColor = activeAccentColor,
             onSetFontSize = onSetLyricFontSize,
             onSetTranslationScale = onSetLyricTranslationScale,
@@ -1003,7 +1008,7 @@ fun NowPlayingSheet(
             onSetHighlightTheme = onSetLyricHighlightTheme,
             onSetBackgroundDim = onSetLyricBackgroundDim,
             onSetKeepScreenOn = onSetLyricKeepScreenOn,
-            onOpenStatusBarLyricSettings = onOpenStatusBarLyricPage,
+            onSetDynamicPulse = onSetLyricDynamicPulse,
             onDismiss = { showLyricSettingsDialog = false }
         )
     }
@@ -1573,6 +1578,7 @@ private fun CoverPlayerPageContent(
     showPhonetic: Boolean,
     showPhoneticButton: Boolean = false,
     lyricWordByWord: Boolean = true,
+    lyricDynamicPulse: Boolean = true,
     lyricHighlightTheme: LyricHighlightTheme = LyricHighlightTheme.ICE_BLUE,
     isFavorite: Boolean,
     playMode: PlayMode,
@@ -1827,6 +1833,7 @@ private fun CoverPlayerPageContent(
             showTranslation = showTranslation && showTranslationButton,
             showPhonetic = showPhonetic && showPhoneticButton,
             lyricWordByWord = lyricWordByWord,
+            lyricDynamicPulse = lyricDynamicPulse,
             lyricHighlightTheme = lyricHighlightTheme,
             accentPrimary = accentPrimary,
             accentSecondary = accentSecondary,
@@ -2886,6 +2893,7 @@ private fun FullWidthLyricPreviewSection(
     showTranslation: Boolean,
     showPhonetic: Boolean,
     lyricWordByWord: Boolean = true,
+    lyricDynamicPulse: Boolean = true,
     lyricHighlightTheme: LyricHighlightTheme = LyricHighlightTheme.ICE_BLUE,
     accentPrimary: Color,
     accentSecondary: Color = ConceptCyanAccent,
@@ -2896,8 +2904,8 @@ private fun FullWidthLyricPreviewSection(
         sampledPositionMs = positionProvider()
     }
     val currentLineHasWordTiming = lyricData.lines.getOrNull(currentLyricIndex)?.hasWordTiming == true
-    LaunchedEffect(isPlaying, currentLyricIndex, lyricWordByWord, currentLineHasWordTiming, positionProvider) {
-        if (isPlaying && lyricWordByWord && currentLineHasWordTiming) {
+    LaunchedEffect(isPlaying, currentLyricIndex, lyricWordByWord, lyricDynamicPulse, currentLineHasWordTiming, positionProvider) {
+        if (isPlaying && ((lyricWordByWord && currentLineHasWordTiming) || (lyricDynamicPulse && lyricData.lines.isNotEmpty()))) {
             while (isActive) {
                 withFrameMillis {
                     sampledPositionMs = positionProvider()
@@ -3086,8 +3094,9 @@ private fun FullWidthLyricPreviewSection(
                             }
                         }
 
-                        val wave = if (isSinging) sin(wordProgress * PI.toFloat()) else 0f
-                        val isLongNote = word.durationMs >= 750L && isSinging
+                        val wave = if (lyricDynamicPulse && isSinging) sin(wordProgress * PI.toFloat()) else 0f
+                        val isLongNote = lyricDynamicPulse && word.durationMs >= 700L && isSinging
+                        val shimmer = if (isLongNote) 0.86f + 0.14f * sin(wordProgress * PI.toFloat() * 3f) else 1f
 
                         Text(
                             text = annotatedWord,
@@ -3097,9 +3106,9 @@ private fun FullWidthLyricPreviewSection(
                                 lineHeight = 26.5.sp,
                                 shadow = if (isLongNote) {
                                     Shadow(
-                                        color = activePrimaryColor.copy(alpha = (0.80f * wave).coerceIn(0f, 1f)),
+                                        color = activePrimaryColor.copy(alpha = (0.82f * wave * shimmer).coerceIn(0f, 1f)),
                                         offset = Offset.Zero,
-                                        blurRadius = (18f * wave + 5f).coerceAtLeast(1f)
+                                        blurRadius = (18f * wave * shimmer + 5f).coerceAtLeast(1f)
                                     )
                                 } else null
                             ),
@@ -3108,8 +3117,8 @@ private fun FullWidthLyricPreviewSection(
                                     wordTopYMap[wordIndex] = coords.positionInParent().y
                                 }
                                 .graphicsLayer {
-                                    translationY = -2.8f * wave
-                                    val s = 1f + 0.032f * wave
+                                    translationY = -2.8f * wave * shimmer
+                                    val s = 1f + 0.034f * wave * shimmer
                                     scaleX = s
                                     scaleY = s
                                 }
@@ -3132,22 +3141,45 @@ private fun FullWidthLyricPreviewSection(
             }
         }
 
-        // 仅当主歌词为 1 行或 2 行时，在下方显示小一号的下一句歌词（或外文歌翻译）；若主歌词 >= 3 行则三行全归主歌词混动显示
+        // 仅当主歌词为 1 行或 2 行时，在下方显示小一号的下一句歌词（或外文歌翻译）；若处于前奏/间奏且开启灵动音律跃动，同步展示呼吸波点
         if (!isSuperLongLyric) {
             Spacer(modifier = Modifier.height(4.dp))
 
-            Text(
-                text = subText.ifBlank { "♪ • • •" },
-                style = MaterialTheme.typography.bodySmall.copy(
-                    color = Color.White.copy(alpha = 0.64f),
-                    fontSize = 15.sp,
-                    lineHeight = 21.sp,
-                    fontWeight = FontWeight.Medium
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth()
-            )
+            val interludeProgress = if (lyricDynamicPulse) {
+                lyricData.getInterludeProgressAt(livePositionMs, currentLyricIndex)
+            } else -1f
+            val interludeRemainSec = if (interludeProgress >= 0f) {
+                lyricData.getInterludeRemainingSecondsAt(livePositionMs, currentLyricIndex)
+            } else 0
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (interludeProgress >= 0f) {
+                    LyricInterludeDotsPill(
+                        progress = interludeProgress,
+                        remainingSeconds = interludeRemainSec,
+                        isPrelude = currentLyricIndex < 0 || (lyricData.lines.isNotEmpty() && livePositionMs < lyricData.lines.first().startTimeMs),
+                        accentPrimary = activePrimaryColor,
+                        accentSecondary = activeSecondaryColor,
+                        compact = true
+                    )
+                }
+                Text(
+                    text = subText.ifBlank { "♪ • • •" },
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = Color.White.copy(alpha = 0.64f),
+                        fontSize = 15.sp,
+                        lineHeight = 21.sp,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
     }
 }
@@ -4338,6 +4370,7 @@ private fun RedesignedDedicatedLyricPage(
     lyricBlurIntensity: Float,
     lyricLineSpacing: Float,
     lyricHighlightTheme: LyricHighlightTheme,
+    lyricDynamicPulse: Boolean = true,
     dynamicCoverAccent: Color = ConceptPrimary,
     dynamicCoverSecondary: Color = ConceptCyanAccent,
     onLineClick: (Int) -> Unit,
@@ -4574,6 +4607,20 @@ private fun RedesignedDedicatedLyricPage(
                                 horizontalAlignment = horizontalAlignment,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
+                                if (lyricDynamicPulse && index == 0 && currentLyricIndex <= 0) {
+                                    LyricInterludeBreathingIndicator(
+                                        lyricData = lyricData,
+                                        lineIndex = -1,
+                                        initialPositionMs = currentPositionMs,
+                                        isPlaying = isPlaying,
+                                        lyricPositionProvider = lyricPositionProvider,
+                                        accentPrimary = activePrimaryColor,
+                                        accentSecondary = activeSecondaryColor,
+                                        horizontalAlignment = horizontalAlignment,
+                                        modifier = Modifier.padding(bottom = 8.dp)
+                                    )
+                                }
+
                                 val phoneticText = line.phonetic
                                 if (showPhonetic && showPhoneticButton && !phoneticText.isNullOrBlank()) {
                                     val phoneticFontSize = (lyricFontSize * lyricTranslationScale * 0.86f).coerceAtLeast(11.5f)
@@ -4599,6 +4646,7 @@ private fun RedesignedDedicatedLyricPage(
                                         isPlaying = isPlaying,
                                         lyricPositionProvider = lyricPositionProvider,
                                         lyricFontSize = lyricFontSize,
+                                        lyricDynamicPulse = lyricDynamicPulse,
                                         flowArrangement = flowArrangement,
                                         activePrimaryColor = activePrimaryColor,
                                         activeSecondaryColor = activeSecondaryColor
@@ -4648,6 +4696,20 @@ private fun RedesignedDedicatedLyricPage(
                                             textAlign = textAlign
                                         ),
                                         modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+
+                                if (lyricDynamicPulse && isCurrent) {
+                                    LyricInterludeBreathingIndicator(
+                                        lyricData = lyricData,
+                                        lineIndex = index,
+                                        initialPositionMs = currentPositionMs,
+                                        isPlaying = isPlaying,
+                                        lyricPositionProvider = lyricPositionProvider,
+                                        accentPrimary = activePrimaryColor,
+                                        accentSecondary = activeSecondaryColor,
+                                        horizontalAlignment = horizontalAlignment,
+                                        modifier = Modifier.padding(top = 8.dp)
                                     )
                                 }
                             }
@@ -4879,6 +4941,7 @@ private fun DedicatedActiveKaraokeWords(
     isPlaying: Boolean,
     lyricPositionProvider: () -> Long,
     lyricFontSize: Float,
+    lyricDynamicPulse: Boolean = true,
     flowArrangement: Arrangement.Horizontal,
     activePrimaryColor: Color,
     activeSecondaryColor: Color
@@ -4941,8 +5004,9 @@ private fun DedicatedActiveKaraokeWords(
                 }
             }
 
-            val wave = if (isSinging) sin(wordProgress * PI.toFloat()) else 0f
-            val isLongNote = word.durationMs >= 750L && isSinging
+            val wave = if (lyricDynamicPulse && isSinging) sin(wordProgress * PI.toFloat()) else 0f
+            val isLongNote = lyricDynamicPulse && word.durationMs >= 700L && isSinging
+            val shimmer = if (isLongNote) 0.85f + 0.15f * sin(wordProgress * PI.toFloat() * 3f) else 1f
 
             Text(
                 text = annotatedWord,
@@ -4952,19 +5016,147 @@ private fun DedicatedActiveKaraokeWords(
                     lineHeight = (lyricFontSize + 9f).sp,
                     shadow = if (isLongNote) {
                         Shadow(
-                            color = activePrimaryColor.copy(alpha = (0.80f * wave).coerceIn(0f, 1f)),
+                            color = activePrimaryColor.copy(alpha = (0.82f * wave * shimmer).coerceIn(0f, 1f)),
                             offset = Offset.Zero,
-                            blurRadius = (20f * wave + 6f).coerceAtLeast(1f)
+                            blurRadius = (20f * wave * shimmer + 6f).coerceAtLeast(1f)
                         )
                     } else null
                 ),
                 modifier = Modifier.graphicsLayer {
-                    translationY = -3.2f * wave
-                    val s = 1f + 0.035f * wave
+                    translationY = -3.4f * wave * shimmer
+                    val s = 1f + 0.038f * wave * shimmer
                     scaleX = s
                     scaleY = s
                 }
             )
+        }
+    }
+}
+
+/**
+ * 基于酷狗 KRC 精确时间戳的「前奏与器乐间奏三点呼吸波点指示器 (LyricInterludeBreathingIndicator)」：
+ * - 利用 `LyricData.getInterludeProgressAt` 精准探测前奏（≥3s）及行间器乐间奏（≥4s）；
+ * - 实时以三枚流光圆点按区间进度 [0 -> 1] 依次点亮并伴随正弦波呼吸跳动，同时显示倒计时秒数。
+ */
+@Composable
+internal fun LyricInterludeBreathingIndicator(
+    lyricData: LyricData,
+    lineIndex: Int,
+    initialPositionMs: Long,
+    isPlaying: Boolean,
+    lyricPositionProvider: () -> Long,
+    accentPrimary: Color,
+    accentSecondary: Color,
+    horizontalAlignment: Alignment.Horizontal = Alignment.Start,
+    modifier: Modifier = Modifier
+) {
+    var sampledPosMs by remember(lyricData, lineIndex) { mutableLongStateOf(lyricPositionProvider()) }
+    LaunchedEffect(initialPositionMs) {
+        sampledPosMs = lyricPositionProvider()
+    }
+    LaunchedEffect(isPlaying, lyricData, lineIndex, lyricPositionProvider) {
+        if (isPlaying) {
+            while (isActive) {
+                withFrameMillis {
+                    sampledPosMs = lyricPositionProvider()
+                }
+            }
+        } else {
+            sampledPosMs = lyricPositionProvider()
+        }
+    }
+
+    val progress = lyricData.getInterludeProgressAt(sampledPosMs, lineIndex)
+    val remainingSec = if (progress >= 0f) {
+        lyricData.getInterludeRemainingSecondsAt(sampledPosMs, lineIndex)
+    } else 0
+    val visible = progress >= 0f && remainingSec > 0
+
+    androidx.compose.animation.AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(220)) + scaleIn(initialScale = 0.85f, animationSpec = ConceptMotion.expressiveSpring()),
+        exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.85f, animationSpec = tween(180)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = modifier.fillMaxWidth(),
+            horizontalAlignment = horizontalAlignment
+        ) {
+            LyricInterludeDotsPill(
+                progress = progress.coerceIn(0f, 1f),
+                remainingSeconds = remainingSec,
+                isPrelude = lineIndex < 0,
+                accentPrimary = accentPrimary,
+                accentSecondary = accentSecondary,
+                compact = false
+            )
+        }
+    }
+}
+
+@Composable
+internal fun LyricInterludeDotsPill(
+    progress: Float,
+    remainingSeconds: Int,
+    isPrelude: Boolean,
+    accentPrimary: Color,
+    accentSecondary: Color,
+    compact: Boolean = false
+) {
+    val infiniteTransition = rememberInfiniteTransition(label = "interludeDotsWave")
+    val wavePhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = (2.0 * PI).toFloat(),
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "interludeDotsPhase"
+    )
+
+    Surface(
+        shape = CircleShape,
+        color = accentPrimary.copy(alpha = if (compact) 0.14f else 0.16f),
+        contentColor = Color.White
+    ) {
+        Row(
+            modifier = Modifier.padding(
+                horizontal = if (compact) 8.dp else 11.dp,
+                vertical = if (compact) 3.dp else 5.dp
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(if (compact) 5.dp else 6.dp)
+        ) {
+            for (i in 0 until 3) {
+                val dotFill = ((progress * 3f) - i).coerceIn(0f, 1f)
+                val breath = sin(wavePhase - i * 0.85f)
+                val dotScale = 0.88f + 0.24f * dotFill + 0.10f * breath.coerceAtLeast(0f)
+                val dotColor = lerp(
+                    Color.White.copy(alpha = 0.30f),
+                    if (i == 2) accentSecondary else accentPrimary,
+                    dotFill
+                )
+                Box(
+                    modifier = Modifier
+                        .size(if (compact) 6.dp else 7.5.dp)
+                        .graphicsLayer {
+                            scaleX = dotScale
+                            scaleY = dotScale
+                            translationY = -1.6f * breath * (0.4f + 0.6f * dotFill)
+                        }
+                        .clip(CircleShape)
+                        .background(dotColor)
+                )
+            }
+            if (remainingSeconds > 0) {
+                Text(
+                    text = if (isPrelude) "前奏 ${remainingSeconds}s" else "间奏 ${remainingSeconds}s",
+                    color = accentPrimary.copy(alpha = 0.92f),
+                    fontSize = if (compact) 10.sp else 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1
+                )
+            }
         }
     }
 }

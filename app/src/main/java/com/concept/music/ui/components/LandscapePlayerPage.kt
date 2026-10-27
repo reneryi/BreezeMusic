@@ -125,6 +125,7 @@ internal fun LandscapePlayerPage(
     lyricBlurIntensity: Float,
     lyricLineSpacing: Float,
     lyricHighlightTheme: LyricHighlightTheme,
+    lyricDynamicPulse: Boolean = true,
     climaxStartMs: Long,
     climaxEndMs: Long,
     highlightClimaxRange: Boolean,
@@ -533,6 +534,20 @@ internal fun LandscapePlayerPage(
                                     .padding(vertical = (lyricLineSpacing * 0.85f).dp, horizontal = 8.dp)
                             ) {
                                 Column(modifier = Modifier.fillMaxWidth()) {
+                                    if (lyricDynamicPulse && index == 0 && currentLyricIndex <= 0) {
+                                        LyricInterludeBreathingIndicator(
+                                            lyricData = lyricData,
+                                            lineIndex = -1,
+                                            initialPositionMs = currentPositionMs,
+                                            isPlaying = isPlaying,
+                                            lyricPositionProvider = lyricPositionProvider,
+                                            accentPrimary = activePrimaryColor,
+                                            accentSecondary = activeSecondaryColor,
+                                            horizontalAlignment = Alignment.Start,
+                                            modifier = Modifier.padding(bottom = 6.dp)
+                                        )
+                                    }
+
                                     val phoneticText = line.phonetic
                                     if (showPhonetic && showPhoneticButton && !phoneticText.isNullOrBlank()) {
                                         val phoneticFontSize = (lyricFontSize * lyricTranslationScale * 0.85f).coerceAtLeast(11.5f)
@@ -554,6 +569,7 @@ internal fun LandscapePlayerPage(
                                             isPlaying = isPlaying,
                                             lyricPositionProvider = lyricPositionProvider,
                                             lyricFontSize = lyricFontSize,
+                                            lyricDynamicPulse = lyricDynamicPulse,
                                             activePrimaryColor = activePrimaryColor,
                                             activeSecondaryColor = activeSecondaryColor
                                         )
@@ -582,6 +598,20 @@ internal fun LandscapePlayerPage(
                                                 lineHeight = (transFontSize * 1.42f).sp,
                                                 fontWeight = FontWeight.SemiBold
                                             )
+                                        )
+                                    }
+
+                                    if (lyricDynamicPulse && isCurrent) {
+                                        LyricInterludeBreathingIndicator(
+                                            lyricData = lyricData,
+                                            lineIndex = index,
+                                            initialPositionMs = currentPositionMs,
+                                            isPlaying = isPlaying,
+                                            lyricPositionProvider = lyricPositionProvider,
+                                            accentPrimary = activePrimaryColor,
+                                            accentSecondary = activeSecondaryColor,
+                                            horizontalAlignment = Alignment.Start,
+                                            modifier = Modifier.padding(top = 6.dp)
                                         )
                                     }
                                 }
@@ -829,6 +859,7 @@ private fun LandscapeActiveKaraokeWords(
     isPlaying: Boolean,
     lyricPositionProvider: () -> Long,
     lyricFontSize: Float,
+    lyricDynamicPulse: Boolean = true,
     activePrimaryColor: Color,
     activeSecondaryColor: Color
 ) {
@@ -877,8 +908,9 @@ private fun LandscapeActiveKaraokeWords(
                     ) { append(word.text) }
                 }
             }
-            val wave = if (isSinging) sin(wordProgress * PI.toFloat()) else 0f
-            val isLongNote = word.durationMs >= 750L && isSinging
+            val wave = if (lyricDynamicPulse && isSinging) sin(wordProgress * PI.toFloat()) else 0f
+            val isLongNote = lyricDynamicPulse && word.durationMs >= 700L && isSinging
+            val shimmer = if (isLongNote) 0.85f + 0.15f * sin(wordProgress * PI.toFloat() * 3f) else 1f
             Text(
                 text = annotatedWord,
                 style = MaterialTheme.typography.headlineSmall.copy(
@@ -887,15 +919,15 @@ private fun LandscapeActiveKaraokeWords(
                     lineHeight = (lyricFontSize + 8f).sp,
                     shadow = if (isLongNote) {
                         Shadow(
-                            color = activePrimaryColor.copy(alpha = (0.80f * wave).coerceIn(0f, 1f)),
+                            color = activePrimaryColor.copy(alpha = (0.82f * wave * shimmer).coerceIn(0f, 1f)),
                             offset = Offset.Zero,
-                            blurRadius = (20f * wave + 6f).coerceAtLeast(1f)
+                            blurRadius = (20f * wave * shimmer + 6f).coerceAtLeast(1f)
                         )
                     } else null
                 ),
                 modifier = Modifier.graphicsLayer {
-                    translationY = -2.8f * wave
-                    val s = 1f + 0.032f * wave
+                    translationY = -3.0f * wave * shimmer
+                    val s = 1f + 0.035f * wave * shimmer
                     scaleX = s
                     scaleY = s
                 }

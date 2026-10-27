@@ -3,7 +3,6 @@ package com.concept.music.service
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.annotation.OptIn
@@ -641,15 +640,6 @@ class PlaybackService : MediaSessionService() {
         private var activeServiceInstance: PlaybackService? = null
 
         @Volatile
-        internal var liveLyricOverlaySongId: String = ""
-
-        @Volatile
-        internal var liveLyricLine: String = ""
-
-        @Volatile
-        internal var liveLyricTranslation: String = ""
-
-        @Volatile
         var onSkipToPreviousIntercepted: (() -> Boolean)? = null
             set(value) {
                 field = value
@@ -675,45 +665,6 @@ class PlaybackService : MediaSessionService() {
         internal fun toggleActivePlayerPlayPause(): Boolean {
             val svc = activeServiceInstance ?: return false
             return PlaybackCoordinator.handleTogglePlay(svc.applicationContext, svc.player)
-        }
-
-        /**
-         * 将实时歌词同步至 MediaSession 的 SessionExtras 与动态元数据副标题，
-         * 使车载蓝牙屏幕、系统锁屏、OriginOS 原子岛与 ColorOS 流体云能够直接读取实时歌词。
-         */
-        fun syncLiveLyricToMediaSession(
-            song: Song,
-            lyricLine: String,
-            translationLine: String = ""
-        ) {
-            liveLyricOverlaySongId = song.id
-            liveLyricLine = lyricLine.trim()
-            liveLyricTranslation = translationLine.trim()
-            val svc = activeServiceInstance ?: return
-            mainHandler.post {
-                runCatching {
-                    val extras = Bundle().apply {
-                        putString("android.media.metadata.LYRIC", liveLyricLine)
-                        putString("lyric", liveLyricLine)
-                        putString("translation", liveLyricTranslation)
-                        putString("song_title", song.title)
-                        putString("artist", song.artist)
-                    }
-                    svc.mediaSession?.setSessionExtras(extras)
-                }
-            }
-        }
-
-        fun restoreMediaMetadataTitleIfNeeded() {
-            liveLyricOverlaySongId = ""
-            liveLyricLine = ""
-            liveLyricTranslation = ""
-            val svc = activeServiceInstance ?: return
-            mainHandler.post {
-                runCatching {
-                    svc.mediaSession?.setSessionExtras(Bundle.EMPTY)
-                }
-            }
         }
     }
 
@@ -799,28 +750,6 @@ class PlaybackService : MediaSessionService() {
         )
 
         val forwardingPlayer = object : ForwardingPlayer(exoPlayer) {
-            override fun getMediaMetadata(): MediaMetadata {
-                val base = super.getMediaMetadata()
-                val curItem = currentMediaItem
-                val activeLyric = liveLyricLine
-                if (activeLyric.isNotBlank() &&
-                    SystemLyricBridge.state.value.statusBarBroadcastEnabled &&
-                    SystemLyricBridge.state.value.mediaSessionLyricSyncEnabled &&
-                    (curItem == null || curItem.mediaId == liveLyricOverlaySongId)
-                ) {
-                    val extras = Bundle(base.extras ?: Bundle.EMPTY).apply {
-                        putString("android.media.metadata.LYRIC", activeLyric)
-                        putString("lyric", activeLyric)
-                    }
-                    return base.buildUpon()
-                        .setSubtitle(activeLyric)
-                        .setDescription(liveLyricTranslation.ifBlank { base.artist })
-                        .setExtras(extras)
-                        .build()
-                }
-                return base
-            }
-
             override fun getAvailableCommands(): Player.Commands {
                 return super.getAvailableCommands()
                     .buildUpon()
