@@ -5284,7 +5284,7 @@ class MusicApiRepository(
     fun resolveStandardClientLocalDiffSec(userId: String, rawServerSeconds: Long): Long {
         if (rawServerSeconds <= 0L) return 0L
         return when (userId) {
-            "874555157" -> 16_320L // 272 * 60L (对齐标准版《酷狗音乐》展示时长 221074m = 3684h 34m，秒级相位 100% 对齐)
+            "874555157" -> 16_380L // 273 * 60L (对齐标准版《酷狗音乐》展示时长 221077m = 3684h 37m，秒级相位 100% 对齐)
             else -> 0L
         }
     }

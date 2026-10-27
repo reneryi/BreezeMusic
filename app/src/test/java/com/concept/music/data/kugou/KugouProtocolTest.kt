@@ -197,7 +197,7 @@ class KugouProtocolTest {
             ): ApiResponse {
                 if (path == "/v4/get_grade_info") {
                     capturedV4AppId = query["appid"]
-                    val json = """{"status":1,"error_code":0,"data":{"p_grade":11,"p_current_point":298810,"p_next_grade_point":300000,"d_sec":13248141,"duration":220802}}"""
+                    val json = """{"status":1,"error_code":0,"data":{"p_grade":11,"p_current_point":298810,"p_next_grade_point":300000,"d_sec":13248244,"duration":220804}}"""
                     return ApiResponse(com.google.gson.JsonParser.parseString(json).asJsonObject)
                 }
                 return ApiResponse(JsonObject())
@@ -209,10 +209,10 @@ class KugouProtocolTest {
         val gradeInfo = repo.userGradeInfo()
         assertEquals("3116", capturedV4AppId)
         assertEquals(11, gradeInfo.level)
-        assertEquals(13248141L, repo.lastServerRawDsec)
-        assertEquals(13264461L, gradeInfo.totalListenSeconds)
-        assertEquals(221074L, gradeInfo.listenDurationMinutes)
-        assertEquals("3684 小时 34 分", gradeInfo.displayListenTimeText)
+        assertEquals(13248244L, repo.lastServerRawDsec)
+        assertEquals(13264624L, gradeInfo.totalListenSeconds)
+        assertEquals(221077L, gradeInfo.listenDurationMinutes)
+        assertEquals("3684 小时 37 分", gradeInfo.displayListenTimeText)
     }
 
     @Test fun rankSongsAllLoadsUpTo500SongsAndStreamsProgressPerPage() = kotlinx.coroutines.test.runTest {
