@@ -104,7 +104,14 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ConceptMusicTheme {
-                MainContent()
+                var showSplashOverlay by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(true) }
+                Box(modifier = Modifier.fillMaxSize()) {
+                    MainContent()
+                    com.concept.music.ui.components.BreezeSplashOverlay(
+                        visible = showSplashOverlay,
+                        onDismiss = { showSplashOverlay = false }
+                    )
+                }
             }
         }
     }

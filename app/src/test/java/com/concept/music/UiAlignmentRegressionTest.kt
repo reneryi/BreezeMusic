@@ -1129,10 +1129,10 @@ class UiAlignmentRegressionTest {
         assertTrue(issueTemplate.contains("### 复现步骤 (Steps to Reproduce)"))
         assertTrue(issueTemplate.contains("BreezeMusic v1.0.0 (Build 1)"))
 
-        assertEquals(1, com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.size)
+        assertTrue(com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.isNotEmpty())
         val firstRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.first()
         assertEquals("v1.0.0", firstRelease.version)
-        assertEquals(4, firstRelease.moduleGroups.size)
+        assertTrue(firstRelease.moduleGroups.size >= 4)
         assertTrue(firstRelease.highlights.isNotEmpty())
     }
 
@@ -1571,5 +1571,23 @@ class UiAlignmentRegressionTest {
         val detail = repo.songDetail(showMeLoveHiRes)
         assertEquals("44.1 kHz / 24 bit", detail.sampleRate)
         assertEquals("Hi-Res 高解析度无损 (FLAC 44.1 kHz / 24bit)", detail.audioQuality)
+    }
+
+    @Test
+    fun `关于页真实版本号动态解析与正式版更新日志完整性验证`() {
+        val defaultVer = com.concept.music.ui.components.resolveAppVersionInfo(null)
+        assertEquals(BuildConfig.VERSION_NAME, defaultVer.rawVersionName)
+        assertEquals("v${BuildConfig.VERSION_NAME}", defaultVer.displayVersion)
+        assertTrue(defaultVer.fullBadgeText.contains("v${BuildConfig.VERSION_NAME}"))
+
+        val customVer = com.concept.music.ui.components.AppVersionInfo(rawVersionName = "2.1.0", versionCode = 12L)
+        assertEquals("v2.1.0", customVer.displayVersion)
+        assertEquals("v2.1.0 正式版 · Build 12", customVer.fullBadgeText)
+
+        val history = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY
+        assertTrue("更新日志应包含正式版及历史演进版本", history.size >= 3)
+        val latest = history.first()
+        assertEquals("v${BuildConfig.VERSION_NAME}", latest.version)
+        assertEquals(5, latest.moduleGroups.size)
     }
 }

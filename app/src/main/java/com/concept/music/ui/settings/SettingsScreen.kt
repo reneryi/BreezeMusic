@@ -197,53 +197,85 @@ data class ChangelogVersionItem(
 
 internal val PROJECT_CHANGELOG_HISTORY = listOf(
     ChangelogVersionItem(
-        version = "v1.0.0",
+        version = "v${BuildConfig.VERSION_NAME}",
         date = "2026-10-28",
         tag = "正式版 · 首发",
-        summary = "微风音乐首个正式版发布：完整构建酷狗概念版端侧直连、64-bit 母带 DSP、KRC 逐字歌词、外设线控与二级设置体系",
+        summary = "微风音乐正式版发布：完整实现酷狗概念版端侧直连、FLAC STREAMINFO 硬件级真实采样率探测、64-bit 母带 DSP、KRC 逐字流光与穿透桌面歌词、多音质下载与高清封面/歌词二进制内嵌、全新微风流光图标与开屏动效",
         highlights = listOf(
-            "酷狗概念版端侧直连与 VIP 闭环：纯 Kotlin 实现 MakcRe/KuGouMusicApi 概念版（appid=3116）签名加密与风控设备注册，支持验证码/扫码登录、每日畅听领 VIP、听歌时长上报与后台静默守护",
-            "全链路高解析音源与 64-bit 母带 DSP：支持 Hi-Res / SQ 无损 / 320K 智能解析与真无损码率防伪校验；内置 10 段参量均衡器、蝰蛇音效预设、超重低音、人声清澈度、电子管温暖度与立体声混响",
-            "KRC 逐字流光歌词与全局桌面歌词：端侧解密 KRC 逐字时间戳、双语译文与罗马音注音，支持阶梯景深模糊、前奏/间奏呼吸波点、2K 歌词海报生成与可穿透锁定的系统级桌面歌词",
-            "Material 3 流体视觉与封面动态取色：提取专辑封面生成色相锁定的 13 级明度色阶（满足 WCAG 对比度标准），提供仿真黑胶唱臂、圆角方形封面、五款流光背景与 120Hz 高刷横竖屏播放页",
-            "多应用混音同播与全场景外设控制：支持「允许与其他应用同时播放」及三档音频焦点策略（独占 / 闪避 / 完全混音），提供有线耳机双击/三击切歌定制、连接耳机自动播放与蓝牙歌词延迟自动补偿",
-            "二级设置中心、四维缓存与反馈体系：采用清晰的二级分类导航架构；支持音频流、封面图片、歌单 SWR 快照与歌词/临时缓存四维分项统计与独立清理，内置可视化 GitHub Issue 反馈指南与在线检查更新"
+            "酷狗概念版纯端侧直连与 VIP 闭环：纯 Kotlin 移植 MakcRe/KuGouMusicApi 概念版（appid=3116, clientver=11440）签名加密与 dfid 风控设备注册，支持验证码/扫码登录、每日畅听领 VIP、升级 VIP、CSCC 听歌时长上报与 JobScheduler 后台静默守护",
+            "高解析音源、FLAC STREAMINFO 真实参数探测与 64-bit 母带 DSP：支持 Hi-Res / SQ 无损 / 320K / 128K 智能解析回退，直接读取音频流前 512 字节 STREAMINFO/帧头提取与椒盐音乐一致的硬件级真实采样率（44.1kHz/48kHz/96kHz/192kHz）与位深（16bit/24bit）；内置 64-bit PCM 母带管线、10 段参量均衡器與蝰蛇音效",
+            "多音质本地下载、1000P 高清封面/歌词二进制内嵌与独立 .lrc 导出：自研零依赖 AudioMetadataEmbedder 写入 FLAC Vorbis Comment (Block 4) + Picture (Block 6) 与 MP3 ID3v2.3 (TIT2/TPE1/TALB/TYER/USLT/APIC)，支持自定义音乐与歌词保存路径、独立「下载」设置页与二级下载记录",
+            "KRC 逐字流光歌词与系统级穿透桌面歌词：端侧解密 KRC 逐字时间戳、双语译文与罗马音注音，支持阶梯景深模糊、前奏/间奏呼吸波点、2K 超清歌词海报生成，以及支持物理穿透锁定、封面取色随动与通知栏/流体云快捷控制的全局桌面歌词",
+            "全新品牌视觉、开屏动效与外设/权限透明管控：设计「深海微风 · 黑胶流光」自适应图标与沉浸式开屏页面；提取封面生成色相锁定的 13 级明度色阶，提供仿真黑胶唱臂、120Hz 高刷横竖屏播放页、三档音频焦点混音/闪避、有线耳机双击/三击切歌与 8 大权限独立透明开关"
         ),
         moduleGroups = listOf(
             ChangelogModuleGroup(
-                moduleTitle = "一、酷狗概念版端侧直连与账号权益",
+                moduleTitle = "一、酷狗概念版端侧直连与 VIP 权益闭环",
                 points = listOf(
-                    "纯 Kotlin 端侧完整实现 MakcRe/KuGouMusicApi 概念版（appid=3116）签名、RSA/AES 加解密与 dfid 设备注册，零中间服务器直连",
-                    "支持手机验证码登录（含同手机号多账号切换）、扫码登录及 Android Keystore 硬件级凭证加密存储",
+                    "纯 Kotlin 端侧完整实现 MakcRe/KuGouMusicApi 概念版（appid=3116, clientver=11440）签名、RSA/AES 加解密与 dfid 设备注册，零中间服务器直连",
+                    "支持手机验证码登录（含同手机号多酷狗账号切换）、扫码登录及 Android Keystore 硬件级凭证加密存储",
                     "打通概念版每日签到畅听领 VIP、升级 VIP 权益、CSCC 三段式真实听歌时长上报与 JobScheduler 后台静默续期守护",
-                    "完整覆盖每日推荐、私人 FM、排行榜、歌单广场、歌手/专辑详情与四级楼中楼评论区交互"
+                    "完整覆盖每日推荐、私人 FM、新歌速递、排行榜、歌单广场、歌手/专辑详情与四级楼中楼评论区交互（含动态表情与评论图片查看）"
                 )
             ),
             ChangelogModuleGroup(
-                moduleTitle = "二、高解析音源与 64-bit 母带 DSP 引擎",
+                moduleTitle = "二、高解析音源、STREAMINFO 真实参数探测与 64-bit 母带 DSP",
                 points = listOf(
-                    "支持 Hi-Res / SQ 无损 / 高品 320K / 标准 128K 智能解析与真无损码率防伪校验，支持移动网络省流保护",
-                    "自研 64-bit/Float PCM 母带音频管线：内置 10 段参量均衡器、蝰蛇声效预设、动态超重低音、人声清澈度、电子管激励与 M/S 声场混响",
-                    "支持高潮智能试听（Climax 副歌直达）、跨曲淡入淡出无缝衔接（Crossfade）、ReplayGain 音量平衡与倍速/升降调独立控制"
+                    "支持 Hi-Res (res_hash) / SQ 无损 (sq_hash) / 高品 320K / 标准 128K 多通道智能解析与平滑降级，支持移动网络省流保护",
+                    "遵循 RFC 9639 标准通过轻量 Range 请求解析 FLAC STREAMINFO 前 42 字节（及 OGG Vorbis 识别头、MP3 MPEG 帧头），精准呈现 44.1kHz / 48.0kHz / 96.0kHz / 192.0kHz 真实硬件采样率与 16bit / 24bit 位深",
+                    "自研 64-bit/Float PCM 母带音频管线：内置 10 段参量均衡器、蝰蛇声效预设、动态超重低音、人声清澈度、电子管温暖度激励与 M/S 声场混响",
+                    "支持高潮智能试听（Climax 副歌直达）、跨曲淡入淡出无缝衔接（Crossfade）、ReplayGain 音量平衡与倍速/升降调独立调节"
                 )
             ),
             ChangelogModuleGroup(
-                moduleTitle = "三、KRC 逐字流光歌词与流体视觉设计",
+                moduleTitle = "三、多音质音乐下载、高清封面与歌词二进制内嵌",
+                points = listOf(
+                    "参考 lisalee23042605/kgmusicbot 架构并纯 Kotlin 原生重写：支持多音质音频文件流式下载与同名文件智能防重跳过",
+                    "自研零外部依赖 AudioMetadataEmbedder：对 FLAC 写入 Vorbis Comment (TITLE/ARTIST/ALBUM/DATE/LYRICS/UNSYNCEDLYRICS) 与 Picture Block (type=3)，对 MP3 写入 ID3v2.3 (TIT2/TPE1/TALB/TYER/COMM/USLT/APIC)，并识别 OGG 容器防损坏",
+                    "默认自动拉取 1000×1000 高清专辑封面与双语 LRC 歌词内嵌至音频文件，支持按需开启同步生成独立 .lrc 歌词文件",
+                    "支持通过系统 SAF 目录选择器或手动输入自定义音乐保存路径与歌词保存路径；设置页提供独立「下载」模块与「最近下载记录」二级子页面"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "四、KRC 逐字流光歌词、全局桌面歌词与 2K 海报",
                 points = listOf(
                     "端侧解密 KRC 逐字时间戳、双语译文与罗马音注音，支持字内卡拉 OK 平滑扫光、前奏/间奏呼吸波点与阶梯景深模糊",
-                    "提取专辑封面生成色相锁定的 13 级 Tonal Palette 动态取色系统（WCAG 4.5:1 对比度保障），提供仿真黑胶与圆角方图封面及五款动态背景",
-                    "支持 120Hz 高刷横屏播放模式、2K 超清多模板歌词海报导出，以及支持物理穿透锁定的系统级全局桌面悬浮歌词"
+                    "系统级跨应用全局桌面悬浮歌词：支持横向全屏自适应、双行插空居中与长句自然三行换行、封面取色实时随动、物理穿透锁定及通知栏/流体云快捷开关",
+                    "内置 2K 超清多模板歌词海报生成器，支持挑选任意歌词段落、切换视觉样式并一键导出至系统相册"
                 )
             ),
             ChangelogModuleGroup(
-                moduleTitle = "四、外设线控、多应用混音与二级设置体系",
+                moduleTitle = "五、流体视觉、品牌图标/开屏动效与外设/权限透明管控",
                 points = listOf(
-                    "新增「允许与其他应用同时播放」及三档音频焦点策略（独占焦点 / 压低音量闪避同播 Ducking / 完全混音同播）",
-                    "新增有线耳机暂停键双击/三击切歌状态机，支持切歌方向互换、280ms/350ms/450ms 三档灵敏度调节及连接有线/蓝牙耳机自动播放",
-                    "新增蓝牙音频输出延迟自动歌词补偿、划掉后台任务卡片保持播放与系统电池优化白名单一键引导",
-                    "重构设置中心为二级分类菜单架构：支持音频/图片/SWR 快照/歌词四维缓存分项统计与独立清理、GitHub Issue 可视化反馈指南与在线检查更新"
+                    "全新设计「深海微风 · 黑胶流光」自适应应用图标（Adaptive Icon）与沉浸式动态波浪开屏页面，全链路统一关于页与桌面视觉",
+                    "提取专辑封面生成色相锁定的 13 级 Tonal Palette 动态取色系统（满足 WCAG 对比度标准），提供仿真黑胶与圆角方图封面及五款动态背景，支持 120Hz 高刷横竖屏自适应舞台",
+                    "支持「允许与其他应用同时播放」及三档音频焦点策略（独占 / 压低音量闪避 Ducking / 完全混音），提供有线耳机暂停键双击/三击切歌、连接耳机自动续播与蓝牙歌词延迟自动补偿",
+                    "公开透明的权限管理中心：详细披露 8 项系统与功能权限用途，支持独立开关管控（「音乐下载与歌词保存」默认关闭并隐藏，需手动开启后解锁）"
                 )
             )
+        )
+    ),
+    ChangelogVersionItem(
+        version = "v0.9.0-beta",
+        date = "2026-10-20",
+        tag = "公测候选版",
+        summary = "桌面歌词双向同步、通知栏/流体云快捷控制、二级设置中心重构与四维缓存管理",
+        highlights = listOf(
+            "桌面歌词与 App 内设置双向实时同步：支持「封面随动」动态高亮色、字号联动与纵向位置记忆",
+            "系统通知栏与流体云扩展按钮：新增桌面歌词显隐开关与锁定/解锁自定义 MediaSession 动作按钮",
+            "重构设置中心为二级分类菜单架构：支持音频流、封面图片、歌单 SWR 快照与歌词/临时缓存四维分项统计与独立清理",
+            "新增可视化 GitHub Issue 反馈规范指南、环境信息一键复制与在线版本检查更新"
+        )
+    ),
+    ChangelogVersionItem(
+        version = "v0.8.0-alpha",
+        date = "2026-10-10",
+        tag = "架构预览版",
+        summary = "完成酷狗概念版核心协议端侧 Kotlin 移植、Media3 播放服务与沉浸式黑胶播放器基础架构",
+        highlights = listOf(
+            "完成 MakcRe/KuGouMusicApi 概念版签名算法、设备注册与登录鉴权端侧 Kotlin 移植",
+            "接入 AndroidX Media3 ExoPlayer 前台媒体服务，构建仿真黑胶唱盘与 KRC 逐字歌词同步渲染引擎",
+            "实现每日推荐、歌单广场、排行榜、歌手/专辑详情与全网搜索核心曲库闭环"
         )
     )
 )
@@ -349,7 +381,9 @@ private fun copyTextToClipboard(context: Context, label: String, text: String) {
     }
 }
 
-private suspend fun checkGitHubLatestRelease(): UpdateCheckResult = withContext(Dispatchers.IO) {
+private suspend fun checkGitHubLatestRelease(
+    localVersionName: String = BuildConfig.VERSION_NAME
+): UpdateCheckResult = withContext(Dispatchers.IO) {
     if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.NETWORK_ACCESS)) {
         return@withContext UpdateCheckResult.Error("已在权限管理中关闭「网络访问」权限，请先开启后再检查更新")
     }
@@ -364,7 +398,7 @@ private suspend fun checkGitHubLatestRelease(): UpdateCheckResult = withContext(
             if (resp.code == 404) {
                 return@withContext UpdateCheckResult.UpToDate(
                     versionText = "v${BuildConfig.VERSION_NAME}",
-                    message = "当前已是最新正式版 (v${BuildConfig.VERSION_NAME})"
+                    message = "当前已是最新正式版 (v$localVersionName)"
                 )
             }
             if (!resp.isSuccessful) {
@@ -396,7 +430,7 @@ private suspend fun checkGitHubLatestRelease(): UpdateCheckResult = withContext(
                 }
             }
 
-            if (tagName.isNotBlank() && isRemoteVersionNewer(BuildConfig.VERSION_NAME, tagName)) {
+            if (tagName.isNotBlank() && isRemoteVersionNewer(localVersionName, tagName)) {
                 UpdateCheckResult.HasUpdate(
                     latestVersion = tagName,
                     title = releaseTitle,
@@ -405,7 +439,7 @@ private suspend fun checkGitHubLatestRelease(): UpdateCheckResult = withContext(
                     publishedAt = publishedAt
                 )
             } else {
-                val verDisplay = tagName.ifBlank { "v${BuildConfig.VERSION_NAME}" }
+                val verDisplay = tagName.ifBlank { "v$localVersionName" }
                 UpdateCheckResult.UpToDate(
                     versionText = verDisplay,
                     message = "当前已是最新版本 ($verDisplay)"
@@ -468,6 +502,7 @@ fun SettingsScreen(
     val detailedCacheStats by AudioCacheManager.detailedStats.collectAsState()
     val cacheLimit by AudioCacheManager.cacheLimit.collectAsState()
     val downloadConfig by MusicDownloadManager.config.collectAsState()
+    val appVersionInfo = remember(context) { com.concept.music.ui.components.resolveAppVersionInfo(context) }
     val themeMode by ThemeManager.themeMode.collectAsState()
     val audioEffectState by AudioEffectManager.state.collectAsState()
     val permissionState by AppPermissionManager.state.collectAsState()
@@ -723,7 +758,7 @@ fun SettingsScreen(
                                 category = SettingsCategory.ABOUT,
                                 icon = Icons.Rounded.Info,
                                 accentColor = ConceptPrimary,
-                                statusText = "BreezeMusic v${BuildConfig.VERSION_NAME} · 项目地址 · 检查更新 · 版权声明",
+                                statusText = "BreezeMusic ${appVersionInfo.displayVersion} · 项目地址 · 检查更新 · 版权声明",
                                 onClick = { activeCategoryName = SettingsCategory.ABOUT.name }
                             )
                         }
@@ -1604,17 +1639,18 @@ fun SettingsScreen(
                             SettingsCategory.ABOUT -> {
                                 item {
                                     if (isChangelogPage) {
-                                        ChangelogSubPageContent()
+                                        ChangelogSubPageContent(appVersionInfo = appVersionInfo)
                                     } else {
                                         AboutAppSectionContent(
                                             context = context,
+                                            appVersionInfo = appVersionInfo,
                                             updateState = updateCheckState,
                                             onOpenChangelog = { showChangelogSubPage = true },
                                             onTriggerCheckUpdate = {
                                                 if (updateCheckState !is UpdateCheckResult.Checking) {
                                                     updateCheckState = UpdateCheckResult.Checking
                                                     coroutineScope.launch {
-                                                        val res = checkGitHubLatestRelease()
+                                                        val res = checkGitHubLatestRelease(appVersionInfo.rawVersionName)
                                                         updateCheckState = res
                                                         when (res) {
                                                             is UpdateCheckResult.UpToDate -> {
@@ -3889,12 +3925,13 @@ private fun FeedbackRuleItem(
 @Composable
 private fun AboutAppSectionContent(
     context: Context,
+    appVersionInfo: com.concept.music.ui.components.AppVersionInfo = com.concept.music.ui.components.resolveAppVersionInfo(context),
     updateState: UpdateCheckResult,
     onOpenChangelog: () -> Unit,
     onTriggerCheckUpdate: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // 1. 大气居中的品牌版本与核心入口卡片（告别重复跳转按钮）
+        // 1. 大气居中的品牌版本与核心入口卡片（同步使用全新设计的微风音乐应用图标与动态真实版本号）
         Surface(
             shape = RoundedCornerShape(26.dp),
             color = conceptFloatingCardColor(),
@@ -3923,29 +3960,11 @@ private fun AboutAppSectionContent(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(68.dp)
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(ConceptPrimary, ConceptCyanAccent)
-                                    )
-                                )
-                                .border(
-                                    width = 1.dp,
-                                    color = Color.White.copy(alpha = 0.28f),
-                                    shape = RoundedCornerShape(20.dp)
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.MusicNote,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(36.dp)
-                            )
-                        }
+                        com.concept.music.ui.components.BreezeAppLogo(
+                            size = 74.dp,
+                            cornerRadius = 22.dp,
+                            showAmbientHalo = true
+                        )
 
                         Spacer(modifier = Modifier.height(2.dp))
 
@@ -3972,7 +3991,7 @@ private fun AboutAppSectionContent(
                                 )
                             ) {
                                 Text(
-                                    text = "v${BuildConfig.VERSION_NAME} 正式版 · Build ${BuildConfig.VERSION_CODE}",
+                                    text = appVersionInfo.fullBadgeText,
                                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                     color = ConceptPrimary,
                                     fontSize = 11.5.sp,
@@ -4124,7 +4143,7 @@ private fun AboutAppSectionContent(
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
-                                        text = "查看 v${BuildConfig.VERSION_NAME} 正式版及历次版本更新记录",
+                                        text = "查看 ${appVersionInfo.displayVersion} 正式版及历次版本更新记录",
                                         style = MaterialTheme.typography.bodySmall,
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -4388,11 +4407,22 @@ private fun AboutAppSectionContent(
  * 首个正式版 v1.0.0 汇总项目的全部核心架构与功能模块，后续随版本迭代按版本号追加。
  */
 @Composable
-private fun ChangelogSubPageContent() {
-    var expandedVersions by rememberSaveable {
-        mutableStateOf(listOf(PROJECT_CHANGELOG_HISTORY.firstOrNull()?.version ?: "v1.0.0"))
+private fun ChangelogSubPageContent(
+    appVersionInfo: com.concept.music.ui.components.AppVersionInfo? = null
+) {
+    val changelogItems = remember(appVersionInfo) {
+        if (appVersionInfo != null && PROJECT_CHANGELOG_HISTORY.isNotEmpty()) {
+            PROJECT_CHANGELOG_HISTORY.mapIndexed { index, item ->
+                if (index == 0) item.copy(version = appVersionInfo.displayVersion) else item
+            }
+        } else {
+            PROJECT_CHANGELOG_HISTORY
+        }
     }
-    val allExpanded = expandedVersions.size >= PROJECT_CHANGELOG_HISTORY.size
+    var expandedVersions by rememberSaveable(appVersionInfo?.displayVersion) {
+        mutableStateOf(listOf(changelogItems.firstOrNull()?.version ?: "v1.0.0"))
+    }
+    val allExpanded = expandedVersions.size >= changelogItems.size
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // 顶部说明与一键展开/收起控制条
@@ -4430,7 +4460,7 @@ private fun ChangelogSubPageContent() {
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "按版本号分类归档 · 共 ${PROJECT_CHANGELOG_HISTORY.size} 个版本",
+                            text = "按版本号分类归档 · 共 ${changelogItems.size} 个版本",
                             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                             fontSize = 13.5.sp
                         )
@@ -4442,13 +4472,13 @@ private fun ChangelogSubPageContent() {
                         )
                     }
                 }
-                if (PROJECT_CHANGELOG_HISTORY.size > 1) {
+                if (changelogItems.size > 1) {
                     TextButton(
                         onClick = {
                             expandedVersions = if (allExpanded) {
                                 emptyList()
                             } else {
-                                PROJECT_CHANGELOG_HISTORY.map { it.version }
+                                changelogItems.map { it.version }
                             }
                         }
                     ) {
@@ -4464,7 +4494,7 @@ private fun ChangelogSubPageContent() {
         }
 
         // 按版本号分类的可折叠版本卡片列表
-        PROJECT_CHANGELOG_HISTORY.forEachIndexed { idx, item ->
+        changelogItems.forEachIndexed { idx, item ->
             val isExpanded = expandedVersions.contains(item.version)
             ChangelogVersionAccordionCard(
                 item = item,
