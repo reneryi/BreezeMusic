@@ -11,6 +11,7 @@
 <img src="https://img.shields.io/badge/UI-Jetpack%20Compose%20%2B%20Material%203-00E5FF?style=flat-square" alt="Compose" />
 <img src="https://img.shields.io/badge/Audio-Media3%20ExoPlayer%20%2B%2064bit%20DSP-00E5A3?style=flat-square" alt="Audio" />
 <img src="https://img.shields.io/badge/Architecture-Pure%20Client--Side%20Direct-FFD54F?style=flat-square" alt="Direct" />
+<img src="https://img.shields.io/badge/License-GPL--3.0-blue.svg?style=flat-square" alt="License" />
 </p>
 
 ## 一、项目简介
@@ -232,3 +233,7 @@ BreezeMusic/
 * [lisalee23042605/kgmusicbot](https://github.com/lisalee23042605/kgmusicbot)：提供了酷狗概念版多音质下载与封面/歌词内嵌的实现参考。
 
 * [AndroidX Media3](https://developer.android.com/media/media3) & [Jetpack Compose](https://developer.android.com/jetpack/compose)：提供了现代化的 Android 媒体播放与声明式 UI 框架支持。
+
+## 九、开源许可证 (License)
+
+本项目代码基于 [GNU General Public License v3.0 (GPL-3.0)](LICENSE) 协议开源。任何人均可自由学习、修改与分享，但任何衍生版本必须保持相同的开源协议且禁止商业化闭源牟利。
