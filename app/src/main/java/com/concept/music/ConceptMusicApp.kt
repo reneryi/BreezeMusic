@@ -23,6 +23,7 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         ThemeManager.init(this)
+        com.concept.music.service.AppPermissionManager.init(this)
         VipManager.initialize(this)
         com.concept.music.service.AudioEffectManager.init(this)
         AmbientSoundManager.init(this)

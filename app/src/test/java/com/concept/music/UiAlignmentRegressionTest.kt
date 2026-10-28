@@ -56,7 +56,8 @@ class UiAlignmentRegressionTest {
         assertFalse(AudioEffectState().equalLoudnessCompensation)
         assertFalse(state.allowPlayWithOtherApps)
         assertTrue(state.wiredHeadsetControlEnabled)
-        assertEquals(8, com.concept.music.ui.settings.SettingsCategory.entries.size)
+        assertEquals(9, com.concept.music.ui.settings.SettingsCategory.entries.size)
+        assertTrue(com.concept.music.ui.settings.SettingsCategory.entries.contains(com.concept.music.ui.settings.SettingsCategory.PERMISSIONS))
     }
 
     @Test
@@ -1130,5 +1131,66 @@ class UiAlignmentRegressionTest {
         assertEquals("v1.0.0", firstRelease.version)
         assertEquals(4, firstRelease.moduleGroups.size)
         assertTrue(firstRelease.highlights.isNotEmpty())
+    }
+
+    @Test
+    fun `权限管理七大权限公开说明与自主开关对功能影响验证`() {
+        com.concept.music.service.AppPermissionManager.resetForTest()
+        try {
+            val initialState = com.concept.music.service.AppPermissionManager.state.value
+            assertEquals(7, initialState.totalCount)
+            assertEquals(7, initialState.enabledCount)
+
+            // 验证每项权限均包含完整的公开用途说明、隐私承诺与关闭后功能影响说明
+            com.concept.music.service.AppPermissionType.entries.forEach { type ->
+                assertTrue(type.title.isNotBlank())
+                assertTrue(type.manifestPermissionName.isNotBlank())
+                assertTrue(type.purposeDescription.isNotBlank())
+                assertTrue(type.privacyCommitment.isNotBlank())
+                assertTrue(type.disabledImpactDescription.isNotBlank())
+                assertTrue(initialState.isEnabled(type))
+            }
+
+            // 1. 关闭「全局悬浮窗（桌面歌词）」权限 -> 立即关闭桌面歌词并阻止再次开启
+            com.concept.music.service.SystemLyricBridge.setFloatingCapsuleEnabled(true)
+            assertTrue(com.concept.music.service.SystemLyricBridge.state.value.floatingCapsuleEnabled)
+            com.concept.music.service.AppPermissionManager.setPermissionEnabled(
+                null,
+                com.concept.music.service.AppPermissionType.SYSTEM_OVERLAY,
+                false
+            )
+            assertFalse(com.concept.music.service.SystemLyricBridge.state.value.floatingCapsuleEnabled)
+            com.concept.music.service.SystemLyricBridge.setFloatingCapsuleEnabled(true)
+            assertFalse("关闭悬浮窗权限后不得允许开启桌面歌词", com.concept.music.service.SystemLyricBridge.state.value.floatingCapsuleEnabled)
+
+            // 2. 关闭「外设音频检测与耳机线控」权限 -> 蓝牙歌词延迟补偿与耳机按键拦截自动停用
+            val btState = PlayerUiState(
+                lyricOffsetMs = 50L,
+                bluetoothLyricOffsetEnabled = true,
+                bluetoothLyricOffsetMs = -200L,
+                isBluetoothAudioConnected = true
+            )
+            assertEquals(-150L, btState.effectiveLyricOffsetMs)
+            com.concept.music.service.AppPermissionManager.setPermissionEnabled(
+                null,
+                com.concept.music.service.AppPermissionType.AUDIO_HARDWARE,
+                false
+            )
+            assertEquals("关闭外设音频权限后蓝牙歌词延迟补偿应停用", 50L, btState.effectiveLyricOffsetMs)
+
+            // 3. 关闭「设备动作与方向传感器」权限 -> 横放自动横屏判定返回 false
+            com.concept.music.service.AppPermissionManager.setPermissionEnabled(
+                null,
+                com.concept.music.service.AppPermissionType.MOTION_ORIENTATION,
+                false
+            )
+            assertEquals(4, com.concept.music.service.AppPermissionManager.state.value.enabledCount)
+
+            // 4. 一键恢复开启全部权限
+            com.concept.music.service.AppPermissionManager.enableAllPermissions(null)
+            assertEquals(7, com.concept.music.service.AppPermissionManager.state.value.enabledCount)
+        } finally {
+            com.concept.music.service.AppPermissionManager.resetForTest()
+        }
     }
 }

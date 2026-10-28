@@ -239,7 +239,10 @@ internal fun isSystemAutoRotateEnabled(context: Context): Boolean {
  */
 @Suppress("UNUSED_PARAMETER")
 internal fun hasDeviceMotionOrientationPermission(context: Context, appToggleEnabled: Boolean): Boolean {
-    return appToggleEnabled
+    return appToggleEnabled &&
+        com.concept.music.service.AppPermissionManager.isPermissionEnabled(
+            com.concept.music.service.AppPermissionType.MOTION_ORIENTATION
+        )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

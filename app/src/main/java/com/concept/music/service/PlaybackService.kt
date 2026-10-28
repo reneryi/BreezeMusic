@@ -657,6 +657,7 @@ class PlaybackService : MediaSessionService() {
 
         fun handleHeadsetKeyEvent(context: Context?, event: KeyEvent?): Boolean {
             if (event == null) return false
+            if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.AUDIO_HARDWARE)) return false
             if (context != null) {
                 fallbackAppContext = context.applicationContext ?: context
             }
@@ -775,7 +776,7 @@ class PlaybackService : MediaSessionService() {
                     onBluetoothConnectionChanged?.invoke(btConnectedNow)
                 }
 
-                if (autoPlayOnHeadsetConnectEnabled) {
+                if (autoPlayOnHeadsetConnectEnabled && AppPermissionManager.isPermissionEnabled(AppPermissionType.AUDIO_HARDWARE)) {
                     val shouldTriggerWired = newlyAddedWired && autoPlayOnWiredConnectEnabled
                     val shouldTriggerBt = newlyAddedBluetooth && autoPlayOnBluetoothConnectEnabled
                     if (shouldTriggerWired || shouldTriggerBt) {
@@ -1053,7 +1054,10 @@ class PlaybackService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         val p = player
-        if (!keepPlayingOnTaskRemovedEnabled || p == null || (!p.isPlaying && !p.playWhenReady)) {
+        val canKeepBackground = keepPlayingOnTaskRemovedEnabled &&
+            AppPermissionManager.isPermissionEnabled(AppPermissionType.BACKGROUND_GUARDIAN) &&
+            AppPermissionManager.isPermissionEnabled(AppPermissionType.NOTIFICATION_MEDIA)
+        if (!canKeepBackground || p == null || (!p.isPlaying && !p.playWhenReady)) {
             super.onTaskRemoved(rootIntent)
             stopSelf()
         }

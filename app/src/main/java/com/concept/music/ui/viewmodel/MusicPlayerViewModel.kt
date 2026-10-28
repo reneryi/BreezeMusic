@@ -179,8 +179,15 @@ data class PlayerUiState(
     val error: String? = null
 ) {
     val effectiveLyricOffsetMs: Long
-        get() = (lyricOffsetMs + if (bluetoothLyricOffsetEnabled && isBluetoothAudioConnected) bluetoothLyricOffsetMs else 0L)
-            .coerceIn(-6000L, 6000L)
+        get() {
+            val btAllowed = bluetoothLyricOffsetEnabled &&
+                isBluetoothAudioConnected &&
+                com.concept.music.service.AppPermissionManager.isPermissionEnabled(
+                    com.concept.music.service.AppPermissionType.AUDIO_HARDWARE
+                )
+            return (lyricOffsetMs + if (btAllowed) bluetoothLyricOffsetMs else 0L)
+                .coerceIn(-6000L, 6000L)
+        }
 }
 
 class MusicPlayerViewModel(application: Application) : AndroidViewModel(application) {
@@ -538,6 +545,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     init {
         val context = application.applicationContext
+        com.concept.music.service.AppPermissionManager.init(context)
+        com.concept.music.service.AppPermissionManager.onMotionPermissionSyncedCallback = { enabled ->
+            if (mutableState.value.motionOrientationPermissionEnabled != enabled) {
+                mutableState.value = mutableState.value.copy(motionOrientationPermissionEnabled = enabled)
+            }
+        }
         restorePersistedPlaybackState()
 
         ConceptMusicWidgetUpdater.onWidgetCommand = { action ->
@@ -1796,7 +1809,34 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     fun setMotionOrientationPermissionEnabled(enabled: Boolean) {
         mutableState.value = mutableState.value.copy(motionOrientationPermissionEnabled = enabled)
+        com.concept.music.service.AppPermissionManager.setPermissionEnabled(
+            runCatching { getApplication<Application>() }.getOrNull(),
+            com.concept.music.service.AppPermissionType.MOTION_ORIENTATION,
+            enabled
+        )
         persistPlaybackStateAsync()
+    }
+
+    fun setAppPermissionEnabled(type: com.concept.music.service.AppPermissionType, enabled: Boolean) {
+        val appCtx = runCatching { getApplication<Application>() }.getOrNull()
+        com.concept.music.service.AppPermissionManager.setPermissionEnabled(appCtx, type, enabled)
+        when (type) {
+            com.concept.music.service.AppPermissionType.MOTION_ORIENTATION -> {
+                mutableState.value = mutableState.value.copy(motionOrientationPermissionEnabled = enabled)
+                persistPlaybackStateAsync()
+            }
+            com.concept.music.service.AppPermissionType.AUDIO_HARDWARE -> {
+                val effectiveNoisy = enabled && mutableState.value.pauseOnHeadsetDisconnect
+                PlaybackService.updateHandleAudioBecomingNoisy(effectiveNoisy)
+                updateLyricIndex(currentSmoothPositionMs())
+            }
+            com.concept.music.service.AppPermissionType.BACKGROUND_GUARDIAN,
+            com.concept.music.service.AppPermissionType.NOTIFICATION_MEDIA -> {
+                val effectiveKeep = enabled && mutableState.value.keepPlayingOnTaskRemoved
+                PlaybackService.updateKeepPlayingOnTaskRemoved(effectiveKeep)
+            }
+            else -> {}
+        }
     }
 
     fun setLyricAlignment(alignment: LyricAlignment) {

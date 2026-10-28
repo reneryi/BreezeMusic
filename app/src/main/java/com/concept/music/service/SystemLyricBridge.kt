@@ -151,6 +151,14 @@ object SystemLyricBridge {
     }
 
     fun requestOverlayPermissionIfNeeded(context: Context): Boolean {
+        if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.SYSTEM_OVERLAY)) {
+            Toast.makeText(
+                context,
+                "已在权限管理中关闭「跨应用全局悬浮窗（桌面歌词）」权限，请先在设置-权限管理中开启",
+                Toast.LENGTH_SHORT
+            ).show()
+            return false
+        }
         if (canDrawSystemOverlays(context)) return true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             runCatching {
@@ -175,6 +183,15 @@ object SystemLyricBridge {
      * 切换或开启桌面歌词（自动检测并引导开启系统级全局悬浮窗权限）
      */
     fun toggleDesktopLyricWithPermissionCheck(context: Context) {
+        if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.SYSTEM_OVERLAY)) {
+            setFloatingCapsuleEnabled(false)
+            Toast.makeText(
+                context,
+                "已在权限管理中关闭「跨应用全局悬浮窗（桌面歌词）」权限，请先前往设置-权限管理开启",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
         val nextEnabled = !_state.value.floatingCapsuleEnabled
         if (nextEnabled && !canDrawSystemOverlays(context)) {
             requestOverlayPermissionIfNeeded(context)
@@ -218,8 +235,9 @@ object SystemLyricBridge {
     }
 
     fun setFloatingCapsuleEnabled(enabled: Boolean) {
-        _state.value = _state.value.copy(floatingCapsuleEnabled = enabled)
-        prefs?.edit()?.putBoolean("floating_capsule_enabled", enabled)?.apply()
+        val effectiveEnabled = enabled && AppPermissionManager.isPermissionEnabled(AppPermissionType.SYSTEM_OVERLAY)
+        _state.value = _state.value.copy(floatingCapsuleEnabled = effectiveEnabled)
+        prefs?.edit()?.putBoolean("floating_capsule_enabled", effectiveEnabled)?.apply()
         syncSystemOverlayWindow()
     }
 

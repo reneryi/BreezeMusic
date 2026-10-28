@@ -300,130 +300,207 @@ fun LyricPosterDialog(
                     .fillMaxSize()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                // 1. 顶部工作台标题栏
+                // 1. 顶部工作台标题栏（左标题自适应留白 + 右侧紧凑等高双胶囊操作按钮）
+                val actionButtonsEnabled = selectedLines.isNotEmpty() && !saving
+                val primaryBtnTextColor = if (template == PosterTemplateStyle.AURORA_GLASS || template == PosterTemplateStyle.VINYL_ARCHIVE) {
+                    Color(0xFF0A0F18)
+                } else {
+                    Color.White
+                }
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
-                            Icon(
-                                imageVector = Icons.Rounded.Close,
-                                contentDescription = "关闭",
-                                tint = Color.White
-                            )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.White.copy(alpha = 0.08f),
+                            modifier = Modifier
+                                .size(34.dp)
+                                .softClickable(onClick = onDismiss)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "关闭",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Column {
-                            Text(
-                                text = "高定歌词海报工坊",
-                                color = Color.White,
-                                fontSize = 16.5.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Text(
-                                text = "五款独立艺术构图 · 2K 超清无损 PNG 导出",
-                                color = Color.White.copy(alpha = 0.56f),
-                                fontSize = 10.5.sp
-                            )
-                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "歌词海报",
+                            color = Color.White,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(
-                            onClick = {
-                                if (selectedLines.isEmpty()) return@FilledTonalButton
-                                saving = true
-                                scope.launch {
-                                    val uri = withContext(Dispatchers.IO) {
-                                        runCatching {
-                                            renderAndSavePosterToGallery(
-                                                context = context,
-                                                song = effectiveSong,
-                                                lines = selectedLines,
-                                                template = template,
-                                                includeTranslation = includeTranslation,
-                                                centerAlign = centerAlign,
-                                                showWaveform = showWaveformCode,
-                                                dateStr = dateStr
-                                            )
-                                        }.getOrNull()
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(11.dp),
+                            color = Color.White.copy(alpha = if (actionButtonsEnabled) 0.11f else 0.05f),
+                            modifier = Modifier
+                                .height(34.dp)
+                                .border(
+                                    width = 0.8.dp,
+                                    color = Color.White.copy(alpha = if (actionButtonsEnabled) 0.18f else 0.08f),
+                                    shape = RoundedCornerShape(11.dp)
+                                )
+                                .softCardClickable(
+                                    enabled = actionButtonsEnabled,
+                                    shape = RoundedCornerShape(11.dp)
+                                ) {
+                                    if (selectedLines.isEmpty() || saving) return@softCardClickable
+                                    if (!com.concept.music.service.AppPermissionManager.isPermissionEnabled(
+                                            com.concept.music.service.AppPermissionType.STORAGE_EXPORT
+                                        )
+                                    ) {
+                                        Toast.makeText(
+                                            context,
+                                            "已在权限管理中关闭「相册图片写入与导出」权限，请先在设置-权限管理中开启",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        return@softCardClickable
                                     }
-                                    saving = false
-                                    if (uri != null) {
-                                        runCatching {
-                                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                                type = "image/png"
-                                                putExtra(Intent.EXTRA_STREAM, uri)
-                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                            }
-                                            context.startActivity(Intent.createChooser(shareIntent, "分享超清歌词海报"))
+                                    saving = true
+                                    scope.launch {
+                                        val uri = withContext(Dispatchers.IO) {
+                                            runCatching {
+                                                renderAndSavePosterToGallery(
+                                                    context = context,
+                                                    song = effectiveSong,
+                                                    lines = selectedLines,
+                                                    template = template,
+                                                    includeTranslation = includeTranslation,
+                                                    centerAlign = centerAlign,
+                                                    showWaveform = showWaveformCode,
+                                                    dateStr = dateStr
+                                                )
+                                            }.getOrNull()
                                         }
-                                    } else {
-                                        Toast.makeText(context, "生成分享海报失败", Toast.LENGTH_SHORT).show()
+                                        saving = false
+                                        if (uri != null) {
+                                            runCatching {
+                                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                                    type = "image/png"
+                                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                context.startActivity(Intent.createChooser(shareIntent, "分享歌词海报"))
+                                            }
+                                        } else {
+                                            Toast.makeText(context, "生成分享海报失败", Toast.LENGTH_SHORT).show()
+                                        }
                                     }
                                 }
-                            },
-                            enabled = selectedLines.isNotEmpty() && !saving,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = Color.White.copy(alpha = 0.12f),
-                                contentColor = Color.White
-                            ),
-                            contentPadding = PaddingValues(horizontal = 11.dp, vertical = 6.dp)
                         ) {
-                            Icon(Icons.Rounded.Share, contentDescription = "分享", modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("分享", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Share,
+                                    contentDescription = "分享",
+                                    tint = Color.White.copy(alpha = if (actionButtonsEnabled) 0.95f else 0.4f),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "分享",
+                                    color = Color.White.copy(alpha = if (actionButtonsEnabled) 0.95f else 0.4f),
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         }
 
-                        Button(
-                            onClick = {
-                                if (selectedLines.isEmpty()) return@Button
-                                saving = true
-                                scope.launch {
-                                    val uri = withContext(Dispatchers.IO) {
-                                        runCatching {
-                                            renderAndSavePosterToGallery(
-                                                context = context,
-                                                song = effectiveSong,
-                                                lines = selectedLines,
-                                                template = template,
-                                                includeTranslation = includeTranslation,
-                                                centerAlign = centerAlign,
-                                                showWaveform = showWaveformCode,
-                                                dateStr = dateStr
-                                            )
-                                        }.getOrNull()
+                        Surface(
+                            shape = RoundedCornerShape(11.dp),
+                            color = Color(template.accentColor).copy(alpha = if (actionButtonsEnabled) 1f else 0.45f),
+                            modifier = Modifier
+                                .height(34.dp)
+                                .softCardClickable(
+                                    enabled = actionButtonsEnabled,
+                                    shape = RoundedCornerShape(11.dp)
+                                ) {
+                                    if (selectedLines.isEmpty() || saving) return@softCardClickable
+                                    if (!com.concept.music.service.AppPermissionManager.isPermissionEnabled(
+                                            com.concept.music.service.AppPermissionType.STORAGE_EXPORT
+                                        )
+                                    ) {
+                                        Toast.makeText(
+                                            context,
+                                            "已在权限管理中关闭「相册图片写入与导出」权限，请先在设置-权限管理中开启",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        return@softCardClickable
                                     }
-                                    saving = false
-                                    Toast.makeText(
-                                        context,
-                                        if (uri != null) "2K 超清海报已保存至相册 (Pictures/ConceptMusic)" else "保存海报失败",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                    if (uri != null) onDismiss()
+                                    saving = true
+                                    scope.launch {
+                                        val uri = withContext(Dispatchers.IO) {
+                                            runCatching {
+                                                renderAndSavePosterToGallery(
+                                                    context = context,
+                                                    song = effectiveSong,
+                                                    lines = selectedLines,
+                                                    template = template,
+                                                    includeTranslation = includeTranslation,
+                                                    centerAlign = centerAlign,
+                                                    showWaveform = showWaveformCode,
+                                                    dateStr = dateStr
+                                                )
+                                            }.getOrNull()
+                                        }
+                                        saving = false
+                                        Toast.makeText(
+                                            context,
+                                            if (uri != null) "海报已保存至相册 (Pictures/ConceptMusic)" else "保存海报失败",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                        if (uri != null) onDismiss()
+                                    }
                                 }
-                            },
-                            enabled = selectedLines.isNotEmpty() && !saving,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(template.accentColor)),
-                            contentPadding = PaddingValues(horizontal = 13.dp, vertical = 6.dp)
                         ) {
-                            Icon(
-                                Icons.Rounded.Download,
-                                contentDescription = "保存",
-                                tint = if (template == PosterTemplateStyle.AURORA_GLASS || template == PosterTemplateStyle.VINYL_ARCHIVE) Color(0xFF0A0F18) else Color.White,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (saving) "超清渲染中..." else "保存超清海报",
-                                color = if (template == PosterTemplateStyle.AURORA_GLASS || template == PosterTemplateStyle.VINYL_ARCHIVE) Color(0xFF0A0F18) else Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 13.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Download,
+                                    contentDescription = "保存海报",
+                                    tint = primaryBtnTextColor,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = if (saving) "渲染中..." else "保存海报",
+                                    color = primaryBtnTextColor,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         }
                     }
                 }
@@ -631,10 +708,12 @@ private fun PosterMiniToggleChip(
     ) {
         Text(
             text = label,
-            color = if (active) ConceptPrimary else Color.White.copy(alpha = 0.65f),
-            fontSize = 10.5.sp,
+            color = if (active) ConceptPrimary else Color.White.copy(alpha = 0.72f),
+            fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp)
         )
     }
 }

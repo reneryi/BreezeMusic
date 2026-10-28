@@ -118,6 +118,10 @@ private fun SaveQrButton(bitmap: Bitmap) {
     }
     Column {
         Button(onClick = {
+            if (!com.concept.music.service.AppPermissionManager.isPermissionEnabled(com.concept.music.service.AppPermissionType.STORAGE_EXPORT)) {
+                message = "已在权限管理中关闭「相册图片写入与导出」权限，请先在设置中开启"
+                return@Button
+            }
             if (Build.VERSION.SDK_INT <= 28 && ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED)
                 permission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             else save()

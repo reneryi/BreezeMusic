@@ -52,6 +52,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.concept.music.BuildConfig
 import com.concept.music.data.kugou.NetworkClientProvider
 import com.concept.music.data.model.AudioQuality
+import com.concept.music.service.AppPermissionManager
+import com.concept.music.service.AppPermissionState
+import com.concept.music.service.AppPermissionType
 import com.concept.music.service.AudioCacheLimit
 import com.concept.music.service.AudioCacheManager
 import com.concept.music.service.AudioEffectManager
@@ -270,15 +273,19 @@ enum class SettingsCategory(
     ),
     STORAGE(
         title = "存储与缓存",
-        subtitle = "音频/图片/歌单快照/歌词分项缓存明细、上限设置与独立清理"
+        subtitle = "音频、图片、歌单快照与歌词分项缓存明细、上限设置与清理"
+    ),
+    PERMISSIONS(
+        title = "权限管理",
+        subtitle = "公开说明应用获取的全部权限用途，支持自主开关并管控对应功能"
     ),
     FEEDBACK(
         title = "问题反馈与建议",
-        subtitle = "标准 GitHub Issue 提交示例图、编写指南与一键跳转仓库 Issues"
+        subtitle = "标准 GitHub Issue 提交示例、反馈指南与一键跳转仓库"
     ),
     ABOUT(
         title = "关于微风音乐",
-        subtitle = "项目定义、免责与版权声明、项目仓库、检查更新与更新日志"
+        subtitle = "项目简介、免责与版权声明、开源仓库、检查更新与更新日志"
     )
 }
 
@@ -290,6 +297,10 @@ private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
 }
 
 private fun requestIgnoreBatteryOptimizations(context: Context) {
+    if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.BACKGROUND_GUARDIAN)) {
+        Toast.makeText(context, "已在权限管理中关闭「后台保活、唤醒锁与 VIP 自动守护」权限，请先在权限管理中开启", Toast.LENGTH_SHORT).show()
+        return
+    }
     runCatching {
         val directIntent = Intent(
             Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
@@ -330,6 +341,9 @@ private fun copyTextToClipboard(context: Context, label: String, text: String) {
 }
 
 private suspend fun checkGitHubLatestRelease(): UpdateCheckResult = withContext(Dispatchers.IO) {
+    if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.NETWORK_ACCESS)) {
+        return@withContext UpdateCheckResult.Error("已在权限管理中关闭「网络访问」权限，请先开启后再检查更新")
+    }
     runCatching {
         val req = Request.Builder()
             .url(ProjectLinks.GITHUB_LATEST_RELEASE_API)
@@ -446,14 +460,17 @@ fun SettingsScreen(
     val cacheLimit by AudioCacheManager.cacheLimit.collectAsState()
     val themeMode by ThemeManager.themeMode.collectAsState()
     val audioEffectState by AudioEffectManager.state.collectAsState()
+    val permissionState by AppPermissionManager.state.collectAsState()
 
     var batteryWhitelisted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+    var systemPermissionRefreshTick by remember { mutableIntStateOf(0) }
     var updateCheckState by remember { mutableStateOf<UpdateCheckResult>(UpdateCheckResult.Idle) }
 
     DisposableEffect(lifecycleOwner, context) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 batteryWhitelisted = isIgnoringBatteryOptimizations(context)
+                systemPermissionRefreshTick += 1
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -493,24 +510,19 @@ fun SettingsScreen(
             topBar = {
                 TopAppBar(
                     title = {
-                        Column {
-                            Text(
-                                text = when {
-                                    showChangelogSubPage -> "更新日志"
-                                    activeCategory != null -> activeCategory.title
-                                    else -> "设置"
-                                },
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                            )
-                            if (activeCategory != null || showChangelogSubPage) {
-                                Text(
-                                    text = if (showChangelogSubPage) "关于微风音乐 · 版本记录" else "设置 · 二级选项",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp
-                                )
-                            }
-                        }
+                        Text(
+                            text = when {
+                                showChangelogSubPage -> "更新日志"
+                                activeCategory != null -> activeCategory.title
+                                else -> "设置"
+                            },
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 18.sp
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     },
                     navigationIcon = {
                         IconButton(
@@ -646,6 +658,21 @@ fun SettingsScreen(
                                 accentColor = ConceptAmberAccent,
                                 statusText = "总缓存 ${AudioCacheManager.formatSize(cacheSizeBytes)} · 音频 ${AudioCacheManager.formatSize(detailedCacheStats.audioBytes)} / 图片 ${AudioCacheManager.formatSize(detailedCacheStats.totalImageBytes)}",
                                 onClick = { activeCategoryName = SettingsCategory.STORAGE.name }
+                            )
+                        }
+                        item {
+                            val permEnabledCnt = permissionState.enabledCount
+                            val permTotalCnt = permissionState.totalCount
+                            SettingsMenuEntryCard(
+                                category = SettingsCategory.PERMISSIONS,
+                                icon = Icons.Rounded.VerifiedUser,
+                                accentColor = ConceptMintAccent,
+                                statusText = if (permEnabledCnt == permTotalCnt) {
+                                    "已开启全部 $permTotalCnt 项权限 · 用途公开透明"
+                                } else {
+                                    "已开启 $permEnabledCnt / $permTotalCnt 项 · 已限制 ${permTotalCnt - permEnabledCnt} 项功能"
+                                },
+                                onClick = { activeCategoryName = SettingsCategory.PERMISSIONS.name }
                             )
                         }
                         item {
@@ -1495,6 +1522,31 @@ fun SettingsScreen(
                                 }
                             }
 
+                            SettingsCategory.PERMISSIONS -> {
+                                item {
+                                    PermissionsSectionContent(
+                                        context = context,
+                                        permissionState = permissionState,
+                                        refreshTick = systemPermissionRefreshTick,
+                                        onTogglePermission = { type, enabled ->
+                                            viewModel.setAppPermissionEnabled(type, enabled)
+                                            val stateLabel = if (enabled) "已开启" else "已关闭"
+                                            Toast.makeText(
+                                                context,
+                                                "$stateLabel「${type.title}」权限",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        },
+                                        onEnableAll = {
+                                            AppPermissionType.entries.forEach { t ->
+                                                viewModel.setAppPermissionEnabled(t, true)
+                                            }
+                                            Toast.makeText(context, "已恢复开启全部应用权限", Toast.LENGTH_SHORT).show()
+                                        }
+                                    )
+                                }
+                            }
+
                             SettingsCategory.FEEDBACK -> {
                                 item {
                                     FeedbackGuideSectionContent(context = context)
@@ -1753,7 +1805,7 @@ private fun StorageAndCacheSectionContent(
                 title = "流媒体音频缓存",
                 badgeText = "共 ${stats.audioTrackCount} 首音频片段",
                 sizeText = AudioCacheManager.formatSize(stats.audioBytes),
-                description = "目录：concept_audio_stream_cache · 在线边听边存的 Hi-Res / SQ 无损 FLAC / 320K 音频流数据块，二次重播免缓冲零流量。",
+                description = "在线播放时自动保存的 Hi-Res / SQ 无损与高品音频数据块，再次播放同一歌曲时免缓冲且不消耗流量。",
                 accentColor = ConceptAmberAccent,
                 icon = Icons.Rounded.LibraryMusic,
                 actionLabel = "清理音频",
@@ -1773,7 +1825,7 @@ private fun StorageAndCacheSectionContent(
                 title = "封面与评论图片缓存",
                 badgeText = "磁盘 ${AudioCacheManager.formatSize(stats.imageDiskBytes)} · 内存 ${AudioCacheManager.formatSize(stats.imageMemoryBytes)}",
                 sizeText = AudioCacheManager.formatSize(stats.totalImageBytes),
-                description = "目录：image_cache (Coil) · 专辑高清封面、2K 歌词海报底图、歌手写真、歌单封面及评论区动态 GIF/WebP 表情包与配图。",
+                description = "包含专辑高清封面、歌词海报底图、歌手写真、歌单封面及评论区配图缓存。",
                 accentColor = ConceptPrimary,
                 icon = Icons.Rounded.Image,
                 actionLabel = "清理图片",
@@ -1790,16 +1842,16 @@ private fun StorageAndCacheSectionContent(
             )
 
             CacheCategoryDetailRow(
-                title = "歌单与发现页秒开快照 (SWR)",
+                title = "歌单与发现页本地快照",
                 badgeText = "${stats.swrSnapshotCount} 份歌单离线快照",
                 sizeText = AudioCacheManager.formatSize(stats.swrMetadataBytes),
-                description = "目录：swr_playlists · 每日推荐、私人 FM、新歌速递、排行榜及个人收藏歌单的冷启动秒开缓存（清理后联网自动重新同步，不影响云端歌单）。",
+                description = "每日推荐、私人 FM、新歌速递、排行榜及个人收藏歌单的启动加速缓存，清理后联网会自动重新同步，不影响云端歌单。",
                 accentColor = ConceptMintAccent,
                 icon = Icons.Rounded.FlashOn,
                 actionLabel = "清理快照",
                 onClearClick = {
                     AudioCacheManager.clearSwrMetadataCacheOnly(context) {
-                        Toast.makeText(context, "已清理歌单与发现页秒开快照", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "已清理歌单与发现页本地快照", Toast.LENGTH_SHORT).show()
                     }
                 }
             )
@@ -1810,10 +1862,10 @@ private fun StorageAndCacheSectionContent(
             )
 
             CacheCategoryDetailRow(
-                title = "KRC 歌词、音源直链与验证临时缓存",
+                title = "逐字歌词与音源直链缓存",
                 badgeText = "歌词 ${stats.lyricMemoryCount} 首 · 音源元数据 ${stats.runtimeMetaCount} 条",
                 sizeText = AudioCacheManager.formatSize(stats.otherTempBytes),
-                description = "包含内存中已解密的 KRC 逐字双语歌词、20 分钟音源直链缓存、专辑发行信息缓存及安全验证 WebView 临时文件。",
+                description = "包含已解析的 KRC 逐字双语歌词、临时音源链接、专辑发行信息及安全验证临时文件。",
                 accentColor = ConceptVioletAccent,
                 icon = Icons.Rounded.Lyrics,
                 actionLabel = "清理临时",
@@ -1943,6 +1995,515 @@ private fun CacheCategoryDetailRow(
     }
 }
 
+
+/**
+ * 权限管理二级页面（大气、高可读性的权限公开透明说明与自主开关中心）：
+ * 1. 顶部全景概览横幅：直观呈现已开启权限数量、最小化隐私承诺及「系统权限设置 / 一键全部开启」快捷入口；
+ * 2. 7 大核心权限独立卡片：清晰公开每项权限的 Android 系统标识、获取用途、隐私保护承诺，以及关闭后的具体功能影响；
+ * 3. 独立自主开关：用户可随时开启或关闭任意一项权限，关闭后立即拦截或停用对应功能。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PermissionsSectionContent(
+    context: Context,
+    permissionState: AppPermissionState,
+    refreshTick: Int,
+    onTogglePermission: (AppPermissionType, Boolean) -> Unit,
+    onEnableAll: () -> Unit
+) {
+    val enabledCount = permissionState.enabledCount
+    val totalCount = permissionState.totalCount
+    val restrictedCount = (totalCount - enabledCount).coerceAtLeast(0)
+
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        // 1. 顶部大气概览 Hero 卡片
+        Surface(
+            shape = RoundedCornerShape(26.dp),
+            color = conceptFloatingCardColor(),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shadowElevation = 0.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    ConceptMintAccent.copy(alpha = 0.16f),
+                                    ConceptPrimary.copy(alpha = 0.06f),
+                                    Color.Transparent
+                                )
+                            )
+                        )
+                        .padding(horizontal = 20.dp, vertical = 20.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(RoundedCornerShape(15.dp))
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(ConceptMintAccent, ConceptPrimary)
+                                            )
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.VerifiedUser,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(26.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(14.dp))
+                                Column {
+                                    Text(
+                                        text = "应用权限公开与自主管控",
+                                        style = MaterialTheme.typography.titleMedium.copy(
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 17.5.sp
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = if (restrictedCount == 0) {
+                                            "当前已启用全部 $totalCount 项权限 · 所有功能正常可用"
+                                        } else {
+                                            "已启用 $enabledCount / $totalCount 项 · 已自主关闭 $restrictedCount 项权限"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (restrictedCount == 0) ConceptMintAccent else ConceptAmberAccent
+                                    )
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "微风音乐遵循「最小化按需获取」与「纯端侧透明直连」原则。下方完整公开项目中声明与使用的每项权限用途，您可随时自主开关；关闭某项权限后，对应功能将立即停用，不影响其他无关模块正常运行。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp
+                        )
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(
+                                "零私服纯端侧直连",
+                                "用途透明公开",
+                                "支持独立自主关停",
+                                "绝不读取私人相册与通讯录"
+                            ).forEach { badge ->
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = ConceptMintAccent.copy(alpha = 0.12f)
+                                ) {
+                                    Text(
+                                        text = badge,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = ConceptMintAccent,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { AppPermissionManager.openAppDetailsSettings(context) },
+                                shape = RoundedCornerShape(13.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.SettingsApplications,
+                                    contentDescription = null,
+                                    tint = ConceptPrimary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "系统应用权限页",
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ConceptPrimary,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+
+                            if (restrictedCount > 0) {
+                                Button(
+                                    onClick = onEnableAll,
+                                    shape = RoundedCornerShape(13.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = ConceptMintAccent,
+                                        contentColor = Color(0xFF061310)
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(40.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.DoneAll,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "恢复开启全部",
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 1,
+                                        softWrap = false
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. 逐项权限公开说明与独立开关卡片
+        AppPermissionType.entries.forEach { permType ->
+            val isEnabled = permissionState.isEnabled(permType)
+            val systemGrant = remember(permType, refreshTick, isEnabled) {
+                AppPermissionManager.querySystemGrantStatus(context, permType)
+            }
+            PermissionDisclosureCard(
+                type = permType,
+                enabled = isEnabled,
+                systemGrant = systemGrant,
+                onCheckedChange = { onTogglePermission(permType, it) },
+                onOpenSystemSetting = {
+                    AppPermissionManager.openSystemPermissionSetting(context, permType)
+                }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PermissionDisclosureCard(
+    type: AppPermissionType,
+    enabled: Boolean,
+    systemGrant: com.concept.music.service.SystemPermissionGrantStatus,
+    onCheckedChange: (Boolean) -> Unit,
+    onOpenSystemSetting: () -> Unit
+) {
+    val (icon, accentColor) = when (type) {
+        AppPermissionType.NETWORK_ACCESS -> Icons.Rounded.Public to ConceptPrimary
+        AppPermissionType.NOTIFICATION_MEDIA -> Icons.Rounded.NotificationsActive to ConceptCyanAccent
+        AppPermissionType.SYSTEM_OVERLAY -> Icons.Rounded.PictureInPictureAlt to ConceptVioletAccent
+        AppPermissionType.STORAGE_EXPORT -> Icons.Rounded.PhotoLibrary to ConceptAmberAccent
+        AppPermissionType.BACKGROUND_GUARDIAN -> Icons.Rounded.BatteryChargingFull to ConceptMintAccent
+        AppPermissionType.MOTION_ORIENTATION -> Icons.Rounded.ScreenRotation to ConceptCoralAccent
+        AppPermissionType.AUDIO_HARDWARE -> Icons.Rounded.Headphones to ConceptRoseAccent
+    }
+
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = conceptFloatingCardColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shadowElevation = 0.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                width = if (enabled) 0.8.dp else 1.2.dp,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
+                } else {
+                    ConceptAmberAccent.copy(alpha = 0.45f)
+                },
+                shape = RoundedCornerShape(24.dp)
+            )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // 卡片头部：图标 + 权限标题 + 状态标签 + 自主开关
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                if (enabled) accentColor.copy(alpha = 0.15f)
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = type.title,
+                            tint = if (enabled) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = type.title,
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.5.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = accentColor.copy(alpha = 0.14f)
+                            ) {
+                                Text(
+                                    text = type.badge,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = accentColor,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                )
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (enabled && systemGrant.isSystemGranted) {
+                                    ConceptMintAccent.copy(alpha = 0.14f)
+                                } else {
+                                    ConceptAmberAccent.copy(alpha = 0.15f)
+                                }
+                            ) {
+                                Text(
+                                    text = if (!enabled) "应用内已关闭" else systemGrant.statusLabel,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (enabled && systemGrant.isSystemGranted) {
+                                        ConceptMintAccent
+                                    } else {
+                                        ConceptAmberAccent
+                                    },
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Switch(
+                    checked = enabled,
+                    onCheckedChange = onCheckedChange,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = accentColor
+                    )
+                )
+            }
+
+            // 系统权限标识胶囊条
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.62f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Code,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = type.manifestPermissionName,
+                        fontSize = 11.5.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // 权限用途公开说明与隐私承诺正文区（大字号、宽行距，清晰易读）
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.52f),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            text = "获取用途说明",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.5.sp
+                            ),
+                            color = accentColor
+                        )
+                        Text(
+                            text = type.purposeDescription,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 13.sp,
+                            lineHeight = 19.5.sp
+                        )
+                    }
+
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                    )
+
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(
+                            text = "隐私与数据边界",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.5.sp
+                            ),
+                            color = ConceptMintAccent
+                        )
+                        Text(
+                            text = type.privacyCommitment,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.5.sp,
+                            lineHeight = 18.5.sp
+                        )
+                    }
+                }
+            }
+
+            // 关闭后影响说明区（关闭时高亮警示，开启时清晰预告）
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                } else {
+                    ConceptAmberAccent.copy(alpha = 0.14f)
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 13.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Icon(
+                        imageVector = if (enabled) Icons.Rounded.Info else Icons.Rounded.WarningAmber,
+                        contentDescription = null,
+                        tint = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else ConceptAmberAccent,
+                        modifier = Modifier
+                            .padding(top = 2.dp)
+                            .size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (enabled) "关闭后对功能的影响" else "当前已关闭 · 对应功能已停用",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (enabled) MaterialTheme.colorScheme.onSurface else ConceptAmberAccent
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = type.disabledImpactDescription,
+                            fontSize = 12.2.sp,
+                            lineHeight = 18.sp,
+                            color = if (enabled) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                    }
+                }
+            }
+
+            // 若该权限有关联的系统设置页面，提供快捷跳转入口
+            if (systemGrant.actionButtonLabel != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        onClick = onOpenSystemSetting,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = systemGrant.actionButtonLabel,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accentColor
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                            contentDescription = null,
+                            tint = accentColor,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 /**
  * 问题反馈与建议二级页面：
  * 1. 标准 GitHub Issue 提交可视化介绍示例图（仿真窗口 + ①~⑤ 编号标注）
@@ -2048,12 +2609,20 @@ private fun FeedbackGuideSectionContent(context: Context) {
                             )
                         }
 
-                        // ② 标签区
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        // ② 标签区（使用自适应流式单行胶囊，彻底杜绝窄屏下「enhancement · 建议」挤压折行变形）
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text("标签分类：", fontSize = 11.sp, color = Color(0xFF8B949E))
+                            Text(
+                                text = "标签：",
+                                fontSize = 11.sp,
+                                color = Color(0xFF8B949E),
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.align(Alignment.CenterVertically)
+                            )
                             IssueTagChip("bug · 缺陷/闪退", Color(0xFFDA3633))
                             IssueTagChip("error · 报错码", Color(0xFFD29922))
                             IssueTagChip("enhancement · 建议", Color(0xFF1F6FEB))
@@ -2240,7 +2809,8 @@ private fun FeedbackGuideSectionContent(context: Context) {
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Button(
                     onClick = { openExternalUrl(context, ProjectLinks.GITHUB_ISSUES_URL) },
@@ -2249,11 +2819,21 @@ private fun FeedbackGuideSectionContent(context: Context) {
                         containerColor = ConceptRoseAccent,
                         contentColor = Color.White
                     ),
-                    modifier = Modifier.weight(1f)
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("跳转仓库 Issues 界面", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                    Text(
+                        text = "浏览仓库 Issues",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
                 FilledTonalButton(
@@ -2263,11 +2843,22 @@ private fun FeedbackGuideSectionContent(context: Context) {
                         Toast.makeText(context, "已自动复制模板，正在打开新建 Issue 页面...", Toast.LENGTH_SHORT).show()
                         openExternalUrl(context, ProjectLinks.GITHUB_NEW_ISSUE_URL)
                     },
-                    shape = RoundedCornerShape(14.dp)
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
                 ) {
-                    Icon(Icons.Rounded.AddCircleOutline, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("直接新建 Issue", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Icon(Icons.Rounded.AddCircleOutline, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "直接新建 Issue",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
@@ -2307,16 +2898,25 @@ private fun IssueDiagramCalloutLabel(
 private fun IssueTagChip(text: String, color: Color) {
     Surface(
         shape = CircleShape,
-        color = color.copy(alpha = 0.22f),
-        modifier = Modifier.border(0.8.dp, color.copy(alpha = 0.65f), CircleShape)
+        color = color.copy(alpha = 0.20f),
+        modifier = Modifier
+            .height(22.dp)
+            .border(0.8.dp, color.copy(alpha = 0.65f), CircleShape)
     ) {
-        Text(
-            text = text,
-            fontSize = 9.5.sp,
-            color = color,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-        )
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.padding(horizontal = 7.dp)
+        ) {
+            Text(
+                text = text,
+                fontSize = 9.5.sp,
+                color = color,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
@@ -2460,10 +3060,10 @@ private fun AboutAppSectionContent(
                         }
 
                         Text(
-                            text = "Kotlin · Jetpack Compose · Media3 · Concept (3116)",
-                            style = MaterialTheme.typography.labelSmall,
+                            text = "轻量 · 纯粹 · 高解析的第三方概念版客户端",
+                            style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp
+                            fontSize = 12.sp
                         )
                     }
                 }
@@ -2596,15 +3196,15 @@ private fun AboutAppSectionContent(
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "更新日志 · Changelog",
+                                        text = "更新日志",
                                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                        fontSize = 13.5.sp,
+                                        fontSize = 14.sp,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
-                                        text = "按版本号分类归档 · 点击查看 v${BuildConfig.VERSION_NAME} 正式版更新详情",
+                                        text = "查看 v${BuildConfig.VERSION_NAME} 正式版及历次版本更新记录",
                                         style = MaterialTheme.typography.bodySmall,
-                                        fontSize = 11.5.sp,
+                                        fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -3286,8 +3886,8 @@ private fun SettingsMenuEntryCard(
                     text = statusText,
                     style = MaterialTheme.typography.bodySmall,
                     color = accentColor,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -3296,7 +3896,7 @@ private fun SettingsMenuEntryCard(
                     text = category.subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp,
+                    fontSize = 11.8.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )

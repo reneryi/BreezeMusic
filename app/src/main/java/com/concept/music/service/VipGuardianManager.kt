@@ -78,10 +78,11 @@ object VipGuardianManager {
 
     fun setEnabled(context: Context, enabled: Boolean) {
         val appCtx = context.applicationContext
-        _state.update { it.copy(enabled = enabled) }
-        prefs?.edit()?.putBoolean("guardian_enabled", enabled)?.apply()
-        runCatching { VipManager.accounts.setAuto(enabled) }
-        if (enabled) {
+        val effectiveEnabled = enabled && AppPermissionManager.isPermissionEnabled(AppPermissionType.BACKGROUND_GUARDIAN)
+        _state.update { it.copy(enabled = effectiveEnabled) }
+        prefs?.edit()?.putBoolean("guardian_enabled", effectiveEnabled)?.apply()
+        runCatching { VipManager.accounts.setAuto(effectiveEnabled) }
+        if (effectiveEnabled) {
             schedulePeriodicJob(appCtx)
             triggerGuardianNow(appCtx, isManual = false)
         } else {
@@ -96,6 +97,7 @@ object VipGuardianManager {
     }
 
     fun schedulePeriodicJob(context: Context) {
+        if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.BACKGROUND_GUARDIAN)) return
         runCatching {
             val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler ?: return
             val existing = scheduler.allPendingJobs.any { it.id == JOB_ID_VIP_GUARDIAN }

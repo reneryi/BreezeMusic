@@ -544,8 +544,14 @@ private fun VipCenterContentBody(
                     }
 
                     Switch(
-                        checked = autoClaim,
-                        onCheckedChange = onAutoChange,
+                        checked = autoClaim && com.concept.music.service.AppPermissionManager.isPermissionEnabled(com.concept.music.service.AppPermissionType.BACKGROUND_GUARDIAN),
+                        onCheckedChange = { enabled ->
+                            if (enabled && !com.concept.music.service.AppPermissionManager.isPermissionEnabled(com.concept.music.service.AppPermissionType.BACKGROUND_GUARDIAN)) {
+                                Toast.makeText(context, "已在权限管理中关闭「后台保活与自动守护」权限，请先在设置中开启", Toast.LENGTH_SHORT).show()
+                            } else {
+                                onAutoChange(enabled)
+                            }
+                        },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color.White,
                             checkedTrackColor = ConceptPrimary
@@ -597,9 +603,10 @@ private fun VipCenterContentBody(
                                 )
                             )
                             Text(
-                                text = "酷狗概念版协议 · AppID 3116 / Ver 11440",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                text = "用于保障概念版 VIP 音源与每日权益正常鉴权",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.5.sp
                                 )
                             )
                         }

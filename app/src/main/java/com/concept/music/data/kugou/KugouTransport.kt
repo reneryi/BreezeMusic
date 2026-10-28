@@ -151,6 +151,9 @@ class DirectKugouTransport(
         sign: Boolean,
         includeDefaultParams: Boolean
     ): ApiResponse {
+        if (!com.concept.music.service.AppPermissionManager.isPermissionEnabled(com.concept.music.service.AppPermissionType.NETWORK_ACCESS)) {
+            throw IOException("已关闭「网络访问与网络状态检测」权限，无法加载在线数据（可在设置-权限管理中重新开启）")
+        }
         val d = device ?: identity()
         val params = linkedMapOf<String, String>()
         if (includeDefaultParams) {
@@ -206,6 +209,9 @@ class DirectKugouTransport(
     override suspend fun requestRawBytes(path: String, session: KugouSession?, query: Map<String, String>,
         rawBody: String?, host: String, method: String, headers: Map<String, String>,
         sign: Boolean, includeDefaultParams: Boolean, device: DeviceIdentity?): ByteArray = withContext(Dispatchers.IO) {
+        if (!com.concept.music.service.AppPermissionManager.isPermissionEnabled(com.concept.music.service.AppPermissionType.NETWORK_ACCESS)) {
+            throw IOException("已关闭「网络访问与网络状态检测」权限，无法加载在线数据（可在设置-权限管理中重新开启）")
+        }
         val d = device ?: identity()
         val params = linkedMapOf<String, String>()
         if (includeDefaultParams) {

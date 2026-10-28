@@ -737,9 +737,9 @@ fun CommentsScreen(
                             }
 
                             Text(
-                                text = if (currentType == "hot") "按热度权重排序" else "按实时发布时间排序",
-                                color = subText.copy(alpha = 0.65f),
-                                fontSize = 11.sp
+                                text = if (currentType == "hot") "按热度排序" else "按最新时间排序",
+                                color = subText.copy(alpha = 0.72f),
+                                fontSize = 11.5.sp
                             )
                         }
 
@@ -1219,9 +1219,9 @@ fun CommentFloorDetailScreen(
                             fontWeight = FontWeight.ExtraBold
                         )
                         Text(
-                            text = "点击任意评论可挂载子分支回复",
-                            color = subText.copy(alpha = 0.65f),
-                            fontSize = 11.sp
+                            text = "点击任意评论即可回复",
+                            color = subText.copy(alpha = 0.72f),
+                            fontSize = 11.5.sp
                         )
                     }
                 }
