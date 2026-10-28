@@ -24,6 +24,8 @@ import com.concept.music.service.AmbientSoundManager
 import com.concept.music.service.AudioCacheManager
 import com.concept.music.service.ConceptMusicWidgetUpdater
 import com.concept.music.service.PlaybackCoordinator
+import com.concept.music.service.AudioFocusMode
+import com.concept.music.service.HeadsetClickSensitivity
 import com.concept.music.service.PlaybackService
 import com.concept.music.service.SystemLyricBridge
 import com.google.common.util.concurrent.ListenableFuture
@@ -152,7 +154,17 @@ data class PlayerUiState(
     val wifiOnlyLossless: Boolean = false,
     val pauseOnHeadsetDisconnect: Boolean = true,
     val allowPlayWithOtherApps: Boolean = false,
+    val audioFocusMode: AudioFocusMode = AudioFocusMode.EXCLUSIVE,
     val wiredHeadsetControlEnabled: Boolean = true,
+    val swapHeadsetDoubleTripleClick: Boolean = false,
+    val headsetClickSensitivity: HeadsetClickSensitivity = HeadsetClickSensitivity.STANDARD,
+    val autoPlayOnHeadsetConnect: Boolean = false,
+    val autoPlayOnWiredConnect: Boolean = true,
+    val autoPlayOnBluetoothConnect: Boolean = true,
+    val bluetoothLyricOffsetEnabled: Boolean = false,
+    val bluetoothLyricOffsetMs: Long = -200L,
+    val isBluetoothAudioConnected: Boolean = false,
+    val keepPlayingOnTaskRemoved: Boolean = true,
     val autoPlayOnStartup: Boolean = false,
     val commentTargetSong: Song? = null,
     val comments: List<SongComment> = emptyList(),
@@ -165,7 +177,11 @@ data class PlayerUiState(
     val loading: Boolean = false,
     val lyricLoading: Boolean = false,
     val error: String? = null
-)
+) {
+    val effectiveLyricOffsetMs: Long
+        get() = (lyricOffsetMs + if (bluetoothLyricOffsetEnabled && isBluetoothAudioConnected) bluetoothLyricOffsetMs else 0L)
+            .coerceIn(-6000L, 6000L)
+}
 
 class MusicPlayerViewModel(application: Application) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(PlayerUiState())
@@ -555,6 +571,29 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             viewModelScope.launch(Dispatchers.Main) { togglePlayPause() }
             true
         }
+        PlaybackCoordinator.onResumePlayDelegate = {
+            val stNow = mutableState.value
+            val canResume = !stNow.isPlaying && (stNow.currentSong != null || stNow.playlistQueue.isNotEmpty())
+            if (canResume) {
+                viewModelScope.launch(Dispatchers.Main) {
+                    if (!mutableState.value.isPlaying) {
+                        val curSong = mutableState.value.currentSong ?: mutableState.value.playlistQueue.firstOrNull()
+                        if (curSong != null) {
+                            togglePlayPause()
+                        }
+                    }
+                }
+            }
+            canResume
+        }
+        PlaybackService.onBluetoothConnectionChanged = { btConnected ->
+            viewModelScope.launch(Dispatchers.Main) {
+                if (mutableState.value.isBluetoothAudioConnected != btConnected) {
+                    mutableState.update { it.copy(isBluetoothAudioConnected = btConnected) }
+                    updateLyricIndex(currentSmoothPositionMs())
+                }
+            }
+        }
         PlaybackService.onSkipToNextIntercepted = {
             val hasQueue = mutableState.value.playlistQueue.isNotEmpty()
             if (hasQueue) {
@@ -573,8 +612,16 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                         val st = mutableState.value
                         player.playbackParameters = PlaybackParameters(st.playbackSpeed, st.playbackPitch)
                         PlaybackService.updateHandleAudioBecomingNoisy(st.pauseOnHeadsetDisconnect)
-                        PlaybackService.updateAllowPlayWithOtherApps(st.allowPlayWithOtherApps)
+                        PlaybackService.updateAudioFocusMode(st.audioFocusMode)
                         PlaybackService.updateWiredHeadsetControlEnabled(st.wiredHeadsetControlEnabled)
+                        PlaybackService.updateSwapHeadsetDoubleTripleClick(st.swapHeadsetDoubleTripleClick)
+                        PlaybackService.updateHeadsetClickSensitivity(st.headsetClickSensitivity)
+                        PlaybackService.updateHeadsetAutoPlayConfig(
+                            enabled = st.autoPlayOnHeadsetConnect,
+                            wiredEnabled = st.autoPlayOnWiredConnect,
+                            bluetoothEnabled = st.autoPlayOnBluetoothConnect
+                        )
+                        PlaybackService.updateKeepPlayingOnTaskRemoved(st.keepPlayingOnTaskRemoved)
                         syncPlayer()
                         startProgressUpdates()
                         if (!hasTriggeredStartupAutoPlay && st.autoPlayOnStartup && st.currentSong != null && !player.isPlaying) {
@@ -755,9 +802,40 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         val savedWifiOnly = prefs.getBoolean("wifi_only_lossless", false)
         val savedPauseHeadset = prefs.getBoolean("pause_on_headset_disconnect", true)
         val savedAllowPlayWithOthers = prefs.getBoolean("allow_play_with_other_apps", false)
+        val rawFocusMode = prefs.getString("audio_focus_mode", null)
+        val savedAudioFocusMode = if (rawFocusMode != null) {
+            runCatching { AudioFocusMode.valueOf(rawFocusMode) }.getOrDefault(
+                if (savedAllowPlayWithOthers) AudioFocusMode.MIX else AudioFocusMode.EXCLUSIVE
+            )
+        } else {
+            if (savedAllowPlayWithOthers) AudioFocusMode.MIX else AudioFocusMode.EXCLUSIVE
+        }
+        val effectiveAllowMix = savedAudioFocusMode != AudioFocusMode.EXCLUSIVE
         val savedWiredHeadsetControl = prefs.getBoolean("wired_headset_control_enabled", true)
-        PlaybackService.updateAllowPlayWithOtherApps(savedAllowPlayWithOthers)
+        val savedSwapHeadsetButtons = prefs.getBoolean("swap_headset_double_triple_click", false)
+        val savedSensitivity = runCatching {
+            HeadsetClickSensitivity.valueOf(
+                prefs.getString("headset_click_sensitivity", HeadsetClickSensitivity.STANDARD.name)
+                    ?: HeadsetClickSensitivity.STANDARD.name
+            )
+        }.getOrDefault(HeadsetClickSensitivity.STANDARD)
+        val savedAutoPlayHeadset = prefs.getBoolean("auto_play_on_headset_connect", false)
+        val savedAutoPlayWired = prefs.getBoolean("auto_play_on_wired_connect", true)
+        val savedAutoPlayBt = prefs.getBoolean("auto_play_on_bluetooth_connect", true)
+        val savedBtLyricOffsetEnabled = prefs.getBoolean("bluetooth_lyric_offset_enabled", false)
+        val savedBtLyricOffsetMs = prefs.getLong("bluetooth_lyric_offset_ms", -200L).coerceIn(-1000L, 1000L)
+        val savedKeepPlayingTaskRemoved = prefs.getBoolean("keep_playing_on_task_removed", true)
+
+        PlaybackService.updateAudioFocusMode(savedAudioFocusMode)
         PlaybackService.updateWiredHeadsetControlEnabled(savedWiredHeadsetControl)
+        PlaybackService.updateSwapHeadsetDoubleTripleClick(savedSwapHeadsetButtons)
+        PlaybackService.updateHeadsetClickSensitivity(savedSensitivity)
+        PlaybackService.updateHeadsetAutoPlayConfig(
+            enabled = savedAutoPlayHeadset,
+            wiredEnabled = savedAutoPlayWired,
+            bluetoothEnabled = savedAutoPlayBt
+        )
+        PlaybackService.updateKeepPlayingOnTaskRemoved(savedKeepPlayingTaskRemoved)
         val savedAutoPlay = prefs.getBoolean("auto_play_on_startup", false)
 
         val userScopeKey = currentUser ?: "guest"
@@ -855,8 +933,18 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             volumeNormalization = savedVolNorm,
             wifiOnlyLossless = savedWifiOnly,
             pauseOnHeadsetDisconnect = savedPauseHeadset,
-            allowPlayWithOtherApps = savedAllowPlayWithOthers,
+            allowPlayWithOtherApps = effectiveAllowMix,
+            audioFocusMode = savedAudioFocusMode,
             wiredHeadsetControlEnabled = savedWiredHeadsetControl,
+            swapHeadsetDoubleTripleClick = savedSwapHeadsetButtons,
+            headsetClickSensitivity = savedSensitivity,
+            autoPlayOnHeadsetConnect = savedAutoPlayHeadset,
+            autoPlayOnWiredConnect = savedAutoPlayWired,
+            autoPlayOnBluetoothConnect = savedAutoPlayBt,
+            bluetoothLyricOffsetEnabled = savedBtLyricOffsetEnabled,
+            bluetoothLyricOffsetMs = savedBtLyricOffsetMs,
+            isBluetoothAudioConnected = PlaybackService.isBluetoothAudioOutputConnected,
+            keepPlayingOnTaskRemoved = savedKeepPlayingTaskRemoved,
             autoPlayOnStartup = savedAutoPlay,
             playlistQueue = sanitizedQueue,
             currentIndex = savedIndex,
@@ -941,7 +1029,16 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             putBoolean("wifi_only_lossless", snapshot.wifiOnlyLossless)
             putBoolean("pause_on_headset_disconnect", snapshot.pauseOnHeadsetDisconnect)
             putBoolean("allow_play_with_other_apps", snapshot.allowPlayWithOtherApps)
+            putString("audio_focus_mode", snapshot.audioFocusMode.name)
             putBoolean("wired_headset_control_enabled", snapshot.wiredHeadsetControlEnabled)
+            putBoolean("swap_headset_double_triple_click", snapshot.swapHeadsetDoubleTripleClick)
+            putString("headset_click_sensitivity", snapshot.headsetClickSensitivity.name)
+            putBoolean("auto_play_on_headset_connect", snapshot.autoPlayOnHeadsetConnect)
+            putBoolean("auto_play_on_wired_connect", snapshot.autoPlayOnWiredConnect)
+            putBoolean("auto_play_on_bluetooth_connect", snapshot.autoPlayOnBluetoothConnect)
+            putBoolean("bluetooth_lyric_offset_enabled", snapshot.bluetoothLyricOffsetEnabled)
+            putLong("bluetooth_lyric_offset_ms", snapshot.bluetoothLyricOffsetMs)
+            putBoolean("keep_playing_on_task_removed", snapshot.keepPlayingOnTaskRemoved)
             putBoolean("auto_play_on_startup", snapshot.autoPlayOnStartup)
             putString("saved_queue_json_$userScopeKey", queueJson)
             putString("saved_recent_queues_json_$userScopeKey", recentJson)
@@ -1296,7 +1393,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun seekToLyricLine(index: Int) {
         val lines = mutableState.value.currentLyric.lines
         if (index in lines.indices) {
-            val targetMs = (lines[index].startTimeMs - mutableState.value.lyricOffsetMs).coerceAtLeast(0L)
+            val targetMs = (lines[index].startTimeMs - mutableState.value.effectiveLyricOffsetMs).coerceAtLeast(0L)
             seekTo(targetMs)
         }
     }
@@ -1508,7 +1605,17 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             wifiOnlyLossless = st.wifiOnlyLossless,
             pauseOnHeadsetDisconnect = st.pauseOnHeadsetDisconnect,
             allowPlayWithOtherApps = st.allowPlayWithOtherApps,
+            audioFocusMode = st.audioFocusMode,
             wiredHeadsetControlEnabled = st.wiredHeadsetControlEnabled,
+            swapHeadsetDoubleTripleClick = st.swapHeadsetDoubleTripleClick,
+            headsetClickSensitivity = st.headsetClickSensitivity,
+            autoPlayOnHeadsetConnect = st.autoPlayOnHeadsetConnect,
+            autoPlayOnWiredConnect = st.autoPlayOnWiredConnect,
+            autoPlayOnBluetoothConnect = st.autoPlayOnBluetoothConnect,
+            bluetoothLyricOffsetEnabled = st.bluetoothLyricOffsetEnabled,
+            bluetoothLyricOffsetMs = st.bluetoothLyricOffsetMs,
+            isBluetoothAudioConnected = st.isBluetoothAudioConnected,
+            keepPlayingOnTaskRemoved = st.keepPlayingOnTaskRemoved,
             autoPlayOnStartup = st.autoPlayOnStartup,
             recentQueues = remainingRecent,
             activeQueueId = ""
@@ -1761,15 +1868,93 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         persistPlaybackStateAsync()
     }
 
-    fun setAllowPlayWithOtherApps(enabled: Boolean) {
-        mutableState.value = mutableState.value.copy(allowPlayWithOtherApps = enabled)
-        PlaybackService.updateAllowPlayWithOtherApps(enabled)
+    fun setAudioFocusMode(mode: AudioFocusMode) {
+        val allowMix = mode != AudioFocusMode.EXCLUSIVE
+        mutableState.value = mutableState.value.copy(
+            audioFocusMode = mode,
+            allowPlayWithOtherApps = allowMix
+        )
+        PlaybackService.updateAudioFocusMode(mode)
         persistPlaybackStateAsync()
+    }
+
+    fun setAllowPlayWithOtherApps(enabled: Boolean) {
+        val targetMode = if (enabled) {
+            val cur = mutableState.value.audioFocusMode
+            if (cur == AudioFocusMode.EXCLUSIVE) AudioFocusMode.MIX else cur
+        } else {
+            AudioFocusMode.EXCLUSIVE
+        }
+        setAudioFocusMode(targetMode)
     }
 
     fun setWiredHeadsetControlEnabled(enabled: Boolean) {
         mutableState.value = mutableState.value.copy(wiredHeadsetControlEnabled = enabled)
         PlaybackService.updateWiredHeadsetControlEnabled(enabled)
+        persistPlaybackStateAsync()
+    }
+
+    fun setSwapHeadsetDoubleTripleClick(swapped: Boolean) {
+        mutableState.value = mutableState.value.copy(swapHeadsetDoubleTripleClick = swapped)
+        PlaybackService.updateSwapHeadsetDoubleTripleClick(swapped)
+        persistPlaybackStateAsync()
+    }
+
+    fun setHeadsetClickSensitivity(sensitivity: HeadsetClickSensitivity) {
+        mutableState.value = mutableState.value.copy(headsetClickSensitivity = sensitivity)
+        PlaybackService.updateHeadsetClickSensitivity(sensitivity)
+        persistPlaybackStateAsync()
+    }
+
+    fun setAutoPlayOnHeadsetConnect(enabled: Boolean) {
+        val st = mutableState.value
+        mutableState.value = st.copy(autoPlayOnHeadsetConnect = enabled)
+        PlaybackService.updateHeadsetAutoPlayConfig(
+            enabled = enabled,
+            wiredEnabled = st.autoPlayOnWiredConnect,
+            bluetoothEnabled = st.autoPlayOnBluetoothConnect
+        )
+        persistPlaybackStateAsync()
+    }
+
+    fun setAutoPlayOnWiredConnect(enabled: Boolean) {
+        val st = mutableState.value
+        mutableState.value = st.copy(autoPlayOnWiredConnect = enabled)
+        PlaybackService.updateHeadsetAutoPlayConfig(
+            enabled = st.autoPlayOnHeadsetConnect,
+            wiredEnabled = enabled,
+            bluetoothEnabled = st.autoPlayOnBluetoothConnect
+        )
+        persistPlaybackStateAsync()
+    }
+
+    fun setAutoPlayOnBluetoothConnect(enabled: Boolean) {
+        val st = mutableState.value
+        mutableState.value = st.copy(autoPlayOnBluetoothConnect = enabled)
+        PlaybackService.updateHeadsetAutoPlayConfig(
+            enabled = st.autoPlayOnHeadsetConnect,
+            wiredEnabled = st.autoPlayOnWiredConnect,
+            bluetoothEnabled = enabled
+        )
+        persistPlaybackStateAsync()
+    }
+
+    fun setBluetoothLyricOffsetEnabled(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(bluetoothLyricOffsetEnabled = enabled)
+        updateLyricIndex(currentSmoothPositionMs())
+        persistPlaybackStateAsync()
+    }
+
+    fun setBluetoothLyricOffsetMs(offsetMs: Long) {
+        val clamped = offsetMs.coerceIn(-1000L, 1000L)
+        mutableState.value = mutableState.value.copy(bluetoothLyricOffsetMs = clamped)
+        updateLyricIndex(currentSmoothPositionMs())
+        persistPlaybackStateAsync()
+    }
+
+    fun setKeepPlayingOnTaskRemoved(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(keepPlayingOnTaskRemoved = enabled)
+        PlaybackService.updateKeepPlayingOnTaskRemoved(enabled)
         persistPlaybackStateAsync()
     }
 
@@ -2523,7 +2708,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             updateLyricIndex(pos)
         }
         val latestState = mutableState.value
-        val adjustedPos = (pos + latestState.lyricOffsetMs).coerceAtLeast(0L)
+        val adjustedPos = (pos + latestState.effectiveLyricOffsetMs).coerceAtLeast(0L)
         SystemLyricBridge.updatePlaybackSnapshot(
             song = latestState.currentSong,
             lyricData = latestState.currentLyric,
@@ -2536,7 +2721,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     internal fun updateLyricIndex(pos: Long) {
         val st = mutableState.value
         val lyric = st.currentLyric
-        val adjustedPos = (pos + st.lyricOffsetMs).coerceAtLeast(0L)
+        val adjustedPos = (pos + st.effectiveLyricOffsetMs).coerceAtLeast(0L)
         if (lyric.lines.isNotEmpty()) {
             val index = lyric.getLineIndexAt(adjustedPos)
             if (index != st.currentLyricIndex) {
@@ -2614,6 +2799,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         playPauseFadeJob?.cancel()
         ConceptMusicWidgetUpdater.onWidgetCommand = null
         PlaybackCoordinator.onTogglePlayDelegate = null
+        PlaybackCoordinator.onResumePlayDelegate = null
+        PlaybackService.onBluetoothConnectionChanged = null
         PlaybackService.onSkipToNextIntercepted = null
         PlaybackService.onSkipToPreviousIntercepted = null
         SystemLyricBridge.onTogglePlayCallback = null

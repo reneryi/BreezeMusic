@@ -20,13 +20,25 @@ import java.io.File
 import java.util.Locale
 
 /**
+ * 音频缓存容量上限档位
+ */
+enum class AudioCacheLimit(val label: String, val maxBytes: Long) {
+    MB_512("512 MB", 512L * 1024L * 1024L),
+    GB_1("1 GB", 1024L * 1024L * 1024L),
+    GB_2("2 GB", 2048L * 1024L * 1024L),
+    GB_5("5 GB", 5120L * 1024L * 1024L),
+    GB_10("10 GB", 10240L * 1024L * 1024L)
+}
+
+/**
  * 边听边存音频缓存管理器 ([FUNC-02])
- * 基于 Media3 SimpleCache + LRU 淘汰策略，实现联网流媒体自动落盘缓存与秒开重播
+ * 基于 Media3 SimpleCache + LRU 淘汰策略，实现联网流媒体自动落盘缓存、容量上限调节与秒开重播
  */
 @OptIn(UnstableApi::class)
 object AudioCacheManager {
     private const val CACHE_DIR_NAME = "concept_audio_stream_cache"
-    private const val DEFAULT_MAX_CACHE_BYTES = 1024L * 1024L * 1024L // 默认 1 GB 上限
+    private const val PREFS_NAME = "concept_player_prefs"
+    private const val KEY_AUDIO_CACHE_LIMIT = "audio_cache_limit"
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -38,6 +50,46 @@ object AudioCacheManager {
 
     private val _cacheSizeBytes = MutableStateFlow(0L)
     val cacheSizeBytes = _cacheSizeBytes.asStateFlow()
+
+    private val _cacheLimit = MutableStateFlow(AudioCacheLimit.GB_1)
+    val cacheLimit = _cacheLimit.asStateFlow()
+
+    fun loadSavedCacheLimit(context: Context): AudioCacheLimit {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_AUDIO_CACHE_LIMIT, AudioCacheLimit.GB_1.name) ?: AudioCacheLimit.GB_1.name
+        val resolved = runCatching { AudioCacheLimit.valueOf(raw) }.getOrDefault(AudioCacheLimit.GB_1)
+        _cacheLimit.value = resolved
+        return resolved
+    }
+
+    fun setCacheLimit(context: Context, limit: AudioCacheLimit) {
+        val appCtx = context.applicationContext
+        _cacheLimit.value = limit
+        appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_AUDIO_CACHE_LIMIT, limit.name)
+            .apply()
+        scope.launch {
+            runCatching {
+                val cache = getCache(appCtx)
+                trimCacheToLimit(cache, limit.maxBytes)
+            }
+            refreshCacheSize(appCtx)
+        }
+    }
+
+    private fun trimCacheToLimit(cache: SimpleCache, maxBytes: Long) {
+        if (cache.cacheSpace <= maxBytes) return
+        val keysWithOldestTouch = cache.keys.map { key ->
+            val lastTouch = cache.getCachedSpans(key).maxOfOrNull { it.lastTouchTimestamp } ?: 0L
+            key to lastTouch
+        }.sortedBy { it.second }
+
+        for ((key, _) in keysWithOldestTouch) {
+            if (cache.cacheSpace <= maxBytes) break
+            runCatching { cache.removeResource(key) }
+        }
+    }
 
     /**
      * 构造唯一且隔离试听片段与完整正片的业务音频缓存 Key，彻底杜绝 trackercdn 路由同名导致的串歌与试听锁死
@@ -53,11 +105,12 @@ object AudioCacheManager {
     fun getCache(context: Context): SimpleCache {
         simpleCache?.let { return it }
         val appContext = context.applicationContext
+        val configuredLimit = loadSavedCacheLimit(appContext)
         val dir = File(appContext.cacheDir, CACHE_DIR_NAME).apply {
             if (!exists()) mkdirs()
         }
         cacheDir = dir
-        val evictor = LeastRecentlyUsedCacheEvictor(DEFAULT_MAX_CACHE_BYTES)
+        val evictor = LeastRecentlyUsedCacheEvictor(configuredLimit.maxBytes)
         val dbProvider = StandaloneDatabaseProvider(appContext)
         return SimpleCache(dir, evictor, dbProvider).also { cache ->
             simpleCache = cache
@@ -112,6 +165,7 @@ object AudioCacheManager {
 
     fun refreshCacheSize(context: Context) {
         val appCtx = context.applicationContext
+        loadSavedCacheLimit(appCtx)
         scope.launch {
             val bytes = runCatching {
                 val cache = getCache(appCtx)

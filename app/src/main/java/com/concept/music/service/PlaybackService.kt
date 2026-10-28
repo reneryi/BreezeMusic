@@ -3,6 +3,10 @@ package com.concept.music.service
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -34,16 +38,37 @@ import kotlin.math.abs
 import kotlin.math.sin
 
 /**
+ * 音频焦点与多应用并发模式（三档可选）：
+ * 1. EXCLUSIVE：独占焦点（默认），其他应用播放音视频时自动暂停本应用，导航/短通知音自动闪避；
+ * 2. DUCK：压低音量同播（智能闪避），其他应用播放音频时不暂停本应用，而是将本应用音量平滑压低至 30% 作为背景伴奏，对方结束后恢复 100%；
+ * 3. MIX：完全混音同播，不抢占音频焦点且不压低音量，与其他应用保持 100% 原音量同时播放。
+ */
+enum class AudioFocusMode(val label: String, val subtitle: String) {
+    EXCLUSIVE("独占焦点", "其他应用播放音视频时自动暂停，导航与通知音自动闪避"),
+    DUCK("压低音量同播", "其他应用发声时不暂停音乐，自动压低本应用音量至 30% 伴奏"),
+    MIX("完全混音同播", "完全不抢占焦点，与其他应用保持 100% 原音量同时播放")
+}
+
+/**
+ * 有线耳机线控连击灵敏度（多击判定时间窗）
+ */
+enum class HeadsetClickSensitivity(val label: String, val subtitle: String, val timeoutMs: Long) {
+    FAST("紧凑 280ms", "响应干脆，适合快速连按", 280L),
+    STANDARD("标准 350ms", "默认均衡手感", 350L),
+    RELAXED("宽松 450ms", "适合偏硬按键或慢速连按", 450L)
+}
+
+/**
  * 有线耳机与媒体按键多击线控状态机：
  * 解决 AndroidX Media3 默认对有线耳机单键 (`KEYCODE_HEADSETHOOK`) 双击/三击无法切歌的问题，
- * 同时兼容 Type-C 数字耳放线控与三键线控：
+ * 支持自定义连击灵敏度（280ms / 350ms / 450ms）与双击/三击切歌方向交换：
  * - 单击暂停/中键：播放 / 暂停切换
- * - 双击暂停/中键：切换下一首
- * - 三击暂停/中键：切换上一首
+ * - 双击暂停/中键：默认切换下一首（开启方向交换后为切换上一首）
+ * - 三击暂停/中键：默认切换上一首（开启方向交换后为切换下一首）
  * - 独立上下曲键 (`KEYCODE_MEDIA_NEXT` / `KEYCODE_MEDIA_PREVIOUS`)：立即切歌
  */
 class HeadsetMediaButtonController(
-    val multiClickTimeoutMs: Long = 350L,
+    multiClickTimeoutMs: Long = 350L,
     private val duplicateGuardWindowMs: Long = 25L,
     private val tripleClickCooldownMs: Long = 220L,
     private val nowMsProvider: () -> Long = {
@@ -57,7 +82,13 @@ class HeadsetMediaButtonController(
     private val onSkipToPrevious: () -> Unit
 ) {
     @Volatile
+    var multiClickTimeoutMs: Long = multiClickTimeoutMs
+
+    @Volatile
     var multiClickSkipEnabled: Boolean = true
+
+    @Volatile
+    var swapDoubleTripleClick: Boolean = false
 
     private var pendingClickCount: Int = 0
     private var lastDownTimeMs: Long = -1L
@@ -81,6 +112,22 @@ class HeadsetMediaButtonController(
         KeyEvent.KEYCODE_MEDIA_PLAY,
         KeyEvent.KEYCODE_MEDIA_PAUSE -> true
         else -> false
+    }
+
+    private fun triggerDoubleClickAction() {
+        if (swapDoubleTripleClick) {
+            onSkipToPrevious()
+        } else {
+            onSkipToNext()
+        }
+    }
+
+    private fun triggerTripleClickAction() {
+        if (swapDoubleTripleClick) {
+            onSkipToNext()
+        } else {
+            onSkipToPrevious()
+        }
     }
 
     fun handleKeyEvent(
@@ -139,15 +186,16 @@ class HeadsetMediaButtonController(
             if (pendingClickCount >= 3) {
                 pendingClickCount = 0
                 lastTripleClickAtMs = now
-                onSkipToPrevious()
+                triggerTripleClickAction()
             } else {
-                scheduleDelayed(multiClickTimeoutMs) {
+                val windowMs = multiClickTimeoutMs.coerceIn(180L, 800L)
+                scheduleDelayed(windowMs) {
                     val count = pendingClickCount
                     pendingClickCount = 0
                     when (count) {
                         1 -> onTogglePlay()
-                        2 -> onSkipToNext()
-                        else -> if (count >= 3) onSkipToPrevious()
+                        2 -> triggerDoubleClickAction()
+                        else -> if (count >= 3) triggerTripleClickAction()
                     }
                 }
             }
@@ -171,7 +219,7 @@ class HeadsetMediaButtonController(
  * 支持 16-bit / 24-bit / 32-bit / Float PCM 与单声道/立体声采样帧：
  * 1. 左右声道声像平衡 (Stereo Channel Balance)
  * 2. M/S 立体声场宽度扩展与 3D 环绕声像微旋补偿
- * 3. 智能跨曲目响度均衡 (Volume Normalization) 与软膝防破音数字限幅器 (Soft-Knee Anti-Clipping Limiter)
+ * 3. 智能跨曲目响度均衡 (Volume Normalization)、音频焦点闪避压低增益 (Audio Focus Ducking) 与软膝防破音数字限幅器
  * 4. 64 采样线性增益平滑过渡与 Flush/Reset 相位清零，彻底消除 Seek/切换音效时的咔哒爆音
  */
 @OptIn(UnstableApi::class)
@@ -222,9 +270,10 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         val eqLoudnessComp = state.isEnabled && state.equalLoudnessCompensation
         val volNorm = state.isEnabled && state.volumeNormalizationEnabled
         val antiClip = state.isEnabled && state.antiClippingEnabled && (dspActive || eqLoudnessComp || volNorm)
+        val focusDuckGain = PlaybackService.audioFocusDuckGain.coerceIn(0.15f, 1.0f)
 
         // 若处于 0 音染 / Bit-Perfect 原生直通态且声道平衡居中，直接零拷贝透传
-        if (abs(balance) < 0.01f && !dspActive && !eqLoudnessComp && !volNorm) {
+        if (abs(balance) < 0.01f && !dspActive && !eqLoudnessComp && !volNorm && focusDuckGain >= 0.99f) {
             val out = replaceOutputBuffer(remaining).order(ByteOrder.LITTLE_ENDIAN)
             out.put(inputBuffer)
             out.flip()
@@ -232,8 +281,8 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         }
 
         val out = replaceOutputBuffer(remaining).order(ByteOrder.LITTLE_ENDIAN)
-        val targetLeftGain = (if (balance > 0f) (1f - balance).coerceIn(0f, 1f) else 1f) * (if (eqLoudnessComp) 1.06f else 1.0f)
-        val targetRightGain = (if (balance < 0f) (1f + balance).coerceIn(0f, 1f) else 1f) * (if (eqLoudnessComp) 1.06f else 1.0f)
+        val targetLeftGain = (if (balance > 0f) (1f - balance).coerceIn(0f, 1f) else 1f) * (if (eqLoudnessComp) 1.06f else 1.0f) * focusDuckGain
+        val targetRightGain = (if (balance < 0f) (1f + balance).coerceIn(0f, 1f) else 1f) * (if (eqLoudnessComp) 1.06f else 1.0f) * focusDuckGain
         val phaseStep = if (rotSpeed > 0) (2.0 * PI * (0.15 + rotSpeed * 0.012)) / inputAudioFormat.sampleRate.coerceAtLeast(44100) else 0.0
         val encoding = inputAudioFormat.encoding
         val channels = inputAudioFormat.channelCount
@@ -359,12 +408,36 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
 
 /**
  * AndroidX Media3 官方后台播放服务
- * 提供锁屏控制、通知栏控制面板、有线/蓝牙耳机按键拦截、AudioFocus 音频焦点管理（支持与其他应用混音同播）及 MediaSession 实时歌词元数据同步
+ * 提供锁屏控制、通知栏控制面板、有线/蓝牙耳机按键拦截、三档音频焦点与闪避管理、耳机连接自动播放与蓝牙连接检测
  */
 class PlaybackService : MediaSessionService() {
 
     private var player: ExoPlayer? = null
     private var mediaSession: MediaSession? = null
+    private var audioManager: AudioManager? = null
+    private var duckFocusRequest: AudioFocusRequest? = null
+    private var audioDeviceCallback: AudioDeviceCallback? = null
+    private var initialDeviceEnumerationDone: Boolean = false
+    private val connectedWiredIds = mutableSetOf<Int>()
+    private val connectedBluetoothIds = mutableSetOf<Int>()
+
+    private val duckAudioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        if (currentAudioFocusMode != AudioFocusMode.DUCK) {
+            audioFocusDuckGain = 1.0f
+            return@OnAudioFocusChangeListener
+        }
+        when (focusChange) {
+            AudioManager.AUDIOFOCUS_LOSS,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                // 压低音量同播模式：不暂停音乐，平滑压低至 30% 音量
+                audioFocusDuckGain = 0.30f
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                audioFocusDuckGain = 1.0f
+            }
+        }
+    }
 
     companion object {
         private val mainHandler: Handler? by lazy {
@@ -374,11 +447,39 @@ class PlaybackService : MediaSessionService() {
             }.getOrNull()
         }
         private var pendingHeadsetRunnable: Runnable? = null
+
         @Volatile
         private var activeServiceInstance: PlaybackService? = null
 
         @Volatile
         private var fallbackAppContext: Context? = null
+
+        @Volatile
+        var currentAudioFocusMode: AudioFocusMode = AudioFocusMode.EXCLUSIVE
+            private set
+
+        @Volatile
+        var audioFocusDuckGain: Float = 1.0f
+            internal set
+
+        @Volatile
+        var autoPlayOnHeadsetConnectEnabled: Boolean = false
+
+        @Volatile
+        var autoPlayOnWiredConnectEnabled: Boolean = true
+
+        @Volatile
+        var autoPlayOnBluetoothConnectEnabled: Boolean = true
+
+        @Volatile
+        var keepPlayingOnTaskRemovedEnabled: Boolean = true
+
+        @Volatile
+        var isBluetoothAudioOutputConnected: Boolean = false
+            internal set
+
+        @Volatile
+        var onBluetoothConnectionChanged: ((Boolean) -> Unit)? = null
 
         @Volatile
         var onSkipToPreviousIntercepted: (() -> Boolean)? = null
@@ -437,6 +538,24 @@ class PlaybackService : MediaSessionService() {
             }
         )
 
+        internal fun isWiredHeadsetDeviceType(type: Int): Boolean = when (type) {
+            AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_USB_DEVICE,
+            AudioDeviceInfo.TYPE_USB_ACCESSORY -> true
+            else -> false
+        }
+
+        internal fun isBluetoothAudioDeviceType(type: Int): Boolean = when (type) {
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_BLE_SPEAKER,
+            AudioDeviceInfo.TYPE_BLE_BROADCAST -> true
+            else -> false
+        }
+
         fun updateHandleAudioBecomingNoisy(enabled: Boolean) {
             val svc = activeServiceInstance ?: return
             runCatching {
@@ -468,12 +587,37 @@ class PlaybackService : MediaSessionService() {
         }
 
         /**
-         * 设置是否允许与其他应用同时播放：
-         * - allowMix = true：关闭 ExoPlayer 独占音频焦点管理 (handleAudioFocus = false)，不打断其他应用且不被其他应用打断；
-         * - allowMix = false：开启标准音频焦点管理 (handleAudioFocus = true)。
+         * 更新三档音频焦点与混音闪避模式
+         */
+        fun updateAudioFocusMode(mode: AudioFocusMode) {
+            currentAudioFocusMode = mode
+            if (mode != AudioFocusMode.DUCK) {
+                audioFocusDuckGain = 1.0f
+            }
+            val svc = activeServiceInstance ?: return
+            runCatching {
+                val mainLooper = Looper.getMainLooper()
+                val applyBlock = {
+                    svc.applyAudioFocusModeInternal(mode)
+                }
+                if (mainLooper == null || Looper.myLooper() == mainLooper) {
+                    applyBlock()
+                } else {
+                    mainHandler?.post(applyBlock)
+                }
+            }
+        }
+
+        /**
+         * 设置是否允许与其他应用同时播放（兼容布尔开关与三档模式联动）
          */
         fun updateAllowPlayWithOtherApps(allowMix: Boolean) {
-            updateAudioFocusDucking(enabled = !allowMix)
+            val targetMode = if (allowMix) {
+                if (currentAudioFocusMode == AudioFocusMode.EXCLUSIVE) AudioFocusMode.MIX else currentAudioFocusMode
+            } else {
+                AudioFocusMode.EXCLUSIVE
+            }
+            updateAudioFocusMode(targetMode)
         }
 
         /**
@@ -481,6 +625,34 @@ class PlaybackService : MediaSessionService() {
          */
         fun updateWiredHeadsetControlEnabled(enabled: Boolean) {
             headsetButtonController.multiClickSkipEnabled = enabled
+        }
+
+        /**
+         * 设置是否交换有线耳机双击与三击的切歌方向
+         */
+        fun updateSwapHeadsetDoubleTripleClick(swapped: Boolean) {
+            headsetButtonController.swapDoubleTripleClick = swapped
+        }
+
+        /**
+         * 设置有线耳机多击判定灵敏度
+         */
+        fun updateHeadsetClickSensitivity(sensitivity: HeadsetClickSensitivity) {
+            headsetButtonController.multiClickTimeoutMs = sensitivity.timeoutMs
+        }
+
+        fun updateHeadsetAutoPlayConfig(
+            enabled: Boolean,
+            wiredEnabled: Boolean = autoPlayOnWiredConnectEnabled,
+            bluetoothEnabled: Boolean = autoPlayOnBluetoothConnectEnabled
+        ) {
+            autoPlayOnHeadsetConnectEnabled = enabled
+            autoPlayOnWiredConnectEnabled = wiredEnabled
+            autoPlayOnBluetoothConnectEnabled = bluetoothEnabled
+        }
+
+        fun updateKeepPlayingOnTaskRemoved(enabled: Boolean) {
+            keepPlayingOnTaskRemovedEnabled = enabled
         }
 
         fun handleHeadsetKeyEvent(context: Context?, event: KeyEvent?): Boolean {
@@ -512,6 +684,125 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    private fun applyAudioFocusModeInternal(mode: AudioFocusMode) {
+        val p = player ?: return
+        when (mode) {
+            AudioFocusMode.EXCLUSIVE -> {
+                abandonDuckAudioFocusRequest()
+                audioFocusDuckGain = 1.0f
+                p.setAudioAttributes(p.audioAttributes, true)
+            }
+            AudioFocusMode.DUCK -> {
+                p.setAudioAttributes(p.audioAttributes, false)
+                if (p.isPlaying || p.playWhenReady) {
+                    requestDuckAudioFocus()
+                }
+            }
+            AudioFocusMode.MIX -> {
+                abandonDuckAudioFocusRequest()
+                audioFocusDuckGain = 1.0f
+                p.setAudioAttributes(p.audioAttributes, false)
+            }
+        }
+    }
+
+    private fun requestDuckAudioFocus() {
+        val am = audioManager ?: (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.also { audioManager = it } ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val req = duckFocusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setWillPauseWhenDucked(false)
+                .setOnAudioFocusChangeListener(duckAudioFocusChangeListener, mainHandler ?: Handler(Looper.getMainLooper()))
+                .build()
+                .also { duckFocusRequest = it }
+            runCatching { am.requestAudioFocus(req) }
+        }
+    }
+
+    private fun abandonDuckAudioFocusRequest() {
+        val am = audioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            duckFocusRequest?.let { req ->
+                runCatching { am.abandonAudioFocusRequest(req) }
+            }
+        }
+    }
+
+    private fun setupAudioDeviceMonitor() {
+        val am = (getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.also { audioManager = it } ?: return
+        // 初始化当前已连接设备快照
+        runCatching {
+            val outputs = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            connectedWiredIds.clear()
+            connectedBluetoothIds.clear()
+            for (dev in outputs) {
+                if (!dev.isSink) continue
+                if (isWiredHeadsetDeviceType(dev.type)) connectedWiredIds.add(dev.id)
+                if (isBluetoothAudioDeviceType(dev.type)) connectedBluetoothIds.add(dev.id)
+            }
+            val btConnected = connectedBluetoothIds.isNotEmpty()
+            isBluetoothAudioOutputConnected = btConnected
+            onBluetoothConnectionChanged?.invoke(btConnected)
+        }
+
+        val callback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+                if (addedDevices == null) return
+                var newlyAddedWired = false
+                var newlyAddedBluetooth = false
+                for (dev in addedDevices) {
+                    if (!dev.isSink) continue
+                    if (isWiredHeadsetDeviceType(dev.type)) {
+                        if (connectedWiredIds.add(dev.id) && initialDeviceEnumerationDone) {
+                            newlyAddedWired = true
+                        }
+                    }
+                    if (isBluetoothAudioDeviceType(dev.type)) {
+                        if (connectedBluetoothIds.add(dev.id) && initialDeviceEnumerationDone) {
+                            newlyAddedBluetooth = true
+                        }
+                    }
+                }
+                initialDeviceEnumerationDone = true
+                val btConnectedNow = connectedBluetoothIds.isNotEmpty()
+                if (isBluetoothAudioOutputConnected != btConnectedNow) {
+                    isBluetoothAudioOutputConnected = btConnectedNow
+                    onBluetoothConnectionChanged?.invoke(btConnectedNow)
+                }
+
+                if (autoPlayOnHeadsetConnectEnabled) {
+                    val shouldTriggerWired = newlyAddedWired && autoPlayOnWiredConnectEnabled
+                    val shouldTriggerBt = newlyAddedBluetooth && autoPlayOnBluetoothConnectEnabled
+                    if (shouldTriggerWired || shouldTriggerBt) {
+                        PlaybackCoordinator.handleResumeOnHeadsetConnected(applicationContext, player)
+                    }
+                }
+            }
+
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+                if (removedDevices == null) return
+                for (dev in removedDevices) {
+                    connectedWiredIds.remove(dev.id)
+                    connectedBluetoothIds.remove(dev.id)
+                }
+                val btConnectedNow = connectedBluetoothIds.isNotEmpty()
+                if (isBluetoothAudioOutputConnected != btConnectedNow) {
+                    isBluetoothAudioOutputConnected = btConnectedNow
+                    onBluetoothConnectionChanged?.invoke(btConnectedNow)
+                }
+            }
+        }
+        audioDeviceCallback = callback
+        runCatching {
+            am.registerAudioDeviceCallback(callback, mainHandler)
+        }
+    }
+
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
@@ -521,8 +812,31 @@ class PlaybackService : MediaSessionService() {
         val prefs = applicationContext.getSharedPreferences("concept_player_prefs", Context.MODE_PRIVATE)
         val pauseOnHeadsetDisconnect = prefs.getBoolean("pause_on_headset_disconnect", true)
         val allowPlayWithOtherApps = prefs.getBoolean("allow_play_with_other_apps", false)
+        val savedFocusModeName = prefs.getString("audio_focus_mode", null)
+        val initialFocusMode = if (savedFocusModeName != null) {
+            runCatching { AudioFocusMode.valueOf(savedFocusModeName) }.getOrDefault(
+                if (allowPlayWithOtherApps) AudioFocusMode.MIX else AudioFocusMode.EXCLUSIVE
+            )
+        } else {
+            if (allowPlayWithOtherApps) AudioFocusMode.MIX else AudioFocusMode.EXCLUSIVE
+        }
+        currentAudioFocusMode = initialFocusMode
+
         val wiredHeadsetControlEnabled = prefs.getBoolean("wired_headset_control_enabled", true)
+        val swapHeadsetButtons = prefs.getBoolean("swap_headset_double_triple_click", false)
+        val savedSensitivityName = prefs.getString("headset_click_sensitivity", HeadsetClickSensitivity.STANDARD.name)
+            ?: HeadsetClickSensitivity.STANDARD.name
+        val sensitivity = runCatching { HeadsetClickSensitivity.valueOf(savedSensitivityName) }
+            .getOrDefault(HeadsetClickSensitivity.STANDARD)
+
         headsetButtonController.multiClickSkipEnabled = wiredHeadsetControlEnabled
+        headsetButtonController.swapDoubleTripleClick = swapHeadsetButtons
+        headsetButtonController.multiClickTimeoutMs = sensitivity.timeoutMs
+
+        autoPlayOnHeadsetConnectEnabled = prefs.getBoolean("auto_play_on_headset_connect", false)
+        autoPlayOnWiredConnectEnabled = prefs.getBoolean("auto_play_on_wired_connect", true)
+        autoPlayOnBluetoothConnectEnabled = prefs.getBoolean("auto_play_on_bluetooth_connect", true)
+        keepPlayingOnTaskRemovedEnabled = prefs.getBoolean("keep_playing_on_task_removed", true)
 
         val audioAttributes = AudioAttributes.Builder()
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -567,12 +881,27 @@ class PlaybackService : MediaSessionService() {
 
         val exoPlayer = ExoPlayer.Builder(this, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
-            .setAudioAttributes(audioAttributes, !allowPlayWithOtherApps)
+            .setAudioAttributes(audioAttributes, initialFocusMode == AudioFocusMode.EXCLUSIVE)
             .setHandleAudioBecomingNoisy(pauseOnHeadsetDisconnect)
             .setLoadControl(loadControl)
             .setSeekParameters(SeekParameters.CLOSEST_SYNC)
             .build()
         player = exoPlayer
+
+        exoPlayer.addListener(object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) {
+                    if (currentAudioFocusMode == AudioFocusMode.DUCK) {
+                        audioFocusDuckGain = 1.0f
+                        requestDuckAudioFocus()
+                    } else {
+                        audioFocusDuckGain = 1.0f
+                    }
+                }
+            }
+        })
+
+        setupAudioDeviceMonitor()
 
         AudioEffectManager.init(applicationContext)
         AudioEffectManager.onAuxEffectChanged = { effectId, sendLevel ->
@@ -722,12 +1051,26 @@ class PlaybackService : MediaSessionService() {
         return res
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val p = player
+        if (!keepPlayingOnTaskRemovedEnabled || p == null || (!p.isPlaying && !p.playWhenReady)) {
+            super.onTaskRemoved(rootIntent)
+            stopSelf()
+        }
+    }
+
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
         return mediaSession
     }
 
     override fun onDestroy() {
         headsetButtonController.reset()
+        abandonDuckAudioFocusRequest()
+        audioFocusDuckGain = 1.0f
+        audioDeviceCallback?.let { cb ->
+            runCatching { audioManager?.unregisterAudioDeviceCallback(cb) }
+        }
+        audioDeviceCallback = null
         if (activeServiceInstance === this) {
             activeServiceInstance = null
         }

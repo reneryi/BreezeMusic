@@ -611,10 +611,19 @@ class SongPlaybackSwitchTest {
     @Test
     fun testAllowPlayWithOtherAppsAndWiredHeadsetControlSettingsToggle() = runTest(testDispatcher) {
         assertFalse(viewModel.uiState.value.allowPlayWithOtherApps)
-        viewModel.setAllowPlayWithOtherApps(true)
+        assertEquals(com.concept.music.service.AudioFocusMode.EXCLUSIVE, viewModel.uiState.value.audioFocusMode)
+
+        viewModel.setAudioFocusMode(com.concept.music.service.AudioFocusMode.DUCK)
         assertTrue(viewModel.uiState.value.allowPlayWithOtherApps)
+        assertEquals(com.concept.music.service.AudioFocusMode.DUCK, viewModel.uiState.value.audioFocusMode)
+
         viewModel.setAllowPlayWithOtherApps(false)
         assertFalse(viewModel.uiState.value.allowPlayWithOtherApps)
+        assertEquals(com.concept.music.service.AudioFocusMode.EXCLUSIVE, viewModel.uiState.value.audioFocusMode)
+
+        viewModel.setAllowPlayWithOtherApps(true)
+        assertTrue(viewModel.uiState.value.allowPlayWithOtherApps)
+        assertEquals(com.concept.music.service.AudioFocusMode.MIX, viewModel.uiState.value.audioFocusMode)
 
         viewModel.setWiredHeadsetControlEnabled(false)
         assertFalse(viewModel.uiState.value.wiredHeadsetControlEnabled)
@@ -623,6 +632,34 @@ class SongPlaybackSwitchTest {
         viewModel.setWiredHeadsetControlEnabled(true)
         assertTrue(viewModel.uiState.value.wiredHeadsetControlEnabled)
         assertTrue(com.concept.music.service.PlaybackService.headsetButtonController.multiClickSkipEnabled)
+
+        viewModel.setSwapHeadsetDoubleTripleClick(true)
+        assertTrue(viewModel.uiState.value.swapHeadsetDoubleTripleClick)
+        assertTrue(com.concept.music.service.PlaybackService.headsetButtonController.swapDoubleTripleClick)
+        viewModel.setSwapHeadsetDoubleTripleClick(false)
+
+        viewModel.setHeadsetClickSensitivity(com.concept.music.service.HeadsetClickSensitivity.RELAXED)
+        assertEquals(com.concept.music.service.HeadsetClickSensitivity.RELAXED, viewModel.uiState.value.headsetClickSensitivity)
+        assertEquals(450L, com.concept.music.service.PlaybackService.headsetButtonController.multiClickTimeoutMs)
+        viewModel.setHeadsetClickSensitivity(com.concept.music.service.HeadsetClickSensitivity.STANDARD)
+
+        viewModel.setAutoPlayOnHeadsetConnect(true)
+        assertTrue(viewModel.uiState.value.autoPlayOnHeadsetConnect)
+        assertTrue(com.concept.music.service.PlaybackService.autoPlayOnHeadsetConnectEnabled)
+        viewModel.setAutoPlayOnWiredConnect(false)
+        assertFalse(viewModel.uiState.value.autoPlayOnWiredConnect)
+        viewModel.setAutoPlayOnBluetoothConnect(false)
+        assertFalse(viewModel.uiState.value.autoPlayOnBluetoothConnect)
+
+        viewModel.setBluetoothLyricOffsetEnabled(true)
+        viewModel.setBluetoothLyricOffsetMs(-250L)
+        assertTrue(viewModel.uiState.value.bluetoothLyricOffsetEnabled)
+        assertEquals(-250L, viewModel.uiState.value.bluetoothLyricOffsetMs)
+
+        viewModel.setKeepPlayingOnTaskRemoved(false)
+        assertFalse(viewModel.uiState.value.keepPlayingOnTaskRemoved)
+        assertFalse(com.concept.music.service.PlaybackService.keepPlayingOnTaskRemovedEnabled)
+        viewModel.setKeepPlayingOnTaskRemoved(true)
     }
 
     private class TestSessionStore : SessionStore {

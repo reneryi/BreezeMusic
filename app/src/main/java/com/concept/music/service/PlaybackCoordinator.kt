@@ -39,6 +39,9 @@ object PlaybackCoordinator {
     var onTogglePlayDelegate: (() -> Boolean)? = null
 
     @Volatile
+    var onResumePlayDelegate: (() -> Boolean)? = null
+
+    @Volatile
     var onSkipToPreviousDelegate: (() -> Boolean)? = null
 
     @Volatile
@@ -91,6 +94,30 @@ object PlaybackCoordinator {
             }
             AmbientSoundManager.onMusicPlayStateChanged(targetPlay)
             ConceptMusicWidgetUpdater.updateState(context.applicationContext, isPlaying = targetPlay)
+            return true
+        }
+        return playFromBackgroundQueue(context, activePlayer, offsetDelta = 0)
+    }
+
+    /**
+     * 当插入有线耳机或连接蓝牙耳机时触发自动开始播放（仅在当前未播放时启动，绝不误暂停正在播放的音乐）
+     */
+    fun handleResumeOnHeadsetConnected(context: Context, player: Player?): Boolean {
+        if (player?.isPlaying == true) return false
+        onResumePlayDelegate?.let { delegate ->
+            if (delegate()) return true
+        }
+        val activePlayer = player ?: return false
+        if (activePlayer.isPlaying) return false
+        if (activePlayer.mediaItemCount > 0) {
+            if (activePlayer.playbackState == Player.STATE_ENDED) {
+                activePlayer.seekTo(0L)
+            } else if (activePlayer.playbackState == Player.STATE_IDLE) {
+                activePlayer.prepare()
+            }
+            activePlayer.play()
+            AmbientSoundManager.onMusicPlayStateChanged(true)
+            ConceptMusicWidgetUpdater.updateState(context.applicationContext, isPlaying = true)
             return true
         }
         return playFromBackgroundQueue(context, activePlayer, offsetDelta = 0)

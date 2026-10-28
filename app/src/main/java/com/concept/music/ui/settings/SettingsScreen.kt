@@ -1,5 +1,10 @@
 package com.concept.music.ui.settings
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
@@ -28,13 +33,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.concept.music.data.model.AudioQuality
+import com.concept.music.service.AudioCacheLimit
 import com.concept.music.service.AudioCacheManager
 import com.concept.music.service.AudioEffectManager
+import com.concept.music.service.AudioFocusMode
+import com.concept.music.service.HeadsetClickSensitivity
 import com.concept.music.ui.theme.*
 import com.concept.music.ui.viewmodel.CoverStyle
 import com.concept.music.ui.viewmodel.LyricAlignment
@@ -62,11 +73,11 @@ enum class SettingsCategory(
     ),
     PLAYBACK_CONTROL(
         title = "外设与播放控制",
-        subtitle = "允许与其他应用同时播放、有线耳机线控切歌与播放行为"
+        subtitle = "音频焦点混音/闪避、有线线控自定义、耳机连播与后台保活"
     ),
     LYRICS(
         title = "歌词显示设置",
-        subtitle = "全屏歌词字号、译文比例、对齐方式、景深模糊与屏幕常亮"
+        subtitle = "全屏歌词字号、译文比例、对齐方式、景深模糊与蓝牙延迟补偿"
     ),
     SPEED_SLEEP(
         title = "倍速与睡眠定时",
@@ -74,12 +85,40 @@ enum class SettingsCategory(
     ),
     STORAGE(
         title = "存储与缓存",
-        subtitle = "边听边存本地音频缓存统计与一键清理"
+        subtitle = "自定义音频缓存上限（512MB~10GB）、缓存统计与一键清理"
     ),
     ABOUT(
         title = "关于微风音乐",
         subtitle = "版本信息、酷狗概念版特性与说明"
     )
+}
+
+private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+    return runCatching {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return@runCatching false
+        pm.isIgnoringBatteryOptimizations(context.packageName)
+    }.getOrDefault(false)
+}
+
+private fun requestIgnoreBatteryOptimizations(context: Context) {
+    runCatching {
+        val directIntent = Intent(
+            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:${context.packageName}")
+        ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(directIntent)
+    }.onFailure {
+        runCatching {
+            val listIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(listIntent)
+        }.onFailure {
+            Toast.makeText(context, "无法打开系统电池优化设置页，请在系统设置中手动允许后台运行", Toast.LENGTH_SHORT).show()
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -90,6 +129,7 @@ fun SettingsScreen(
     onOpenViperEffect: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val uiState by viewModel.uiState.collectAsState()
     val preferredQuality = uiState.preferredQuality
     val coverStyle = uiState.coverStyle
@@ -112,14 +152,37 @@ fun SettingsScreen(
     val wifiOnlyLossless = uiState.wifiOnlyLossless
     val pauseOnHeadsetDisconnect = uiState.pauseOnHeadsetDisconnect
     val allowPlayWithOtherApps = uiState.allowPlayWithOtherApps
+    val audioFocusMode = uiState.audioFocusMode
     val wiredHeadsetControlEnabled = uiState.wiredHeadsetControlEnabled
+    val swapHeadsetDoubleTripleClick = uiState.swapHeadsetDoubleTripleClick
+    val headsetClickSensitivity = uiState.headsetClickSensitivity
+    val autoPlayOnHeadsetConnect = uiState.autoPlayOnHeadsetConnect
+    val autoPlayOnWiredConnect = uiState.autoPlayOnWiredConnect
+    val autoPlayOnBluetoothConnect = uiState.autoPlayOnBluetoothConnect
+    val bluetoothLyricOffsetEnabled = uiState.bluetoothLyricOffsetEnabled
+    val bluetoothLyricOffsetMs = uiState.bluetoothLyricOffsetMs
+    val isBluetoothAudioConnected = uiState.isBluetoothAudioConnected
+    val keepPlayingOnTaskRemoved = uiState.keepPlayingOnTaskRemoved
     val autoPlayOnStartup = uiState.autoPlayOnStartup
     val smoothPlayPauseFade = uiState.smoothPlayPauseFade
     val motionOrientationPermissionEnabled = uiState.motionOrientationPermissionEnabled
 
     val cacheSizeBytes by AudioCacheManager.cacheSizeBytes.collectAsState()
+    val cacheLimit by AudioCacheManager.cacheLimit.collectAsState()
     val themeMode by ThemeManager.themeMode.collectAsState()
     val audioEffectState by AudioEffectManager.state.collectAsState()
+
+    var batteryWhitelisted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                batteryWhitelisted = isIgnoringBatteryOptimizations(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     var activeCategoryName by rememberSaveable { mutableStateOf<String?>(null) }
     val activeCategory = remember(activeCategoryName) {
@@ -235,11 +298,12 @@ fun SettingsScreen(
                             )
                         }
                         item {
+                            val btCompLabel = if (bluetoothLyricOffsetEnabled) " · 蓝牙补偿 ${bluetoothLyricOffsetMs}ms" else ""
                             SettingsMenuEntryCard(
                                 category = SettingsCategory.LYRICS,
                                 icon = Icons.Rounded.Lyrics,
                                 accentColor = ConceptCyanAccent,
-                                statusText = "${lyricFontSize.toInt()}sp · ${lyricAlignment.label} · ${if (lyricBlurEnabled) "景深模糊" else "清晰文本"}",
+                                statusText = "${lyricFontSize.toInt()}sp · ${lyricAlignment.label} · ${if (lyricBlurEnabled) "景深模糊" else "清晰文本"}$btCompLabel",
                                 onClick = { activeCategoryName = SettingsCategory.LYRICS.name }
                             )
                         }
@@ -258,11 +322,12 @@ fun SettingsScreen(
                             )
                         }
                         item {
+                            val headsetStatus = if (wiredHeadsetControlEnabled) "线控开启(${headsetClickSensitivity.label})" else "线控关闭"
                             SettingsMenuEntryCard(
                                 category = SettingsCategory.PLAYBACK_CONTROL,
                                 icon = Icons.Rounded.Headphones,
                                 accentColor = ConceptCoralAccent,
-                                statusText = "${if (allowPlayWithOtherApps) "允许与其他应用同播" else "独占音频焦点"} · ${if (wiredHeadsetControlEnabled) "有线线控开启" else "有线线控关闭"}",
+                                statusText = "${audioFocusMode.label} · $headsetStatus",
                                 onClick = { activeCategoryName = SettingsCategory.PLAYBACK_CONTROL.name }
                             )
                         }
@@ -285,7 +350,7 @@ fun SettingsScreen(
                                 category = SettingsCategory.STORAGE,
                                 icon = Icons.Rounded.Storage,
                                 accentColor = ConceptAmberAccent,
-                                statusText = "已缓存 ${AudioCacheManager.formatSize(cacheSizeBytes)}",
+                                statusText = "已缓存 ${AudioCacheManager.formatSize(cacheSizeBytes)} / 上限 ${cacheLimit.label}",
                                 onClick = { activeCategoryName = SettingsCategory.STORAGE.name }
                             )
                         }
@@ -619,7 +684,7 @@ fun SettingsScreen(
                                     ) {
                                         SettingToggleRow(
                                             title = "允许与其他应用同时播放",
-                                            subtitle = "开启后不独占系统音频焦点，刷视频、玩游戏或发语音时不中断音乐播放",
+                                            subtitle = "开启后刷视频、玩游戏或发语音时不中断音乐播放",
                                             checked = allowPlayWithOtherApps,
                                             onCheckedChange = { enabled ->
                                                 viewModel.setAllowPlayWithOtherApps(enabled)
@@ -627,6 +692,43 @@ fun SettingsScreen(
                                                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                             }
                                         )
+
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(vertical = 12.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                                        )
+
+                                        Text(
+                                            text = "音频焦点与导航/通知音闪避策略",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = audioFocusMode.subtitle,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            lineHeight = 16.sp
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            AudioFocusMode.entries.forEach { mode ->
+                                                FilterChip(
+                                                    selected = audioFocusMode == mode,
+                                                    onClick = {
+                                                        viewModel.setAudioFocusMode(mode)
+                                                        Toast.makeText(context, "音频焦点模式：${mode.label}", Toast.LENGTH_SHORT).show()
+                                                    },
+                                                    label = { Text(mode.label, fontSize = 12.sp) },
+                                                    colors = FilterChipDefaults.filterChipColors(
+                                                        selectedContainerColor = ConceptCoralAccent.copy(alpha = 0.2f),
+                                                        selectedLabelColor = ConceptCoralAccent
+                                                    )
+                                                )
+                                            }
+                                        }
                                     }
                                 }
 
@@ -637,7 +739,7 @@ fun SettingsScreen(
                                     ) {
                                         SettingToggleRow(
                                             title = "有线耳机线控切歌",
-                                            subtitle = "通过有线耳机暂停键（中键）双击切换下一首、三击切换上一首",
+                                            subtitle = "通过有线耳机暂停键（中键）双击/三击切换上下首",
                                             checked = wiredHeadsetControlEnabled,
                                             onCheckedChange = { enabled ->
                                                 viewModel.setWiredHeadsetControlEnabled(enabled)
@@ -648,6 +750,43 @@ fun SettingsScreen(
 
                                         if (wiredHeadsetControlEnabled) {
                                             Spacer(modifier = Modifier.height(10.dp))
+
+                                            SettingToggleRow(
+                                                title = "交换双击/三击切歌方向",
+                                                subtitle = if (swapHeadsetDoubleTripleClick) "当前：双击上一首 · 三击下一首" else "当前：双击下一首 · 三击上一首（默认）",
+                                                checked = swapHeadsetDoubleTripleClick,
+                                                onCheckedChange = { swapped ->
+                                                    viewModel.setSwapHeadsetDoubleTripleClick(swapped)
+                                                }
+                                            )
+
+                                            Spacer(modifier = Modifier.height(10.dp))
+
+                                            Text(
+                                                text = "线控连击灵敏度（多击判定间隔）",
+                                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                            )
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            FlowRow(
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                HeadsetClickSensitivity.entries.forEach { sens ->
+                                                    FilterChip(
+                                                        selected = headsetClickSensitivity == sens,
+                                                        onClick = { viewModel.setHeadsetClickSensitivity(sens) },
+                                                        label = { Text(sens.label, fontSize = 12.sp) },
+                                                        colors = FilterChipDefaults.filterChipColors(
+                                                            selectedContainerColor = ConceptCoralAccent.copy(alpha = 0.2f),
+                                                            selectedLabelColor = ConceptCoralAccent
+                                                        )
+                                                    )
+                                                }
+                                            }
+
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            val doubleActionText = if (swapHeadsetDoubleTripleClick) "切换上一首" else "切换下一首"
+                                            val tripleActionText = if (swapHeadsetDoubleTripleClick) "切换下一首" else "切换上一首"
                                             Surface(
                                                 shape = RoundedCornerShape(14.dp),
                                                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.62f),
@@ -658,12 +797,12 @@ fun SettingsScreen(
                                                     verticalArrangement = Arrangement.spacedBy(4.dp)
                                                 ) {
                                                     Text(
-                                                        text = "有线耳机按键操作说明",
+                                                        text = "有线耳机按键操作说明（${headsetClickSensitivity.label}）",
                                                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                                                         color = ConceptCoralAccent
                                                     )
                                                     Text(
-                                                        text = "• 单击暂停键（中键）：播放 / 暂停\n• 双击暂停键（中键）：切换下一首\n• 三击暂停键（中键）：切换上一首",
+                                                        text = "• 单击暂停键（中键）：播放 / 暂停\n• 双击暂停键（中键）：$doubleActionText\n• 三击暂停键（中键）：$tripleActionText",
                                                         style = MaterialTheme.typography.bodySmall,
                                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                         lineHeight = 18.sp
@@ -683,12 +822,65 @@ fun SettingsScreen(
                                             checked = pauseOnHeadsetDisconnect,
                                             onCheckedChange = { viewModel.setPauseOnHeadsetDisconnect(it) }
                                         )
+
+                                        Spacer(modifier = Modifier.height(10.dp))
+
+                                        SettingToggleRow(
+                                            title = "连接耳机（有线/蓝牙）自动开始播放",
+                                            subtitle = "插入有线耳机或蓝牙音频设备连接成功时自动恢复播放",
+                                            checked = autoPlayOnHeadsetConnect,
+                                            onCheckedChange = { enabled ->
+                                                viewModel.setAutoPlayOnHeadsetConnect(enabled)
+                                                val msg = if (enabled) "已开启连接耳机自动播放" else "已关闭连接耳机自动播放"
+                                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                            }
+                                        )
+
+                                        if (autoPlayOnHeadsetConnect) {
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                FilterChip(
+                                                    selected = autoPlayOnWiredConnect,
+                                                    onClick = { viewModel.setAutoPlayOnWiredConnect(!autoPlayOnWiredConnect) },
+                                                    label = { Text("有线耳机插入自动播", fontSize = 12.sp) },
+                                                    colors = FilterChipDefaults.filterChipColors(
+                                                        selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
+                                                        selectedLabelColor = ConceptPrimary
+                                                    )
+                                                )
+                                                FilterChip(
+                                                    selected = autoPlayOnBluetoothConnect,
+                                                    onClick = { viewModel.setAutoPlayOnBluetoothConnect(!autoPlayOnBluetoothConnect) },
+                                                    label = { Text("蓝牙耳机连接自动播", fontSize = 12.sp) },
+                                                    colors = FilterChipDefaults.filterChipColors(
+                                                        selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
+                                                        selectedLabelColor = ConceptPrimary
+                                                    )
+                                                )
+                                            }
+                                        }
+
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(vertical = 12.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                                        )
+
+                                        BluetoothLyricCompensationSection(
+                                            enabled = bluetoothLyricOffsetEnabled,
+                                            offsetMs = bluetoothLyricOffsetMs,
+                                            isBluetoothConnected = isBluetoothAudioConnected,
+                                            onEnabledChange = { viewModel.setBluetoothLyricOffsetEnabled(it) },
+                                            onOffsetChange = { viewModel.setBluetoothLyricOffsetMs(it) }
+                                        )
                                     }
                                 }
 
                                 item {
                                     SettingsSectionCard(
-                                        title = "播放行为与横屏感应",
+                                        title = "播放行为与后台保活",
                                         icon = Icons.Rounded.Tune
                                     ) {
                                         SettingToggleRow(
@@ -717,6 +909,72 @@ fun SettingsScreen(
                                                 viewModel.setMotionOrientationPermissionEnabled(enabled)
                                             }
                                         )
+
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(vertical = 12.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                                        )
+
+                                        SettingToggleRow(
+                                            title = "底部任务栏清理后保持后台播放",
+                                            subtitle = "在系统最近任务列表划掉卡片时，保持后台音乐继续播放不中断",
+                                            checked = keepPlayingOnTaskRemoved,
+                                            onCheckedChange = { viewModel.setKeepPlayingOnTaskRemoved(it) }
+                                        )
+
+                                        Spacer(modifier = Modifier.height(12.dp))
+
+                                        Surface(
+                                            shape = RoundedCornerShape(16.dp),
+                                            color = if (batteryWhitelisted) ConceptMintAccent.copy(alpha = 0.12f) else ConceptAmberAccent.copy(alpha = 0.12f),
+                                            contentColor = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .softCardClickable(
+                                                    shape = RoundedCornerShape(16.dp),
+                                                    onClick = { requestIgnoreBatteryOptimizations(context) }
+                                                )
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                                    Icon(
+                                                        imageVector = if (batteryWhitelisted) Icons.Rounded.VerifiedUser else Icons.Rounded.BatteryChargingFull,
+                                                        contentDescription = null,
+                                                        tint = if (batteryWhitelisted) ConceptMintAccent else ConceptAmberAccent,
+                                                        modifier = Modifier.size(21.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    Column {
+                                                        Text(
+                                                            text = "电池优化白名单与后台常驻",
+                                                            fontWeight = FontWeight.Bold,
+                                                            fontSize = 14.sp,
+                                                            color = MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                        Text(
+                                                            text = if (batteryWhitelisted) {
+                                                                "已忽略电池优化 · 息屏长时间听歌不杀后台"
+                                                            } else {
+                                                                "未加入白名单 · 点击一键允许后台无限制运行"
+                                                            },
+                                                            fontSize = 11.sp,
+                                                            color = if (batteryWhitelisted) ConceptMintAccent else ConceptAmberAccent
+                                                        )
+                                                    }
+                                                }
+                                                Icon(
+                                                    imageVector = Icons.Rounded.ChevronRight,
+                                                    contentDescription = null,
+                                                    tint = if (batteryWhitelisted) ConceptMintAccent else ConceptAmberAccent
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -792,6 +1050,21 @@ fun SettingsScreen(
                                             subtitle = "处于全屏歌词页或横屏播放页时保持屏幕常亮不息屏",
                                             checked = lyricKeepScreenOn,
                                             onCheckedChange = { viewModel.setLyricKeepScreenOn(it) }
+                                        )
+                                    }
+                                }
+
+                                item {
+                                    SettingsSectionCard(
+                                        title = "蓝牙歌词音画同步补偿",
+                                        icon = Icons.Rounded.BluetoothAudio
+                                    ) {
+                                        BluetoothLyricCompensationSection(
+                                            enabled = bluetoothLyricOffsetEnabled,
+                                            offsetMs = bluetoothLyricOffsetMs,
+                                            isBluetoothConnected = isBluetoothAudioConnected,
+                                            onEnabledChange = { viewModel.setBluetoothLyricOffsetEnabled(it) },
+                                            onOffsetChange = { viewModel.setBluetoothLyricOffsetMs(it) }
                                         )
                                     }
                                 }
@@ -911,7 +1184,7 @@ fun SettingsScreen(
                             SettingsCategory.STORAGE -> {
                                 item {
                                     SettingsSectionCard(
-                                        title = "存储与缓存",
+                                        title = "存储与缓存管理",
                                         icon = Icons.Rounded.Storage
                                     ) {
                                         Row(
@@ -925,22 +1198,65 @@ fun SettingsScreen(
                                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
                                                 )
                                                 Text(
-                                                    text = "已播歌曲自动缓存，提升二次加载速度",
+                                                    text = "已播歌曲自动落盘缓存，超出上限时按 LRU 自动淘汰旧缓存",
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
                                             }
                                             Spacer(modifier = Modifier.width(12.dp))
                                             Text(
-                                                text = AudioCacheManager.formatSize(cacheSizeBytes),
-                                                style = MaterialTheme.typography.titleMedium.copy(
+                                                text = "${AudioCacheManager.formatSize(cacheSizeBytes)} / ${cacheLimit.label}",
+                                                style = MaterialTheme.typography.titleSmall.copy(
                                                     color = VipGold,
                                                     fontWeight = FontWeight.Bold
                                                 )
                                             )
                                         }
 
-                                        Spacer(modifier = Modifier.height(12.dp))
+                                        Spacer(modifier = Modifier.height(10.dp))
+
+                                        val usageFraction = (cacheSizeBytes.toFloat() / cacheLimit.maxBytes.toFloat().coerceAtLeast(1f)).coerceIn(0f, 1f)
+                                        LinearProgressIndicator(
+                                            progress = { usageFraction },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(6.dp)
+                                                .clip(CircleShape),
+                                            color = ConceptAmberAccent,
+                                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                        )
+
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(vertical = 12.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                                        )
+
+                                        Text(
+                                            text = "自定义音频缓存容量上限",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            AudioCacheLimit.entries.forEach { limitOption ->
+                                                FilterChip(
+                                                    selected = cacheLimit == limitOption,
+                                                    onClick = {
+                                                        AudioCacheManager.setCacheLimit(context, limitOption)
+                                                        Toast.makeText(context, "音频缓存上限已设为 ${limitOption.label}", Toast.LENGTH_SHORT).show()
+                                                    },
+                                                    label = { Text(limitOption.label, fontSize = 12.sp) },
+                                                    colors = FilterChipDefaults.filterChipColors(
+                                                        selectedContainerColor = ConceptAmberAccent.copy(alpha = 0.2f),
+                                                        selectedLabelColor = ConceptAmberAccent
+                                                    )
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(14.dp))
 
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
@@ -1008,6 +1324,74 @@ fun SettingsScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BluetoothLyricCompensationSection(
+    enabled: Boolean,
+    offsetMs: Long,
+    isBluetoothConnected: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    onOffsetChange: (Long) -> Unit
+) {
+    SettingToggleRow(
+        title = "蓝牙音频输出延迟补偿",
+        subtitle = "连接蓝牙耳机或音箱时，自动为 KRC 逐字歌词套用延迟偏移量，断开蓝牙自动恢复 0ms",
+        checked = enabled,
+        onCheckedChange = onEnabledChange
+    )
+
+    if (enabled) {
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (isBluetoothConnected) "蓝牙音频已连接 · 补偿生效中" else "当前未连接蓝牙 · 连上后自动生效",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isBluetoothConnected) ConceptCyanAccent else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "${if (offsetMs > 0) "+" else ""}${offsetMs} ms",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = ConceptPrimary
+                )
+            )
+        }
+
+        Slider(
+            value = offsetMs.toFloat().coerceIn(-600f, 600f),
+            onValueChange = { raw ->
+                val stepped = ((raw / 25f).roundToInt() * 25L).coerceIn(-600L, 600L)
+                onOffsetChange(stepped)
+            },
+            valueRange = -600f..600f,
+            steps = 47,
+            colors = SliderDefaults.colors(thumbColor = ConceptPrimary, activeTrackColor = ConceptPrimary)
+        )
+
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(-300L, -200L, -150L, -100L, 0L, 100L).forEach { presetMs ->
+                FilterChip(
+                    selected = offsetMs == presetMs,
+                    onClick = { onOffsetChange(presetMs) },
+                    label = {
+                        Text(
+                            text = if (presetMs > 0) "+${presetMs}ms" else "${presetMs}ms",
+                            fontSize = 11.sp
+                        )
+                    }
+                )
             }
         }
     }
@@ -1148,9 +1532,9 @@ private fun SettingsSectionCard(
     val sectionAccent = when {
         title.contains("外观") || title.contains("主题") || title.contains("视觉") -> ConceptVioletAccent
         title.contains("音质") || title.contains("音效") -> ConceptMintAccent
-        title.contains("外设") || title.contains("焦点") || title.contains("播放行为") -> ConceptCoralAccent
-        title.contains("歌词") -> ConceptCyanAccent
-        title.contains("缓存") -> ConceptAmberAccent
+        title.contains("外设") || title.contains("焦点") || title.contains("播放行为") || title.contains("后台") -> ConceptCoralAccent
+        title.contains("歌词") || title.contains("蓝牙") -> ConceptCyanAccent
+        title.contains("缓存") || title.contains("存储") -> ConceptAmberAccent
         else -> ConceptPrimary
     }
     Surface(

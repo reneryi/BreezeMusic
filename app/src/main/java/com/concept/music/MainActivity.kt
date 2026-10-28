@@ -1097,7 +1097,7 @@ private fun IsolatedNowPlayingHost(
         lyricBlurEnabled = playerUiState.lyricBlurEnabled,
         lyricBlurIntensity = playerUiState.lyricBlurIntensity,
         lyricLineSpacing = playerUiState.lyricLineSpacing,
-        lyricOffsetMs = playerUiState.lyricOffsetMs,
+        lyricOffsetMs = playerUiState.effectiveLyricOffsetMs,
         lyricHighlightTheme = playerUiState.lyricHighlightTheme,
         lyricBackgroundDim = playerUiState.lyricBackgroundDim,
         lyricKeepScreenOn = playerUiState.lyricKeepScreenOn,
@@ -1171,7 +1171,7 @@ private fun IsolatedDesktopLyricHost(
 ) {
     if (!visible) return
     val playerUiState by viewModel.uiState.collectAsState()
-    val lyricOffsetMs = playerUiState.lyricOffsetMs
+    val lyricOffsetMs = playerUiState.effectiveLyricOffsetMs
     val positionProvider = remember(viewModel, lyricOffsetMs) {
         { (viewModel.currentSmoothPositionMs() + lyricOffsetMs).coerceAtLeast(0L) }
     }

@@ -1049,5 +1049,47 @@ class UiAlignmentRegressionTest {
         fakeNowMs += 1_000L
         controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 2500L)
         assertEquals(3, playPauseCount)
+
+        // 6. 开启交换双击/三击切歌方向与灵敏度调节：双击触发上一首，三击触发下一首
+        controller.multiClickSkipEnabled = true
+        controller.swapDoubleTripleClick = true
+        controller.multiClickTimeoutMs = com.concept.music.service.HeadsetClickSensitivity.FAST.timeoutMs
+        assertEquals(280L, controller.multiClickTimeoutMs)
+
+        fakeNowMs += 1_000L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 3000L)
+        fakeNowMs += 120L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 3120L)
+        scheduledAction?.invoke()
+        assertEquals("交换方向后双击应触发上一首", 2, prevTrackCount)
+        assertEquals(1, nextTrackCount)
+
+        fakeNowMs += 1_000L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 4000L)
+        fakeNowMs += 110L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 4110L)
+        fakeNowMs += 110L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 4220L)
+        assertEquals("交换方向后三击应触发下一首", 2, nextTrackCount)
+    }
+
+    @Test
+    fun `音频焦点三档模式与蓝牙歌词延迟补偿及缓存上限档位验证`() {
+        assertEquals(3, com.concept.music.service.AudioFocusMode.entries.size)
+        assertEquals(3, com.concept.music.service.HeadsetClickSensitivity.entries.size)
+        assertEquals(5, com.concept.music.service.AudioCacheLimit.entries.size)
+        assertEquals(512L * 1024L * 1024L, com.concept.music.service.AudioCacheLimit.MB_512.maxBytes)
+        assertEquals(10240L * 1024L * 1024L, com.concept.music.service.AudioCacheLimit.GB_10.maxBytes)
+
+        val baseState = PlayerUiState(
+            lyricOffsetMs = 100L,
+            bluetoothLyricOffsetEnabled = true,
+            bluetoothLyricOffsetMs = -250L,
+            isBluetoothAudioConnected = false
+        )
+        assertEquals("未连接蓝牙时仅生效基础偏移", 100L, baseState.effectiveLyricOffsetMs)
+
+        val btConnectedState = baseState.copy(isBluetoothAudioConnected = true)
+        assertEquals("连接蓝牙且开启补偿时自动叠加蓝牙偏移", -150L, btConnectedState.effectiveLyricOffsetMs)
     }
 }
