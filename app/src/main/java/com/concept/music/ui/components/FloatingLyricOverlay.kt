@@ -2,35 +2,42 @@ package com.concept.music.ui.components
 
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.FormatAlignLeft
-import androidx.compose.material.icons.rounded.*
-import androidx.compose.material3.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
@@ -45,21 +52,28 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.concept.music.data.model.LyricData
-import com.concept.music.data.model.LyricLine
 import com.concept.music.data.model.Song
 import com.concept.music.service.DesktopLyricColorScheme
-import com.concept.music.service.DesktopLyricLineMode
+import com.concept.music.service.DesktopLyricRenderRow
 import com.concept.music.service.SystemLyricBridge
+import com.concept.music.service.resolveDesktopLyricLayoutPlan
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.softClickable
+import com.concept.music.ui.viewmodel.PlayMode
 import kotlinx.coroutines.isActive
+import kotlin.math.PI
+import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
- * 桌面悬浮歌词宿主组件：
- * 1. 自动向 `SystemLyricBridge` 同步实时毫秒级进度、歌词与控播回调，驱动 Android 系统级全局悬浮窗 (`WindowManager`)；
- * 2. 若已授予「显示在其他应用上层」权限，直接由系统级 `NativeDesktopLyricView` 跨应用全局渲染，本组件内对应图层自动隐退防重叠；
- * 3. 若尚未授予系统悬浮窗权限，无缝在应用内渲染同款桌面悬浮歌词胶囊。
+ * 推翻重构后的桌面悬浮歌词组件 (`FloatingLyricOverlay`)：
+ * 1. 启动后常驻态仅显示纯净歌词（带立体柔光暗影），彻底移除不透明胶囊背景框；
+ * 2. 横向自适应铺满屏幕宽度，禁止左右拖动，仅支持垂直方向上下拖动定位；
+ * 3. 歌词显示区域保持恒定三行高度空间：短歌词（两行）采用「插空垂直居中」（0.28 / 0.72 黄金分布），遇到长歌词自动折为三行（0.18 / 0.50 / 0.82）；
+ * 4. 顶部恒定预留 46.dp 控制栏槽位：点击歌词呼出毛玻璃背景框与上方 7 个圆润无框按钮时，歌词垂直位置纹丝不动（绝不下移）；
+ * 5. 顶栏从左到右依次为：锁定、播放顺序（左上角），上一首、暂停/播放、下一首（正中），设置、X（右上角），全部采用圆润饱满无边框矢量图标；
+ * 6. 点击设置按钮后，毛玻璃框底部平滑向下延展，仅提供「歌词颜色」与「歌词字号」两项设置，且与 App 内歌词动效及设置双向实时同步。
  */
 @Composable
 fun FloatingLyricOverlay(
@@ -69,10 +83,12 @@ fun FloatingLyricOverlay(
     currentPositionMs: Long,
     positionProvider: () -> Long = { currentPositionMs },
     isPlaying: Boolean = true,
+    playMode: PlayMode = PlayMode.REPEAT_ALL,
     onTogglePlay: () -> Unit = {},
     onPrevious: () -> Unit = {},
     onNext: () -> Unit = {},
-    onClickCapsule: () -> Unit,
+    onCyclePlayMode: () -> Unit = {},
+    onClickCapsule: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -86,73 +102,88 @@ fun FloatingLyricOverlay(
             currentLyricIndex = currentLyricIndex,
             currentPositionMs = positionProvider(),
             isPlaying = isPlaying,
+            playMode = playMode,
             onTogglePlay = onTogglePlay,
             onPrevious = onPrevious,
-            onNext = onNext
+            onNext = onNext,
+            onCyclePlayMode = onCyclePlayMode
         )
     }
 
-    // 若系统级桌面歌词全局悬浮窗已激活，则不重复渲染应用内桌面歌词图层
+    // 若系统级跨应用全局悬浮窗已激活，则由系统窗口接管渲染，避免双层重叠
     if (state.systemOverlayActive) {
         return
     }
 
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
-    val screenWidthPx = remember(configuration.screenWidthDp, density) {
-        with(density) { configuration.screenWidthDp.dp.toPx().coerceAtLeast(720f) }
-    }
     val screenHeightPx = remember(configuration.screenHeightDp, density) {
         with(density) { configuration.screenHeightDp.dp.toPx().coerceAtLeast(1280f) }
     }
-    val maxHorizontalOffsetPx = remember(screenWidthPx, state.desktopWidthFraction) {
-        ((screenWidthPx * (1f - state.desktopWidthFraction)) / 2f).coerceAtLeast(24f)
-    }
-    val minVerticalOffsetPx = remember(density) { with(density) { 44.dp.toPx() } }
+    val minVerticalOffsetPx = remember(density) { with(density) { 36.dp.toPx() } }
     val maxVerticalOffsetPx = remember(screenHeightPx, density) {
-        (screenHeightPx - with(density) { 180.dp.toPx() }).coerceAtLeast(minVerticalOffsetPx + 100f)
+        (screenHeightPx - with(density) { 220.dp.toPx() }).coerceAtLeast(minVerticalOffsetPx + 100f)
     }
 
-    var dragX by remember { mutableFloatStateOf(state.savedOffsetX.coerceIn(-maxHorizontalOffsetPx, maxHorizontalOffsetPx)) }
-    var dragY by remember { mutableFloatStateOf(state.savedOffsetY.coerceIn(minVerticalOffsetPx, maxVerticalOffsetPx)) }
+    var dragY by remember {
+        mutableFloatStateOf(state.savedOffsetY.coerceIn(minVerticalOffsetPx, maxVerticalOffsetPx))
+    }
     var showHudControls by remember { mutableStateOf(false) }
-    var showStyleSubPanel by remember { mutableStateOf(false) }
+    var showSettingsPanel by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.floatingCapsuleLocked) {
         if (state.floatingCapsuleLocked) {
             showHudControls = false
-            showStyleSubPanel = false
+            showSettingsPanel = false
         }
     }
+
+    val hudAlpha by animateFloatAsState(
+        targetValue = if (showHudControls && !state.floatingCapsuleLocked) 1f else 0f,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "desktopHudAlpha"
+    )
+
+    val settingsHeightDp by animateDpAsState(
+        targetValue = if (showHudControls && showSettingsPanel && !state.floatingCapsuleLocked) 86.dp else 0.dp,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "desktopSettingsExpandHeight"
+    )
+
+    val settingsAlpha by animateFloatAsState(
+        targetValue = if (showHudControls && showSettingsPanel && !state.floatingCapsuleLocked) 1f else 0f,
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        label = "desktopSettingsAlpha"
+    )
 
     val scheme = state.desktopColorScheme
     val playedStartColor = Color(scheme.playedStartHex)
     val playedEndColor = Color(scheme.playedEndHex)
-    val unplayedColor = Color(scheme.unplayedHex).copy(alpha = 0.82f)
+    val unplayedColor = Color(scheme.unplayedHex).copy(alpha = 0.92f)
     val textShadow = remember(scheme) {
         Shadow(
-            color = Color(scheme.strokeHex).copy(alpha = 0.88f),
-            offset = Offset(0f, 2f),
-            blurRadius = 6f
+            color = Color(scheme.strokeHex).copy(alpha = 0.92f),
+            offset = Offset(0f, 3f),
+            blurRadius = 8f
         )
     }
 
-    val effectiveBgAlpha = when {
-        state.floatingCapsuleLocked -> (state.desktopBgAlpha * 0.35f).coerceIn(0f, 0.52f)
-        showHudControls -> state.desktopBgAlpha.coerceAtLeast(0.75f)
-        else -> state.desktopBgAlpha
+    val topHudReserveDp = 46.dp
+    val singleRowSlotDp = remember(state.desktopFontSize) {
+        (state.desktopFontSize * 1.44f).coerceAtLeast(24f).dp
     }
-    val containerColor = Color(0xFF0A101D).copy(alpha = effectiveBgAlpha)
-    val borderAlpha = if (effectiveBgAlpha < 0.10f) 0f else if (state.floatingCapsuleLocked) 0.06f else 0.24f
+    val fixedThreeLineZoneDp = remember(singleRowSlotDp) {
+        singleRowSlotDp * 3 + 8.dp
+    }
 
     AnimatedVisibility(
         visible = state.floatingCapsuleEnabled && song != null,
         enter = scaleIn(
-            initialScale = 0.90f,
+            initialScale = 0.94f,
             animationSpec = ConceptMotion.expressiveSpring()
         ) + fadeIn(tween(180, easing = ConceptMotion.EmphasizedDecelerate)),
         exit = scaleOut(
-            targetScale = 0.90f,
+            targetScale = 0.94f,
             animationSpec = ConceptMotion.spatialSheetSpring()
         ) + fadeOut(tween(150, easing = ConceptMotion.EmphasizedAccelerate)),
         modifier = modifier
@@ -161,35 +192,34 @@ fun FloatingLyricOverlay(
         val safeIdx = currentLyricIndex.coerceIn(0, (lines.size - 1).coerceAtLeast(0))
         val currentLine = lines.getOrNull(safeIdx)
         val nextLine = lines.getOrNull(safeIdx + 1)
+        val fallbackTitle = "${song?.title.orEmpty()} - ${song?.artist.orEmpty()}".trim(' ', '-')
+            .ifBlank { "微风音乐 · 酷狗概念版" }
 
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.TopCenter
         ) {
-            // 使用 graphicsLayer 直接在 GPU 渲染阶段做平移变换，彻底消除拖拽时的 Layout 重排与 Shadow 重算卡顿
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
+            // 横向自适应占满屏幕宽度（仅留 10.dp 安全边距），锁定 X=0，仅支持垂直上下拖动
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth(state.desktopWidthFraction.coerceIn(0.68f, 0.96f))
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp)
                     .graphicsLayer {
-                        translationX = dragX
                         translationY = dragY
                     }
                     .then(
                         if (!state.floatingCapsuleLocked) {
-                            Modifier.pointerInput(maxHorizontalOffsetPx, maxVerticalOffsetPx) {
-                                detectDragGestures(
+                            Modifier.pointerInput(minVerticalOffsetPx, maxVerticalOffsetPx) {
+                                detectVerticalDragGestures(
                                     onDragEnd = {
-                                        SystemLyricBridge.saveDesktopPosition(dragX, dragY)
+                                        SystemLyricBridge.saveDesktopPosition(0f, dragY)
                                     },
                                     onDragCancel = {
-                                        SystemLyricBridge.saveDesktopPosition(dragX, dragY)
+                                        SystemLyricBridge.saveDesktopPosition(0f, dragY)
                                     }
                                 ) { change, dragAmount ->
                                     change.consume()
-                                    dragX = (dragX + dragAmount.x).coerceIn(-maxHorizontalOffsetPx, maxHorizontalOffsetPx)
-                                    dragY = (dragY + dragAmount.y).coerceIn(minVerticalOffsetPx, maxVerticalOffsetPx)
+                                    dragY = (dragY + dragAmount).coerceIn(minVerticalOffsetPx, maxVerticalOffsetPx)
                                 }
                             }
                         } else {
@@ -197,477 +227,212 @@ fun FloatingLyricOverlay(
                         }
                     )
             ) {
+                val panelShape = RoundedCornerShape(24.dp)
+
+                // 主容器：顶部 46.dp 控制槽位 + 中间三行恒定高度歌词区 + 底部平滑延伸设置区
                 Column(
                     modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(containerColor)
+                        .fillMaxWidth()
+                        .clip(panelShape)
                         .then(
-                            if (borderAlpha > 0.01f) {
-                                Modifier.border(
-                                    width = 1.dp,
-                                    color = playedStartColor.copy(alpha = borderAlpha),
-                                    shape = RoundedCornerShape(20.dp)
-                                )
-                            } else Modifier
-                        )
-                        .then(
-                            if (!state.floatingCapsuleLocked) {
-                                Modifier.clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) {
-                                    showHudControls = !showHudControls
-                                    if (!showHudControls) showStyleSubPanel = false
-                                }
-                            } else Modifier
-                        )
-                        .padding(horizontal = 14.dp, vertical = 9.dp)
-                ) {
-                    // 1. 顶部交互控制栏（未锁定且点击桌面歌词后展开）
-                    AnimatedVisibility(
-                        visible = showHudControls && !state.floatingCapsuleLocked,
-                        enter = expandVertically(animationSpec = ConceptMotion.spatialSheetSpring()) +
-                            fadeIn(tween(180, easing = ConceptMotion.EmphasizedDecelerate)),
-                        exit = shrinkVertically(animationSpec = ConceptMotion.spatialSheetSpring()) +
-                            fadeOut(tween(140, easing = ConceptMotion.EmphasizedAccelerate))
-                    ) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            if (!SystemLyricBridge.canDrawSystemOverlays(context)) {
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = playedStartColor.copy(alpha = 0.18f),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(bottom = 6.dp)
-                                        .softClickable {
-                                            SystemLyricBridge.requestOverlayPermissionIfNeeded(context)
-                                        }
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = "开启「跨应用全局悬浮窗」权限，退回手机桌面也可常驻显示",
-                                            color = Color.White.copy(alpha = 0.92f),
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "去开启 >",
-                                            color = playedStartColor,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.ExtraBold
-                                        )
-                                    }
-                                }
+                            if (hudAlpha > 0.01f) {
+                                Modifier
+                                    .background(
+                                        brush = Brush.verticalGradient(
+                                            colors = listOf(
+                                                Color(0xFF131D31).copy(alpha = 0.85f * hudAlpha),
+                                                Color(0xFF0A101D).copy(alpha = 0.90f * hudAlpha)
+                                            )
+                                        ),
+                                        shape = panelShape
+                                    )
+                                    .background(
+                                        brush = Brush.horizontalGradient(
+                                            colors = listOf(
+                                                playedStartColor.copy(alpha = 0.16f * hudAlpha),
+                                                playedEndColor.copy(alpha = 0.08f * hudAlpha),
+                                                Color.Transparent
+                                            )
+                                        ),
+                                        shape = panelShape
+                                    )
+                                    .border(
+                                        width = 1.dp,
+                                        brush = Brush.linearGradient(
+                                            colors = listOf(
+                                                Color.White.copy(alpha = 0.24f * hudAlpha),
+                                                playedStartColor.copy(alpha = 0.28f * hudAlpha)
+                                            )
+                                        ),
+                                        shape = panelShape
+                                    )
+                            } else {
+                                Modifier
                             }
+                        )
+                ) {
+                    // 1. 顶部固定 46.dp 控制栏槽位（始终占据固定高度，保证点击唤醒时下方歌词位置 0px 偏移！）
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(topHudReserveDp)
+                            .graphicsLayer { alpha = hudAlpha }
+                    ) {
+                        if (hudAlpha > 0.05f && !state.floatingCapsuleLocked) {
+                            DesktopPlumpTopControlBar(
+                                isPlaying = isPlaying,
+                                playMode = playMode,
+                                isSettingsOpen = showSettingsPanel,
+                                accentColor = playedStartColor,
+                                onLockClick = {
+                                    showSettingsPanel = false
+                                    showHudControls = false
+                                    SystemLyricBridge.setFloatingCapsuleLocked(true)
+                                    Toast.makeText(context, "桌面歌词已锁定，点击左上角小锁图标即可解锁", Toast.LENGTH_SHORT).show()
+                                },
+                                onCyclePlayModeClick = {
+                                    onCyclePlayMode()
+                                },
+                                onPreviousClick = onPrevious,
+                                onTogglePlayClick = onTogglePlay,
+                                onNextClick = onNext,
+                                onToggleSettingsClick = {
+                                    showSettingsPanel = !showSettingsPanel
+                                },
+                                onCloseClick = {
+                                    showSettingsPanel = false
+                                    showHudControls = false
+                                    SystemLyricBridge.setFloatingCapsuleEnabled(false)
+                                }
+                            )
 
-                            Row(
+                            // 顶栏底部极细柔光分割线
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 18.dp)
+                                    .height(0.6.dp)
+                                    .background(Color.White.copy(alpha = 0.12f * hudAlpha))
+                            )
+                        }
+                    }
+
+                    // 2. 恒定三行高度歌词主显示区（短歌词两行插空居中 0.28/0.72，长歌词自然三行 0.18/0.50/0.82）
+                    BoxWithConstraints(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(fixedThreeLineZoneDp)
+                            .then(
+                                if (!state.floatingCapsuleLocked) {
+                                    Modifier.clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) {
+                                        val nextHud = !showHudControls
+                                        showHudControls = nextHud
+                                        if (!nextHud) {
+                                            showSettingsPanel = false
+                                        }
+                                    }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .padding(horizontal = 14.dp)
+                    ) {
+                        val availWidthPx = with(density) { maxWidth.toPx().coerceAtLeast(200f) }
+                        val mainFontPx = with(density) { state.desktopFontSize.sp.toPx().coerceAtLeast(15f) }
+                        val slotHeightPx = with(density) { singleRowSlotDp.toPx() }
+                        val maxVisualUnits = (availWidthPx / mainFontPx).coerceAtLeast(10f)
+
+                        val layoutPlan = remember(
+                            currentLine,
+                            nextLine,
+                            fallbackTitle,
+                            state.desktopShowTranslation,
+                            maxVisualUnits,
+                            slotHeightPx
+                        ) {
+                            resolveDesktopLyricLayoutPlan(
+                                currentLine = currentLine,
+                                nextLine = nextLine,
+                                fallbackTitle = fallbackTitle,
+                                showTranslation = state.desktopShowTranslation,
+                                maxVisualUnitsPerLine = maxVisualUnits,
+                                singleRowSlotHeightPx = slotHeightPx
+                            )
+                        }
+
+                        val containerHeightDp = maxHeight
+                        layoutPlan.rows.forEach { row ->
+                            val rowFontSizeSp = if (row.isSecondaryRow) {
+                                (state.desktopFontSize * 0.82f).coerceAtLeast(13f)
+                            } else {
+                                state.desktopFontSize
+                            }
+                            val rowHalfHeightDp = (rowFontSizeSp * 0.68f).dp
+                            val targetTopOffsetDp = (containerHeightDp * row.verticalCenterFraction - rowHalfHeightDp)
+                                .coerceAtLeast(0.dp)
+
+                            Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(bottom = 6.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .offset(y = targetTopOffsetDp),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .softClickable(onClick = onClickCapsule)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.OpenInFull,
-                                        contentDescription = "进入播放页",
-                                        tint = playedStartColor,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(5.dp))
-                                    Text(
-                                        text = "${song?.title.orEmpty()} - ${song?.artist.orEmpty()}",
-                                        color = Color.White.copy(alpha = 0.90f),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    IconButton(onClick = onPrevious, modifier = Modifier.size(26.dp)) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.SkipPrevious,
-                                            contentDescription = "上一首",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(17.dp)
-                                        )
-                                    }
-                                    IconButton(onClick = onTogglePlay, modifier = Modifier.size(28.dp)) {
-                                        Icon(
-                                            imageVector = if (isPlaying) Icons.Rounded.PauseCircleFilled else Icons.Rounded.PlayCircleFilled,
-                                            contentDescription = "播放/暂停",
-                                            tint = playedStartColor,
-                                            modifier = Modifier.size(21.dp)
-                                        )
-                                    }
-                                    IconButton(onClick = onNext, modifier = Modifier.size(26.dp)) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.SkipNext,
-                                            contentDescription = "下一首",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(17.dp)
-                                        )
-                                    }
-                                }
-
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    IconButton(
-                                        onClick = { showStyleSubPanel = !showStyleSubPanel },
-                                        modifier = Modifier.size(26.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Palette,
-                                            contentDescription = "桌面歌词样式",
-                                            tint = if (showStyleSubPanel) playedStartColor else Color.White.copy(alpha = 0.80f),
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            SystemLyricBridge.setFloatingCapsuleLocked(true)
-                                            Toast.makeText(context, "桌面歌词已锁定，点击右侧小锁图标可解锁", Toast.LENGTH_SHORT).show()
-                                        },
-                                        modifier = Modifier.size(26.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.LockOpen,
-                                            contentDescription = "锁定桌面歌词",
-                                            tint = Color.White.copy(alpha = 0.80f),
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                    }
-                                    IconButton(
-                                        onClick = { SystemLyricBridge.setFloatingCapsuleEnabled(false) },
-                                        modifier = Modifier.size(26.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Close,
-                                            contentDescription = "关闭桌面歌词",
-                                            tint = Color.White.copy(alpha = 0.80f),
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                    }
-                                }
-                            }
-
-                            HorizontalDivider(color = Color.White.copy(alpha = 0.10f), thickness = 0.5.dp)
-                            Spacer(modifier = Modifier.height(5.dp))
-                        }
-                    }
-
-                    // 2. 桌面歌词实时逐字流光主显示区（局部帧采样，不引起外层容器重组）
-                    val textAlign = if (state.desktopAlignment == 1) TextAlign.Start else TextAlign.Center
-                    val colAlign = if (state.desktopAlignment == 1) Alignment.Start else Alignment.CenterHorizontally
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = colAlign
-                    ) {
-                        when (state.desktopLineMode) {
-                            DesktopLyricLineMode.SINGLE_COMPACT -> {
-                                DesktopKrcKaraokeLineText(
-                                    line = currentLine,
-                                    fallbackText = "${song?.title.orEmpty()} - ${song?.artist.orEmpty()}",
-                                    isActiveLine = true,
+                                DesktopUnifiedAnimatedLyricRow(
+                                    row = row,
                                     isPlaying = isPlaying,
                                     positionProvider = positionProvider,
-                                    fontSizeSp = state.desktopFontSize,
+                                    fontSizeSp = rowFontSizeSp,
                                     playedStartColor = playedStartColor,
                                     playedEndColor = playedEndColor,
                                     unplayedColor = unplayedColor,
-                                    textShadow = textShadow,
-                                    textAlign = textAlign
+                                    textShadow = textShadow
                                 )
-                            }
-
-                            DesktopLyricLineMode.DUAL_ALTERNATING -> {
-                                val isEvenLine = safeIdx % 2 == 0
-                                val topLine = if (isEvenLine) currentLine else nextLine
-                                val bottomLine = if (isEvenLine) nextLine else currentLine
-
-                                DesktopKrcKaraokeLineText(
-                                    line = topLine,
-                                    fallbackText = "${song?.title.orEmpty()} - ${song?.artist.orEmpty()}",
-                                    isActiveLine = isEvenLine,
-                                    isPlaying = isPlaying,
-                                    positionProvider = positionProvider,
-                                    fontSizeSp = if (isEvenLine) state.desktopFontSize else (state.desktopFontSize - 2.5f).coerceAtLeast(12f),
-                                    playedStartColor = playedStartColor,
-                                    playedEndColor = playedEndColor,
-                                    unplayedColor = unplayedColor,
-                                    textShadow = textShadow,
-                                    textAlign = TextAlign.Start
-                                )
-                                Spacer(modifier = Modifier.height(2.dp))
-                                DesktopKrcKaraokeLineText(
-                                    line = bottomLine,
-                                    fallbackText = "♪ • • •",
-                                    isActiveLine = !isEvenLine,
-                                    isPlaying = isPlaying,
-                                    positionProvider = positionProvider,
-                                    fontSizeSp = if (!isEvenLine) state.desktopFontSize else (state.desktopFontSize - 2.5f).coerceAtLeast(12f),
-                                    playedStartColor = playedStartColor,
-                                    playedEndColor = playedEndColor,
-                                    unplayedColor = unplayedColor,
-                                    textShadow = textShadow,
-                                    textAlign = TextAlign.End
-                                )
-                            }
-
-                            DesktopLyricLineMode.DUAL_BILINGUAL -> {
-                                DesktopKrcKaraokeLineText(
-                                    line = currentLine,
-                                    fallbackText = "${song?.title.orEmpty()} - ${song?.artist.orEmpty()}",
-                                    isActiveLine = true,
-                                    isPlaying = isPlaying,
-                                    positionProvider = positionProvider,
-                                    fontSizeSp = state.desktopFontSize,
-                                    playedStartColor = playedStartColor,
-                                    playedEndColor = playedEndColor,
-                                    unplayedColor = unplayedColor,
-                                    textShadow = textShadow,
-                                    textAlign = textAlign
-                                )
-                                val subLineText = when {
-                                    state.desktopShowTranslation && !currentLine?.translation.isNullOrBlank() ->
-                                        currentLine?.translation.orEmpty()
-                                    !nextLine?.text.isNullOrBlank() ->
-                                        nextLine?.text.orEmpty()
-                                    else -> ""
-                                }
-                                if (subLineText.isNotBlank()) {
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = subLineText,
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            color = unplayedColor.copy(alpha = 0.85f),
-                                            fontSize = (state.desktopFontSize - 3.8f).coerceAtLeast(11.5f).sp,
-                                            fontWeight = FontWeight.Medium,
-                                            shadow = textShadow
-                                        ),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        textAlign = textAlign,
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
                             }
                         }
+
+                        // 前奏 / 间奏三点呼吸波点（与 App 内动效统一）
+                        DesktopInterludeBreathingIndicator(
+                            lyricData = lyricData,
+                            isPlaying = isPlaying,
+                            positionProvider = positionProvider,
+                            accentColor = playedStartColor,
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 2.dp)
+                        )
                     }
 
-                    // 3. 展开式桌面歌词个性定制面板
-                    AnimatedVisibility(
-                        visible = showHudControls && showStyleSubPanel && !state.floatingCapsuleLocked,
-                        enter = expandVertically(animationSpec = ConceptMotion.spatialSheetSpring()) +
-                            fadeIn(tween(180, easing = ConceptMotion.EmphasizedDecelerate)),
-                        exit = shrinkVertically(animationSpec = ConceptMotion.spatialSheetSpring()) +
-                            fadeOut(tween(140, easing = ConceptMotion.EmphasizedAccelerate))
-                    ) {
-                        Column(
+                    // 3. 底部平滑向下延伸的设置面板（仅含「歌词颜色」与「歌词字号」两项）
+                    if (settingsHeightDp > 0.5.dp && !state.floatingCapsuleLocked) {
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(top = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                .height(settingsHeightDp)
+                                .graphicsLayer { alpha = settingsAlpha }
                         ) {
-                            HorizontalDivider(color = Color.White.copy(alpha = 0.10f), thickness = 0.5.dp)
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("配色:", color = Color.White.copy(alpha = 0.7f), fontSize = 10.5.sp)
-                                DesktopLyricColorScheme.entries.forEach { item ->
-                                    val selected = state.desktopColorScheme == item
-                                    Surface(
-                                        shape = RoundedCornerShape(9.dp),
-                                        color = if (selected) Color(item.playedStartHex).copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f),
-                                        modifier = Modifier.softClickable { SystemLyricBridge.setDesktopColorScheme(item) }
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(9.dp)
-                                                    .clip(CircleShape)
-                                                    .background(
-                                                        Brush.linearGradient(
-                                                            listOf(Color(item.playedStartHex), Color(item.playedEndHex))
-                                                        )
-                                                    )
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = item.label,
-                                                color = Color.White,
-                                                fontSize = 10.sp,
-                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                    DesktopLyricLineMode.entries.forEach { mode ->
-                                        val selected = state.desktopLineMode == mode
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = if (selected) playedStartColor else Color.White.copy(alpha = 0.10f),
-                                            modifier = Modifier.softClickable { SystemLyricBridge.setDesktopLineMode(mode) }
-                                        ) {
-                                            Text(
-                                                text = mode.label,
-                                                color = if (selected) Color(0xFF06101E) else Color.White.copy(alpha = 0.85f),
-                                                fontSize = 9.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp)
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color.White.copy(alpha = 0.10f),
-                                        modifier = Modifier.softClickable {
-                                            SystemLyricBridge.setDesktopAlignment(if (state.desktopAlignment == 0) 1 else 0)
-                                        }
-                                    ) {
-                                        Icon(
-                                            imageVector = if (state.desktopAlignment == 0) Icons.Rounded.FormatAlignCenter else Icons.AutoMirrored.Rounded.FormatAlignLeft,
-                                            contentDescription = "切换对齐",
-                                            tint = Color.White,
-                                            modifier = Modifier
-                                                .padding(4.5.dp)
-                                                .size(13.dp)
-                                        )
-                                    }
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color.White.copy(alpha = 0.10f),
-                                        modifier = Modifier.softClickable {
-                                            SystemLyricBridge.setDesktopFontSize(state.desktopFontSize - 1.5f)
-                                        }
-                                    ) {
-                                        Text(
-                                            text = "A-",
-                                            color = Color.White,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                                        )
-                                    }
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = Color.White.copy(alpha = 0.10f),
-                                        modifier = Modifier.softClickable {
-                                            SystemLyricBridge.setDesktopFontSize(state.desktopFontSize + 1.5f)
-                                        }
-                                    ) {
-                                        Text(
-                                            text = "A+",
-                                            color = Color.White,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                                        )
-                                    }
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = if (state.desktopBgAlpha < 0.08f) "无框透明" else "透度 ${(state.desktopBgAlpha * 100).toInt()}%",
-                                    color = Color.White.copy(alpha = 0.75f),
-                                    fontSize = 10.sp,
-                                    modifier = Modifier.width(64.dp)
-                                )
-                                Slider(
-                                    value = state.desktopBgAlpha,
-                                    onValueChange = { SystemLyricBridge.setDesktopBgAlpha(it) },
-                                    valueRange = 0f..0.95f,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = playedStartColor,
-                                        activeTrackColor = playedStartColor,
-                                        inactiveTrackColor = Color.White.copy(alpha = 0.2f)
-                                    ),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "窗宽 ${(state.desktopWidthFraction * 100).toInt()}%",
-                                    color = Color.White.copy(alpha = 0.75f),
-                                    fontSize = 10.sp,
-                                    modifier = Modifier.width(56.dp)
-                                )
-                                Slider(
-                                    value = state.desktopWidthFraction,
-                                    onValueChange = { SystemLyricBridge.setDesktopWidthFraction(it) },
-                                    valueRange = 0.68f..0.96f,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = playedStartColor,
-                                        activeTrackColor = playedStartColor,
-                                        inactiveTrackColor = Color.White.copy(alpha = 0.2f)
-                                    ),
-                                    modifier = Modifier
-                                        .weight(0.85f)
-                                        .height(24.dp)
-                                )
-                            }
+                            DesktopExpandableSettingsSection(
+                                selectedScheme = state.desktopColorScheme,
+                                fontSizeSp = state.desktopFontSize,
+                                accentColor = playedStartColor,
+                                onSelectScheme = { SystemLyricBridge.setDesktopColorScheme(it) },
+                                onChangeFontSize = { SystemLyricBridge.setDesktopFontSize(it) }
+                            )
                         }
                     }
                 }
 
-                // 锁定状态下在右侧保留一个微透明防误触解锁小按钮
+                // 锁定状态下在左上角原锁定键位置保留圆润小锁解锁按钮
                 if (state.floatingCapsuleLocked) {
-                    Spacer(modifier = Modifier.width(6.dp))
                     Surface(
                         shape = CircleShape,
-                        color = Color(0xCC0A101D),
+                        color = Color(0x880D1524),
                         modifier = Modifier
-                            .size(30.dp)
-                            .border(1.dp, VipGold.copy(alpha = 0.65f), CircleShape)
+                            .padding(start = 12.dp, top = 6.dp)
+                            .size(34.dp)
                             .softClickable {
                                 SystemLyricBridge.setFloatingCapsuleLocked(false)
                                 showHudControls = true
@@ -675,11 +440,9 @@ fun FloatingLyricOverlay(
                             }
                     ) {
                         Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Rounded.Lock,
-                                contentDescription = "解锁桌面歌词",
-                                tint = VipGold,
-                                modifier = Modifier.size(14.dp)
+                            PlumpDesktopLockCanvasIcon(
+                                color = VipGold,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -689,25 +452,517 @@ fun FloatingLyricOverlay(
     }
 }
 
+/**
+ * 顶部 7 键无边框、圆润饱满矢量控制栏：
+ * 左上角：[锁定, 播放顺序] | 正中：[上一首, 暂停/播放, 下一首] | 右上角：[设置, X]
+ */
 @Composable
-private fun DesktopKrcKaraokeLineText(
-    line: LyricLine?,
-    fallbackText: String,
-    isActiveLine: Boolean,
+private fun DesktopPlumpTopControlBar(
+    isPlaying: Boolean,
+    playMode: PlayMode,
+    isSettingsOpen: Boolean,
+    accentColor: Color,
+    onLockClick: () -> Unit,
+    onCyclePlayModeClick: () -> Unit,
+    onPreviousClick: () -> Unit,
+    onTogglePlayClick: () -> Unit,
+    onNextClick: () -> Unit,
+    onToggleSettingsClick: () -> Unit,
+    onCloseClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 10.dp)
+    ) {
+        // 左上角组：锁定、播放顺序
+        Row(
+            modifier = Modifier.align(Alignment.CenterStart),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .softClickable(pressScale = 0.84f, onClick = onLockClick),
+                contentAlignment = Alignment.Center
+            ) {
+                PlumpDesktopLockCanvasIcon(
+                    color = VipGold,
+                    modifier = Modifier.size(19.dp)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .softClickable(pressScale = 0.84f, onClick = onCyclePlayModeClick),
+                contentAlignment = Alignment.Center
+            ) {
+                PlumpDesktopPlayModeCanvasIcon(
+                    playMode = playMode,
+                    color = if (playMode == PlayMode.REPEAT_ALL) Color.White.copy(alpha = 0.94f) else accentColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+
+        // 正中央组：上一首、暂停/播放、下一首
+        Row(
+            modifier = Modifier.align(Alignment.Center),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .softClickable(pressScale = 0.84f, onClick = onPreviousClick),
+                contentAlignment = Alignment.Center
+            ) {
+                PlumpDesktopSkipCanvasIcon(
+                    isNext = false,
+                    color = Color.White.copy(alpha = 0.95f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .softClickable(pressScale = 0.84f, onClick = onTogglePlayClick),
+                contentAlignment = Alignment.Center
+            ) {
+                PlumpDesktopPlayPauseCanvasIcon(
+                    isPlaying = isPlaying,
+                    color = accentColor,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .softClickable(pressScale = 0.84f, onClick = onNextClick),
+                contentAlignment = Alignment.Center
+            ) {
+                PlumpDesktopSkipCanvasIcon(
+                    isNext = true,
+                    color = Color.White.copy(alpha = 0.95f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+
+        // 右上角组：设置、关闭 (X)
+        Row(
+            modifier = Modifier.align(Alignment.CenterEnd),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .softClickable(pressScale = 0.84f, onClick = onToggleSettingsClick),
+                contentAlignment = Alignment.Center
+            ) {
+                PlumpDesktopSettingsCanvasIcon(
+                    color = if (isSettingsOpen) accentColor else Color.White.copy(alpha = 0.94f),
+                    knobColor = accentColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .softClickable(pressScale = 0.84f, onClick = onCloseClick),
+                contentAlignment = Alignment.Center
+            ) {
+                PlumpDesktopCloseCanvasIcon(
+                    color = Color.White.copy(alpha = 0.92f),
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlumpDesktopLockCanvasIcon(
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = 2.2.dp.toPx()
+        drawArc(
+            color = color,
+            startAngle = 180f,
+            sweepAngle = 180f,
+            useCenter = false,
+            topLeft = Offset(w * 0.28f, h * 0.10f),
+            size = Size(w * 0.44f, h * 0.50f),
+            style = Stroke(width = stroke, cap = StrokeCap.Round)
+        )
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(w * 0.16f, h * 0.44f),
+            size = Size(w * 0.68f, h * 0.48f),
+            cornerRadius = CornerRadius(w * 0.18f, w * 0.18f)
+        )
+    }
+}
+
+@Composable
+private fun PlumpDesktopPlayModeCanvasIcon(
+    playMode: PlayMode,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = 2.2.dp.toPx()
+        when (playMode) {
+            PlayMode.REPEAT_ALL, PlayMode.REPEAT_ONE -> {
+                val pad = w * 0.14f
+                val arcSize = Size(w - pad * 2f, h - pad * 2f)
+                drawArc(
+                    color = color,
+                    startAngle = -155f,
+                    sweepAngle = 130f,
+                    useCenter = false,
+                    topLeft = Offset(pad, pad),
+                    size = arcSize,
+                    style = Stroke(width = stroke, cap = StrokeCap.Round)
+                )
+                drawArc(
+                    color = color,
+                    startAngle = 25f,
+                    sweepAngle = 130f,
+                    useCenter = false,
+                    topLeft = Offset(pad, pad),
+                    size = arcSize,
+                    style = Stroke(width = stroke, cap = StrokeCap.Round)
+                )
+                val topTip = Offset(w * 0.78f, h * 0.26f)
+                drawLine(color, topTip, Offset(topTip.x - 3.6.dp.toPx(), topTip.y - 0.8.dp.toPx()), stroke, StrokeCap.Round)
+                drawLine(color, topTip, Offset(topTip.x - 0.8.dp.toPx(), topTip.y + 3.6.dp.toPx()), stroke, StrokeCap.Round)
+
+                val botTip = Offset(w * 0.22f, h * 0.74f)
+                drawLine(color, botTip, Offset(botTip.x + 3.6.dp.toPx(), botTip.y + 0.8.dp.toPx()), stroke, StrokeCap.Round)
+                drawLine(color, botTip, Offset(botTip.x + 0.8.dp.toPx(), botTip.y - 3.6.dp.toPx()), stroke, StrokeCap.Round)
+
+                if (playMode == PlayMode.REPEAT_ONE) {
+                    drawLine(color, Offset(w * 0.50f, h * 0.34f), Offset(w * 0.50f, h * 0.66f), stroke, StrokeCap.Round)
+                }
+            }
+            PlayMode.SHUFFLE -> {
+                val p1 = Path().apply {
+                    moveTo(w * 0.15f, h * 0.30f)
+                    cubicTo(w * 0.45f, h * 0.30f, w * 0.55f, h * 0.70f, w * 0.85f, h * 0.70f)
+                }
+                val p2 = Path().apply {
+                    moveTo(w * 0.15f, h * 0.70f)
+                    cubicTo(w * 0.45f, h * 0.70f, w * 0.55f, h * 0.30f, w * 0.85f, h * 0.30f)
+                }
+                drawPath(p1, color, style = Stroke(width = stroke, cap = StrokeCap.Round))
+                drawPath(p2, color, style = Stroke(width = stroke, cap = StrokeCap.Round))
+                val tipTop = Offset(w * 0.86f, h * 0.30f)
+                drawLine(color, tipTop, Offset(tipTop.x - 3.2.dp.toPx(), tipTop.y - 2.6.dp.toPx()), stroke, StrokeCap.Round)
+                drawLine(color, tipTop, Offset(tipTop.x - 3.2.dp.toPx(), tipTop.y + 2.6.dp.toPx()), stroke, StrokeCap.Round)
+                val tipBot = Offset(w * 0.86f, h * 0.70f)
+                drawLine(color, tipBot, Offset(tipBot.x - 3.2.dp.toPx(), tipBot.y - 2.6.dp.toPx()), stroke, StrokeCap.Round)
+                drawLine(color, tipBot, Offset(tipBot.x - 3.2.dp.toPx(), tipBot.y + 2.6.dp.toPx()), stroke, StrokeCap.Round)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlumpDesktopSkipCanvasIcon(
+    isNext: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val barW = w * 0.16f
+        val barH = h * 0.66f
+        val barTop = (h - barH) / 2f
+        val strokeJoin = 2.6.dp.toPx()
+
+        if (isNext) {
+            val tri = Path().apply {
+                moveTo(w * 0.18f, h * 0.20f)
+                lineTo(w * 0.68f, h * 0.50f)
+                lineTo(w * 0.18f, h * 0.80f)
+                close()
+            }
+            drawPath(tri, color)
+            drawPath(tri, color, style = Stroke(width = strokeJoin, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(w * 0.72f, barTop),
+                size = Size(barW, barH),
+                cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+            )
+        } else {
+            val tri = Path().apply {
+                moveTo(w * 0.82f, h * 0.20f)
+                lineTo(w * 0.32f, h * 0.50f)
+                lineTo(w * 0.82f, h * 0.80f)
+                close()
+            }
+            drawPath(tri, color)
+            drawPath(tri, color, style = Stroke(width = strokeJoin, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(w * 0.12f, barTop),
+                size = Size(barW, barH),
+                cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlumpDesktopPlayPauseCanvasIcon(
+    isPlaying: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        if (isPlaying) {
+            val barW = w * 0.24f
+            val barH = h * 0.72f
+            val top = (h - barH) / 2f
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(w * 0.18f, top),
+                size = Size(barW, barH),
+                cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+            )
+            drawRoundRect(
+                color = color,
+                topLeft = Offset(w * 0.58f, top),
+                size = Size(barW, barH),
+                cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+            )
+        } else {
+            val strokeJoin = 3.2.dp.toPx()
+            val tri = Path().apply {
+                moveTo(w * 0.24f, h * 0.16f)
+                lineTo(w * 0.84f, h * 0.50f)
+                lineTo(w * 0.24f, h * 0.84f)
+                close()
+            }
+            drawPath(tri, color)
+            drawPath(tri, color, style = Stroke(width = strokeJoin, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
+    }
+}
+
+@Composable
+private fun PlumpDesktopSettingsCanvasIcon(
+    color: Color,
+    knobColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = 2.2.dp.toPx()
+        drawLine(color, Offset(w * 0.14f, h * 0.32f), Offset(w * 0.86f, h * 0.32f), stroke, StrokeCap.Round)
+        drawCircle(knobColor, radius = 3.2.dp.toPx(), center = Offset(w * 0.64f, h * 0.32f))
+
+        drawLine(color, Offset(w * 0.14f, h * 0.68f), Offset(w * 0.86f, h * 0.68f), stroke, StrokeCap.Round)
+        drawCircle(color, radius = 3.2.dp.toPx(), center = Offset(w * 0.36f, h * 0.68f))
+    }
+}
+
+@Composable
+private fun PlumpDesktopCloseCanvasIcon(
+    color: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = 2.4.dp.toPx()
+        drawLine(color, Offset(w * 0.18f, h * 0.18f), Offset(w * 0.82f, h * 0.82f), stroke, StrokeCap.Round)
+        drawLine(color, Offset(w * 0.82f, h * 0.18f), Offset(w * 0.18f, h * 0.82f), stroke, StrokeCap.Round)
+    }
+}
+
+/**
+ * 底部平滑延伸的设置面板（仅包含「歌词颜色」与「歌词字号」两项）
+ */
+@Composable
+private fun DesktopExpandableSettingsSection(
+    selectedScheme: DesktopLyricColorScheme,
+    fontSizeSp: Float,
+    accentColor: Color,
+    onSelectScheme: (DesktopLyricColorScheme) -> Unit,
+    onChangeFontSize: (Float) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 18.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.SpaceEvenly
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(0.6.dp)
+                .background(Color.White.copy(alpha = 0.12f))
+        )
+
+        // 1. 歌词颜色
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "颜色",
+                color = Color.White.copy(alpha = 0.85f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                DesktopLyricColorScheme.entries.forEach { scheme ->
+                    val selected = scheme == selectedScheme
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .softClickable(pressScale = 0.85f) { onSelectScheme(scheme) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (selected) {
+                            Box(
+                                modifier = Modifier
+                                    .size(25.dp)
+                                    .clip(CircleShape)
+                                    .border(1.8.dp, Color.White, CircleShape)
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(19.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(Color(scheme.playedStartHex), Color(scheme.playedEndHex))
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (selected) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. 歌词字号
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "字号",
+                color = Color.White.copy(alpha = 0.85f),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.width(14.dp))
+            Text(
+                text = "A-",
+                color = Color.White.copy(alpha = 0.92f),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier
+                    .softClickable(pressScale = 0.85f) {
+                        onChangeFontSize((fontSizeSp - 1f).coerceIn(15f, 26f))
+                    }
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+            Slider(
+                value = fontSizeSp.coerceIn(15f, 26f),
+                onValueChange = { raw ->
+                    val stepped = (raw * 2f).roundToInt() / 2f
+                    onChangeFontSize(stepped)
+                },
+                valueRange = 15f..26f,
+                colors = SliderDefaults.colors(
+                    thumbColor = Color.White,
+                    activeTrackColor = accentColor,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.22f)
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(26.dp)
+            )
+            Text(
+                text = "${fontSizeSp.roundToInt()}sp",
+                color = accentColor,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier.padding(horizontal = 6.dp)
+            )
+            Text(
+                text = "A+",
+                color = Color.White.copy(alpha = 0.92f),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier
+                    .softClickable(pressScale = 0.85f) {
+                        onChangeFontSize((fontSizeSp + 1f).coerceIn(15f, 26f))
+                    }
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            )
+        }
+    }
+}
+
+/**
+ * 与 App 内歌词动效完全统一的桌面歌词单行渲染器（支持 KRC 逐字流光渐变 + 唱诵单字弹性上浮 + 长音辉光）
+ */
+@Composable
+private fun DesktopUnifiedAnimatedLyricRow(
+    row: DesktopLyricRenderRow,
     isPlaying: Boolean,
     positionProvider: () -> Long,
     fontSizeSp: Float,
     playedStartColor: Color,
     playedEndColor: Color,
     unplayedColor: Color,
-    textShadow: Shadow,
-    textAlign: TextAlign
+    textShadow: Shadow
 ) {
-    var sampledPosMs by remember(line, isActiveLine) {
-        mutableLongStateOf(if (isActiveLine) positionProvider() else -1L)
+    var sampledPosMs by remember(row, isPlaying) {
+        mutableLongStateOf(if (row.isActiveKaraoke) positionProvider() else -1L)
     }
-    LaunchedEffect(line, isActiveLine, isPlaying) {
-        if (isActiveLine && line != null && line.words.isNotEmpty()) {
+    LaunchedEffect(row, isPlaying) {
+        if (row.isActiveKaraoke) {
             sampledPosMs = positionProvider()
             if (isPlaying) {
                 while (isActive) {
@@ -717,84 +972,137 @@ private fun DesktopKrcKaraokeLineText(
                 }
             }
         } else {
-            sampledPosMs = if (isActiveLine) positionProvider() else -1L
+            sampledPosMs = -1L
         }
     }
 
-    val currentPositionMs = if (isActiveLine) sampledPosMs else -1L
-    if (line != null && line.words.isNotEmpty() && currentPositionMs >= 0L) {
-        val annotated = buildAnnotatedString {
-            line.words.forEach { word ->
-                val wordEnd = word.startTimeMs + word.durationMs
-                when {
-                    currentPositionMs >= wordEnd -> {
-                        withStyle(
-                            SpanStyle(
-                                color = playedStartColor,
-                                fontWeight = FontWeight.ExtraBold,
-                                shadow = textShadow
-                            )
-                        ) {
-                            append(word.text)
+    val currentPosMs = if (row.isActiveKaraoke) sampledPosMs else -1L
+
+    if (row.isActiveKaraoke && row.words.isNotEmpty() && currentPosMs >= 0L) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            row.words.forEach { word ->
+                val wordProgress = when {
+                    word.durationMs > 0L -> ((currentPosMs - word.startTimeMs).toFloat() / word.durationMs.toFloat()).coerceIn(0f, 1f)
+                    currentPosMs >= word.startTimeMs -> 1f
+                    else -> 0f
+                }
+                val isSinging = wordProgress in 0.01f..0.99f
+                val wave = if (isSinging) sin(wordProgress * PI.toFloat()) else 0f
+                val isLongNote = word.durationMs >= 700L && isSinging
+
+                val wordAnnotated = buildAnnotatedString {
+                    when {
+                        wordProgress <= 0f -> {
+                            withStyle(SpanStyle(color = unplayedColor, fontWeight = FontWeight.Bold, shadow = textShadow)) {
+                                append(word.text)
+                            }
                         }
-                    }
-                    currentPositionMs > word.startTimeMs -> {
-                        val subP = if (word.durationMs > 0L) {
-                            ((currentPositionMs - word.startTimeMs).toFloat() / word.durationMs.toFloat()).coerceIn(0f, 1f)
-                        } else 1f
-                        val lStop = (subP - 0.15f).coerceAtLeast(0f)
-                        val rStop = (subP + 0.15f).coerceAtMost(1f)
-                        withStyle(
-                            SpanStyle(
-                                brush = Brush.horizontalGradient(
-                                    0.0f to playedStartColor,
-                                    lStop to playedEndColor,
-                                    rStop to unplayedColor,
-                                    1.0f to unplayedColor
-                                ),
-                                fontWeight = FontWeight.ExtraBold,
-                                shadow = textShadow
-                            )
-                        ) {
-                            append(word.text)
+                        wordProgress >= 1f -> {
+                            withStyle(SpanStyle(color = playedStartColor, fontWeight = FontWeight.ExtraBold, shadow = textShadow)) {
+                                append(word.text)
+                            }
                         }
-                    }
-                    else -> {
-                        withStyle(
-                            SpanStyle(
-                                color = unplayedColor,
-                                fontWeight = FontWeight.SemiBold,
-                                shadow = textShadow
-                            )
-                        ) {
-                            append(word.text)
+                        else -> {
+                            val lStop = (wordProgress - 0.15f).coerceAtLeast(0f)
+                            val rStop = (wordProgress + 0.15f).coerceAtMost(1f)
+                            val glowShadow = if (isLongNote) {
+                                Shadow(
+                                    color = playedStartColor.copy(alpha = (0.85f * wave).coerceIn(0.25f, 1f)),
+                                    offset = Offset(0f, 2f),
+                                    blurRadius = 14f * wave + 6f
+                                )
+                            } else textShadow
+                            withStyle(
+                                SpanStyle(
+                                    brush = Brush.horizontalGradient(
+                                        0.0f to playedStartColor,
+                                        lStop to playedEndColor,
+                                        rStop to unplayedColor,
+                                        1.0f to unplayedColor
+                                    ),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    shadow = glowShadow
+                                )
+                            ) {
+                                append(word.text)
+                            }
                         }
                     }
                 }
+
+                Text(
+                    text = wordAnnotated,
+                    fontSize = fontSizeSp.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.graphicsLayer {
+                        translationY = -2.5f.dp.toPx() * wave
+                        val s = 1f + 0.036f * wave
+                        scaleX = s
+                        scaleY = s
+                    }
+                )
             }
         }
-        Text(
-            text = annotated,
-            fontSize = fontSizeSp.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = textAlign,
-            modifier = Modifier.fillMaxWidth()
-        )
     } else {
-        val display = line?.text?.takeIf { it.isNotBlank() } ?: fallbackText
         Text(
-            text = display,
+            text = row.text,
             style = MaterialTheme.typography.bodyMedium.copy(
-                color = if (isActiveLine) playedStartColor else unplayedColor,
-                fontWeight = if (isActiveLine) FontWeight.ExtraBold else FontWeight.SemiBold,
+                color = if (row.isActiveKaraoke) playedStartColor else unplayedColor.copy(alpha = if (row.isSecondaryRow) 0.82f else 0.94f),
+                fontWeight = if (row.isActiveKaraoke) FontWeight.ExtraBold else FontWeight.SemiBold,
                 fontSize = fontSizeSp.sp,
                 shadow = textShadow
             ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            textAlign = textAlign,
+            textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
         )
+    }
+}
+
+@Composable
+private fun DesktopInterludeBreathingIndicator(
+    lyricData: LyricData,
+    isPlaying: Boolean,
+    positionProvider: () -> Long,
+    accentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    var sampledPosMs by remember(lyricData, isPlaying) {
+        mutableLongStateOf(positionProvider())
+    }
+    LaunchedEffect(lyricData, isPlaying) {
+        sampledPosMs = positionProvider()
+        if (isPlaying && lyricData.lines.isNotEmpty()) {
+            while (isActive) {
+                withFrameMillis {
+                    sampledPosMs = positionProvider()
+                }
+            }
+        }
+    }
+    val interludeProgress = lyricData.getInterludeProgressAt(sampledPosMs)
+    if (interludeProgress >= 0f) {
+        Row(
+            modifier = modifier,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            for (i in 0..2) {
+                val dotPhase = ((interludeProgress * 3f) - i * 0.35f).coerceIn(0f, 1f)
+                val pulse = sin(dotPhase * PI.toFloat()).coerceIn(0.25f, 1f)
+                Box(
+                    modifier = Modifier
+                        .size((4.5f + 2.5f * pulse).dp)
+                        .clip(CircleShape)
+                        .background(accentColor.copy(alpha = (0.35f + 0.60f * pulse).coerceIn(0f, 1f)))
+                )
+            }
+        }
     }
 }

@@ -823,10 +823,7 @@ fun NowPlayingSheet(
                             onAddToPlaylist = onAddToPlaylist,
                             onOpenAudioEffect = openViperAction,
                             onToggleDesktopLyric = {
-                                val nextEnabled = !systemLyricState.floatingCapsuleEnabled
-                                SystemLyricBridge.setFloatingCapsuleEnabled(nextEnabled)
-                                val msg = if (nextEnabled) "已开启桌面歌词" else "已关闭桌面歌词"
-                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                SystemLyricBridge.toggleDesktopLyricWithPermissionCheck(context)
                             },
                             onEnterLandscape = { enterLandscape(false) },
                             onOpenMoreSheet = { showMoreControlSheet = true },

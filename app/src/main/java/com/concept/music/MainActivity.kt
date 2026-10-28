@@ -1183,9 +1183,11 @@ private fun IsolatedDesktopLyricHost(
         currentPositionMs = adjustedPos,
         positionProvider = positionProvider,
         isPlaying = playerUiState.isPlaying,
+        playMode = playerUiState.playMode,
         onTogglePlay = { viewModel.togglePlayPause() },
         onPrevious = { viewModel.skipToPrevious() },
         onNext = { viewModel.skipToNext() },
+        onCyclePlayMode = { viewModel.cyclePlayMode() },
         onClickCapsule = onOpenPlayer
     )
 }

@@ -1,5 +1,7 @@
 package com.concept.music
 
+import com.concept.music.ui.viewmodel.PlayMode
+
 import com.concept.music.data.kugou.*
 import com.concept.music.data.model.*
 import com.concept.music.ui.theme.CoverTonalPalette
@@ -52,7 +54,7 @@ class UiAlignmentRegressionTest {
         assertTrue(state.motionOrientationPermissionEnabled)
         assertEquals(LyricHighlightTheme.ICE_BLUE, state.lyricHighlightTheme)
         assertTrue(LyricHighlightTheme.entries.contains(LyricHighlightTheme.DYNAMIC_COVER))
-        assertEquals(0.88f, SystemLyricState().desktopWidthFraction, 0.01f)
+        assertEquals(1.0f, SystemLyricState().desktopWidthFraction, 0.01f)
         assertFalse(AudioEffectState().equalLoudnessCompensation)
         assertFalse(state.allowPlayWithOtherApps)
         assertTrue(state.wiredHeadsetControlEnabled)
@@ -1191,6 +1193,131 @@ class UiAlignmentRegressionTest {
             assertEquals(7, com.concept.music.service.AppPermissionManager.state.value.enabledCount)
         } finally {
             com.concept.music.service.AppPermissionManager.resetForTest()
+        }
+    }
+
+    @Test
+    fun `桌面歌词三行恒定高度与两行插空居中及长歌词自然换行验证`() {
+        val shortLine = LyricLine(
+            startTimeMs = 1000L,
+            durationMs = 3000L,
+            text = "穿过旷野的风",
+            translation = "The wind blowing through the wilderness",
+            words = listOf(
+                LyricWord(startTimeMs = 1000L, durationMs = 1500L, text = "穿过旷野"),
+                LyricWord(startTimeMs = 2500L, durationMs = 1500L, text = "的风")
+            )
+        )
+        val nextShortLine = LyricLine(
+            startTimeMs = 4000L,
+            durationMs = 2500L,
+            text = "你慢些走"
+        )
+        val shortPlan = com.concept.music.service.resolveDesktopLyricLayoutPlan(
+            currentLine = shortLine,
+            nextLine = nextShortLine,
+            song = null,
+            fontSizeSp = 19f,
+            lineMode = com.concept.music.service.DesktopLyricLineMode.DUAL_BILINGUAL,
+            maxCharsPerSingleRow = 16f
+        )
+
+        // 短歌词仅用两行：插空居中显示（0.28f 与 0.72f，整体中点严格位于 0.50f）
+        assertFalse("短歌词不应触发三行换行", shortPlan.isThreeLineLayout)
+        assertEquals(2, shortPlan.rows.size)
+        assertEquals(0.28f, shortPlan.rows[0].verticalCenterFraction, 0.001f)
+        assertEquals(0.72f, shortPlan.rows[1].verticalCenterFraction, 0.001f)
+        assertEquals(
+            "两行插空布局的整体视觉中心必须严格居中(0.50f)",
+            0.50f,
+            (shortPlan.rows[0].verticalCenterFraction + shortPlan.rows[1].verticalCenterFraction) / 2f,
+            0.001f
+        )
+
+        // 长歌词超过单行阈值：自然扩展为三行（0.18f、0.50f、0.82f），且三行总高度与两行完全一致
+        val longWords = listOf(
+            LyricWord(startTimeMs = 1000L, durationMs = 600L, text = "在无人问津的"),
+            LyricWord(startTimeMs = 1600L, durationMs = 600L, text = "深夜里独自"),
+            LyricWord(startTimeMs = 2200L, durationMs = 600L, text = "穿越漫长而又"),
+            LyricWord(startTimeMs = 2800L, durationMs = 600L, text = "辽阔的星河与"),
+            LyricWord(startTimeMs = 3400L, durationMs = 600L, text = "旷野寻找光芒")
+        )
+        val longLine = LyricLine(
+            startTimeMs = 1000L,
+            durationMs = 3000L,
+            text = longWords.joinToString("") { it.text },
+            translation = "穿越漫长星河寻找失落的光芒",
+            words = longWords
+        )
+        val longPlan = com.concept.music.service.resolveDesktopLyricLayoutPlan(
+            currentLine = longLine,
+            nextLine = nextShortLine,
+            song = null,
+            fontSizeSp = 19f,
+            lineMode = com.concept.music.service.DesktopLyricLineMode.DUAL_BILINGUAL,
+            maxCharsPerSingleRow = 16f
+        )
+
+        assertTrue("长歌词应自然切换为三行布局", longPlan.isThreeLineLayout)
+        assertEquals(3, longPlan.rows.size)
+        assertEquals(0.18f, longPlan.rows[0].verticalCenterFraction, 0.001f)
+        assertEquals(0.50f, longPlan.rows[1].verticalCenterFraction, 0.001f)
+        assertEquals(0.82f, longPlan.rows[2].verticalCenterFraction, 0.001f)
+        assertEquals(
+            "两行插空与三行换行的歌词容器高度必须保持恒定不变",
+            shortPlan.fixedThreeLineHeightPx,
+            longPlan.fixedThreeLineHeightPx,
+            0.001f
+        )
+        assertTrue(longPlan.rows[0].isPrimary)
+        assertTrue(longPlan.rows[1].isPrimary)
+        assertFalse(longPlan.rows[2].isPrimary)
+        assertEquals(
+            "长歌词拆分为两行主句后应完整保留全部 KRC 逐字时间戳",
+            longWords,
+            longPlan.rows[0].words + longPlan.rows[1].words
+        )
+    }
+
+    @Test
+    fun `桌面歌词与App内设置双向同步及横向全屏锁定验证`() {
+        var syncedTheme: LyricHighlightTheme? = null
+        var syncedFontSize: Float? = null
+        com.concept.music.service.SystemLyricBridge.onDesktopColorChangedCallback = { syncedTheme = it }
+        com.concept.music.service.SystemLyricBridge.onDesktopFontSizeChangedCallback = { syncedFontSize = it }
+        try {
+            // 1. 桌面端修改配色与字号 -> 实时回调同步给 App 内播放器设置
+            com.concept.music.service.SystemLyricBridge.setDesktopColorScheme(
+                com.concept.music.service.DesktopLyricColorScheme.SAKURA_PINK
+            )
+            assertEquals(LyricHighlightTheme.SAKURA_PINK, syncedTheme)
+
+            com.concept.music.service.SystemLyricBridge.setDesktopFontSize(22f)
+            assertNotNull(syncedFontSize)
+            assertTrue(syncedFontSize!! >= 18f)
+
+            // 2. App 内修改配色、字号、播放顺序 -> 实时同步到桌面歌词状态
+            com.concept.music.service.SystemLyricBridge.syncFromAppSettings(
+                highlightTheme = LyricHighlightTheme.EMERALD_GREEN,
+                inAppLyricFontSize = 26f,
+                playMode = PlayMode.REPEAT_ONE
+            )
+            val bridgeState = com.concept.music.service.SystemLyricBridge.state.value
+            assertEquals(
+                com.concept.music.service.DesktopLyricColorScheme.EMERALD_GREEN,
+                bridgeState.desktopColorScheme
+            )
+            assertEquals(PlayMode.REPEAT_ONE, com.concept.music.service.SystemLyricBridge.playModeSnapshot)
+            assertEquals(1.0f, bridgeState.desktopWidthFraction, 0.001f)
+
+            // 3. 横向占满屏幕宽度，锁定横向偏移 X = 0f，仅允许纵向拖动保存
+            com.concept.music.service.SystemLyricBridge.saveDesktopPosition(168f, 420f)
+            val afterDrag = com.concept.music.service.SystemLyricBridge.state.value
+            assertEquals("横向自适应占满屏幕宽度后 X 轴偏移必须恒定锁定为 0f", 0f, afterDrag.savedOffsetX, 0.001f)
+            assertEquals(420f, afterDrag.savedOffsetY, 0.001f)
+        } finally {
+            com.concept.music.service.SystemLyricBridge.onDesktopColorChangedCallback = null
+            com.concept.music.service.SystemLyricBridge.onDesktopFontSizeChangedCallback = null
         }
     }
 }

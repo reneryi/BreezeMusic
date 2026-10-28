@@ -80,6 +80,11 @@ enum class LyricHighlightTheme(val label: String, val primaryHex: Long, val seco
     VIP_GOLD("鎏金岁华", 0xFFFFC857, 0xFFFF9F1C),
     SAKURA_PINK("霓虹樱粉", 0xFFFF6B9D, 0xFFFF8E53),
     AURORA_MINT("极光薄荷", 0xFF2CE5B5, 0xFF3898FF)
+;
+
+    companion object {
+        @JvmField val EMERALD_GREEN = AURORA_MINT
+    }
 }
 
 @Immutable
@@ -572,6 +577,15 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         SystemLyricBridge.onNextCallback = {
             viewModelScope.launch(Dispatchers.Main) { skipToNext() }
         }
+        SystemLyricBridge.onCyclePlayModeCallback = {
+            viewModelScope.launch(Dispatchers.Main) { cyclePlayMode() }
+        }
+        SystemLyricBridge.onDesktopColorChangedCallback = { theme ->
+            setLyricHighlightTheme(theme, syncToDesktop = false)
+        }
+        SystemLyricBridge.onDesktopFontSizeChangedCallback = { size ->
+            setLyricFontSize(size, syncToDesktop = false)
+        }
 
         PlaybackService.onSkipToPreviousIntercepted = {
             val hasQueue = mutableState.value.playlistQueue.isNotEmpty()
@@ -967,6 +981,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             currentPositionMs = initialPos,
             durationMs = initialDur,
             songDetail = restoredSong?.let { VipManager.music.songDetail(it) }
+        )
+        SystemLyricBridge.syncFromAppSettings(
+            highlightTheme = savedHighlightTheme,
+            inAppLyricFontSize = savedFontSize,
+            showTranslation = savedShowTrans,
+            playMode = savedPlayMode
         )
 
         if (restoredSong != null) {
@@ -1418,6 +1438,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             PlayMode.SHUFFLE -> PlayMode.REPEAT_ALL
         }
         mutableState.value = mutableState.value.copy(playMode = nextMode)
+        SystemLyricBridge.syncFromAppSettings(playMode = nextMode)
         persistPlaybackStateAsync()
         activePlayer?.repeatMode = if (nextMode == PlayMode.REPEAT_ONE) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
         if (nextMode == PlayMode.REPEAT_ONE) {
@@ -1651,9 +1672,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun toggleTranslation() {
+        val nextShow = !mutableState.value.showTranslation
         mutableState.value = mutableState.value.copy(
-            showTranslation = !mutableState.value.showTranslation
+            showTranslation = nextShow
         )
+        SystemLyricBridge.syncFromAppSettings(showTranslation = nextShow)
         persistPlaybackStateAsync()
     }
 
@@ -1802,8 +1825,12 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         persistPlaybackStateAsync()
     }
 
-    fun setLyricFontSize(size: Float) {
-        mutableState.value = mutableState.value.copy(lyricFontSize = size.coerceIn(18f, 34f))
+    fun setLyricFontSize(size: Float, syncToDesktop: Boolean = true) {
+        val clamped = size.coerceIn(18f, 34f)
+        mutableState.value = mutableState.value.copy(lyricFontSize = clamped)
+        if (syncToDesktop) {
+            SystemLyricBridge.syncFromAppSettings(inAppLyricFontSize = clamped)
+        }
         persistPlaybackStateAsync()
     }
 
@@ -1871,8 +1898,11 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         persistPlaybackStateAsync()
     }
 
-    fun setLyricHighlightTheme(theme: LyricHighlightTheme) {
+    fun setLyricHighlightTheme(theme: LyricHighlightTheme, syncToDesktop: Boolean = true) {
         mutableState.value = mutableState.value.copy(lyricHighlightTheme = theme)
+        if (syncToDesktop) {
+            SystemLyricBridge.syncFromAppSettings(highlightTheme = theme)
+        }
         persistPlaybackStateAsync()
     }
 
@@ -2754,7 +2784,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             lyricData = latestState.currentLyric,
             currentLyricIndex = latestState.currentLyricIndex,
             currentPositionMs = adjustedPos,
-            isPlaying = latestState.isPlaying
+            isPlaying = latestState.isPlaying,
+            playMode = latestState.playMode
         )
     }
 
@@ -2783,7 +2814,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 lyricData = lyric,
                 currentLyricIndex = index,
                 currentPositionMs = adjustedPos,
-                isPlaying = st.isPlaying
+                isPlaying = st.isPlaying,
+                playMode = st.playMode
             )
         } else if (st.currentLyricIndex != -1) {
             mutableState.value = st.copy(
@@ -2795,7 +2827,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 lyricData = lyric,
                 currentLyricIndex = -1,
                 currentPositionMs = adjustedPos,
-                isPlaying = st.isPlaying
+                isPlaying = st.isPlaying,
+                playMode = st.playMode
             )
         }
     }
@@ -2846,6 +2879,9 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         SystemLyricBridge.onTogglePlayCallback = null
         SystemLyricBridge.onPreviousCallback = null
         SystemLyricBridge.onNextCallback = null
+        SystemLyricBridge.onCyclePlayModeCallback = null
+        SystemLyricBridge.onDesktopColorChangedCallback = null
+        SystemLyricBridge.onDesktopFontSizeChangedCallback = null
         activePlayer?.removeListener(listener)
         controllerFuture?.let(MediaController::releaseFuture)
         super.onCleared()
