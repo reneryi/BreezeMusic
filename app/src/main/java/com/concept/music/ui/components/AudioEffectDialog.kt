@@ -464,7 +464,7 @@ private fun AcousticFieldTuningTab(
                         valueText = "${state.bassBoostStrength / 10}% · ${state.bassCutoffHz}Hz",
                         value = state.bassBoostStrength.toFloat(),
                         valueRange = 0f..1000f,
-                        enabled = true,
+                        enabled = state.isEnabled,
                         accentColor = ConceptCoralAccent,
                         onValueChange = { AudioEffectManager.setBassBoostStrength(it.toInt()) }
                     )
@@ -487,7 +487,7 @@ private fun AcousticFieldTuningTab(
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (selected) ConceptCoralAccent.copy(alpha = 0.18f) else elevatedBg,
                                 contentColor = if (selected) ConceptCoralAccent else subText,
-                                modifier = Modifier.softCardClickable(enabled = true) {
+                                modifier = Modifier.softCardClickable(enabled = state.isEnabled) {
                                     AudioEffectManager.setBassCutoffHz(hz)
                                 }
                             ) {
@@ -507,7 +507,7 @@ private fun AcousticFieldTuningTab(
                         valueText = "${state.virtualizerStrength / 10}%",
                         value = state.virtualizerStrength.toFloat(),
                         valueRange = 0f..1000f,
-                        enabled = true,
+                        enabled = state.isEnabled,
                         accentColor = ConceptCyanAccent,
                         onValueChange = { AudioEffectManager.setVirtualizerStrength(it.toInt()) }
                     )
@@ -532,7 +532,7 @@ private fun AcousticFieldTuningTab(
                                 contentColor = if (isSelected) Color.White else subText,
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.softCardClickable(
-                                    enabled = true,
+                                    enabled = state.isEnabled,
                                     shape = RoundedCornerShape(12.dp),
                                     onClick = { AudioEffectManager.setReverbMode(mode) }
                                 )
@@ -582,7 +582,7 @@ private fun AcousticFieldTuningTab(
                         valueText = "${state.vocalClarityStrength / 10}%",
                         value = state.vocalClarityStrength.toFloat(),
                         valueRange = 0f..1000f,
-                        enabled = true,
+                        enabled = state.isEnabled,
                         accentColor = ConceptPrimary,
                         onValueChange = { AudioEffectManager.setVocalClarityStrength(it.toInt()) }
                     )
@@ -592,7 +592,7 @@ private fun AcousticFieldTuningTab(
                         valueText = "${state.analogWarmthStrength / 10}%",
                         value = state.analogWarmthStrength.toFloat(),
                         valueRange = 0f..1000f,
-                        enabled = true,
+                        enabled = state.isEnabled,
                         accentColor = VipGold,
                         onValueChange = { AudioEffectManager.setAnalogWarmthStrength(it.toInt()) }
                     )
@@ -602,7 +602,7 @@ private fun AcousticFieldTuningTab(
                         valueText = String.format(Locale.getDefault(), "+%.1f dB", state.loudnessGainMb / 100f),
                         value = state.loudnessGainMb.toFloat(),
                         valueRange = 0f..1500f,
-                        enabled = true,
+                        enabled = state.isEnabled,
                         accentColor = ConceptMintAccent,
                         onValueChange = { AudioEffectManager.setLoudnessGain(it.toInt()) }
                     )
@@ -1040,7 +1040,7 @@ private fun ProfessionalEqualizerPage(
                                         value = level.toFloat(),
                                         onValueChange = { AudioEffectManager.setTenBandLevel(index, it.toInt()) },
                                         valueRange = -1000f..1000f,
-                                        enabled = true,
+                                        enabled = state.isEnabled,
                                         colors = SliderDefaults.colors(
                                             thumbColor = ConceptPrimary,
                                             activeTrackColor = ConceptPrimary,
@@ -1106,7 +1106,7 @@ private fun ProfessionalEqualizerPage(
                         valueText = String.format(Locale.getDefault(), "%+.1f dB", state.preampGainDb),
                         value = state.preampGainDb,
                         valueRange = -6f..6f,
-                        enabled = true,
+                        enabled = state.isEnabled,
                         accentColor = ConceptPrimary,
                         onValueChange = { AudioEffectManager.setPreampGainDb(it) }
                     )
