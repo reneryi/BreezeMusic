@@ -608,6 +608,23 @@ class SongPlaybackSwitchTest {
         assertEquals("暂停拖拽期间绝不能重新开启 segment 或触发 CSCC 事件", 2, recordedEvents.size)
     }
 
+    @Test
+    fun testAllowPlayWithOtherAppsAndWiredHeadsetControlSettingsToggle() = runTest(testDispatcher) {
+        assertFalse(viewModel.uiState.value.allowPlayWithOtherApps)
+        viewModel.setAllowPlayWithOtherApps(true)
+        assertTrue(viewModel.uiState.value.allowPlayWithOtherApps)
+        viewModel.setAllowPlayWithOtherApps(false)
+        assertFalse(viewModel.uiState.value.allowPlayWithOtherApps)
+
+        viewModel.setWiredHeadsetControlEnabled(false)
+        assertFalse(viewModel.uiState.value.wiredHeadsetControlEnabled)
+        assertFalse(com.concept.music.service.PlaybackService.headsetButtonController.multiClickSkipEnabled)
+
+        viewModel.setWiredHeadsetControlEnabled(true)
+        assertTrue(viewModel.uiState.value.wiredHeadsetControlEnabled)
+        assertTrue(com.concept.music.service.PlaybackService.headsetButtonController.multiClickSkipEnabled)
+    }
+
     private class TestSessionStore : SessionStore {
         var rows = listOf(SavedAccount("user_1"))
         var activeKey: String? = "user_1"

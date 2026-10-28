@@ -3,6 +3,11 @@ package com.concept.music.service
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.KeyEvent
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.AuxEffectInfo
@@ -27,6 +32,139 @@ import java.nio.ByteOrder
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
+
+/**
+ * 有线耳机与媒体按键多击线控状态机：
+ * 解决 AndroidX Media3 默认对有线耳机单键 (`KEYCODE_HEADSETHOOK`) 双击/三击无法切歌的问题，
+ * 同时兼容 Type-C 数字耳放线控与三键线控：
+ * - 单击暂停/中键：播放 / 暂停切换
+ * - 双击暂停/中键：切换下一首
+ * - 三击暂停/中键：切换上一首
+ * - 独立上下曲键 (`KEYCODE_MEDIA_NEXT` / `KEYCODE_MEDIA_PREVIOUS`)：立即切歌
+ */
+class HeadsetMediaButtonController(
+    val multiClickTimeoutMs: Long = 350L,
+    private val duplicateGuardWindowMs: Long = 25L,
+    private val tripleClickCooldownMs: Long = 220L,
+    private val nowMsProvider: () -> Long = {
+        runCatching { SystemClock.uptimeMillis() }.getOrDefault(0L).takeIf { it > 0L }
+            ?: System.currentTimeMillis()
+    },
+    private val scheduleDelayed: (delayMs: Long, action: () -> Unit) -> Unit,
+    private val cancelScheduled: () -> Unit,
+    private val onTogglePlay: () -> Unit,
+    private val onSkipToNext: () -> Unit,
+    private val onSkipToPrevious: () -> Unit
+) {
+    @Volatile
+    var multiClickSkipEnabled: Boolean = true
+
+    private var pendingClickCount: Int = 0
+    private var lastDownTimeMs: Long = -1L
+    private var lastKeyCode: Int = -1
+    private var lastHandledAtMs: Long = -1L
+    private var lastTripleClickAtMs: Long = -1L
+
+    fun isSupportedMediaKey(keyCode: Int): Boolean = when (keyCode) {
+        KeyEvent.KEYCODE_HEADSETHOOK,
+        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+        KeyEvent.KEYCODE_MEDIA_PLAY,
+        KeyEvent.KEYCODE_MEDIA_PAUSE,
+        KeyEvent.KEYCODE_MEDIA_NEXT,
+        KeyEvent.KEYCODE_MEDIA_PREVIOUS -> true
+        else -> false
+    }
+
+    private fun isToggleOrHookKey(keyCode: Int): Boolean = when (keyCode) {
+        KeyEvent.KEYCODE_HEADSETHOOK,
+        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+        KeyEvent.KEYCODE_MEDIA_PLAY,
+        KeyEvent.KEYCODE_MEDIA_PAUSE -> true
+        else -> false
+    }
+
+    fun handleKeyEvent(
+        keyCode: Int,
+        action: Int,
+        repeatCount: Int = 0,
+        downTimeMs: Long = 0L
+    ): Boolean {
+        if (!isSupportedMediaKey(keyCode)) return false
+        if (action == KeyEvent.ACTION_UP) return true
+        if (action != KeyEvent.ACTION_DOWN) return true
+        if (repeatCount > 0) return true
+
+        val now = nowMsProvider()
+        if (downTimeMs > 0L && downTimeMs == lastDownTimeMs && keyCode == lastKeyCode) {
+            return true
+        }
+        if (now > 0L && lastHandledAtMs > 0L &&
+            (now - lastHandledAtMs) in 0L until duplicateGuardWindowMs &&
+            keyCode == lastKeyCode
+        ) {
+            return true
+        }
+        lastDownTimeMs = downTimeMs
+        lastKeyCode = keyCode
+        lastHandledAtMs = now
+
+        when (keyCode) {
+            KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                cancelScheduled()
+                pendingClickCount = 0
+                onSkipToNext()
+                return true
+            }
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                cancelScheduled()
+                pendingClickCount = 0
+                onSkipToPrevious()
+                return true
+            }
+        }
+
+        if (isToggleOrHookKey(keyCode)) {
+            if (!multiClickSkipEnabled) {
+                cancelScheduled()
+                pendingClickCount = 0
+                onTogglePlay()
+                return true
+            }
+            if (now > 0L && lastTripleClickAtMs > 0L && (now - lastTripleClickAtMs) in 0L until tripleClickCooldownMs) {
+                return true
+            }
+
+            cancelScheduled()
+            pendingClickCount += 1
+            if (pendingClickCount >= 3) {
+                pendingClickCount = 0
+                lastTripleClickAtMs = now
+                onSkipToPrevious()
+            } else {
+                scheduleDelayed(multiClickTimeoutMs) {
+                    val count = pendingClickCount
+                    pendingClickCount = 0
+                    when (count) {
+                        1 -> onTogglePlay()
+                        2 -> onSkipToNext()
+                        else -> if (count >= 3) onSkipToPrevious()
+                    }
+                }
+            }
+            return true
+        }
+        return false
+    }
+
+    fun reset() {
+        cancelScheduled()
+        pendingClickCount = 0
+        lastDownTimeMs = -1L
+        lastKeyCode = -1
+        lastHandledAtMs = -1L
+        lastTripleClickAtMs = -1L
+    }
+}
 
 /**
  * 概念版发烧级实时 PCM 母带音频处理器
@@ -221,7 +359,7 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
 
 /**
  * AndroidX Media3 官方后台播放服务
- * 提供锁屏控制、通知栏控制面板、蓝牙耳机按键拦截与 AudioFocus 音频焦点管理
+ * 提供锁屏控制、通知栏控制面板、有线/蓝牙耳机按键拦截、AudioFocus 音频焦点管理（支持与其他应用混音同播）及 MediaSession 实时歌词元数据同步
  */
 class PlaybackService : MediaSessionService() {
 
@@ -229,8 +367,18 @@ class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
 
     companion object {
+        private val mainHandler: Handler? by lazy {
+            runCatching {
+                val looper = Looper.getMainLooper()
+                if (looper != null) Handler(looper) else null
+            }.getOrNull()
+        }
+        private var pendingHeadsetRunnable: Runnable? = null
         @Volatile
         private var activeServiceInstance: PlaybackService? = null
+
+        @Volatile
+        private var fallbackAppContext: Context? = null
 
         @Volatile
         var onSkipToPreviousIntercepted: (() -> Boolean)? = null
@@ -246,13 +394,116 @@ class PlaybackService : MediaSessionService() {
                 PlaybackCoordinator.onSkipToNextDelegate = value
             }
 
+        internal val headsetButtonController = HeadsetMediaButtonController(
+            scheduleDelayed = { delayMs, action ->
+                val handler = mainHandler
+                if (handler != null) {
+                    pendingHeadsetRunnable?.let { handler.removeCallbacks(it) }
+                    val r = Runnable { action() }
+                    pendingHeadsetRunnable = r
+                    handler.postDelayed(r, delayMs)
+                } else {
+                    action()
+                }
+            },
+            cancelScheduled = {
+                val handler = mainHandler
+                pendingHeadsetRunnable?.let { r -> handler?.removeCallbacks(r) }
+                pendingHeadsetRunnable = null
+            },
+            onTogglePlay = {
+                val ctx = activeServiceInstance?.applicationContext ?: fallbackAppContext
+                if (ctx != null) {
+                    PlaybackCoordinator.handleTogglePlay(ctx, activeServiceInstance?.player)
+                } else {
+                    PlaybackCoordinator.onTogglePlayDelegate?.invoke()
+                }
+            },
+            onSkipToNext = {
+                val ctx = activeServiceInstance?.applicationContext ?: fallbackAppContext
+                if (ctx != null) {
+                    PlaybackCoordinator.handleSkipToNext(ctx, activeServiceInstance?.player)
+                } else {
+                    PlaybackCoordinator.onSkipToNextDelegate?.invoke()
+                }
+            },
+            onSkipToPrevious = {
+                val ctx = activeServiceInstance?.applicationContext ?: fallbackAppContext
+                if (ctx != null) {
+                    PlaybackCoordinator.handleSkipToPrevious(ctx, activeServiceInstance?.player)
+                } else {
+                    PlaybackCoordinator.onSkipToPreviousDelegate?.invoke()
+                }
+            }
+        )
+
         fun updateHandleAudioBecomingNoisy(enabled: Boolean) {
-            activeServiceInstance?.player?.setHandleAudioBecomingNoisy(enabled)
+            val svc = activeServiceInstance ?: return
+            runCatching {
+                val mainLooper = Looper.getMainLooper()
+                if (mainLooper == null || Looper.myLooper() == mainLooper) {
+                    svc.player?.setHandleAudioBecomingNoisy(enabled)
+                } else {
+                    mainHandler?.post {
+                        svc.player?.setHandleAudioBecomingNoisy(enabled)
+                    }
+                }
+            }
         }
 
         fun updateAudioFocusDucking(enabled: Boolean) {
-            val p = activeServiceInstance?.player ?: return
-            p.setAudioAttributes(p.audioAttributes, enabled)
+            val svc = activeServiceInstance ?: return
+            runCatching {
+                val mainLooper = Looper.getMainLooper()
+                if (mainLooper == null || Looper.myLooper() == mainLooper) {
+                    val p = svc.player ?: return
+                    p.setAudioAttributes(p.audioAttributes, enabled)
+                } else {
+                    mainHandler?.post {
+                        val p = svc.player ?: return@post
+                        p.setAudioAttributes(p.audioAttributes, enabled)
+                    }
+                }
+            }
+        }
+
+        /**
+         * 设置是否允许与其他应用同时播放：
+         * - allowMix = true：关闭 ExoPlayer 独占音频焦点管理 (handleAudioFocus = false)，不打断其他应用且不被其他应用打断；
+         * - allowMix = false：开启标准音频焦点管理 (handleAudioFocus = true)。
+         */
+        fun updateAllowPlayWithOtherApps(allowMix: Boolean) {
+            updateAudioFocusDucking(enabled = !allowMix)
+        }
+
+        /**
+         * 设置是否启用有线耳机线控多击切歌（双击暂停键下一首 / 三击暂停键上一首）
+         */
+        fun updateWiredHeadsetControlEnabled(enabled: Boolean) {
+            headsetButtonController.multiClickSkipEnabled = enabled
+        }
+
+        fun handleHeadsetKeyEvent(context: Context?, event: KeyEvent?): Boolean {
+            if (event == null) return false
+            if (context != null) {
+                fallbackAppContext = context.applicationContext ?: context
+            }
+            return headsetButtonController.handleKeyEvent(
+                keyCode = event.keyCode,
+                action = event.action,
+                repeatCount = event.repeatCount,
+                downTimeMs = event.downTime
+            )
+        }
+
+        internal fun extractMediaKeyEvent(intent: Intent?): KeyEvent? {
+            if (intent == null || intent.action != Intent.ACTION_MEDIA_BUTTON) return null
+            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT)
+            }
         }
 
         internal fun toggleActivePlayerPlayPause(): Boolean {
@@ -265,9 +516,13 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         activeServiceInstance = this
+        fallbackAppContext = applicationContext
 
         val prefs = applicationContext.getSharedPreferences("concept_player_prefs", Context.MODE_PRIVATE)
         val pauseOnHeadsetDisconnect = prefs.getBoolean("pause_on_headset_disconnect", true)
+        val allowPlayWithOtherApps = prefs.getBoolean("allow_play_with_other_apps", false)
+        val wiredHeadsetControlEnabled = prefs.getBoolean("wired_headset_control_enabled", true)
+        headsetButtonController.multiClickSkipEnabled = wiredHeadsetControlEnabled
 
         val audioAttributes = AudioAttributes.Builder()
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -312,7 +567,7 @@ class PlaybackService : MediaSessionService() {
 
         val exoPlayer = ExoPlayer.Builder(this, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
-            .setAudioAttributes(audioAttributes, true)
+            .setAudioAttributes(audioAttributes, !allowPlayWithOtherApps)
             .setHandleAudioBecomingNoisy(pauseOnHeadsetDisconnect)
             .setLoadControl(loadControl)
             .setSeekParameters(SeekParameters.CLOSEST_SYNC)
@@ -367,6 +622,16 @@ class PlaybackService : MediaSessionService() {
 
             override fun hasNextMediaItem(): Boolean = true
 
+            override fun play() {
+                if (exoPlayer.mediaItemCount == 0) {
+                    if (!PlaybackCoordinator.handleTogglePlay(applicationContext, exoPlayer)) {
+                        super.play()
+                    }
+                } else {
+                    super.play()
+                }
+            }
+
             override fun seekToPrevious() {
                 if (!PlaybackCoordinator.handleSkipToPrevious(applicationContext, exoPlayer)) {
                     super.seekToPrevious()
@@ -415,6 +680,18 @@ class PlaybackService : MediaSessionService() {
                         .build()
                 }
             }
+
+            override fun onMediaButtonEvent(
+                session: MediaSession,
+                controllerInfo: MediaSession.ControllerInfo,
+                intent: Intent
+            ): Boolean {
+                val keyEvent = extractMediaKeyEvent(intent)
+                if (keyEvent != null && handleHeadsetKeyEvent(applicationContext, keyEvent)) {
+                    return true
+                }
+                return super.onMediaButtonEvent(session, controllerInfo, intent)
+            }
         }
 
         mediaSession = MediaSession.Builder(this, forwardingPlayer)
@@ -424,6 +701,12 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == Intent.ACTION_MEDIA_BUTTON) {
+            val keyEvent = extractMediaKeyEvent(intent)
+            if (keyEvent != null && handleHeadsetKeyEvent(applicationContext, keyEvent)) {
+                return START_STICKY
+            }
+        }
         val res = super.onStartCommand(intent, flags, startId)
         when (intent?.action) {
             ConceptMusicWidgetUpdater.ACTION_WIDGET_TOGGLE_PLAY -> {
@@ -444,6 +727,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        headsetButtonController.reset()
         if (activeServiceInstance === this) {
             activeServiceInstance = null
         }

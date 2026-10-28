@@ -54,6 +54,9 @@ class UiAlignmentRegressionTest {
         assertTrue(LyricHighlightTheme.entries.contains(LyricHighlightTheme.DYNAMIC_COVER))
         assertEquals(0.88f, SystemLyricState().desktopWidthFraction, 0.01f)
         assertFalse(AudioEffectState().equalLoudnessCompensation)
+        assertFalse(state.allowPlayWithOtherApps)
+        assertTrue(state.wiredHeadsetControlEnabled)
+        assertEquals(7, com.concept.music.ui.settings.SettingsCategory.entries.size)
     }
 
     @Test
@@ -977,5 +980,74 @@ class UiAlignmentRegressionTest {
         val interludeMidProgress = krcData.getInterludeProgressAt(positionMs = 11_000L)
         assertEquals(0.5f, interludeMidProgress, 0.01f)
         assertEquals(3, krcData.getInterludeRemainingSecondsAt(positionMs = 11_000L))
+    }
+
+    @Test
+    fun `有线耳机线控单击暂停双击下一首三击上一首及防误触去重验证`() {
+        var fakeNowMs = 10_000L
+        var scheduledAction: (() -> Unit)? = null
+        var playPauseCount = 0
+        var nextTrackCount = 0
+        var prevTrackCount = 0
+
+        val controller = com.concept.music.service.HeadsetMediaButtonController(
+            multiClickTimeoutMs = 350L,
+            nowMsProvider = { fakeNowMs },
+            scheduleDelayed = { _, action -> scheduledAction = action },
+            cancelScheduled = { scheduledAction = null },
+            onTogglePlay = { playPauseCount++ },
+            onSkipToNext = { nextTrackCount++ },
+            onSkipToPrevious = { prevTrackCount++ }
+        )
+
+        // 1. 单击有线耳机中键 (KEYCODE_HEADSETHOOK) -> 等待超时后触发播放/暂停
+        assertTrue(controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 100L))
+        assertTrue(controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_UP, 0, 100L))
+        assertNotNull(scheduledAction)
+        scheduledAction?.invoke()
+        assertEquals(1, playPauseCount)
+        assertEquals(0, nextTrackCount)
+        assertEquals(0, prevTrackCount)
+
+        // 2. 双击有线耳机暂停/中键 -> 触发下一首
+        fakeNowMs += 1_000L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 200L)
+        fakeNowMs += 160L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 360L)
+        assertNotNull(scheduledAction)
+        scheduledAction?.invoke()
+        assertEquals(1, playPauseCount)
+        assertEquals(1, nextTrackCount)
+        assertEquals(0, prevTrackCount)
+
+        // 3. 三击有线耳机暂停/中键 -> 立即触发上一首，且冷却期内忽略误触第 4 击
+        fakeNowMs += 1_000L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, android.view.KeyEvent.ACTION_DOWN, 0, 500L)
+        fakeNowMs += 140L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, android.view.KeyEvent.ACTION_DOWN, 0, 640L)
+        fakeNowMs += 140L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, android.view.KeyEvent.ACTION_DOWN, 0, 780L)
+        assertNull("满三击后应立即执行上一首并清空延时任务", scheduledAction)
+        assertEquals(1, prevTrackCount)
+
+        // 冷却期内 (100ms < 220ms) 误触第 4 击不触发暂停
+        fakeNowMs += 100L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, android.view.KeyEvent.ACTION_DOWN, 0, 880L)
+        assertNull(scheduledAction)
+        assertEquals(1, playPauseCount)
+
+        // 4. 重复 downTimeMs (如 Activity 与 MediaSession 双通道重复派发) 自动去重
+        fakeNowMs += 1_000L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 1500L)
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 1500L)
+        scheduledAction?.invoke()
+        assertEquals("同一物理按键事件不得被计为双击", 2, playPauseCount)
+        assertEquals(1, nextTrackCount)
+
+        // 5. 关闭多击切歌开关时，单击直接切换播放/暂停
+        controller.multiClickSkipEnabled = false
+        fakeNowMs += 1_000L
+        controller.handleKeyEvent(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.ACTION_DOWN, 0, 2500L)
+        assertEquals(3, playPauseCount)
     }
 }

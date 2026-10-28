@@ -151,6 +151,8 @@ data class PlayerUiState(
     val volumeNormalization: Boolean = true,
     val wifiOnlyLossless: Boolean = false,
     val pauseOnHeadsetDisconnect: Boolean = true,
+    val allowPlayWithOtherApps: Boolean = false,
+    val wiredHeadsetControlEnabled: Boolean = true,
     val autoPlayOnStartup: Boolean = false,
     val commentTargetSong: Song? = null,
     val comments: List<SongComment> = emptyList(),
@@ -571,6 +573,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                         val st = mutableState.value
                         player.playbackParameters = PlaybackParameters(st.playbackSpeed, st.playbackPitch)
                         PlaybackService.updateHandleAudioBecomingNoisy(st.pauseOnHeadsetDisconnect)
+                        PlaybackService.updateAllowPlayWithOtherApps(st.allowPlayWithOtherApps)
+                        PlaybackService.updateWiredHeadsetControlEnabled(st.wiredHeadsetControlEnabled)
                         syncPlayer()
                         startProgressUpdates()
                         if (!hasTriggeredStartupAutoPlay && st.autoPlayOnStartup && st.currentSong != null && !player.isPlaying) {
@@ -750,6 +754,10 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         com.concept.music.service.AudioEffectManager.setVolumeNormalizationEnabled(savedVolNorm)
         val savedWifiOnly = prefs.getBoolean("wifi_only_lossless", false)
         val savedPauseHeadset = prefs.getBoolean("pause_on_headset_disconnect", true)
+        val savedAllowPlayWithOthers = prefs.getBoolean("allow_play_with_other_apps", false)
+        val savedWiredHeadsetControl = prefs.getBoolean("wired_headset_control_enabled", true)
+        PlaybackService.updateAllowPlayWithOtherApps(savedAllowPlayWithOthers)
+        PlaybackService.updateWiredHeadsetControlEnabled(savedWiredHeadsetControl)
         val savedAutoPlay = prefs.getBoolean("auto_play_on_startup", false)
 
         val userScopeKey = currentUser ?: "guest"
@@ -847,6 +855,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             volumeNormalization = savedVolNorm,
             wifiOnlyLossless = savedWifiOnly,
             pauseOnHeadsetDisconnect = savedPauseHeadset,
+            allowPlayWithOtherApps = savedAllowPlayWithOthers,
+            wiredHeadsetControlEnabled = savedWiredHeadsetControl,
             autoPlayOnStartup = savedAutoPlay,
             playlistQueue = sanitizedQueue,
             currentIndex = savedIndex,
@@ -930,6 +940,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             putBoolean("volume_normalization", snapshot.volumeNormalization)
             putBoolean("wifi_only_lossless", snapshot.wifiOnlyLossless)
             putBoolean("pause_on_headset_disconnect", snapshot.pauseOnHeadsetDisconnect)
+            putBoolean("allow_play_with_other_apps", snapshot.allowPlayWithOtherApps)
+            putBoolean("wired_headset_control_enabled", snapshot.wiredHeadsetControlEnabled)
             putBoolean("auto_play_on_startup", snapshot.autoPlayOnStartup)
             putString("saved_queue_json_$userScopeKey", queueJson)
             putString("saved_recent_queues_json_$userScopeKey", recentJson)
@@ -1495,6 +1507,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             volumeNormalization = st.volumeNormalization,
             wifiOnlyLossless = st.wifiOnlyLossless,
             pauseOnHeadsetDisconnect = st.pauseOnHeadsetDisconnect,
+            allowPlayWithOtherApps = st.allowPlayWithOtherApps,
+            wiredHeadsetControlEnabled = st.wiredHeadsetControlEnabled,
             autoPlayOnStartup = st.autoPlayOnStartup,
             recentQueues = remainingRecent,
             activeQueueId = ""
@@ -1744,6 +1758,18 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     fun setPauseOnHeadsetDisconnect(enabled: Boolean) {
         mutableState.value = mutableState.value.copy(pauseOnHeadsetDisconnect = enabled)
         PlaybackService.updateHandleAudioBecomingNoisy(enabled)
+        persistPlaybackStateAsync()
+    }
+
+    fun setAllowPlayWithOtherApps(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(allowPlayWithOtherApps = enabled)
+        PlaybackService.updateAllowPlayWithOtherApps(enabled)
+        persistPlaybackStateAsync()
+    }
+
+    fun setWiredHeadsetControlEnabled(enabled: Boolean) {
+        mutableState.value = mutableState.value.copy(wiredHeadsetControlEnabled = enabled)
+        PlaybackService.updateWiredHeadsetControlEnabled(enabled)
         persistPlaybackStateAsync()
     }
 

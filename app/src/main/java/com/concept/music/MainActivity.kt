@@ -115,6 +115,13 @@ class MainActivity : ComponentActivity() {
         SystemLyricBridge.onHostResumed(this)
     }
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (com.concept.music.service.PlaybackService.handleHeadsetKeyEvent(applicationContext, event)) {
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     /**
      * 主动申请屏幕支持的最高物理刷新率档位（120Hz / 144Hz）
      */
