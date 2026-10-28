@@ -12,6 +12,7 @@ import com.concept.music.data.kugou.NetworkClientProvider
 import com.concept.music.data.vip.VipManager
 import com.concept.music.service.AmbientSoundManager
 import com.concept.music.service.FocusPodManager
+import com.concept.music.service.MusicDownloadManager
 import com.concept.music.service.SystemLyricBridge
 import com.concept.music.service.VipGuardianManager
 import com.concept.music.ui.theme.ThemeManager
@@ -25,6 +26,7 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
         ThemeManager.init(this)
         com.concept.music.service.AppPermissionManager.init(this)
         VipManager.initialize(this)
+        MusicDownloadManager.init(this)
         com.concept.music.service.AudioEffectManager.init(this)
         AmbientSoundManager.init(this)
         FocusPodManager.init(this)

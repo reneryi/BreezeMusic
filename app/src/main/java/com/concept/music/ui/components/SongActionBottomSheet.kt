@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
+import com.concept.music.ui.theme.ConceptMintAccent
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptSheetContainerColor
@@ -42,6 +43,7 @@ fun SongActionBottomSheet(
     onPlayNext: () -> Unit,
     onToggleFavorite: () -> Unit,
     onAddToPlaylist: () -> Unit,
+    onDownloadSong: (() -> Unit)? = null,
     onOpenComments: (() -> Unit)? = null,
     onOpenArtist: (() -> Unit)? = null,
     onOpenAlbum: (() -> Unit)? = null,
@@ -209,6 +211,17 @@ fun SongActionBottomSheet(
                     dismissWithAction { onPlayNext() }
                 }
             )
+
+            if (onDownloadSong != null) {
+                SongActionMenuItem(
+                    icon = Icons.Rounded.Download,
+                    title = "下载歌曲（内嵌高清封面与歌词）",
+                    tint = ConceptMintAccent,
+                    onClick = {
+                        dismissWithAction { onDownloadSong() }
+                    }
+                )
+            }
 
             SongActionMenuItem(
                 icon = if (isFavorite) Icons.Rounded.HeartBroken else Icons.Rounded.FavoriteBorder,

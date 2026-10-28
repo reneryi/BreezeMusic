@@ -358,6 +358,7 @@ fun NowPlayingSheet(
     var showLyricPosterDialog by remember { mutableStateOf(false) }
     var showDoubleTapHeart by remember { mutableStateOf(false) }
     var showMoreControlSheet by remember { mutableStateOf(false) }
+    var showDownloadDialog by remember { mutableStateOf(false) }
 
     val audioEffectState by AudioEffectManager.state.collectAsState()
     val systemLyricState by SystemLyricBridge.state.collectAsState()
@@ -971,7 +972,19 @@ fun NowPlayingSheet(
                 showMoreControlSheet = false
                 onOpenAlbum(song)
             },
+            onDownloadSong = {
+                showMoreControlSheet = false
+                showDownloadDialog = true
+            },
             onDismiss = { showMoreControlSheet = false }
+        )
+    }
+
+    // 多音质下载与封面/歌词内嵌弹窗
+    if (showDownloadDialog) {
+        SongDownloadDialog(
+            song = song,
+            onDismiss = { showDownloadDialog = false }
         )
     }
 

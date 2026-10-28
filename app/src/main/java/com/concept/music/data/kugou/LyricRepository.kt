@@ -6,6 +6,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Base64
+import java.util.Locale
 
 class LyricRepository(
     private val transport: KugouTransport,
@@ -131,6 +132,100 @@ class LyricRepository(
         }
     }
 
+    /**
+     * 获取用于内嵌音频标签或独立保存 `.lrc` 文件的标准 LRC 格式歌词文本（对齐 lisalee23042605/kgmusicbot 的 get_lyrics 逻辑）：
+     * 1. 优先通过酷狗歌词候选下载官方 `fmt=lrc` 标准时间轴文本；
+     * 2. 若官方 `fmt=lrc` 为空，自动将已解析的 KRC/LRC `LyricData` 格式化为标准 `[mm:ss.xx]` LRC 文本（支持双语对照导出）。
+     */
+    suspend fun getLrcTextForExport(song: Song, includeTranslation: Boolean = true): String = withContext(Dispatchers.IO) {
+        val candidates = runCatching { searchLyricCandidates(song) }.getOrDefault(emptyList())
+        if (candidates.isNotEmpty()) {
+            val first = candidates.first()
+            val rawLrc = downloadRawLrcString(first.id, first.accesskey, song.hash)
+            if (rawLrc.isNotBlank() && !includeTranslation) {
+                return@withContext rawLrc.trim()
+            }
+            val parsedData = runCatching { getLyric(song) }.getOrNull()
+            if (parsedData != null && parsedData.lines.isNotEmpty()) {
+                if (includeTranslation && parsedData.hasTranslation) {
+                    return@withContext formatLyricDataAsLrc(song, parsedData, includeTranslation = true)
+                }
+                if (rawLrc.isNotBlank()) {
+                    return@withContext rawLrc.trim()
+                }
+                return@withContext formatLyricDataAsLrc(song, parsedData, includeTranslation = false)
+            }
+            if (rawLrc.isNotBlank()) {
+                return@withContext rawLrc.trim()
+            }
+        }
+        val fallbackData = runCatching { getLyric(song) }.getOrNull()
+        if (fallbackData != null && fallbackData.lines.isNotEmpty()) {
+            return@withContext formatLyricDataAsLrc(song, fallbackData, includeTranslation = includeTranslation)
+        }
+        ""
+    }
+
+    internal fun formatLyricDataAsLrc(
+        song: Song,
+        lyricData: LyricData,
+        includeTranslation: Boolean = true
+    ): String {
+        if (lyricData.lines.isEmpty()) return ""
+        if (!lyricData.isKrc && lyricData.rawText.isNotBlank() && (!includeTranslation || !lyricData.hasTranslation)) {
+            return lyricData.rawText.trim()
+        }
+        val sb = StringBuilder()
+        if (song.title.isNotBlank()) sb.append("[ti:").append(song.title).append("]\n")
+        if (song.artist.isNotBlank()) sb.append("[ar:").append(song.artist).append("]\n")
+        if (song.album.isNotBlank()) sb.append("[al:").append(song.album).append("]\n")
+        sb.append("[by:BreezeMusic]\n")
+
+        for (line in lyricData.lines) {
+            val totalMs = line.startTimeMs.coerceAtLeast(0L)
+            val min = totalMs / 60_000L
+            val sec = (totalMs % 60_000L) / 1000L
+            val cs = (totalMs % 1000L) / 10L
+            val tag = String.format(Locale.US, "[%02d:%02d.%02d]", min, sec, cs)
+            sb.append(tag).append(line.text).append('\n')
+            val trans = line.translation?.trim().orEmpty()
+            if (includeTranslation && trans.isNotBlank() && trans != "//") {
+                sb.append(tag).append(trans).append('\n')
+            }
+        }
+        return sb.toString().trim()
+    }
+
+    private suspend fun downloadRawLrcString(id: String, accesskey: String, hash: String = ""): String {
+        val query = buildMap {
+            put("ver", "1")
+            put("client", "pc")
+            put("id", id)
+            put("accesskey", accesskey)
+            put("fmt", "lrc")
+            put("charset", "utf8")
+            if (hash.isNotBlank()) put("hash", hash.lowercase())
+        }
+        return try {
+            val response = transport.callAdvanced(
+                path = "/download",
+                host = "https://lyrics.kugou.com",
+                query = query,
+                sign = false,
+                includeDefaultParams = false
+            )
+            val content = response.body.text("content") ?: response.data.text("content") ?: return ""
+            runCatching { String(Base64.getMimeDecoder().decode(content.trim()), Charsets.UTF_8) }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?: content
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
     private suspend fun searchLyricCandidates(song: Song): List<LyricCandidate> {
         val d = device()
         val clientTime = System.currentTimeMillis() / 1000
@@ -152,7 +247,7 @@ class LyricRepository(
         val signature = KugouSigner.md5("$salt$sortedParams$salt")
         query["signature"] = signature
 
-        return try {
+        val primary = try {
             val response = transport.callAdvanced(
                 path = "/v1/search",
                 host = "https://lyrics.kugou.com",
@@ -176,6 +271,39 @@ class LyricRepository(
         } catch (_: Exception) {
             emptyList()
         }
+        if (primary.isNotEmpty()) return primary
+
+        // 备用通道：对齐 kgmusicbot 的 krcs.kugou.com/search 接口
+        if (song.hash.isNotBlank()) {
+            return try {
+                val krcsResp = transport.callAdvanced(
+                    path = "/search",
+                    host = "https://krcs.kugou.com",
+                    query = mapOf(
+                        "ver" to "1",
+                        "man" to "yes",
+                        "client" to "mobi",
+                        "hash" to song.hash.lowercase(),
+                        "duration" to song.durationMs.toString(),
+                        "album_audio_id" to song.albumAudioId.toString(),
+                        "clienttime" to System.currentTimeMillis().toString()
+                    ),
+                    sign = false,
+                    includeDefaultParams = false
+                )
+                val candidates = krcsResp.data.objects("candidates").ifEmpty { krcsResp.body.objects("candidates") }
+                candidates.mapNotNull {
+                    val id = it.text("id") ?: return@mapNotNull null
+                    val accesskey = it.text("accesskey") ?: return@mapNotNull null
+                    LyricCandidate(id, accesskey)
+                }
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+        return emptyList()
     }
 
     private suspend fun downloadLyric(id: String, accesskey: String, fmt: String): LyricData? {

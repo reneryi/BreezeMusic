@@ -203,6 +203,7 @@ fun MainContent(
     var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
     var showCreatePlaylistFromGlobal by remember { mutableStateOf(false) }
     var detailSheetSong by remember { mutableStateOf<Song?>(null) }
+    var songToDownload by remember { mutableStateOf<Song?>(null) }
     val mainScope = rememberCoroutineScope()
 
     val openSubRouteFromContext: (String) -> Unit = { targetRoute ->
@@ -946,6 +947,9 @@ fun MainContent(
                 onAddToPlaylist = {
                     songToAddToPlaylist = targetSong
                 },
+                onDownloadSong = {
+                    songToDownload = targetSong
+                },
                 onOpenComments = {
                     musicPlayerViewModel.openCommentsForSong(targetSong)
                     showCommentsScreen = true
@@ -1012,6 +1016,18 @@ fun MainContent(
             SongDetailSheet(
                 detail = detail,
                 onDismiss = { detailSheetSong = null }
+            )
+        }
+
+        if (songToDownload != null) {
+            com.concept.music.ui.components.SongDownloadDialog(
+                song = songToDownload!!,
+                onDismiss = { songToDownload = null },
+                onOpenDownloadSettings = {
+                    songToDownload = null
+                    showNowPlaying = false
+                    navController.navigate("settings") { launchSingleTop = true }
+                }
             )
         }
 

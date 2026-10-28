@@ -7,6 +7,7 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
@@ -58,12 +59,12 @@ enum class AppPermissionType(
     ),
     STORAGE_EXPORT(
         key = "perm_storage_export",
-        title = "相册图片写入与导出",
+        title = "音乐下载、歌词保存与相册导出",
         badge = "存储导出",
-        manifestPermissionName = "WRITE_EXTERNAL_STORAGE (API≤28) · MediaStore",
-        purposeDescription = "仅在您主动点击「保存海报」或扫码登录页「保存二维码」时，将生成的 PNG 图片保存至系统相册 Pictures/ConceptMusic 目录。",
-        privacyCommitment = "仅执行单向图片写入保存，绝不读取、扫描或上传您相册中的任何私人照片与本地文件。",
-        disabledImpactDescription = "关闭后将无法保存或分享歌词海报图片，也无法将登录二维码保存至手机相册。"
+        manifestPermissionName = "WRITE_EXTERNAL_STORAGE · READ_MEDIA_AUDIO · MANAGE_EXTERNAL_STORAGE · MediaStore",
+        purposeDescription = "用于将下载的音乐音频文件（含内嵌歌曲信息、高清封面与歌词）及独立 .lrc 歌词文件保存到自定义手机存储目录，并在点击「保存海报」或「保存二维码」时将 PNG 图片导出至系统相册。",
+        privacyCommitment = "仅在您主动发起音乐下载、歌词保存或海报导出时向目标路径写入文件，绝不扫描或上传您手机中的私人照片与无关文件。",
+        disabledImpactDescription = "关闭后将无法下载保存音乐与独立 .lrc 歌词文件，也无法保存歌词海报或登录二维码至手机存储。"
     ),
     BACKGROUND_GUARDIAN(
         key = "perm_background_guardian",
@@ -232,6 +233,83 @@ object AppPermissionManager {
         _state.value = AppPermissionState()
     }
 
+    /**
+     * 检查手机存储与音乐下载权限是否已就绪：
+     * - Android 9 及以下 (API <= 28)：需授予 `WRITE_EXTERNAL_STORAGE`
+     * - Android 10 (API 29)：若启用 legacyExternalStorage 则检查 `WRITE_EXTERNAL_STORAGE`，或走 MediaStore
+     * - Android 11+ (API >= 30)：标准公共目录 `Music/`、`Download/` 通过 `MediaStore` 免运行时权限写入；
+     *   若需要访问非标准任意自定义绝对路径，可检查 `Environment.isExternalStorageManager()` 或 `READ_MEDIA_AUDIO`
+     */
+    fun hasMusicDownloadStoragePermission(context: Context): Boolean {
+        return runCatching {
+            when {
+                Build.VERSION.SDK_INT <= 29 -> {
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    ) == PackageManager.PERMISSION_GRANTED
+                }
+                Build.VERSION.SDK_INT >= 33 -> {
+                    Environment.isExternalStorageManager() ||
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.READ_MEDIA_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                }
+                else -> {
+                    Environment.isExternalStorageManager() ||
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.READ_EXTERNAL_STORAGE
+                        ) == PackageManager.PERMISSION_GRANTED
+                }
+            }
+        }.getOrDefault(true)
+    }
+
+    /**
+     * 返回当前 Android 系统版本下推荐申请的存储运行时权限数组
+     */
+    fun requiredStorageRuntimePermissions(): Array<String> {
+        return when {
+            Build.VERSION.SDK_INT <= 29 -> arrayOf(
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            )
+            Build.VERSION.SDK_INT >= 33 -> arrayOf(
+                Manifest.permission.READ_MEDIA_AUDIO
+            )
+            else -> arrayOf(
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            )
+        }
+    }
+
+    fun openAllFilesAccessSettings(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            }.onFailure {
+                runCatching {
+                    val fallback = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(fallback)
+                }.onFailure {
+                    openAppDetailsSettings(context)
+                }
+            }
+        } else {
+            openAppDetailsSettings(context)
+        }
+    }
+
     fun querySystemGrantStatus(context: Context, type: AppPermissionType): SystemPermissionGrantStatus {
         return when (type) {
             AppPermissionType.NETWORK_ACCESS -> SystemPermissionGrantStatus(
@@ -266,20 +344,19 @@ object AppPermissionManager {
                 )
             }
             AppPermissionType.STORAGE_EXPORT -> {
-                val granted = if (Build.VERSION.SDK_INT <= 28) {
-                    runCatching {
-                        ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.WRITE_EXTERNAL_STORAGE
-                        ) == PackageManager.PERMISSION_GRANTED
-                    }.getOrDefault(false)
-                } else {
-                    true
-                }
+                val granted = hasMusicDownloadStoragePermission(context)
+                val allFilesGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    runCatching { Environment.isExternalStorageManager() }.getOrDefault(false)
+                } else granted
                 SystemPermissionGrantStatus(
-                    statusLabel = if (Build.VERSION.SDK_INT >= 29) "分区存储已就绪" else if (granted) "存储写入已授权" else "需授予写入权限",
-                    isSystemGranted = granted,
-                    actionButtonLabel = if (Build.VERSION.SDK_INT <= 28 && !granted) "应用权限设置" else null
+                    statusLabel = when {
+                        allFilesGranted -> "全盘存储读写已授权"
+                        granted -> "媒体存储已就绪"
+                        Build.VERSION.SDK_INT >= 29 -> "分区存储就绪 · 可授权音频权限"
+                        else -> "需授予存储写入权限"
+                    },
+                    isSystemGranted = granted || Build.VERSION.SDK_INT >= 29,
+                    actionButtonLabel = "存储权限设置"
                 )
             }
             AppPermissionType.BACKGROUND_GUARDIAN -> {
@@ -334,6 +411,13 @@ object AppPermissionManager {
                     }
                     context.startActivity(intent)
                 }.onFailure {
+                    openAppDetailsSettings(context)
+                }
+            }
+            AppPermissionType.STORAGE_EXPORT -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+                    openAllFilesAccessSettings(context)
+                } else {
                     openAppDetailsSettings(context)
                 }
             }

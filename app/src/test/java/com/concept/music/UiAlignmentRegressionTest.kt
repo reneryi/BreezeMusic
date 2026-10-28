@@ -1392,4 +1392,120 @@ class UiAlignmentRegressionTest {
             com.concept.music.service.AppPermissionManager.resetForTest()
         }
     }
+
+    @Test
+    fun `音乐下载FLAC与MP3高清封面歌词及歌曲元数据内嵌读写验证`() {
+        val tempDir = kotlin.io.path.createTempDirectory("breezemusic_embed_test").toFile()
+        try {
+            val fakeJpegBytes = byteArrayOf(
+                0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(),
+                0x00, 0x10, 'J'.code.toByte(), 'F'.code.toByte(), 'I'.code.toByte(), 'F'.code.toByte()
+            )
+            val sampleLrc = "[00:01.20]第一句歌词\n[00:01.20]First line translation\n[00:05.80]第二句歌词"
+            val tagMeta = com.concept.music.service.AudioTagMetadata(
+                title = "晴天",
+                artist = "周杰伦",
+                album = "叶惠美",
+                publishDate = "2003-07-31",
+                songHash = "ABCDEF1234567890",
+                qualityLabel = "SQ 无损音质",
+                coverBytes = fakeJpegBytes,
+                coverMimeType = "image/jpeg",
+                lrcText = sampleLrc
+            )
+
+            // 1. 构造最小合法 FLAC 文件头 (fLaC + Last STREAMINFO block 34 bytes + 模拟音频帧)
+            val flacFile = java.io.File(tempDir, "test_track.flac")
+            java.io.ByteArrayOutputStream().use { bos ->
+                bos.write(byteArrayOf('f'.code.toByte(), 'L'.code.toByte(), 'a'.code.toByte(), 'C'.code.toByte()))
+                bos.write(byteArrayOf(0x80.toByte(), 0x00, 0x00, 0x22)) // isLast=1, type=0 (STREAMINFO), len=34
+                bos.write(ByteArray(34))
+                bos.write(byteArrayOf(0xFF.toByte(), 0xF8.toByte(), 0x69.toByte(), 0x0C.toByte()))
+                flacFile.writeBytes(bos.toByteArray())
+            }
+
+            val flacOk = com.concept.music.service.AudioMetadataEmbedder.embedMetadata(flacFile, tagMeta)
+            assertTrue("FLAC 元数据、高清封面与歌词内嵌应成功", flacOk)
+
+            val flacTags = com.concept.music.service.AudioMetadataEmbedder.readEmbeddedTagsForVerification(flacFile)
+            assertEquals("晴天", flacTags["TITLE"])
+            assertEquals("周杰伦", flacTags["ARTIST"])
+            assertEquals("叶惠美", flacTags["ALBUM"])
+            assertEquals("周杰伦", flacTags["ALBUMARTIST"])
+            assertEquals("2003-07-31", flacTags["DATE"])
+            assertEquals(sampleLrc, flacTags["LYRICS"])
+            assertEquals(sampleLrc, flacTags["UNSYNCEDLYRICS"])
+            assertEquals("true", flacTags["HAS_PICTURE"])
+
+            // 2. 构造最小合法 MP3 文件并验证 ID3v2.3 (TIT2/TPE1/TALB/USLT/APIC) 内嵌
+            val mp3File = java.io.File(tempDir, "test_track.mp3")
+            mp3File.writeBytes(byteArrayOf(0xFF.toByte(), 0xFB.toByte(), 0x90.toByte(), 0x64.toByte(), 0x00, 0x00))
+
+            val mp3Ok = com.concept.music.service.AudioMetadataEmbedder.embedMetadata(mp3File, tagMeta)
+            assertTrue("MP3 ID3v2.3 元数据、高清封面与歌词内嵌应成功", mp3Ok)
+
+            val mp3Tags = com.concept.music.service.AudioMetadataEmbedder.readEmbeddedTagsForVerification(mp3File)
+            assertEquals("晴天", mp3Tags["TIT2"])
+            assertEquals("周杰伦", mp3Tags["TPE1"])
+            assertEquals("叶惠美", mp3Tags["TALB"])
+            assertEquals("2003", mp3Tags["TYER"])
+            assertEquals(sampleLrc, mp3Tags["USLT"])
+            assertEquals("true", mp3Tags["HAS_APIC"])
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `音乐下载路径自定义与歌词LRC格式化及高清封面URL升级验证`() {
+        com.concept.music.service.MusicDownloadManager.resetForTest()
+        try {
+            val defaultCfg = com.concept.music.service.MusicDownloadManager.config.value
+            assertTrue("歌曲高清封面应默认开启内嵌", defaultCfg.embedHdCover)
+            assertTrue("歌曲歌词应默认开启内嵌", defaultCfg.embedLyrics)
+            assertFalse("独立保存 .lrc 文件默认可按需开启", defaultCfg.saveStandaloneLrcFile)
+
+            com.concept.music.service.MusicDownloadManager.setDownloadDirectoryPath("/storage/emulated/0/Music/CustomBreeze")
+            com.concept.music.service.MusicDownloadManager.setLyricDirectoryPath("/storage/emulated/0/Music/CustomLyrics")
+            com.concept.music.service.MusicDownloadManager.setSaveStandaloneLrcFile(true)
+
+            val updatedCfg = com.concept.music.service.MusicDownloadManager.config.value
+            assertEquals("/storage/emulated/0/Music/CustomBreeze", updatedCfg.downloadDirectoryPath)
+            assertEquals("/storage/emulated/0/Music/CustomLyrics", updatedCfg.lyricDirectoryPath)
+            assertTrue(updatedCfg.saveStandaloneLrcFile)
+
+            val hdCandidates = com.concept.music.service.MusicDownloadManager.buildHighDefCoverUrlCandidates(
+                "http://imge.kugou.com/stdmusic/{size}/20230501/test.jpg"
+            )
+            assertTrue(hdCandidates.first().contains("/1000/"))
+            assertTrue(hdCandidates.any { it.contains("/480/") })
+
+            val safeName = com.concept.music.service.MusicDownloadManager.buildSafeBaseFileName("周杰伦/Jay", "晴天:Live?")
+            assertEquals("周杰伦_Jay - 晴天_Live_", safeName)
+
+            val store = MemoryStore()
+            val transport = object : KugouTransport {
+                override suspend fun call(
+                    path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                    host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+                ): ApiResponse = ApiResponse(JsonObject())
+            }
+            val lyricRepo = LyricRepository(transport)
+            val lrcOut = lyricRepo.formatLyricDataAsLrc(
+                song = Song(id = "1", title = "夜に駆ける", artist = "YOASOBI", album = "THE BOOK"),
+                lyricData = LyricData(
+                    lines = listOf(
+                        LyricLine(startTimeMs = 1500, durationMs = 2000, text = "沈むように", translation = "仿佛沉溺般")
+                    )
+                ),
+                includeTranslation = true
+            )
+            assertTrue(lrcOut.contains("[ti:夜に駆ける]"))
+            assertTrue(lrcOut.contains("[ar:YOASOBI]"))
+            assertTrue(lrcOut.contains("[00:01.50]沈むように"))
+            assertTrue(lrcOut.contains("[00:01.50]仿佛沉溺般"))
+        } finally {
+            com.concept.music.service.MusicDownloadManager.resetForTest()
+        }
+    }
 }

@@ -6,10 +6,13 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -61,6 +64,8 @@ import com.concept.music.service.AudioEffectManager
 import com.concept.music.service.AudioFocusMode
 import com.concept.music.service.DetailedCacheStats
 import com.concept.music.service.HeadsetClickSensitivity
+import com.concept.music.service.MusicDownloadManager
+import com.concept.music.service.DownloadTaskStatus
 import com.concept.music.ui.theme.*
 import com.concept.music.ui.viewmodel.CoverStyle
 import com.concept.music.ui.viewmodel.LyricAlignment
@@ -272,8 +277,8 @@ enum class SettingsCategory(
         subtitle = "倍速升降调调节与睡眠倒计时自动停止播放"
     ),
     STORAGE(
-        title = "存储与缓存",
-        subtitle = "音频、图片、歌单快照与歌词分项缓存明细、上限设置与清理"
+        title = "存储、下载与缓存",
+        subtitle = "音乐下载保存路径、歌词独立保存路径、高清封面/歌词内嵌与缓存管理"
     ),
     PERMISSIONS(
         title = "权限管理",
@@ -458,6 +463,7 @@ fun SettingsScreen(
     val cacheSizeBytes by AudioCacheManager.cacheSizeBytes.collectAsState()
     val detailedCacheStats by AudioCacheManager.detailedStats.collectAsState()
     val cacheLimit by AudioCacheManager.cacheLimit.collectAsState()
+    val downloadConfig by MusicDownloadManager.config.collectAsState()
     val themeMode by ThemeManager.themeMode.collectAsState()
     val audioEffectState by AudioEffectManager.state.collectAsState()
     val permissionState by AppPermissionManager.state.collectAsState()
@@ -652,11 +658,12 @@ fun SettingsScreen(
                             SettingsGroupHeader(title = "系统与信息")
                         }
                         item {
+                            val lrcTag = if (downloadConfig.saveStandaloneLrcFile) "内嵌+独立.lrc" else "封面/歌词内嵌"
                             SettingsMenuEntryCard(
                                 category = SettingsCategory.STORAGE,
                                 icon = Icons.Rounded.Storage,
                                 accentColor = ConceptAmberAccent,
-                                statusText = "总缓存 ${AudioCacheManager.formatSize(cacheSizeBytes)} · 音频 ${AudioCacheManager.formatSize(detailedCacheStats.audioBytes)} / 图片 ${AudioCacheManager.formatSize(detailedCacheStats.totalImageBytes)}",
+                                statusText = "默认下载 ${downloadConfig.defaultDownloadQuality.shortBadge} ($lrcTag) · 缓存 ${AudioCacheManager.formatSize(cacheSizeBytes)}",
                                 onClick = { activeCategoryName = SettingsCategory.STORAGE.name }
                             )
                         }
@@ -1596,6 +1603,701 @@ fun SettingsScreen(
 }
 
 /**
+ * 音乐下载、音频标签内嵌与歌词保存路径设置卡片：
+ * 1. 手机存储权限状态检测与一键申请（兼容 Android 6~14 运行时存储权限与所有文件访问权限）
+ * 2. 自定义音乐下载保存路径（支持系统文件夹选择器与自定义路径输入）
+ * 3. 默认下载音质（Hi-Res / SQ 无损 / 320K 高品 / 128K 标准，自动按序回退）
+ * 4. 歌曲详细信息、高清专辑封面（1000x1000）默认内嵌与歌词默认内嵌开关
+ * 5. 自定义是否额外独立保存 .lrc 歌词文件及自定义歌词保存路径
+ * 6. 实时下载任务队列与完成记录查看
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MusicDownloadSettingsSectionCard(
+    context: Context
+) {
+    val config by MusicDownloadManager.config.collectAsState()
+    val tasks by MusicDownloadManager.tasks.collectAsState()
+    val permissionState by AppPermissionManager.state.collectAsState()
+
+    var permissionRefreshTick by remember { mutableIntStateOf(0) }
+    val hasRuntimeStoragePermission = remember(permissionRefreshTick, permissionState) {
+        AppPermissionManager.hasMusicDownloadStoragePermission(context)
+    }
+    val hasAllFilesAccess = remember(permissionRefreshTick) {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()
+    }
+
+    var showCustomDownloadPathDialog by remember { mutableStateOf(false) }
+    var customDownloadPathInput by remember(config.downloadDirectoryPath) {
+        mutableStateOf(config.downloadDirectoryPath)
+    }
+
+    var showCustomLyricPathDialog by remember { mutableStateOf(false) }
+    var customLyricPathInput by remember(config.lyricDirectoryPath) {
+        mutableStateOf(config.lyricDirectoryPath)
+    }
+
+    val runtimePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { grantMap ->
+        permissionRefreshTick += 1
+        val allGranted = grantMap.values.all { it }
+        if (allGranted || AppPermissionManager.hasMusicDownloadStoragePermission(context)) {
+            Toast.makeText(context, "存储权限已授权，可正常下载保存歌曲与歌词", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "部分存储权限未授予，将自动回退使用系统 MediaStore 音乐目录保存", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    val downloadDirPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { treeUri ->
+        if (treeUri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+            val resolvedPath = MusicDownloadManager.resolveTreeUriToFilePath(context, treeUri)
+            if (!resolvedPath.isNullOrBlank()) {
+                MusicDownloadManager.setDownloadDirectoryPath(resolvedPath)
+                Toast.makeText(context, "音乐下载路径已设为：$resolvedPath", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "所选目录无法映射为本地路径，请使用自定义路径输入", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val lyricDirPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { treeUri ->
+        if (treeUri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+            val resolvedPath = MusicDownloadManager.resolveTreeUriToFilePath(context, treeUri)
+            if (!resolvedPath.isNullOrBlank()) {
+                MusicDownloadManager.setLyricDirectoryPath(resolvedPath)
+                Toast.makeText(context, "歌词保存路径已设为：$resolvedPath", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "所选目录无法映射为本地路径，请使用自定义路径输入", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    SettingsSectionCard(
+        title = "音乐下载与歌词内嵌设置",
+        icon = Icons.Rounded.Download
+    ) {
+        // 1. 手机存储权限状态与一键授权
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = if (hasRuntimeStoragePermission) {
+                ConceptMintAccent.copy(alpha = 0.12f)
+            } else {
+                ConceptAmberAccent.copy(alpha = 0.14f)
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = if (hasRuntimeStoragePermission) Icons.Rounded.VerifiedUser else Icons.Rounded.FolderOff,
+                            contentDescription = null,
+                            tint = if (hasRuntimeStoragePermission) ConceptMintAccent else ConceptAmberAccent,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = if (hasRuntimeStoragePermission) {
+                                    if (hasAllFilesAccess) "手机存储权限已就绪（含自定义任意路径权限）"
+                                    else "手机存储权限已就绪（支持音乐与歌词写入）"
+                                } else {
+                                    "尚未授予存储权限（下载前需授权以保存到手机内）"
+                                },
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "用于将多音质音频文件 (.flac/.mp3) 与独立歌词文件 (.lrc) 保存到您自定义的手机目录",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 11.5.sp
+                            )
+                        }
+                    }
+                }
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.STORAGE_EXPORT)) {
+                                AppPermissionManager.setPermissionEnabled(context, AppPermissionType.STORAGE_EXPORT, true)
+                            }
+                            val perms = AppPermissionManager.requiredStorageRuntimePermissions()
+                            if (perms.isNotEmpty()) {
+                                runtimePermissionLauncher.launch(perms)
+                            } else {
+                                permissionRefreshTick += 1
+                                Toast.makeText(context, "当前系统已具备媒体存储写入权限", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = ConceptPrimary,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Icon(Icons.Rounded.Security, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("请求手机存储权限", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !hasAllFilesAccess) {
+                        OutlinedButton(
+                            onClick = { AppPermissionManager.openAllFilesAccessSettings(context) },
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.FolderOpen,
+                                contentDescription = null,
+                                tint = ConceptAmberAccent,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                "开启所有文件访问 (自定义任意目录)",
+                                fontSize = 11.5.sp,
+                                color = ConceptAmberAccent,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 12.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        )
+
+        // 2. 默认下载音质选择
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "默认下载音质档位",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+            )
+            Text(
+                text = "当前：${config.defaultDownloadQuality.label}",
+                style = MaterialTheme.typography.bodySmall.copy(
+                    color = ConceptMintAccent,
+                    fontWeight = FontWeight.Bold
+                )
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = "基于酷狗概念版多音质解析（res_hash → sq_hash → 320k → 128k），若目标歌曲无对应高音质将自动平滑降级",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 11.5.sp
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            listOf(
+                AudioQuality.HI_RES,
+                AudioQuality.LOSSLESS,
+                AudioQuality.HIGH,
+                AudioQuality.STANDARD
+            ).forEach { qualityOption ->
+                FilterChip(
+                    selected = config.defaultDownloadQuality == qualityOption,
+                    onClick = {
+                        MusicDownloadManager.setDefaultDownloadQuality(qualityOption)
+                        Toast.makeText(context, "默认下载音质已设为 ${qualityOption.label}", Toast.LENGTH_SHORT).show()
+                    },
+                    label = { Text(qualityOption.label, fontSize = 12.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = ConceptMintAccent.copy(alpha = 0.2f),
+                        selectedLabelColor = ConceptMintAccent
+                    )
+                )
+            }
+        }
+
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 12.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        )
+
+        // 3. 自定义音乐下载保存路径
+        Text(
+            text = "音乐下载保存路径",
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Folder,
+                    contentDescription = null,
+                    tint = ConceptAmberAccent,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = config.downloadDirectoryPath,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            OutlinedButton(
+                onClick = { runCatching { downloadDirPickerLauncher.launch(null) } },
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Icon(Icons.Rounded.FolderOpen, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(5.dp))
+                Text("选择文件夹", fontSize = 11.5.sp)
+            }
+            OutlinedButton(
+                onClick = {
+                    customDownloadPathInput = config.downloadDirectoryPath
+                    showCustomDownloadPathDialog = true
+                },
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(5.dp))
+                Text("自定义输入路径", fontSize = 11.5.sp)
+            }
+            TextButton(
+                onClick = {
+                    MusicDownloadManager.resetDirectoriesToDefault()
+                    Toast.makeText(context, "已恢复默认下载与歌词目录", Toast.LENGTH_SHORT).show()
+                },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text("恢复默认", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 12.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        )
+
+        // 4. 歌曲信息、高清封面与歌词内嵌开关
+        SettingToggleRow(
+            title = "默认内嵌高清歌曲封面与元数据",
+            subtitle = "自动获取 1000×1000 高清专辑封面，连同歌名、歌手、专辑、发行年份一并写入 FLAC Picture / MP3 APIC 标签",
+            checked = config.embedHdCover,
+            onCheckedChange = { MusicDownloadManager.setEmbedHdCover(it) },
+            thumbColor = ConceptPrimary
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        SettingToggleRow(
+            title = "默认内嵌歌词到音频文件",
+            subtitle = "下载时自动获取 KRC/LRC 歌词并写入 FLAC (LYRICS/UNSYNCEDLYRICS) 与 MP3 (USLT) 标签内",
+            checked = config.embedLyrics,
+            onCheckedChange = { MusicDownloadManager.setEmbedLyrics(it) },
+            thumbColor = ConceptCyanAccent
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        SettingToggleRow(
+            title = "独立保存 .lrc 歌词文件",
+            subtitle = "除内嵌歌词外，同步在下方「歌词保存路径」下生成同名独立 .lrc 文件（歌手 - 歌名.lrc）",
+            checked = config.saveStandaloneLrcFile,
+            onCheckedChange = { MusicDownloadManager.setSaveStandaloneLrcFile(it) },
+            thumbColor = ConceptMintAccent
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        SettingToggleRow(
+            title = "内嵌与导出歌词包含双语翻译",
+            subtitle = "当外语歌曲存在中文翻译时，在LRC时间戳下同步附加双语翻译行",
+            checked = config.includeTranslationInLyric,
+            onCheckedChange = { MusicDownloadManager.setIncludeTranslationInLyric(it) },
+            thumbColor = ConceptVioletAccent
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        SettingToggleRow(
+            title = "跳过已存在的同名歌曲文件",
+            subtitle = "当目标下载路径下已存在相同歌名与音质后缀的文件时直接跳过，避免重复下载",
+            checked = config.skipExistingFiles,
+            onCheckedChange = { MusicDownloadManager.setSkipExistingFiles(it) },
+            thumbColor = ConceptAmberAccent
+        )
+
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 12.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+        )
+
+        // 5. 自定义独立歌词保存路径 (.lrc)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "独立 .lrc 歌词保存路径",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+            )
+            Text(
+                text = if (config.saveStandaloneLrcFile) "已开启独立保存" else "开启上方开关后生效",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (config.saveStandaloneLrcFile) ConceptMintAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.5.sp
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Lyrics,
+                    contentDescription = null,
+                    tint = ConceptCyanAccent,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = config.lyricDirectoryPath,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Medium
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            OutlinedButton(
+                onClick = { runCatching { lyricDirPickerLauncher.launch(null) } },
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Icon(Icons.Rounded.FolderOpen, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(5.dp))
+                Text("选择歌词目录", fontSize = 11.5.sp)
+            }
+            OutlinedButton(
+                onClick = {
+                    customLyricPathInput = config.lyricDirectoryPath
+                    showCustomLyricPathDialog = true
+                },
+                shape = RoundedCornerShape(10.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(5.dp))
+                Text("自定义歌词路径", fontSize = 11.5.sp)
+            }
+            TextButton(
+                onClick = {
+                    MusicDownloadManager.setLyricDirectoryPath(config.downloadDirectoryPath)
+                    Toast.makeText(context, "歌词保存路径已设为与音乐目录相同", Toast.LENGTH_SHORT).show()
+                },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                modifier = Modifier.height(32.dp)
+            ) {
+                Text("与音乐目录相同", fontSize = 11.5.sp, color = ConceptCyanAccent)
+            }
+        }
+
+        // 6. 最近下载任务列表（若有）
+        if (tasks.isNotEmpty()) {
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 12.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "最近下载队列 (${tasks.size})",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                )
+                TextButton(
+                    onClick = { MusicDownloadManager.clearCompletedTasks() },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text("清理已完成记录", fontSize = 11.5.sp)
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                tasks.take(8).forEach { task ->
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "${task.song.artist} - ${task.song.title}",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                val statusColor = when (task.status) {
+                                    DownloadTaskStatus.COMPLETED, DownloadTaskStatus.SKIPPED_EXISTING -> ConceptMintAccent
+                                    DownloadTaskStatus.FAILED -> ConceptRoseAccent
+                                    else -> ConceptPrimary
+                                }
+                                Text(
+                                    text = "${task.actualQuality.shortBadge} · ${task.status.label}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = statusColor,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            if (task.status == DownloadTaskStatus.DOWNLOADING || task.status == DownloadTaskStatus.EMBEDDING || task.status == DownloadTaskStatus.RESOLVING) {
+                                LinearProgressIndicator(
+                                    progress = { task.progress.coerceIn(0f, 1f) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(CircleShape),
+                                    color = ConceptPrimary
+                                )
+                            }
+                            if (task.status == DownloadTaskStatus.COMPLETED || task.status == DownloadTaskStatus.SKIPPED_EXISTING) {
+                                val tagsSummary = buildList {
+                                    if (task.embeddedMetadata) add("元数据已内嵌")
+                                    if (task.embeddedCover) add("高清封面已内嵌")
+                                    if (task.embeddedLyric) add("歌词已内嵌")
+                                    if (task.savedLrcPath.isNotBlank()) add("已存 .lrc")
+                                }.joinToString(" · ").ifBlank { "已完成保存" }
+                                Text(
+                                    text = "$tagsSummary · ${task.savedAudioPath}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 10.5.sp,
+                                    lineHeight = 14.sp
+                                )
+                            } else if (task.status == DownloadTaskStatus.FAILED && !task.errorMessage.isNullOrBlank()) {
+                                Text(
+                                    text = task.errorMessage,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = ConceptRoseAccent,
+                                    fontSize = 10.5.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCustomDownloadPathDialog) {
+        AlertDialog(
+            onDismissRequest = { showCustomDownloadPathDialog = false },
+            title = { Text("自定义音乐下载保存路径", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "请输入手机存储内的绝对路径（若目录不存在将自动创建）：",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = customDownloadPathInput,
+                        onValueChange = { customDownloadPathInput = it },
+                        singleLine = true,
+                        label = { Text("音乐保存目录路径") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            "/storage/emulated/0/Music/BreezeMusic",
+                            "/storage/emulated/0/Download/BreezeMusic",
+                            "/storage/emulated/0/Music"
+                        ).forEach { preset ->
+                            AssistChip(
+                                onClick = { customDownloadPathInput = preset },
+                                label = { Text(preset.substringAfterLast("/"), fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = customDownloadPathInput.trim()
+                        if (trimmed.isNotEmpty()) {
+                            MusicDownloadManager.setDownloadDirectoryPath(trimmed)
+                            Toast.makeText(context, "音乐下载路径已更新", Toast.LENGTH_SHORT).show()
+                        }
+                        showCustomDownloadPathDialog = false
+                    }
+                ) {
+                    Text("保存路径")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCustomDownloadPathDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    if (showCustomLyricPathDialog) {
+        AlertDialog(
+            onDismissRequest = { showCustomLyricPathDialog = false },
+            title = { Text("自定义独立 .lrc 歌词保存路径", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "请输入独立 .lrc 歌词文件的保存目录路径：",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = customLyricPathInput,
+                        onValueChange = { customLyricPathInput = it },
+                        singleLine = true,
+                        label = { Text("歌词保存目录路径") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            "/storage/emulated/0/Music/BreezeMusic/Lyrics",
+                            "/storage/emulated/0/Download/BreezeMusic/Lyrics",
+                            config.downloadDirectoryPath
+                        ).distinct().forEach { preset ->
+                            AssistChip(
+                                onClick = { customLyricPathInput = preset },
+                                label = { Text(preset.substringAfterLast("/").ifBlank { "同音乐目录" }, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = customLyricPathInput.trim()
+                        if (trimmed.isNotEmpty()) {
+                            MusicDownloadManager.setLyricDirectoryPath(trimmed)
+                            Toast.makeText(context, "歌词保存路径已更新", Toast.LENGTH_SHORT).show()
+                        }
+                        showCustomLyricPathDialog = false
+                    }
+                ) {
+                    Text("保存路径")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCustomLyricPathDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+/**
  * 存储与缓存二级页面完整内容：
  * 1. 总空间占用与多维构成比例条
  * 2. 流媒体音频缓存上限档位调节（512MB ~ 10GB）
@@ -1610,6 +2312,8 @@ private fun StorageAndCacheSectionContent(
     cacheLimit: AudioCacheLimit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        MusicDownloadSettingsSectionCard(context = context)
+
         SettingsSectionCard(
             title = "存储与缓存总览",
             icon = Icons.Rounded.Storage

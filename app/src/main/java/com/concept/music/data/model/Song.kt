@@ -8,6 +8,14 @@ enum class AudioQuality(val apiValue: String, val label: String) {
     LOSSLESS("flac", "无损 SQ"),
     HI_RES("high", "Hi-Res");
 
+    val shortBadge: String
+        get() = when (this) {
+            STANDARD -> "128K"
+            HIGH -> "320K"
+            LOSSLESS -> "SQ"
+            HI_RES -> "Hi-Res"
+        }
+
     companion object {
         fun fromValue(value: String?): AudioQuality = when (value?.lowercase()) {
             "high", "hires", "super" -> HI_RES
