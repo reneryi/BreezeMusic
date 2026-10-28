@@ -475,4 +475,19 @@ class DiscoverLocalCache(context: Context? = null) {
             }
         }
     }
+
+    fun clearAll() {
+        memorySongListMap.clear()
+        memoryRankList.clear()
+        memoryFmChannelList.clear()
+        memoryPlaylistList.clear()
+        memoryPurchasedAlbumList.clear()
+        memoryPurchasedSongList.clear()
+        runCatching { prefs?.edit()?.clear()?.apply() }
+        runCatching {
+            playlistCacheDir?.listFiles()?.forEach { f ->
+                if (f.isFile) runCatching { f.delete() }
+            }
+        }
+    }
 }

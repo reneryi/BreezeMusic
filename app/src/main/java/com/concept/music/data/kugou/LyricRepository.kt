@@ -24,6 +24,8 @@ class LyricRepository(
         }
     }
 
+    fun cachedEntryCount(): Int = synchronized(cache) { cache.size }
+
     fun clearCache() {
         synchronized(cache) {
             cache.clear()

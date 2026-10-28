@@ -254,6 +254,23 @@ class MusicApiRepository(
         seenPersonalFmHashes.clear()
     }
 
+    fun cachedMetadataCount(): Int {
+        return playbackResultCache.size +
+            privilegeLiteObjCache.size +
+            songTechMetaCache.size +
+            albumNameCache.size +
+            albumPublishDateCache.size
+    }
+
+    fun clearRuntimeMetadataCache() {
+        clearPlaybackCache()
+        privilegeLiteObjCache.clear()
+        songTechMetaCache.clear()
+        albumNameCache.clear()
+        albumPublishDateCache.clear()
+        albumCompanyCache.clear()
+    }
+
     fun clearPlaybackCache(hash: String? = null) {
         if (hash.isNullOrBlank()) {
             playbackResultCache.clear()

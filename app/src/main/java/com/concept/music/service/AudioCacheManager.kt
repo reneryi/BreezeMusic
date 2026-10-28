@@ -2,6 +2,7 @@ package com.concept.music.service
 
 import android.content.Context
 import androidx.annotation.OptIn
+import androidx.compose.runtime.Immutable
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
@@ -10,12 +11,14 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import coil.imageLoader
+import com.concept.music.data.vip.VipManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 
@@ -31,12 +34,62 @@ enum class AudioCacheLimit(val label: String, val maxBytes: Long) {
 }
 
 /**
- * 边听边存音频缓存管理器 ([FUNC-02])
- * 基于 Media3 SimpleCache + LRU 淘汰策略，实现联网流媒体自动落盘缓存、容量上限调节与秒开重播
+ * 项目全维度缓存分项统计快照：
+ * 1. 流媒体音频缓存 (`concept_audio_stream_cache` - Media3 SimpleCache)
+ * 2. 封面与评论图片缓存 (`image_cache` - Coil DiskCache + MemoryCache)
+ * 3. 歌单与发现页 SWR 秒开缓存 (`swr_playlists` + `concept_discover_swr_cache_v3.xml`)
+ * 4. KRC 逐字歌词、音源解析内存缓存与 WebView 验证临时缓存
+ */
+@Immutable
+data class DetailedCacheStats(
+    val audioCacheBytes: Long = 0L,
+    val audioCachedKeysCount: Int = 0,
+    val audioCacheMaxBytes: Long = 1024L * 1024L * 1024L,
+    val imageDiskCacheBytes: Long = 0L,
+    val imageMemoryCacheBytes: Long = 0L,
+    val swrPlaylistDiskBytes: Long = 0L,
+    val swrPlaylistCount: Int = 0,
+    val swrDiscoverBytes: Long = 0L,
+    val lyricCacheCount: Int = 0,
+    val lyricEstimatedBytes: Long = 0L,
+    val runtimeMetaCacheCount: Int = 0,
+    val webViewAndTempBytes: Long = 0L,
+    val audioBytes: Long = audioCacheBytes,
+    val audioTrackCount: Int = audioCachedKeysCount,
+    val imageDiskBytes: Long = imageDiskCacheBytes,
+    val imageMemoryBytes: Long = imageMemoryCacheBytes,
+    val swrMetadataBytes: Long = (swrPlaylistDiskBytes + swrDiscoverBytes),
+    val swrSnapshotCount: Int = swrPlaylistCount,
+    val lyricMemoryCount: Int = lyricCacheCount,
+    val runtimeMetaCount: Int = runtimeMetaCacheCount,
+    val otherTempBytes: Long = webViewAndTempBytes
+) {
+    val totalImageBytes: Long
+        get() = maxOf(imageDiskBytes + imageMemoryBytes, imageDiskCacheBytes + imageMemoryCacheBytes).coerceAtLeast(0L)
+
+    val totalSwrMetadataBytes: Long
+        get() = maxOf(swrMetadataBytes, swrPlaylistDiskBytes + swrDiscoverBytes).coerceAtLeast(0L)
+
+    val totalBytes: Long
+        get() = (maxOf(audioBytes, audioCacheBytes) +
+            totalImageBytes +
+            totalSwrMetadataBytes +
+            lyricEstimatedBytes +
+            maxOf(otherTempBytes, webViewAndTempBytes)).coerceAtLeast(0L)
+
+    val totalAllBytes: Long
+        get() = totalBytes
+}
+
+/**
+ * 边听边存音频与全局多级缓存管理器 ([FUNC-02])
+ * 基于 Media3 SimpleCache + LRU 淘汰策略，提供全项目分项缓存统计、独立清理与一键全量清理能力
  */
 @OptIn(UnstableApi::class)
 object AudioCacheManager {
     private const val CACHE_DIR_NAME = "concept_audio_stream_cache"
+    private const val IMAGE_CACHE_DIR_NAME = "image_cache"
+    private const val SWR_CACHE_DIR_NAME = "swr_playlists"
     private const val PREFS_NAME = "concept_player_prefs"
     private const val KEY_AUDIO_CACHE_LIMIT = "audio_cache_limit"
 
@@ -50,6 +103,9 @@ object AudioCacheManager {
 
     private val _cacheSizeBytes = MutableStateFlow(0L)
     val cacheSizeBytes = _cacheSizeBytes.asStateFlow()
+
+    private val _detailedStats = MutableStateFlow(DetailedCacheStats())
+    val detailedStats = _detailedStats.asStateFlow()
 
     private val _cacheLimit = MutableStateFlow(AudioCacheLimit.GB_1)
     val cacheLimit = _cacheLimit.asStateFlow()
@@ -163,22 +219,150 @@ object AudioCacheManager {
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
 
+    private fun computeDetailedStats(appCtx: Context): DetailedCacheStats {
+        val cache = getCache(appCtx)
+        val audioBytes = (cache.cacheSpace.takeIf { it > 0L } ?: calculateDirSize(cacheDir)).coerceAtLeast(0L)
+        val audioTrackCount = runCatching { cache.keys.size }.getOrDefault(0)
+
+        val imgDir = File(appCtx.cacheDir, IMAGE_CACHE_DIR_NAME)
+        val imageDiskBytes = calculateDirSize(imgDir).coerceAtLeast(0L)
+        val imageMemoryBytes = runCatching {
+            appCtx.imageLoader.memoryCache?.size?.toLong() ?: 0L
+        }.getOrDefault(0L).coerceAtLeast(0L)
+
+        val swrDir = File(appCtx.cacheDir, SWR_CACHE_DIR_NAME)
+        val swrDirBytes = calculateDirSize(swrDir)
+        val swrFileCount = runCatching { swrDir.listFiles()?.count { it.isFile } ?: 0 }.getOrDefault(0)
+        val swrPrefsFile = File(File(appCtx.applicationInfo.dataDir, "shared_prefs"), "concept_discover_swr_cache_v3.xml")
+        val swrPrefsBytes = if (swrPrefsFile.exists()) swrPrefsFile.length() else 0L
+        val swrMetadataBytes = (swrDirBytes + swrPrefsBytes).coerceAtLeast(0L)
+
+        val lyricMemCount = runCatching { VipManager.lyric.cachedEntryCount() }.getOrDefault(0)
+        val runtimeMetaCount = runCatching { VipManager.music.cachedMetadataCount() }.getOrDefault(0)
+
+        var otherTempBytes = 0L
+        runCatching {
+            appCtx.cacheDir.listFiles()?.forEach { child ->
+                if (child.name != CACHE_DIR_NAME &&
+                    child.name != IMAGE_CACHE_DIR_NAME &&
+                    child.name != SWR_CACHE_DIR_NAME
+                ) {
+                    otherTempBytes += if (child.isDirectory) calculateDirSize(child) else child.length()
+                }
+            }
+        }
+
+        return DetailedCacheStats(
+            audioBytes = audioBytes,
+            audioTrackCount = audioTrackCount,
+            imageDiskBytes = imageDiskBytes,
+            imageMemoryBytes = imageMemoryBytes,
+            swrMetadataBytes = swrMetadataBytes,
+            swrSnapshotCount = swrFileCount,
+            lyricMemoryCount = lyricMemCount,
+            runtimeMetaCount = runtimeMetaCount,
+            otherTempBytes = otherTempBytes.coerceAtLeast(0L)
+        )
+    }
+
     fun refreshCacheSize(context: Context) {
         val appCtx = context.applicationContext
         loadSavedCacheLimit(appCtx)
         scope.launch {
-            val bytes = runCatching {
-                val cache = getCache(appCtx)
-                val audioBytes = cache.cacheSpace.takeIf { it > 0L } ?: calculateDirSize(cacheDir)
-                val imageBytes = calculateDirSize(File(appCtx.cacheDir, "image_cache"))
-                audioBytes + imageBytes
-            }.getOrDefault(0L)
-            _cacheSizeBytes.value = bytes.coerceAtLeast(0L)
+            val stats = runCatching { computeDetailedStats(appCtx) }.getOrDefault(DetailedCacheStats())
+            _detailedStats.value = stats
+            _cacheSizeBytes.value = stats.totalBytes
         }
     }
 
     /**
-     * 安全清理流媒体音频缓存与图片磁盘缓存（严禁直接物理删除 SimpleCache 索引文件）
+     * 单独清理流媒体音频缓存 (`concept_audio_stream_cache`)
+     */
+    fun clearAudioCacheOnly(context: Context, onComplete: (Boolean) -> Unit = {}) {
+        val appCtx = context.applicationContext
+        scope.launch {
+            val ok = runCatching {
+                val cache = getCache(appCtx)
+                cache.keys.toList().forEach { key ->
+                    runCatching { cache.removeResource(key) }
+                }
+                true
+            }.getOrDefault(false)
+            val stats = runCatching { computeDetailedStats(appCtx) }.getOrDefault(DetailedCacheStats())
+            _detailedStats.value = stats
+            _cacheSizeBytes.value = stats.totalBytes
+            withContext(Dispatchers.Main) { onComplete(ok) }
+        }
+    }
+
+    /**
+     * 单独清理封面与评论图片缓存 (Coil 磁盘缓存 + 内存位图缓存)
+     */
+    @kotlin.OptIn(coil.annotation.ExperimentalCoilApi::class)
+    fun clearImageCacheOnly(context: Context, onComplete: (Boolean) -> Unit = {}) {
+        val appCtx = context.applicationContext
+        scope.launch {
+            val ok = runCatching {
+                runCatching { appCtx.imageLoader.memoryCache?.clear() }
+                runCatching { appCtx.imageLoader.diskCache?.clear() }
+                true
+            }.getOrDefault(false)
+            val stats = runCatching { computeDetailedStats(appCtx) }.getOrDefault(DetailedCacheStats())
+            _detailedStats.value = stats
+            _cacheSizeBytes.value = stats.totalBytes
+            withContext(Dispatchers.Main) { onComplete(ok) }
+        }
+    }
+
+    /**
+     * 单独清理歌单与发现页 SWR 本地秒开快照缓存 (`swr_playlists` + `concept_discover_swr_cache_v3`)
+     */
+    fun clearSwrMetadataCacheOnly(context: Context, onComplete: (Boolean) -> Unit = {}) {
+        val appCtx = context.applicationContext
+        scope.launch {
+            val ok = runCatching {
+                runCatching { VipManager.discoverCache.clearAll() }
+                val swrDir = File(appCtx.cacheDir, SWR_CACHE_DIR_NAME)
+                swrDir.listFiles()?.forEach { f ->
+                    if (f.isFile) runCatching { f.delete() }
+                }
+                true
+            }.getOrDefault(false)
+            val stats = runCatching { computeDetailedStats(appCtx) }.getOrDefault(DetailedCacheStats())
+            _detailedStats.value = stats
+            _cacheSizeBytes.value = stats.totalBytes
+            withContext(Dispatchers.Main) { onComplete(ok) }
+        }
+    }
+
+    /**
+     * 单独清理 KRC 歌词内存缓存、音源解析缓存与 WebView 临时缓存
+     */
+    fun clearLyricAndTempCacheOnly(context: Context, onComplete: (Boolean) -> Unit = {}) {
+        val appCtx = context.applicationContext
+        scope.launch {
+            val ok = runCatching {
+                runCatching { VipManager.lyric.clearCache() }
+                runCatching { VipManager.music.clearRuntimeMetadataCache() }
+                appCtx.cacheDir.listFiles()?.forEach { child ->
+                    if (child.name != CACHE_DIR_NAME &&
+                        child.name != IMAGE_CACHE_DIR_NAME &&
+                        child.name != SWR_CACHE_DIR_NAME
+                    ) {
+                        runCatching { child.deleteRecursively() }
+                    }
+                }
+                true
+            }.getOrDefault(false)
+            val stats = runCatching { computeDetailedStats(appCtx) }.getOrDefault(DetailedCacheStats())
+            _detailedStats.value = stats
+            _cacheSizeBytes.value = stats.totalBytes
+            withContext(Dispatchers.Main) { onComplete(ok) }
+        }
+    }
+
+    /**
+     * 一键全量安全清理流媒体音频缓存、图片缓存、歌单 SWR 快照、歌词与临时缓存
      */
     @kotlin.OptIn(coil.annotation.ExperimentalCoilApi::class)
     fun clearCache(context: Context, onComplete: (Boolean) -> Unit = {}) {
@@ -190,11 +374,25 @@ object AudioCacheManager {
                 keys.forEach { key ->
                     runCatching { cache.removeResource(key) }
                 }
+                runCatching { appCtx.imageLoader.memoryCache?.clear() }
                 runCatching { appCtx.imageLoader.diskCache?.clear() }
-                _cacheSizeBytes.value = 0L
+                runCatching { VipManager.discoverCache.clearAll() }
+                runCatching { VipManager.lyric.clearCache() }
+                runCatching { VipManager.music.clearRuntimeMetadataCache() }
+                appCtx.cacheDir.listFiles()?.forEach { child ->
+                    if (child.name != CACHE_DIR_NAME &&
+                        child.name != IMAGE_CACHE_DIR_NAME &&
+                        child.name != SWR_CACHE_DIR_NAME
+                    ) {
+                        runCatching { child.deleteRecursively() }
+                    }
+                }
                 true
             }.getOrDefault(false)
-            kotlinx.coroutines.withContext(Dispatchers.Main) {
+            val stats = runCatching { computeDetailedStats(appCtx) }.getOrDefault(DetailedCacheStats())
+            _detailedStats.value = stats
+            _cacheSizeBytes.value = stats.totalBytes
+            withContext(Dispatchers.Main) {
                 onComplete(ok)
             }
         }
