@@ -11,9 +11,12 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
@@ -143,74 +146,96 @@ internal fun buildStandardIssueMarkdownTemplate(
     sdkInt: Int = Build.VERSION.SDK_INT
 ): String {
     return """
-        ### 📌 问题描述 (Bug Summary)
+        ### 问题类型 (Issue Type)
         - [x] BUG 缺陷 / 异常崩溃
         - [ ] 功能建议 / 体验优化
         - [ ] 音效 / 歌词 / 界面显示异常
 
-        ### 📱 运行环境 (Environment)
+        ### 运行环境 (Environment)
         - **应用版本**：BreezeMusic v$appVersionName (Build $appVersionCode)
         - **设备型号**：$deviceBrand $deviceModel
         - **系统版本**：Android $androidRelease (API $sdkInt)
         - **音频设备**：例如 手机扬声器 / Type-C 有线耳机 / 蓝牙耳机
         - **网络与状态**：例如 Wi-Fi / 已登录酷狗 VIP
 
-        ### 🔄 复现步骤 (Steps to Reproduce)
+        ### 复现步骤 (Steps to Reproduce)
         1. 打开微风音乐，进入「...」页面
         2. 点击「...」按钮或播放歌曲「...」
         3. 观察到「...」异常
 
-        ### 🎯 期望行为 (Expected Behavior)
+        ### 期望行为 (Expected Behavior)
         请描述正常情况下预期的正确表现。
 
-        ### 💥 实际表现与日志截图 (Actual Behavior & Logs)
+        ### 实际表现与日志截图 (Actual Behavior & Logs)
         请描述实际发生的问题、Toast 提示，并在此处粘贴截图或日志。
     """.trimIndent()
 }
+
+@Immutable
+data class ChangelogModuleGroup(
+    val moduleTitle: String,
+    val points: List<String>
+)
 
 @Immutable
 data class ChangelogVersionItem(
     val version: String,
     val date: String,
     val tag: String,
-    val highlights: List<String>
+    val summary: String,
+    val highlights: List<String>,
+    val moduleGroups: List<ChangelogModuleGroup> = emptyList()
 )
 
 internal val PROJECT_CHANGELOG_HISTORY = listOf(
     ChangelogVersionItem(
-        version = "v1.0.0 (RC3 · 正式版候选)",
+        version = "v1.0.0",
         date = "2026-10-28",
-        tag = "当前版本",
+        tag = "正式版 · 首发",
+        summary = "微风音乐首个正式版发布：完整构建酷狗概念版端侧直连、64-bit 母带 DSP、KRC 逐字歌词、外设线控与二级设置体系",
         highlights = listOf(
-            "重构设置页为二级分类导航架构，彻底告别单页长瀑布流，支持手势侧滑逐级返回",
-            "新增「问题反馈与建议」二级页：内置可视化 GitHub Issue 示例图、填写规范、环境模板一键复制与仓库 Issues 跳转",
-            "升级「存储与缓存」中心：支持流媒体音频、封面/评论图片、歌单 SWR 快照、KRC 歌词与临时缓存四维分项统计与独立清理，支持 512MB~10GB 音频缓存上限调节",
-            "新增「允许与其他应用同时播放」及三档音频焦点策略（独占焦点 / 压低音量闪避同播 Ducking / 完全混音同播）",
-            "新增有线耳机暂停键双击/三击切歌状态机，支持双击/三击方向互换、280ms/350ms/450ms 灵敏度调节与连接耳机（有线/蓝牙）自动播放",
-            "新增蓝牙音频输出延迟自动歌词补偿、划掉后台任务卡片保持播放与系统电池优化白名单一键引导",
-            "完善「关于微风音乐」页面：新增项目定位、开源学习与版权免责声明、GitHub 仓库跳转、在线检查更新与更新日志"
-        )
-    ),
-    ChangelogVersionItem(
-        version = "v1.0.0-rc2 (视听与动效跃迁)",
-        date = "2026-10-20",
-        tag = "核心演进",
-        highlights = listOf(
-            "自研 64-bit/Float PCM 母带音频处理器（10 段参量均衡器、超重低音、人声清澈度、电子管温暖度、M/S 声场扩展与混响）",
-            "重构 KRC 逐字流光歌词渲染引擎：支持字内平滑卡拉 OK 扫光、长音谐波辉光、前奏/间奏三点呼吸波点与阶梯景深模糊",
-            "实现封面色相锁定 13 级 Tonal Palette 动态取色系统（WCAG 4.5:1 对比度保障）与五款高定流光播放页背景",
-            "新增 120Hz 高刷横屏播放模式、2K 超清多模板歌词海报生成与支持物理穿透锁定的系统级全局桌面悬浮歌词"
-        )
-    ),
-    ChangelogVersionItem(
-        version = "v1.0.0-rc1 (酷狗概念版协议底座)",
-        date = "2026-10-10",
-        tag = "基础架构",
-        highlights = listOf(
-            "纯 Kotlin 端侧完整实现 MakcRe/KuGouMusicApi 概念版（appid=3116）签名、RSA/AES 加密与 dfid 风控设备注册，零后端直连",
-            "实现手机验证码登录（支持同手机号多账号切换）、扫码登录与 Android Keystore 硬件级凭证加密存储",
-            "打通概念版每日畅听领 VIP、升级 VIP 权益、CSCC 三段式真实听歌时长上报与 JobScheduler 后台静默守护",
-            "支持 Hi-Res / SQ 无损 / 320K 智能解析与真无损码率防伪校验，补齐每日推荐、私人 FM、排行榜、歌手/专辑详情与四级楼中楼评论"
+            "酷狗概念版端侧直连与 VIP 闭环：纯 Kotlin 实现 MakcRe/KuGouMusicApi 概念版（appid=3116）签名加密与风控设备注册，支持验证码/扫码登录、每日畅听领 VIP、听歌时长上报与后台静默守护",
+            "全链路高解析音源与 64-bit 母带 DSP：支持 Hi-Res / SQ 无损 / 320K 智能解析与真无损码率防伪校验；内置 10 段参量均衡器、蝰蛇音效预设、超重低音、人声清澈度、电子管温暖度与立体声混响",
+            "KRC 逐字流光歌词与全局桌面歌词：端侧解密 KRC 逐字时间戳、双语译文与罗马音注音，支持阶梯景深模糊、前奏/间奏呼吸波点、2K 歌词海报生成与可穿透锁定的系统级桌面歌词",
+            "Material 3 流体视觉与封面动态取色：提取专辑封面生成色相锁定的 13 级明度色阶（满足 WCAG 对比度标准），提供仿真黑胶唱臂、圆角方形封面、五款流光背景与 120Hz 高刷横竖屏播放页",
+            "多应用混音同播与全场景外设控制：支持「允许与其他应用同时播放」及三档音频焦点策略（独占 / 闪避 / 完全混音），提供有线耳机双击/三击切歌定制、连接耳机自动播放与蓝牙歌词延迟自动补偿",
+            "二级设置中心、四维缓存与反馈体系：采用清晰的二级分类导航架构；支持音频流、封面图片、歌单 SWR 快照与歌词/临时缓存四维分项统计与独立清理，内置可视化 GitHub Issue 反馈指南与在线检查更新"
+        ),
+        moduleGroups = listOf(
+            ChangelogModuleGroup(
+                moduleTitle = "一、酷狗概念版端侧直连与账号权益",
+                points = listOf(
+                    "纯 Kotlin 端侧完整实现 MakcRe/KuGouMusicApi 概念版（appid=3116）签名、RSA/AES 加解密与 dfid 设备注册，零中间服务器直连",
+                    "支持手机验证码登录（含同手机号多账号切换）、扫码登录及 Android Keystore 硬件级凭证加密存储",
+                    "打通概念版每日签到畅听领 VIP、升级 VIP 权益、CSCC 三段式真实听歌时长上报与 JobScheduler 后台静默续期守护",
+                    "完整覆盖每日推荐、私人 FM、排行榜、歌单广场、歌手/专辑详情与四级楼中楼评论区交互"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "二、高解析音源与 64-bit 母带 DSP 引擎",
+                points = listOf(
+                    "支持 Hi-Res / SQ 无损 / 高品 320K / 标准 128K 智能解析与真无损码率防伪校验，支持移动网络省流保护",
+                    "自研 64-bit/Float PCM 母带音频管线：内置 10 段参量均衡器、蝰蛇声效预设、动态超重低音、人声清澈度、电子管激励与 M/S 声场混响",
+                    "支持高潮智能试听（Climax 副歌直达）、跨曲淡入淡出无缝衔接（Crossfade）、ReplayGain 音量平衡与倍速/升降调独立控制"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "三、KRC 逐字流光歌词与流体视觉设计",
+                points = listOf(
+                    "端侧解密 KRC 逐字时间戳、双语译文与罗马音注音，支持字内卡拉 OK 平滑扫光、前奏/间奏呼吸波点与阶梯景深模糊",
+                    "提取专辑封面生成色相锁定的 13 级 Tonal Palette 动态取色系统（WCAG 4.5:1 对比度保障），提供仿真黑胶与圆角方图封面及五款动态背景",
+                    "支持 120Hz 高刷横屏播放模式、2K 超清多模板歌词海报导出，以及支持物理穿透锁定的系统级全局桌面悬浮歌词"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "四、外设线控、多应用混音与二级设置体系",
+                points = listOf(
+                    "新增「允许与其他应用同时播放」及三档音频焦点策略（独占焦点 / 压低音量闪避同播 Ducking / 完全混音同播）",
+                    "新增有线耳机暂停键双击/三击切歌状态机，支持切歌方向互换、280ms/350ms/450ms 三档灵敏度调节及连接有线/蓝牙耳机自动播放",
+                    "新增蓝牙音频输出延迟自动歌词补偿、划掉后台任务卡片保持播放与系统电池优化白名单一键引导",
+                    "重构设置中心为二级分类菜单架构：支持音频/图片/SWR 快照/歌词四维缓存分项统计与独立清理、GitHub Issue 可视化反馈指南与在线检查更新"
+                )
+            )
         )
     )
 )
@@ -315,8 +340,8 @@ private suspend fun checkGitHubLatestRelease(): UpdateCheckResult = withContext(
         NetworkClientProvider.baseClient.newCall(req).execute().use { resp ->
             if (resp.code == 404) {
                 return@withContext UpdateCheckResult.UpToDate(
-                    versionText = "v${BuildConfig.VERSION_NAME} (RC)",
-                    message = "当前已是最新开发版，首个正式版 Release 即将发布，敬请关注 GitHub 仓库！"
+                    versionText = "v${BuildConfig.VERSION_NAME}",
+                    message = "当前已是最新正式版 (v${BuildConfig.VERSION_NAME})"
                 )
             }
             if (!resp.isSuccessful) {
@@ -436,13 +461,18 @@ fun SettingsScreen(
     }
 
     var activeCategoryName by rememberSaveable { mutableStateOf<String?>(null) }
+    var showChangelogSubPage by rememberSaveable { mutableStateOf(false) }
     val activeCategory = remember(activeCategoryName) {
         activeCategoryName?.let { name -> runCatching { SettingsCategory.valueOf(name) }.getOrNull() }
     }
 
-    // 处于二级菜单时，系统返回手势优先退回设置一级主菜单
-    BackHandler(enabled = activeCategory != null) {
-        activeCategoryName = null
+    // 处于更新日志子页面或二级菜单时，系统返回手势逐级退回上一层
+    BackHandler(enabled = activeCategory != null || showChangelogSubPage) {
+        if (showChangelogSubPage) {
+            showChangelogSubPage = false
+        } else {
+            activeCategoryName = null
+        }
     }
 
     LaunchedEffect(activeCategory) {
@@ -465,12 +495,16 @@ fun SettingsScreen(
                     title = {
                         Column {
                             Text(
-                                text = activeCategory?.title ?: "设置",
+                                text = when {
+                                    showChangelogSubPage -> "更新日志"
+                                    activeCategory != null -> activeCategory.title
+                                    else -> "设置"
+                                },
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                             )
-                            if (activeCategory != null) {
+                            if (activeCategory != null || showChangelogSubPage) {
                                 Text(
-                                    text = "设置 · 二级选项",
+                                    text = if (showChangelogSubPage) "关于微风音乐 · 版本记录" else "设置 · 二级选项",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 11.sp
@@ -481,7 +515,9 @@ fun SettingsScreen(
                     navigationIcon = {
                         IconButton(
                             onClick = {
-                                if (activeCategory != null) {
+                                if (showChangelogSubPage) {
+                                    showChangelogSubPage = false
+                                } else if (activeCategory != null) {
                                     activeCategoryName = null
                                 } else {
                                     onBackClick()
@@ -502,12 +538,17 @@ fun SettingsScreen(
             containerColor = Color.Transparent
         ) { innerPadding ->
             AnimatedContent(
-                targetState = activeCategory,
+                targetState = Pair(activeCategory, showChangelogSubPage),
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
                 transitionSpec = {
-                    if (targetState != null) {
+                    fun depth(state: Pair<SettingsCategory?, Boolean>): Int = when {
+                        state.second -> 2
+                        state.first != null -> 1
+                        else -> 0
+                    }
+                    if (depth(targetState) > depth(initialState)) {
                         (slideInHorizontally(
                             initialOffsetX = { fullWidth -> (fullWidth * 0.24f).toInt() },
                             animationSpec = tween(durationMillis = 340, easing = ConceptMotion.GentleSpatialEnterEasing)
@@ -528,7 +569,7 @@ fun SettingsScreen(
                     }
                 },
                 label = "SettingsSubPageTransition"
-            ) { category ->
+            ) { (category, isChangelogPage) ->
                 if (category == null) {
                     // 一级菜单主页：分类卡片导航列表
                     LazyColumn(
@@ -1462,31 +1503,36 @@ fun SettingsScreen(
 
                             SettingsCategory.ABOUT -> {
                                 item {
-                                    AboutAppSectionContent(
-                                        context = context,
-                                        updateState = updateCheckState,
-                                        onTriggerCheckUpdate = {
-                                            if (updateCheckState !is UpdateCheckResult.Checking) {
-                                                updateCheckState = UpdateCheckResult.Checking
-                                                coroutineScope.launch {
-                                                    val res = checkGitHubLatestRelease()
-                                                    updateCheckState = res
-                                                    when (res) {
-                                                        is UpdateCheckResult.UpToDate -> {
-                                                            Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
+                                    if (isChangelogPage) {
+                                        ChangelogSubPageContent()
+                                    } else {
+                                        AboutAppSectionContent(
+                                            context = context,
+                                            updateState = updateCheckState,
+                                            onOpenChangelog = { showChangelogSubPage = true },
+                                            onTriggerCheckUpdate = {
+                                                if (updateCheckState !is UpdateCheckResult.Checking) {
+                                                    updateCheckState = UpdateCheckResult.Checking
+                                                    coroutineScope.launch {
+                                                        val res = checkGitHubLatestRelease()
+                                                        updateCheckState = res
+                                                        when (res) {
+                                                            is UpdateCheckResult.UpToDate -> {
+                                                                Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
+                                                            }
+                                                            is UpdateCheckResult.HasUpdate -> {
+                                                                Toast.makeText(context, "发现新版本：${res.latestVersion}", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                            is UpdateCheckResult.Error -> {
+                                                                Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
+                                                            }
+                                                            else -> {}
                                                         }
-                                                        is UpdateCheckResult.HasUpdate -> {
-                                                            Toast.makeText(context, "发现新版本：${res.latestVersion}", Toast.LENGTH_SHORT).show()
-                                                        }
-                                                        is UpdateCheckResult.Error -> {
-                                                            Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
-                                                        }
-                                                        else -> {}
                                                     }
                                                 }
                                             }
-                                        }
-                                    )
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2313,296 +2359,426 @@ private fun FeedbackRuleItem(
 
 /**
  * 关于微风音乐二级页面：
- * 1. 品牌与版本卡片 + GitHub 项目仓库地址跳转 + 在线检查更新
- * 2. 项目定义与五大核心技术特点介绍
- * 3. 版本演进更新日志（Changelog）
- * 4. 严谨正式的开源学习与知识产权免责声明（叠甲声明）
+ * 1. 大气居中的品牌版本 Hero 卡片 + 简洁无冗余的仓库入口、更新日志二级入口与检查更新按钮
+ * 2. 凝练简洁的项目介绍（几句话概括核心定位与特性标签）
+ * 3. 精简正式的免责与版权声明（保留第一点研究用途声明 + 知识产权归属与正版倡导 + 精简免责条款）
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AboutAppSectionContent(
     context: Context,
     updateState: UpdateCheckResult,
+    onOpenChangelog: () -> Unit,
     onTriggerCheckUpdate: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // 1. 品牌头部与项目仓库、检查更新
-        SettingsSectionCard(
-            title = "版本信息与项目仓库",
-            icon = Icons.Rounded.Info
+        // 1. 大气居中的品牌版本与核心入口卡片（告别重复跳转按钮）
+        Surface(
+            shape = RoundedCornerShape(26.dp),
+            color = conceptFloatingCardColor(),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shadowElevation = 0.dp,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // 顶部居中大气品牌横幅区域
                 Box(
                     modifier = Modifier
-                        .size(54.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                        .fillMaxWidth()
                         .background(
-                            Brush.linearGradient(
-                                listOf(ConceptPrimary, ConceptCyanAccent)
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    ConceptPrimary.copy(alpha = 0.16f),
+                                    ConceptCyanAccent.copy(alpha = 0.05f),
+                                    Color.Transparent
+                                )
                             )
-                        ),
+                        )
+                        .padding(top = 26.dp, bottom = 18.dp, start = 20.dp, end = 20.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.MusicNote,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(30.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "BreezeMusic · 微风音乐",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 17.sp
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "版本 v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE} · 正式版候选)",
-                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = ConceptPrimary
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "Kotlin · Jetpack Compose · Media3 · KuGou Concept (3116)",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // 仓库地址卡片
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .clickable { openExternalUrl(context, ProjectLinks.GITHUB_REPO_URL) }
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        Icon(
-                            imageVector = Icons.Rounded.Code,
-                            contentDescription = null,
-                            tint = ConceptPrimary,
-                            modifier = Modifier.size(19.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "GitHub 开源项目地址",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = ProjectLinks.GITHUB_REPO_URL,
-                                fontSize = 11.sp,
-                                color = ConceptPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = {
-                                copyTextToClipboard(context, "项目仓库地址", ProjectLinks.GITHUB_REPO_URL)
-                                Toast.makeText(context, "已复制仓库链接", Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.size(30.dp)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(68.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(ConceptPrimary, ConceptCyanAccent)
+                                    )
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = Color.White.copy(alpha = 0.28f),
+                                    shape = RoundedCornerShape(20.dp)
+                                ),
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.ContentCopy,
-                                contentDescription = "复制仓库地址",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(15.dp)
+                                imageVector = Icons.Rounded.MusicNote,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(36.dp)
                             )
                         }
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
-                            contentDescription = "打开仓库",
-                            tint = ConceptPrimary,
-                            modifier = Modifier.size(16.dp)
+
+                        Spacer(modifier = Modifier.height(2.dp))
+
+                        Text(
+                            text = "BreezeMusic · 微风音乐",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 20.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = ConceptPrimary.copy(alpha = 0.15f),
+                                modifier = Modifier.border(
+                                    width = 0.8.dp,
+                                    color = ConceptPrimary.copy(alpha = 0.35f),
+                                    shape = CircleShape
+                                )
+                            ) {
+                                Text(
+                                    text = "v${BuildConfig.VERSION_NAME} 正式版 · Build ${BuildConfig.VERSION_CODE}",
+                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = ConceptPrimary,
+                                    fontSize = 11.5.sp,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "Kotlin · Jetpack Compose · Media3 · Concept (3116)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.sp
                         )
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // 操作按钮栏：打开项目主页 + 检查更新
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { openExternalUrl(context, ProjectLinks.GITHUB_REPO_URL) },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.weight(1f)
+                // 底部简洁统一的三项导航与操作区（每个入口职责唯一，绝无一大一小重复按钮）
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("访问项目主页", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-                }
-
-                Button(
-                    onClick = onTriggerCheckUpdate,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = ConceptPrimary,
-                        contentColor = Color.White
-                    ),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.SystemUpdate,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (updateState is UpdateCheckResult.Checking) "正在检查..." else "检查更新",
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-
-            // 检查更新结果状态面板
-            when (updateState) {
-                is UpdateCheckResult.Idle -> {}
-                is UpdateCheckResult.Checking -> {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(CircleShape),
-                        color = ConceptPrimary
-                    )
-                }
-                is UpdateCheckResult.HasUpdate -> {
-                    Spacer(modifier = Modifier.height(10.dp))
+                    // 入口 1：GitHub 开源仓库（点击整行直接跳转仓库，右侧附轻量复制胶囊）
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = ConceptMintAccent.copy(alpha = 0.14f),
-                        modifier = Modifier.fillMaxWidth()
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable { openExternalUrl(context, ProjectLinks.GITHUB_REPO_URL) }
                     ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
                             ) {
-                                Text(
-                                    text = "发现新版本：${updateState.latestVersion}",
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 13.5.sp,
-                                    color = ConceptMintAccent
-                                )
-                                if (updateState.publishedAt.isNotBlank()) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(RoundedCornerShape(11.dp))
+                                        .background(ConceptPrimary.copy(alpha = 0.14f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Code,
+                                        contentDescription = null,
+                                        tint = ConceptPrimary,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = updateState.publishedAt,
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        text = "GitHub 开源仓库",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                        fontSize = 13.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "github.com/${ProjectLinks.GITHUB_REPO_OWNER}/${ProjectLinks.GITHUB_REPO_NAME}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontSize = 11.5.sp,
+                                        color = ConceptPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
-                            Text(
-                                text = updateState.releaseNotes,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontSize = 11.5.sp,
-                                lineHeight = 17.sp
-                            )
-                            Button(
-                                onClick = { openExternalUrl(context, updateState.downloadUrl) },
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = ConceptMintAccent,
-                                    contentColor = Color.White
-                                ),
-                                modifier = Modifier.align(Alignment.End)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(15.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("前往下载更新", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .clickable {
+                                            copyTextToClipboard(context, "项目仓库地址", ProjectLinks.GITHUB_REPO_URL)
+                                            Toast.makeText(context, "已复制仓库链接", Toast.LENGTH_SHORT).show()
+                                        }
+                                ) {
+                                    Text(
+                                        text = "复制",
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Rounded.ChevronRight,
+                                    contentDescription = "前往项目仓库",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(19.dp)
+                                )
                             }
                         }
                     }
-                }
-                is UpdateCheckResult.UpToDate -> {
-                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // 入口 2：版本更新日志（二级菜单入口，点击进入按版本号分类的可折叠日志页面）
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = ConceptPrimary.copy(alpha = 0.12f),
-                        modifier = Modifier.fillMaxWidth()
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable(onClick = onOpenChangelog)
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(
-                                text = updateState.message,
-                                fontSize = 11.5.sp,
-                                color = MaterialTheme.colorScheme.onSurface,
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.weight(1f)
-                            )
-                            TextButton(
-                                onClick = { openExternalUrl(context, ProjectLinks.GITHUB_RELEASES_URL) },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                             ) {
-                                Text("查看 Releases", fontSize = 11.5.sp, color = ConceptPrimary, fontWeight = FontWeight.Bold)
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(RoundedCornerShape(11.dp))
+                                        .background(ConceptCyanAccent.copy(alpha = 0.14f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.History,
+                                        contentDescription = null,
+                                        tint = ConceptCyanAccent,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "更新日志 · Changelog",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                        fontSize = 13.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "按版本号分类归档 · 点击查看 v${BuildConfig.VERSION_NAME} 正式版更新详情",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = ConceptCyanAccent.copy(alpha = 0.15f)
+                                ) {
+                                    Text(
+                                        text = "v${BuildConfig.VERSION_NAME}",
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = ConceptCyanAccent,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp)
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Rounded.ChevronRight,
+                                    contentDescription = "查看更新日志",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(19.dp)
+                                )
                             }
                         }
                     }
-                }
-                is UpdateCheckResult.Error -> {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = ConceptAmberAccent.copy(alpha = 0.14f),
+
+                    // 入口 3：检查更新按钮（大气通栏主按钮）
+                    Button(
+                        onClick = onTriggerCheckUpdate,
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = ConceptPrimary,
+                            contentColor = Color.White
+                        ),
+                        contentPadding = PaddingValues(vertical = 12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = updateState.message,
-                                fontSize = 11.5.sp,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.weight(1f)
+                        Icon(
+                            imageVector = Icons.Rounded.SystemUpdate,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (updateState is UpdateCheckResult.Checking) "正在连接 GitHub 检查更新..." else "检查更新",
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // 检查更新结果内联反馈
+                    when (updateState) {
+                        is UpdateCheckResult.Idle -> {}
+                        is UpdateCheckResult.Checking -> {
+                            LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(4.dp)
+                                    .clip(CircleShape),
+                                color = ConceptPrimary
                             )
-                            TextButton(
-                                onClick = { openExternalUrl(context, ProjectLinks.GITHUB_RELEASES_URL) },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        }
+                        is UpdateCheckResult.HasUpdate -> {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = ConceptMintAccent.copy(alpha = 0.14f),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("手动前往", fontSize = 11.5.sp, color = ConceptAmberAccent, fontWeight = FontWeight.Bold)
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "发现新版本：${updateState.latestVersion}",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 13.5.sp,
+                                            color = ConceptMintAccent
+                                        )
+                                        if (updateState.publishedAt.isNotBlank()) {
+                                            Text(
+                                                text = updateState.publishedAt,
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = updateState.releaseNotes,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 11.5.sp,
+                                        lineHeight = 17.sp
+                                    )
+                                    Button(
+                                        onClick = { openExternalUrl(context, updateState.downloadUrl) },
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = ConceptMintAccent,
+                                            contentColor = Color.White
+                                        ),
+                                        modifier = Modifier.align(Alignment.End)
+                                    ) {
+                                        Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("前往下载更新", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                        is UpdateCheckResult.UpToDate -> {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = ConceptPrimary.copy(alpha = 0.12f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = updateState.message,
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    TextButton(
+                                        onClick = { openExternalUrl(context, ProjectLinks.GITHUB_RELEASES_URL) },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("查看 Releases", fontSize = 11.5.sp, color = ConceptPrimary, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                        is UpdateCheckResult.Error -> {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = ConceptAmberAccent.copy(alpha = 0.14f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = updateState.message,
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    TextButton(
+                                        onClick = { openExternalUrl(context, ProjectLinks.GITHUB_RELEASES_URL) },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("前往查看", fontSize = 11.5.sp, color = ConceptAmberAccent, fontWeight = FontWeight.Bold)
+                                    }
+                                }
                             }
                         }
                     }
@@ -2610,119 +2786,51 @@ private fun AboutAppSectionContent(
             }
         }
 
-        // 2. 项目定义与核心特点介绍
+        // 2. 精简版项目介绍（几句话说清核心定位与特点）
         SettingsSectionCard(
-            title = "项目定义与核心特性",
+            title = "项目简介",
             icon = Icons.Rounded.AutoAwesome
         ) {
             Text(
-                text = "BreezeMusic（微风音乐）是一款面向个人审美与高频听歌习惯深度定制的「酷狗概念版（Lite）」第三方原生 Android 客户端。项目参考并移植了 MakcRe/KuGouMusicApi 概念版协议体系，将所有签名、加解密与数据解析全量运行在手机端侧，不依赖任何中间服务器。",
+                text = "BreezeMusic（微风音乐）是基于 Kotlin、Jetpack Compose 与 Media3 打造的第三方「酷狗概念版」原生客户端。项目参考开源方案 MakcRe/KuGouMusicApi 实现端侧直连与每日 VIP 畅听闭环，无任何中间服务器；集成了 Hi-Res 无损音源解析、64-bit 母带 DSP 音效、KRC 逐字流光与桌面歌词、封面色相锁定动态取色及多应用混音/硬件线控能力，致力于提供纯粹、流畅的个人听歌体验。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface,
-                lineHeight = 19.sp
+                fontSize = 12.5.sp,
+                lineHeight = 20.sp
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            ProjectFeatureBullet(
-                title = "1. 零后端原生直连与概念版 VIP 权益闭环",
-                desc = "基于概念版（appid=3116）签名与设备风控协议直连官方网关，支持验证码/扫码登录、每日畅听领 VIP、CSCC 听歌时长上报及 JobScheduler 后台静默续期守护。"
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            ProjectFeatureBullet(
-                title = "2. 真无损音源防伪与自研 64-bit 母带 DSP 管线",
-                desc = "支持 Hi-Res / SQ 无损 / 320K 智能解析与真实格式/码率校验；内置 10 段参量均衡器、蝰蛇声效预设、动态超重低音、人声清澈度、电子管激励与立体声混响。"
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            ProjectFeatureBullet(
-                title = "3. KRC 逐字流光歌词与全局桌面悬浮歌词",
-                desc = "端侧解密 KRC 逐字时间戳、双语译文与罗马音注音，支持阶梯景深模糊、前奏/间奏呼吸波点、蓝牙延迟自动补偿、2K 歌词海报与可穿透锁定的系统级桌面歌词。"
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            ProjectFeatureBullet(
-                title = "4. 现代 Material 3 流体动效与封面色板",
-                desc = "提取专辑封面生成色相锁定的 13 级明度色阶（满足 WCAG 对比度标准），提供仿真黑胶唱臂、圆角方形封面、五款动态背景与 120Hz 高刷横竖屏播放页。"
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            ProjectFeatureBullet(
-                title = "5. 全场景外设与多应用协同控制",
-                desc = "提供独占焦点、压低音量闪避同播、完全混音同播三档音频焦点策略，以及有线耳机双击/三击切歌定制、连接耳机自动播放与最高 10GB 边听边存缓存。"
-            )
-        }
-
-        // 3. 更新日志 (Changelog)
-        SettingsSectionCard(
-            title = "更新日志 · Changelog",
-            icon = Icons.Rounded.History
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                PROJECT_CHANGELOG_HISTORY.forEachIndexed { idx, item ->
-                    if (idx > 0) {
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    "端侧零后端直连",
+                    "Hi-Res 无损与母带 DSP",
+                    "KRC 逐字与桌面歌词",
+                    "M3 封面动态取色",
+                    "混音同播与耳机线控"
+                ).forEach { tag ->
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = ConceptPrimary.copy(alpha = 0.12f)
+                    ) {
+                        Text(
+                            text = tag,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ConceptPrimary,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
                         )
-                    }
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = item.version,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.ExtraBold),
-                                    color = if (idx == 0) ConceptPrimary else MaterialTheme.colorScheme.onSurface
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (idx == 0) ConceptPrimary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant
-                                ) {
-                                    Text(
-                                        text = item.tag,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (idx == 0) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = item.date,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        item.highlights.forEach { line ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                Text(
-                                    text = "• ",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = ConceptPrimary
-                                )
-                                Text(
-                                    text = line,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 12.sp,
-                                    lineHeight = 17.5.sp
-                                )
-                            }
-                        }
                     }
                 }
             }
         }
 
-        // 4. 严谨正式的免责与版权声明（叠甲声明）
+        // 3. 精简正式的免责与版权声明（保留第一点，合并简化正版倡导与知识产权说明，精简免责条款）
         SettingsSectionCard(
-            title = "免责与版权声明（法律条款）",
+            title = "免责与版权声明",
             icon = Icons.Rounded.Gavel
         ) {
             Surface(
@@ -2739,16 +2847,12 @@ private fun AboutAppSectionContent(
                         content = "本软件（BreezeMusic / 微风音乐）系完全开源、非营利性质的个人计算机软件工程与移动开发技术学习项目，旨在探索 Kotlin 协程并发、Jetpack Compose 声明式 UI、AndroidX Media3 实时音频数字信号处理（DSP）及网络协议架构设计。本项目仅供个人学习、技术交流与编程研究使用，严禁任何组织或个人将本项目及其编译产物用于商业牟利、付费售卖、捆绑分发或任何违反中华人民共和国及相关国家/地区法律法规的用途。"
                     )
                     DisclaimerClauseBlock(
-                        title = "二、媒体数据来源与知识产权归属",
-                        content = "本项目客户端自身不存储、不托管、不制作、不修改、亦不提供任何音频文件、歌词文本、专辑封面或其它受著作权保护的音像制品。应用运行期间所索引及流式加载的全部数据均由客户端实时请求自第三方公开网络接口，其涉及的全部音乐作品著作权、录音制作者权、表演者权、词曲版权及商标权均归原版权方、唱片公司、词曲作者及对应内容平台（如酷狗音乐等）所有。"
+                        title = "二、知识产权归属与正版倡导",
+                        content = "本客户端自身不存储、不托管任何音频文件，运行期间加载的音乐作品、歌词及封面等全部知识产权均归原版权方及对应内容平台所有。请广大用户尊重知识产权、支持正版音乐，前往官方正规渠道购买数字专辑或开通会员服务。"
                     )
                     DisclaimerClauseBlock(
-                        title = "三、正版支持倡议与 24 小时试用清理义务",
-                        content = "尊重知识产权是音乐产业持续繁荣的基石。我们强烈倡议并呼吁广大用户支持正版音乐，前往官方客户端正规渠道购买数字音乐专辑或开通会员服务。根据相关法律法规惯例，您下载、编译或安装本软件仅限于技术功能测试，测试过程中产生的本地缓存数据不得用于任何非法传播，且请务必在下载或编译试用后的 24 小时内主动清理全部缓存并彻底卸载、删除本软件。"
-                    )
-                    DisclaimerClauseBlock(
-                        title = "四、免责条款与权利人联络机制",
-                        content = "本开源项目按「原样（AS-IS）」提供，不附带任何明示或暗示的适销性、特定用途适用性或稳定性担保。使用者一旦运行或使用本软件，即视为已充分阅读、理解并同意本声明全部条款；因使用者违反本声明、滥用第三方接口或不当使用本软件所引发的一切账号异常、数据损失、版权纠纷或法律责任，均由使用者本人独立承担，与本项目开发者及开源贡献者无关。若任何权利人认为本项目的相关技术实现存在侵害其合法权益之虞，请通过 GitHub Issues 联系开发者，我们将在核实后第一时间予以修正或移除。"
+                        title = "三、免责条款",
+                        content = "本项目按「原样（AS-IS）」提供，仅限技术测试，请在下载或编译试用后 24 小时内卸载删除。因不当使用本软件引发的任何账号异常、版权纠纷或法律责任均由使用者自行承担，与开发者无关；如有权益疑问请通过 GitHub Issues 联系处理。"
                     )
                 }
             }
@@ -2756,22 +2860,277 @@ private fun AboutAppSectionContent(
     }
 }
 
+/**
+ * 更新日志独立二级页面：
+ * 按版本号分类归档展示，每个版本卡片均支持点击展开和收起详情。
+ * 首个正式版 v1.0.0 汇总项目的全部核心架构与功能模块，后续随版本迭代按版本号追加。
+ */
 @Composable
-private fun ProjectFeatureBullet(title: String, desc: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-            color = ConceptPrimary,
-            fontSize = 12.5.sp
-        )
-        Text(
-            text = desc,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 11.5.sp,
-            lineHeight = 17.sp
-        )
+private fun ChangelogSubPageContent() {
+    var expandedVersions by rememberSaveable {
+        mutableStateOf(listOf(PROJECT_CHANGELOG_HISTORY.firstOrNull()?.version ?: "v1.0.0"))
+    }
+    val allExpanded = expandedVersions.size >= PROJECT_CHANGELOG_HISTORY.size
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // 顶部说明与一键展开/收起控制条
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = conceptFloatingCardColor(),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(ConceptCyanAccent.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.History,
+                            contentDescription = null,
+                            tint = ConceptCyanAccent,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "按版本号分类归档 · 共 ${PROJECT_CHANGELOG_HISTORY.size} 个版本",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            fontSize = 13.5.sp
+                        )
+                        Text(
+                            text = "点击任意版本号卡片即可展开或收起该版本的详细更新内容",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 11.5.sp
+                        )
+                    }
+                }
+                if (PROJECT_CHANGELOG_HISTORY.size > 1) {
+                    TextButton(
+                        onClick = {
+                            expandedVersions = if (allExpanded) {
+                                emptyList()
+                            } else {
+                                PROJECT_CHANGELOG_HISTORY.map { it.version }
+                            }
+                        }
+                    ) {
+                        Text(
+                            text = if (allExpanded) "全部收起" else "全部展开",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ConceptPrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        // 按版本号分类的可折叠版本卡片列表
+        PROJECT_CHANGELOG_HISTORY.forEachIndexed { idx, item ->
+            val isExpanded = expandedVersions.contains(item.version)
+            ChangelogVersionAccordionCard(
+                item = item,
+                isLatest = idx == 0,
+                isExpanded = isExpanded,
+                onToggleExpand = {
+                    expandedVersions = if (isExpanded) {
+                        expandedVersions - item.version
+                    } else {
+                        expandedVersions + item.version
+                    }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChangelogVersionAccordionCard(
+    item: ChangelogVersionItem,
+    isLatest: Boolean,
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(22.dp),
+        color = conceptFloatingCardColor(),
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shadowElevation = 0.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .clickable(onClick = onToggleExpand)
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = item.version,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 17.sp
+                        ),
+                        color = if (isLatest) ConceptPrimary else MaterialTheme.colorScheme.onSurface
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = if (isLatest) ConceptPrimary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            text = item.tag,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isLatest) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
+                        )
+                    }
+                    Text(
+                        text = item.date,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
+                }
+
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Text(
+                            text = if (isExpanded) "收起" else "展开",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = ConceptPrimary
+                        )
+                        Icon(
+                            imageVector = if (isExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                            contentDescription = if (isExpanded) "收起版本日志" else "展开版本日志",
+                            tint = ConceptPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = item.summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+                lineHeight = 17.5.sp
+            )
+
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = expandVertically(animationSpec = tween(240)) + fadeIn(animationSpec = tween(200)),
+                exit = shrinkVertically(animationSpec = tween(220)) + fadeOut(animationSpec = tween(160))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    HorizontalDivider(
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                    )
+
+                    if (item.moduleGroups.isNotEmpty()) {
+                        item.moduleGroups.forEach { group ->
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Text(
+                                        text = group.moduleTitle,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                        color = ConceptPrimary,
+                                        fontSize = 12.5.sp
+                                    )
+                                    group.points.forEach { pt ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.Top
+                                        ) {
+                                            Text(
+                                                text = "• ",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = ConceptPrimary
+                                            )
+                                            Text(
+                                                text = pt,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                fontSize = 11.8.sp,
+                                                lineHeight = 17.5.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        item.highlights.forEach { line ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.Top
+                            ) {
+                                Text(
+                                    text = "• ",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ConceptPrimary
+                                )
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.5.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

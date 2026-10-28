@@ -1096,37 +1096,39 @@ class UiAlignmentRegressionTest {
     @Test
     fun `缓存分项明细统计与GitHub版本对比及标准Issue反馈模板验证`() {
         val stats = com.concept.music.service.DetailedCacheStats(
-            audioCacheBytes = 128L * 1024L * 1024L,
-            audioCachedKeysCount = 24,
-            audioCacheMaxBytes = 2048L * 1024L * 1024L,
-            imageDiskCacheBytes = 32L * 1024L * 1024L,
-            imageMemoryCacheBytes = 6L * 1024L * 1024L,
-            swrPlaylistDiskBytes = 512L * 1024L,
-            swrPlaylistCount = 5,
-            swrDiscoverBytes = 128L * 1024L,
-            lyricCacheCount = 12,
-            lyricEstimatedBytes = 168L * 1024L,
-            runtimeMetaCacheCount = 30,
-            webViewAndTempBytes = 2L * 1024L * 1024L
+            audioBytes = 128L * 1024L * 1024L,
+            audioTrackCount = 24,
+            imageDiskBytes = 32L * 1024L * 1024L,
+            imageMemoryBytes = 6L * 1024L * 1024L,
+            swrMetadataBytes = 640L * 1024L,
+            swrSnapshotCount = 5,
+            lyricMemoryCount = 12,
+            runtimeMetaCount = 30,
+            otherTempBytes = 2L * 1024L * 1024L
         )
         assertEquals(38L * 1024L * 1024L, stats.totalImageBytes)
-        assertEquals(640L * 1024L, stats.totalSwrMetadataBytes)
-        assertTrue(stats.totalAllBytes > 168L * 1024L * 1024L)
+        assertEquals(640L * 1024L, stats.swrMetadataBytes)
+        assertTrue(stats.totalBytes > 168L * 1024L * 1024L)
 
-        // GitHub Release 版本号语义对比验证
-        assertTrue(com.concept.music.ui.settings.isRemoteVersionNewer("v1.0.2", "1.0.1"))
-        assertTrue(com.concept.music.ui.settings.isRemoteVersionNewer("v1.2.0", "1.1.9"))
-        assertFalse(com.concept.music.ui.settings.isRemoteVersionNewer("v1.0.1", "1.0.1"))
-        assertFalse(com.concept.music.ui.settings.isRemoteVersionNewer("v1.0.0", "1.0.1"))
+        // GitHub Release 版本号语义对比验证 (localVersion, remoteTag)
+        assertTrue(com.concept.music.ui.settings.isRemoteVersionNewer("1.0.0", "v1.0.1"))
+        assertTrue(com.concept.music.ui.settings.isRemoteVersionNewer("1.1.9", "v1.2.0"))
+        assertFalse(com.concept.music.ui.settings.isRemoteVersionNewer("1.0.0", "v1.0.0"))
+        assertFalse(com.concept.music.ui.settings.isRemoteVersionNewer("1.0.1", "v1.0.0"))
 
-        // GitHub Issue 标准模板与仓库链接验证
+        // GitHub Issue 标准模板与仓库链接及 v1.0.0 正式版日志验证
         assertEquals("https://github.com/reneryi/breezemusic", com.concept.music.ui.settings.ProjectLinks.GITHUB_REPO_URL)
         assertEquals("https://github.com/reneryi/breezemusic/issues", com.concept.music.ui.settings.ProjectLinks.GITHUB_ISSUES_URL)
-        val issueTemplate = com.concept.music.ui.settings.buildStandardIssueMarkdownTemplate("1.0.1", 2)
-        assertTrue(issueTemplate.contains("### 📌 问题描述 (Bug Summary)"))
-        assertTrue(issueTemplate.contains("### 📱 运行环境 (Environment)"))
-        assertTrue(issueTemplate.contains("### 🔄 复现步骤 (Steps to Reproduce)"))
-        assertTrue(issueTemplate.contains("BreezeMusic v1.0.1 (Build 2)"))
-        assertTrue(com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.isNotEmpty())
+        val issueTemplate = com.concept.music.ui.settings.buildStandardIssueMarkdownTemplate("1.0.0", 1)
+        assertTrue(issueTemplate.contains("### 问题类型 (Issue Type)"))
+        assertTrue(issueTemplate.contains("### 运行环境 (Environment)"))
+        assertTrue(issueTemplate.contains("### 复现步骤 (Steps to Reproduce)"))
+        assertTrue(issueTemplate.contains("BreezeMusic v1.0.0 (Build 1)"))
+
+        assertEquals(1, com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.size)
+        val firstRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.first()
+        assertEquals("v1.0.0", firstRelease.version)
+        assertEquals(4, firstRelease.moduleGroups.size)
+        assertTrue(firstRelease.highlights.isNotEmpty())
     }
 }
