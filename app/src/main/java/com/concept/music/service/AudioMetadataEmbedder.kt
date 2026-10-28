@@ -12,6 +12,31 @@ import java.nio.ByteOrder
  * - 高清封面图片 (APIC / METADATA_BLOCK_PICTURE, type=3 Front Cover, 默认内嵌)
  * - 歌词文本 (USLT / LYRICS + UNSYNCEDLYRICS, 默认内嵌标准 LRC 时间轴歌词)
  */
+/**
+ * 从真实音频流头部（如 FLAC STREAMINFO 34字节头、OGG Vorbis 识别头、MP3 MPEG 帧头）
+ * 解析出的硬件级采样率、位深、声道数与总采样数（对齐椒盐音乐 Salt Player 等专业播放器的原生流头解析机制）
+ */
+data class AudioStreamHeaderInfo(
+    val sampleRateHz: Int,
+    val bitDepth: Int,
+    val channels: Int = 2,
+    val totalSamples: Long = 0L,
+    val containerFormat: String = "FLAC"
+) {
+    val sampleRateKhzText: String
+        get() {
+            val khz = sampleRateHz / 1000.0
+            return if (sampleRateHz % 1000 == 0) {
+                String.format(java.util.Locale.US, "%.1f kHz", khz)
+            } else {
+                String.format(java.util.Locale.US, "%.1f kHz", khz)
+            }
+        }
+
+    val formattedSpecText: String
+        get() = "$sampleRateKhzText / $bitDepth bit"
+}
+
 data class AudioTagMetadata(
     val title: String,
     val artist: String,
@@ -44,6 +69,126 @@ object AudioMetadataEmbedder {
     /**
      * 根据文件头部魔数与扩展名精准识别真实音频容器格式
      */
+    /**
+     * 从音频文件或网络流前部字节（仅需前 42~512 字节）解析真实的采样率 (Hz)、位深 (bit) 与声道数：
+     * - FLAC (RFC 9639 Section 8.2): 解析 mandatory STREAMINFO 块 (offset 8..41)，提取 20-bit 采样率、3-bit 声道数、5-bit 位深、36-bit 总采样数
+     * - OGG Vorbis: 扫描 \x01vorbis 识别头，读取 32-bit LE audio_sample_rate
+     * - MP3: 解析首个 MPEG Audio Frame Header 采样率索引
+     */
+    fun parseStreamHeader(bytes: ByteArray): AudioStreamHeaderInfo? {
+        if (bytes.size < 12) return null
+
+        // 1. FLAC: "fLaC" + STREAMINFO block (至少 42 字节)
+        if (bytes.size >= 42 &&
+            bytes[0] == 'f'.code.toByte() &&
+            bytes[1] == 'L'.code.toByte() &&
+            bytes[2] == 'a'.code.toByte() &&
+            bytes[3] == 'C'.code.toByte()
+        ) {
+            val blockType = bytes[4].toInt() and 0x7F
+            if (blockType == 0) {
+                // STREAMINFO starts at byte 8; bytes 18..25 hold sampleRate(20b), channels(3b), bps(5b), totalSamples(36b)
+                val b18 = bytes[18].toInt() and 0xFF
+                val b19 = bytes[19].toInt() and 0xFF
+                val b20 = bytes[20].toInt() and 0xFF
+                val b21 = bytes[21].toInt() and 0xFF
+                val sampleRateHz = (b18 shl 12) or (b19 shl 4) or ((b20 and 0xF0) ushr 4)
+                val channels = ((b20 and 0x0E) ushr 1) + 1
+                val bitDepth = (((b20 and 0x01) shl 4) or ((b21 and 0xF0) ushr 4)) + 1
+                val totalSamples = ((b21.toLong() and 0x0FL) shl 32) or
+                    ((bytes[22].toLong() and 0xFFL) shl 24) or
+                    ((bytes[23].toLong() and 0xFFL) shl 16) or
+                    ((bytes[24].toLong() and 0xFFL) shl 8) or
+                    (bytes[25].toLong() and 0xFFL)
+                if (sampleRateHz in 8000..384000 && bitDepth in 8..32) {
+                    return AudioStreamHeaderInfo(
+                        sampleRateHz = sampleRateHz,
+                        bitDepth = bitDepth,
+                        channels = channels.coerceIn(1, 8),
+                        totalSamples = totalSamples,
+                        containerFormat = "FLAC"
+                    )
+                }
+            }
+        }
+
+        // 2. OGG Vorbis: "OggS" + "\x01vorbis" identification header
+        if (bytes[0] == 'O'.code.toByte() &&
+            bytes[1] == 'g'.code.toByte() &&
+            bytes[2] == 'g'.code.toByte() &&
+            bytes[3] == 'S'.code.toByte()
+        ) {
+            for (i in 20..(bytes.size - 16)) {
+                if (bytes[i] == 0x01.toByte() &&
+                    bytes[i + 1] == 'v'.code.toByte() &&
+                    bytes[i + 2] == 'o'.code.toByte() &&
+                    bytes[i + 3] == 'r'.code.toByte() &&
+                    bytes[i + 4] == 'b'.code.toByte() &&
+                    bytes[i + 5] == 'i'.code.toByte() &&
+                    bytes[i + 6] == 's'.code.toByte()
+                ) {
+                    val ch = (bytes[i + 11].toInt() and 0xFF).coerceIn(1, 8)
+                    val sr = (bytes[i + 12].toInt() and 0xFF) or
+                        ((bytes[i + 13].toInt() and 0xFF) shl 8) or
+                        ((bytes[i + 14].toInt() and 0xFF) shl 16) or
+                        ((bytes[i + 15].toInt() and 0xFF) shl 24)
+                    if (sr in 8000..192000) {
+                        return AudioStreamHeaderInfo(
+                            sampleRateHz = sr,
+                            bitDepth = 16,
+                            channels = ch,
+                            containerFormat = "OGG"
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. MP3: 跳过 ID3v2 头（若在缓冲区内）并扫描 MPEG Audio Frame Sync (0xFF 0xE0)
+        var startIdx = 0
+        if (bytes[0] == 'I'.code.toByte() && bytes[1] == 'D'.code.toByte() && bytes[2] == '3'.code.toByte()) {
+            val tagSize = ((bytes[6].toInt() and 0x7F) shl 21) or
+                ((bytes[7].toInt() and 0x7F) shl 14) or
+                ((bytes[8].toInt() and 0x7F) shl 7) or
+                (bytes[9].toInt() and 0x7F)
+            startIdx = 10 + tagSize
+        }
+        if (startIdx in 0..(bytes.size - 4)) {
+            for (i in startIdx..(bytes.size - 4)) {
+                val b0 = bytes[i].toInt() and 0xFF
+                val b1 = bytes[i + 1].toInt() and 0xFF
+                if (b0 == 0xFF && (b1 and 0xE0) == 0xE0) {
+                    val versionBits = (b1 ushr 3) and 0x03
+                    val layerBits = (b1 ushr 1) and 0x03
+                    val b2 = bytes[i + 2].toInt() and 0xFF
+                    val bitrateIdx = (b2 ushr 4) and 0x0F
+                    val srIdx = (b2 ushr 2) and 0x03
+                    if (versionBits != 1 && layerBits != 0 && bitrateIdx in 1..14 && srIdx in 0..2) {
+                        val baseSr = when (srIdx) {
+                            0 -> 44100
+                            1 -> 48000
+                            else -> 32000
+                        }
+                        val sr = when (versionBits) {
+                            3 -> baseSr       // MPEG-1
+                            2 -> baseSr / 2   // MPEG-2
+                            else -> baseSr / 4 // MPEG-2.5
+                        }
+                        val b3 = bytes[i + 3].toInt() and 0xFF
+                        val ch = if (((b3 ushr 6) and 0x03) == 3) 1 else 2
+                        return AudioStreamHeaderInfo(
+                            sampleRateHz = sr,
+                            bitDepth = 16,
+                            channels = ch,
+                            containerFormat = "MP3"
+                        )
+                    }
+                }
+            }
+        }
+        return null
+    }
+
     fun detectFormat(file: File, fallbackExt: String = ""): AudioContainerFormat {
         if (file.exists() && file.length() >= 4L) {
             val header = ByteArray(4)

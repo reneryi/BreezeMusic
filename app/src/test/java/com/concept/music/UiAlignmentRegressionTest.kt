@@ -57,8 +57,10 @@ class UiAlignmentRegressionTest {
         assertFalse(AudioEffectState().equalLoudnessCompensation)
         assertFalse(state.allowPlayWithOtherApps)
         assertTrue(state.wiredHeadsetControlEnabled)
-        assertEquals(9, com.concept.music.ui.settings.SettingsCategory.entries.size)
+        assertEquals(10, com.concept.music.ui.settings.SettingsCategory.entries.size)
         assertTrue(com.concept.music.ui.settings.SettingsCategory.entries.contains(com.concept.music.ui.settings.SettingsCategory.PERMISSIONS))
+        assertTrue(com.concept.music.ui.settings.SettingsCategory.entries.contains(com.concept.music.ui.settings.SettingsCategory.DOWNLOAD))
+        assertFalse("音乐下载开关默认必须为关闭状态", com.concept.music.service.AppPermissionState().musicDownloadEnabled)
     }
 
     @Test
@@ -1139,8 +1141,12 @@ class UiAlignmentRegressionTest {
         com.concept.music.service.AppPermissionManager.resetForTest()
         try {
             val initialState = com.concept.music.service.AppPermissionManager.state.value
-            assertEquals(7, initialState.totalCount)
+            assertEquals(8, initialState.totalCount)
             assertEquals(7, initialState.enabledCount)
+            assertFalse(
+                "音乐下载与歌词保存独立开关默认应为关闭状态，需用户手动开启",
+                initialState.isEnabled(com.concept.music.service.AppPermissionType.MUSIC_DOWNLOAD)
+            )
 
             // 验证每项权限均包含完整的公开用途说明、隐私承诺与关闭后功能影响说明
             com.concept.music.service.AppPermissionType.entries.forEach { type ->
@@ -1149,7 +1155,11 @@ class UiAlignmentRegressionTest {
                 assertTrue(type.purposeDescription.isNotBlank())
                 assertTrue(type.privacyCommitment.isNotBlank())
                 assertTrue(type.disabledImpactDescription.isNotBlank())
-                assertTrue(initialState.isEnabled(type))
+                if (type == com.concept.music.service.AppPermissionType.MUSIC_DOWNLOAD) {
+                    assertFalse(initialState.isEnabled(type))
+                } else {
+                    assertTrue(initialState.isEnabled(type))
+                }
             }
 
             // 1. 关闭「全局悬浮窗（桌面歌词）」权限 -> 立即关闭桌面歌词并阻止再次开启
@@ -1189,7 +1199,7 @@ class UiAlignmentRegressionTest {
 
             // 4. 一键恢复开启全部权限
             com.concept.music.service.AppPermissionManager.enableAllPermissions(null)
-            assertEquals(7, com.concept.music.service.AppPermissionManager.state.value.enabledCount)
+            assertEquals(8, com.concept.music.service.AppPermissionManager.state.value.enabledCount)
         } finally {
             com.concept.music.service.AppPermissionManager.resetForTest()
         }
@@ -1507,5 +1517,59 @@ class UiAlignmentRegressionTest {
         } finally {
             com.concept.music.service.MusicDownloadManager.resetForTest()
         }
+    }
+
+    @Test
+    fun `FLAC_STREAMINFO真实采样率位深解析与HiRes_44_1kHz_24bit校准验证`() {
+        // 构造真实 44100 Hz / 2 channels / 24 bit 的 FLAC STREAMINFO 头部 (42 字节)
+        // 44100 = 0x0AC44 -> b18 = 0x0A, b19 = 0xC4, b20 high nibble = 0x4
+        // channels = 2 -> (2 - 1) = 1 (0b001) -> b20 bits 3..1 = 0b0010 = 0x02
+        // bitDepth = 24 -> (24 - 1) = 23 (0b10111) -> b20 bit 0 = 1, b21 high nibble = 0b0111 = 0x70
+        val flacHeader44k24b = ByteArray(42).apply {
+            this[0] = 'f'.code.toByte()
+            this[1] = 'L'.code.toByte()
+            this[2] = 'a'.code.toByte()
+            this[3] = 'C'.code.toByte()
+            this[4] = 0x00 // STREAMINFO block type 0
+            this[5] = 0x00
+            this[6] = 0x00
+            this[7] = 0x22 // length = 34
+            this[18] = 0x0A
+            this[19] = 0xC4.toByte()
+            this[20] = (0x40 or 0x02 or 0x01).toByte()
+            this[21] = 0x70.toByte()
+        }
+        val parsed = com.concept.music.service.AudioMetadataEmbedder.parseStreamHeader(flacHeader44k24b)
+        assertNotNull(parsed)
+        assertEquals(44100, parsed!!.sampleRateHz)
+        assertEquals(24, parsed.bitDepth)
+        assertEquals(2, parsed.channels)
+        assertEquals("44.1 kHz / 24 bit", parsed.formattedSpecText)
+
+        // 验证像 Show Me Love (1555 kbps, 24bit/44.1kHz Hi-Res) 在 songDetail 中正确展示 44.1 kHz / 24 bit 而非误判 48.0 kHz
+        val store = MemoryStore()
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+        }
+        val repo = MusicApiRepository(transport, AccountRepository(store, AuthRepository(transport, store), transport))
+        val showMeLoveHiRes = Song(
+            id = "show_me_love",
+            title = "Show Me Love",
+            artist = "WizTheMC、bees & honey",
+            album = "Show Me Love",
+            durationMs = 176_000L,
+            isHiRes = true,
+            isLossless = true,
+            hashHiRes = "8EE3BE0D2F67DC851111111111111111",
+            actualPlayQuality = AudioQuality.HI_RES,
+            bitrateKbps = 1555,
+            fileSizeByte = 34_414_000L
+        )
+        val detail = repo.songDetail(showMeLoveHiRes)
+        assertEquals("44.1 kHz / 24 bit", detail.sampleRate)
+        assertEquals("Hi-Res 高解析度无损 (FLAC 44.1 kHz / 24bit)", detail.audioQuality)
     }
 }

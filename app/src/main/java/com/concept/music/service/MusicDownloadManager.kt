@@ -332,8 +332,12 @@ object MusicDownloadManager {
             Toast.makeText(context, "已在权限管理中关闭「网络访问」权限，无法下载音乐", Toast.LENGTH_SHORT).show()
             return
         }
+        if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.MUSIC_DOWNLOAD)) {
+            Toast.makeText(context, "音乐下载默认关闭，请先在「设置 - 权限管理」中手动开启「音乐下载与歌词保存」开关", Toast.LENGTH_LONG).show()
+            return
+        }
         if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.STORAGE_EXPORT)) {
-            Toast.makeText(context, "已在权限管理中关闭「音乐下载、歌词保存与相册导出」权限，请先在设置-权限管理中开启", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "已在权限管理中关闭「存储读写与相册导出」权限，请先在设置-权限管理中开启", Toast.LENGTH_LONG).show()
             return
         }
         if (!AppPermissionManager.hasMusicDownloadStoragePermission(context)) {

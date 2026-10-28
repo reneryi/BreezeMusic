@@ -2478,15 +2478,18 @@ internal fun PlayerMoreControlSheet(
                             onClick = { dismissThen(onOpenSleepTimer) },
                             modifier = Modifier.weight(1f)
                         )
-                        BentoControlTile(
-                            icon = Icons.Rounded.Download,
-                            title = "下载歌曲",
-                            subtitle = "封面/歌词内嵌",
-                            active = false,
-                            activeColor = accentColor,
-                            onClick = { dismissThen(onDownloadSong) },
-                            modifier = Modifier.weight(1f)
-                        )
+                        val permState by com.concept.music.service.AppPermissionManager.state.collectAsState()
+                        if (permState.musicDownloadEnabled) {
+                            BentoControlTile(
+                                icon = Icons.Rounded.Download,
+                                title = "下载歌曲",
+                                subtitle = "保存至本地",
+                                active = false,
+                                activeColor = accentColor,
+                                onClick = { dismissThen(onDownloadSong) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
                 }
 

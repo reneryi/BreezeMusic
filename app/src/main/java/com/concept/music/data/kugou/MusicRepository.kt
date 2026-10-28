@@ -82,7 +82,9 @@ class MusicApiRepository(
         val hash: String,
         val sizeBytes: Long,
         val bitrateKbps: Int,
-        val extName: String = ""
+        val extName: String = "",
+        val sampleRateHz: Int = 0,
+        val bitDepth: Int = 0
     )
 
     internal data class SongTechMeta(
@@ -103,8 +105,24 @@ class MusicApiRepository(
                 if (existing == null) {
                     songTechMetaCache[k] = meta
                 } else {
+                    val mergedSpecs = existing.specs.toMutableMap()
+                    for ((qKey, incomingSpec) in meta.specs) {
+                        val prev = mergedSpecs[qKey]
+                        if (prev != null) {
+                            mergedSpecs[qKey] = incomingSpec.copy(
+                                hash = incomingSpec.hash.ifBlank { prev.hash },
+                                sizeBytes = if (incomingSpec.sizeBytes > 0L) incomingSpec.sizeBytes else prev.sizeBytes,
+                                bitrateKbps = if (incomingSpec.bitrateKbps > 0) incomingSpec.bitrateKbps else prev.bitrateKbps,
+                                extName = incomingSpec.extName.ifBlank { prev.extName },
+                                sampleRateHz = if (incomingSpec.sampleRateHz > 0) incomingSpec.sampleRateHz else prev.sampleRateHz,
+                                bitDepth = if (incomingSpec.bitDepth > 0) incomingSpec.bitDepth else prev.bitDepth
+                            )
+                        } else {
+                            mergedSpecs[qKey] = incomingSpec
+                        }
+                    }
                     songTechMetaCache[k] = SongTechMeta(
-                        specs = existing.specs + meta.specs,
+                        specs = mergedSpecs,
                         albumName = meta.albumName.ifBlank { existing.albumName },
                         publishDate = meta.publishDate.ifBlank { existing.publishDate },
                         company = meta.company.ifBlank { existing.company },
@@ -7069,20 +7087,44 @@ class MusicApiRepository(
             AudioQuality.STANDARD -> "ogg"
         }).uppercase()
 
-        val sampleRate = when (activeQuality) {
-            AudioQuality.HI_RES -> when {
-                resolvedKbps >= 3200 -> "192.0 kHz / 24 bit"
-                resolvedKbps >= 1850 -> "96.0 kHz / 24 bit"
-                else -> "48.0 kHz / 24 bit"
+        val probedSrHz = tierSpec?.sampleRateHz?.takeIf { it in 8000..384000 } ?: 0
+        val probedBitDepth = tierSpec?.bitDepth?.takeIf { it in 8..32 } ?: 0
+
+        val sampleRate = if (probedSrHz > 0) {
+            val khzStr = String.format(java.util.Locale.US, "%.1f kHz", probedSrHz / 1000.0)
+            val depth = if (probedBitDepth > 0) probedBitDepth else if (activeQuality == AudioQuality.HI_RES) 24 else 16
+            when (activeQuality) {
+                AudioQuality.HI_RES, AudioQuality.LOSSLESS -> "$khzStr / $depth bit"
+                AudioQuality.HIGH, AudioQuality.STANDARD -> "$khzStr / $depth bit ($extUpper)"
             }
-            AudioQuality.LOSSLESS -> if (resolvedKbps >= 1020) "48.0 kHz / 16 bit" else "44.1 kHz / 16 bit"
-            AudioQuality.HIGH -> "44.1 kHz / 16 bit ($extUpper)"
-            AudioQuality.STANDARD -> "44.1 kHz / 16 bit ($extUpper)"
+        } else {
+            // 尚未完成流头部 STREAMINFO 探测时的初始估算：
+            // 酷狗概念版 Hi-Res (level=6) 含有大量 24bit/44.1kHz 母带（未压缩 PCM 为 2116kbps，FLAC 压缩后通常在 1350~1680kbps，如 1555kbps），
+            // 而 24bit/48.0kHz 压缩后通常在 1680~1950kbps；打开详情弹窗时 fetchSongDetail 会读取 FLAC STREAMINFO 前 42 字节替换为真实采样率
+            when (activeQuality) {
+                AudioQuality.HI_RES -> when {
+                    resolvedKbps >= 3200 -> "192.0 kHz / 24 bit"
+                    resolvedKbps >= 1950 -> "96.0 kHz / 24 bit"
+                    resolvedKbps >= 1680 -> "48.0 kHz / 24 bit"
+                    else -> "44.1 kHz / 24 bit"
+                }
+                AudioQuality.LOSSLESS -> if (resolvedKbps >= 1060) "48.0 kHz / 16 bit" else "44.1 kHz / 16 bit"
+                AudioQuality.HIGH -> "44.1 kHz / 16 bit ($extUpper)"
+                AudioQuality.STANDARD -> "44.1 kHz / 16 bit ($extUpper)"
+            }
+        }
+
+        val effectiveBitDepth = if (probedBitDepth > 0) {
+            probedBitDepth
+        } else if (activeQuality == AudioQuality.HI_RES) {
+            24
+        } else {
+            16
         }
 
         val qualityDesc = when (activeQuality) {
-            AudioQuality.HI_RES -> "Hi-Res 高解析度无损 ($extUpper ${sampleRate.substringBefore(" /")} / 24bit)"
-            AudioQuality.LOSSLESS -> "SQ 无损音质 ($extUpper ${sampleRate.substringBefore(" /")} / 16bit)"
+            AudioQuality.HI_RES -> "Hi-Res 高解析度无损 ($extUpper ${sampleRate.substringBefore(" /")} / ${effectiveBitDepth}bit)"
+            AudioQuality.LOSSLESS -> "SQ 无损音质 ($extUpper ${sampleRate.substringBefore(" /")} / ${effectiveBitDepth}bit)"
             AudioQuality.HIGH -> "HQ 高品音质 (${resolvedKbps}kbps $extUpper)"
             AudioQuality.STANDARD -> "标准音质 (${resolvedKbps}kbps $extUpper)"
         }
@@ -7197,10 +7239,48 @@ class MusicApiRepository(
             )
         )
 
-        val cachedSpecs = listOf(enrichedBase.id, enrichedBase.hash, enrichedBase.hash128, enrichedBase.hash320, enrichedBase.hashFlac, enrichedBase.hashHiRes)
+        val activeQuality = song.actualPlayQuality ?: when {
+            enrichedBase.isHiRes && enrichedBase.hashHiRes.isNotBlank() -> AudioQuality.HI_RES
+            enrichedBase.isLossless || enrichedBase.hashFlac.isNotBlank() -> AudioQuality.LOSSLESS
+            enrichedBase.hash320.isNotBlank() || enrichedBase.quality == "320" -> AudioQuality.HIGH
+            else -> AudioQuality.STANDARD
+        }
+
+        var cachedSpecs = listOf(enrichedBase.id, enrichedBase.hash, enrichedBase.hash128, enrichedBase.hash320, enrichedBase.hashFlac, enrichedBase.hashHiRes)
             .map { it.trim().lowercase() }
             .firstNotNullOfOrNull { if (it.isNotBlank()) songTechMetaCache[it]?.specs else null }
             .orEmpty()
+
+        // 3. 实时读取音频流头部前 512 字节（FLAC STREAMINFO / OGG Vorbis / MP3 Frame Header），获取与椒盐音乐 (Salt Player) 完全一致的真实采样率与位深
+        val currentTierSpec = cachedSpecs[activeQuality]
+        if (currentTierSpec == null || currentTierSpec.sampleRateHz <= 0) {
+            val streamPlayRes = runCatching {
+                peekCachedPlayback(enrichedBase, activeQuality, useAccompaniment = false)
+                    ?: resolvePlayback(enrichedBase, activeQuality, useAccompaniment = false)
+            }.getOrNull()
+            if (streamPlayRes != null && streamPlayRes.url.isNotBlank()) {
+                val headerInfo = probeAudioStreamHeader(streamPlayRes.url)
+                if (headerInfo != null && headerInfo.sampleRateHz > 0) {
+                    val updatedSpec = (currentTierSpec ?: SongStreamSpec(
+                        hash = streamPlayRes.resolvedHash.ifBlank { enrichedBase.hashForQuality(activeQuality).ifBlank { enrichedBase.hash } },
+                        sizeBytes = streamPlayRes.fileSizeByte,
+                        bitrateKbps = streamPlayRes.bitrateKbps,
+                        extName = headerInfo.containerFormat.lowercase()
+                    )).copy(
+                        sampleRateHz = headerInfo.sampleRateHz,
+                        bitDepth = headerInfo.bitDepth
+                    )
+                    cacheSongTechMeta(
+                        keys = listOf(enrichedBase.id, enrichedBase.hash, enrichedBase.hash128, enrichedBase.hash320, enrichedBase.hashFlac, enrichedBase.hashHiRes),
+                        meta = SongTechMeta(specs = mapOf(activeQuality to updatedSpec))
+                    )
+                    cachedSpecs = listOf(enrichedBase.id, enrichedBase.hash, enrichedBase.hash128, enrichedBase.hash320, enrichedBase.hashFlac, enrichedBase.hashHiRes)
+                        .map { it.trim().lowercase() }
+                        .firstNotNullOfOrNull { if (it.isNotBlank()) songTechMetaCache[it]?.specs else null }
+                        .orEmpty()
+                }
+            }
+        }
 
         val enrichedSong = enrichedBase.let { s ->
             val playQ = song.actualPlayQuality
@@ -7226,6 +7306,38 @@ class MusicApiRepository(
         }
         songDetail(enrichedSong)
     }
+
+    /**
+     * 通过轻量级 HTTP Range (bytes=0-511) 请求读取远程音频流前 512 字节，
+     * 直接从 FLAC STREAMINFO (前 42 字节)、OGG Vorbis 识别头或 MP3 帧头解析出硬件级真实采样率 (如 44100 Hz / 48000 Hz / 96000 Hz) 与位深 (16bit / 24bit)。
+     * 解决酷狗 /v2/get_res_privilege/lite 与 /v5/url 接口不返回采样率字段导致只能按码率估算的问题。
+     */
+    private fun probeAudioStreamHeader(url: String): com.concept.music.service.AudioStreamHeaderInfo? {
+        if (url.isBlank()) return null
+        return runCatching {
+            val req = okhttp3.Request.Builder()
+                .url(url)
+                .header("Range", "bytes=0-511")
+                .header("User-Agent", "Android15-1070-11440-46-0-DiscoveryDRADProtocol-wifi")
+                .get()
+                .build()
+            NetworkClientProvider.baseClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful && resp.code != 206) return@use null
+                val bodyStream = resp.body?.byteStream() ?: return@use null
+                val buf = ByteArray(512)
+                var totalRead = 0
+                while (totalRead < buf.size) {
+                    val r = bodyStream.read(buf, totalRead, buf.size - totalRead)
+                    if (r <= 0) break
+                    totalRead += r
+                }
+                if (totalRead >= 12) {
+                    com.concept.music.service.AudioMetadataEmbedder.parseStreamHeader(buf.copyOf(totalRead))
+                } else null
+            }
+        }.getOrNull()
+    }
+
 
     private fun defaultRanks(): List<RankItem> = listOf(
         RankItem(6666, "酷狗飙升榜", "https://imge.kugou.com/commendpic/20210729/20210729175317789524.jpg", "每天更新", listOf("1. 瞬 - 告五人", "2. 奢香夫人 - 凤凰传奇", "3. 离别开出花 - 就是南方凯"), 1, "官方热榜", 100),

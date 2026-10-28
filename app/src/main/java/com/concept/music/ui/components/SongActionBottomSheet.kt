@@ -212,10 +212,11 @@ fun SongActionBottomSheet(
                 }
             )
 
-            if (onDownloadSong != null) {
+            val permissionState by com.concept.music.service.AppPermissionManager.state.collectAsState()
+            if (onDownloadSong != null && permissionState.musicDownloadEnabled) {
                 SongActionMenuItem(
                     icon = Icons.Rounded.Download,
-                    title = "下载歌曲（内嵌高清封面与歌词）",
+                    title = "下载歌曲",
                     tint = ConceptMintAccent,
                     onClick = {
                         dismissWithAction { onDownloadSong() }

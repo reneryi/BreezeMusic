@@ -59,12 +59,21 @@ enum class AppPermissionType(
     ),
     STORAGE_EXPORT(
         key = "perm_storage_export",
-        title = "音乐下载、歌词保存与相册导出",
-        badge = "存储导出",
+        title = "存储读写与相册导出",
+        badge = "存储权限",
         manifestPermissionName = "WRITE_EXTERNAL_STORAGE · READ_MEDIA_AUDIO · MANAGE_EXTERNAL_STORAGE · MediaStore",
-        purposeDescription = "用于将下载的音乐音频文件（含内嵌歌曲信息、高清封面与歌词）及独立 .lrc 歌词文件保存到自定义手机存储目录，并在点击「保存海报」或「保存二维码」时将 PNG 图片导出至系统相册。",
-        privacyCommitment = "仅在您主动发起音乐下载、歌词保存或海报导出时向目标路径写入文件，绝不扫描或上传您手机中的私人照片与无关文件。",
-        disabledImpactDescription = "关闭后将无法下载保存音乐与独立 .lrc 歌词文件，也无法保存歌词海报或登录二维码至手机存储。"
+        purposeDescription = "用于申请与管理手机存储读写权限，支持在点击「保存海报」或「保存二维码」时将生成的 2K 超清歌词海报及登录二维码图片导出保存至系统相册或手机存储。",
+        privacyCommitment = "仅在您主动触发图片导出或本地文件保存时向目标路径写入文件，绝不扫描、读取或上传您手机中的私人照片与无关文件。",
+        disabledImpactDescription = "关闭后将无法向手机存储或系统相册保存歌词海报、登录二维码等本地导出文件。"
+    ),
+    MUSIC_DOWNLOAD(
+        key = "perm_music_download",
+        title = "音乐下载与歌词保存",
+        badge = "独立开关 · 默认关闭",
+        manifestPermissionName = "Local Audio & LRC Export (需手动开启并授权存储权限)",
+        purposeDescription = "独立控制单曲多音质音频文件下载、歌曲详细信息与高清封面内嵌、歌词内嵌及独立 .lrc 歌词文件保存功能。项目默认关闭此开关，必须由您手动开启后才能正常使用。",
+        privacyCommitment = "默认处于关闭状态且不在设置页展示；仅在您手动开启此开关后，设置页才会显示独立的「下载」设置项并开放歌曲下载能力。",
+        disabledImpactDescription = "关闭后设置页将自动隐藏「下载」设置项，同时歌曲更多菜单与播放页中的音乐下载及歌词保存功能也将停用隐藏。"
     ),
     BACKGROUND_GUARDIAN(
         key = "perm_background_guardian",
@@ -108,6 +117,7 @@ data class AppPermissionState(
     val notificationMediaEnabled: Boolean = true,
     val systemOverlayEnabled: Boolean = true,
     val storageExportEnabled: Boolean = true,
+    val musicDownloadEnabled: Boolean = false,
     val backgroundGuardianEnabled: Boolean = true,
     val motionOrientationEnabled: Boolean = true,
     val audioHardwareEnabled: Boolean = true
@@ -117,6 +127,7 @@ data class AppPermissionState(
         AppPermissionType.NOTIFICATION_MEDIA -> notificationMediaEnabled
         AppPermissionType.SYSTEM_OVERLAY -> systemOverlayEnabled
         AppPermissionType.STORAGE_EXPORT -> storageExportEnabled
+        AppPermissionType.MUSIC_DOWNLOAD -> musicDownloadEnabled
         AppPermissionType.BACKGROUND_GUARDIAN -> backgroundGuardianEnabled
         AppPermissionType.MOTION_ORIENTATION -> motionOrientationEnabled
         AppPermissionType.AUDIO_HARDWARE -> audioHardwareEnabled
@@ -133,6 +144,7 @@ data class AppPermissionState(
         AppPermissionType.NOTIFICATION_MEDIA -> copy(notificationMediaEnabled = enabled)
         AppPermissionType.SYSTEM_OVERLAY -> copy(systemOverlayEnabled = enabled)
         AppPermissionType.STORAGE_EXPORT -> copy(storageExportEnabled = enabled)
+        AppPermissionType.MUSIC_DOWNLOAD -> copy(musicDownloadEnabled = enabled)
         AppPermissionType.BACKGROUND_GUARDIAN -> copy(backgroundGuardianEnabled = enabled)
         AppPermissionType.MOTION_ORIENTATION -> copy(motionOrientationEnabled = enabled)
         AppPermissionType.AUDIO_HARDWARE -> copy(audioHardwareEnabled = enabled)
@@ -167,6 +179,7 @@ object AppPermissionManager {
             notificationMediaEnabled = p.getBoolean(AppPermissionType.NOTIFICATION_MEDIA.key, true),
             systemOverlayEnabled = p.getBoolean(AppPermissionType.SYSTEM_OVERLAY.key, true),
             storageExportEnabled = p.getBoolean(AppPermissionType.STORAGE_EXPORT.key, true),
+            musicDownloadEnabled = p.getBoolean(AppPermissionType.MUSIC_DOWNLOAD.key, false),
             backgroundGuardianEnabled = p.getBoolean(AppPermissionType.BACKGROUND_GUARDIAN.key, true),
             motionOrientationEnabled = p.getBoolean(AppPermissionType.MOTION_ORIENTATION.key, legacyMotionEnabled),
             audioHardwareEnabled = p.getBoolean(AppPermissionType.AUDIO_HARDWARE.key, true)
@@ -215,7 +228,7 @@ object AppPermissionManager {
     }
 
     fun enableAllPermissions(context: Context? = null) {
-        val allOn = AppPermissionState()
+        val allOn = AppPermissionState(musicDownloadEnabled = true)
         _state.value = allOn
         prefs?.edit()?.apply {
             AppPermissionType.entries.forEach { putBoolean(it.key, true) }
@@ -352,10 +365,27 @@ object AppPermissionManager {
                     statusLabel = when {
                         allFilesGranted -> "全盘存储读写已授权"
                         granted -> "媒体存储已就绪"
-                        Build.VERSION.SDK_INT >= 29 -> "分区存储就绪 · 可授权音频权限"
+                        Build.VERSION.SDK_INT >= 29 -> "分区存储就绪 · 可在系统设置授权"
                         else -> "需授予存储写入权限"
                     },
                     isSystemGranted = granted || Build.VERSION.SDK_INT >= 29,
+                    actionButtonLabel = "存储权限设置"
+                )
+            }
+            AppPermissionType.MUSIC_DOWNLOAD -> {
+                val enabled = isPermissionEnabled(AppPermissionType.MUSIC_DOWNLOAD)
+                val granted = hasMusicDownloadStoragePermission(context)
+                val allFilesGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    runCatching { Environment.isExternalStorageManager() }.getOrDefault(false)
+                } else granted
+                SystemPermissionGrantStatus(
+                    statusLabel = when {
+                        !enabled -> "默认关闭 · 需手动开启"
+                        allFilesGranted -> "已开启 · 全盘存储已授权"
+                        granted -> "已开启 · 存储读写已就绪"
+                        else -> "已开启 · 待在系统设置授权存储"
+                    },
+                    isSystemGranted = enabled && (granted || Build.VERSION.SDK_INT >= 29),
                     actionButtonLabel = "存储权限设置"
                 )
             }
@@ -414,7 +444,8 @@ object AppPermissionManager {
                     openAppDetailsSettings(context)
                 }
             }
-            AppPermissionType.STORAGE_EXPORT -> {
+            AppPermissionType.STORAGE_EXPORT,
+            AppPermissionType.MUSIC_DOWNLOAD -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
                     openAllFilesAccessSettings(context)
                 } else {
