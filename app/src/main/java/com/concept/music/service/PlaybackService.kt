@@ -8,6 +8,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -28,9 +29,16 @@ import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioTrackBufferSizeProvider
+import androidx.media3.session.CommandButton
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionResult
 import com.concept.music.MainActivity
+import com.concept.music.R
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
@@ -440,6 +448,54 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
+        const val ACTION_CUSTOM_TOGGLE_DESKTOP_LYRIC = "com.concept.music.action.TOGGLE_DESKTOP_LYRIC"
+        const val ACTION_CUSTOM_TOGGLE_DESKTOP_LYRIC_LOCK = "com.concept.music.action.TOGGLE_DESKTOP_LYRIC_LOCK"
+
+        val SESSION_COMMAND_TOGGLE_DESKTOP_LYRIC: SessionCommand
+            get() = SessionCommand(ACTION_CUSTOM_TOGGLE_DESKTOP_LYRIC, Bundle())
+        val SESSION_COMMAND_TOGGLE_DESKTOP_LYRIC_LOCK: SessionCommand
+            get() = SessionCommand(ACTION_CUSTOM_TOGGLE_DESKTOP_LYRIC_LOCK, Bundle())
+
+        /**
+         * 构建适配 Android 13~16 系统媒体通知栏与 OPPO ColorOS 流体云（Fluid Cloud）/ 灵动岛的自定义控制按钮布局：
+         * - 按钮 1（左侧扩展槽位）：桌面歌词开关（词），支持 App 置于后台时快捷开启/关闭桌面歌词；
+         * - 按钮 2（右侧扩展槽位）：桌面歌词锁定/解锁（锁），支持通过流体云或通知栏一键解锁/锁定桌面歌词，从而省去屏幕上的悬浮小锁图标。
+         */
+        fun buildNotificationCustomLayout(
+            lyricEnabled: Boolean = SystemLyricBridge.state.value.floatingCapsuleEnabled,
+            lyricLocked: Boolean = SystemLyricBridge.state.value.floatingCapsuleLocked
+        ): List<CommandButton> {
+            val toggleLyricBtn = CommandButton.Builder()
+                .setDisplayName(if (lyricEnabled) "关闭桌面歌词" else "开启桌面歌词")
+                .setSessionCommand(SESSION_COMMAND_TOGGLE_DESKTOP_LYRIC)
+                .setIconResId(if (lyricEnabled) R.drawable.ic_notif_lyric_on else R.drawable.ic_notif_lyric_off)
+                .setEnabled(true)
+                .build()
+
+            val toggleLockBtn = CommandButton.Builder()
+                .setDisplayName(if (lyricLocked) "解锁桌面歌词" else "锁定桌面歌词")
+                .setSessionCommand(SESSION_COMMAND_TOGGLE_DESKTOP_LYRIC_LOCK)
+                .setIconResId(if (lyricLocked) R.drawable.ic_notif_lyric_locked else R.drawable.ic_notif_lyric_unlocked)
+                .setEnabled(true)
+                .build()
+
+            return listOf(toggleLyricBtn, toggleLockBtn)
+        }
+
+        fun refreshMediaNotificationCustomLayout() {
+            val svc = activeServiceInstance ?: return
+            runCatching {
+                val mainLooper = Looper.getMainLooper()
+                if (mainLooper == null || Looper.myLooper() == mainLooper) {
+                    svc.refreshMediaSessionCustomLayoutInternal()
+                } else {
+                    mainHandler?.post {
+                        svc.refreshMediaSessionCustomLayoutInternal()
+                    }
+                }
+            }
+        }
+
         private val mainHandler: Handler? by lazy {
             runCatching {
                 val looper = Looper.getMainLooper()
@@ -898,7 +954,12 @@ class PlaybackService : MediaSessionService() {
                     } else {
                         audioFocusDuckGain = 1.0f
                     }
+                    startBackgroundDesktopLyricProgressTicker()
+                } else {
+                    stopBackgroundDesktopLyricProgressTicker()
+                    SystemLyricBridge.syncProgressFromService(exoPlayer.currentPosition, false)
                 }
+                refreshMediaSessionCustomLayoutInternal()
             }
         })
 
@@ -987,6 +1048,23 @@ class PlaybackService : MediaSessionService() {
             }
         }
 
+        runCatching {
+            val notificationProvider = DefaultMediaNotificationProvider.Builder(applicationContext)
+                .build()
+                .apply {
+                    setSmallIcon(R.drawable.ic_launcher_concept)
+                }
+            setMediaNotificationProvider(notificationProvider)
+        }
+
+        SystemLyricBridge.init(applicationContext)
+        SystemLyricBridge.onDesktopLyricNotificationStateChanged = {
+            refreshMediaSessionCustomLayoutInternal()
+            if (SystemLyricBridge.state.value.floatingCapsuleEnabled && exoPlayer.isPlaying) {
+                startBackgroundDesktopLyricProgressTicker()
+            }
+        }
+
         val sessionCallback = object : MediaSession.Callback {
             @OptIn(UnstableApi::class)
             override fun onConnect(
@@ -996,9 +1074,22 @@ class PlaybackService : MediaSessionService() {
                 val isSelfOrSystem = controller.packageName == packageName ||
                     controller.packageName == "android" ||
                     controller.packageName.startsWith("com.android.") ||
+                    controller.packageName.startsWith("com.oplus.") ||
+                    controller.packageName.startsWith("com.coloros.") ||
+                    controller.packageName.startsWith("com.heytap.") ||
                     controller.isTrusted
+                val availableSessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
+                    .buildUpon()
+                    .add(SESSION_COMMAND_TOGGLE_DESKTOP_LYRIC)
+                    .add(SESSION_COMMAND_TOGGLE_DESKTOP_LYRIC_LOCK)
+                    .build()
+                val customButtons = buildNotificationCustomLayout()
                 return if (isSelfOrSystem) {
-                    super.onConnect(session, controller)
+                    MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                        .setAvailableSessionCommands(availableSessionCommands)
+                        .setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS)
+                        .setCustomLayout(customButtons)
+                        .build()
                 } else {
                     val restrictedPlayerCommands = MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS
                         .buildUpon()
@@ -1006,9 +1097,50 @@ class PlaybackService : MediaSessionService() {
                         .remove(Player.COMMAND_SET_MEDIA_ITEM)
                         .build()
                     MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                        .setAvailableSessionCommands(availableSessionCommands)
                         .setAvailablePlayerCommands(restrictedPlayerCommands)
+                        .setCustomLayout(customButtons)
                         .build()
                 }
+            }
+
+            override fun onPostConnect(
+                session: MediaSession,
+                controller: MediaSession.ControllerInfo
+            ) {
+                super.onPostConnect(session, controller)
+                val customButtons = buildNotificationCustomLayout()
+                runCatching {
+                    session.setCustomLayout(controller, customButtons)
+                    session.setCustomLayout(customButtons)
+                }
+            }
+
+            override fun onCustomCommand(
+                session: MediaSession,
+                controller: MediaSession.ControllerInfo,
+                customCommand: SessionCommand,
+                args: Bundle
+            ): ListenableFuture<SessionResult> {
+                when (customCommand.customAction) {
+                    ACTION_CUSTOM_TOGGLE_DESKTOP_LYRIC -> {
+                        SystemLyricBridge.handleNotificationToggleDesktopLyric(applicationContext)
+                        refreshMediaSessionCustomLayoutInternal()
+                        if (SystemLyricBridge.state.value.floatingCapsuleEnabled && exoPlayer.isPlaying) {
+                            startBackgroundDesktopLyricProgressTicker()
+                        }
+                        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                    }
+                    ACTION_CUSTOM_TOGGLE_DESKTOP_LYRIC_LOCK -> {
+                        SystemLyricBridge.handleNotificationToggleLock(applicationContext)
+                        refreshMediaSessionCustomLayoutInternal()
+                        if (SystemLyricBridge.state.value.floatingCapsuleEnabled && exoPlayer.isPlaying) {
+                            startBackgroundDesktopLyricProgressTicker()
+                        }
+                        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                    }
+                }
+                return super.onCustomCommand(session, controller, customCommand, args)
             }
 
             override fun onMediaButtonEvent(
@@ -1024,10 +1156,50 @@ class PlaybackService : MediaSessionService() {
             }
         }
 
+        val initialCustomButtons = buildNotificationCustomLayout()
         mediaSession = MediaSession.Builder(this, forwardingPlayer)
             .setSessionActivity(sessionActivityPendingIntent)
             .setCallback(sessionCallback)
+            .setCustomLayout(initialCustomButtons)
             .build()
+            .also { session ->
+                runCatching { session.setCustomLayout(initialCustomButtons) }
+            }
+    }
+
+    private val bgLyricProgressRunnable = object : Runnable {
+        override fun run() {
+            val p = player ?: return
+            if (p.isPlaying && SystemLyricBridge.state.value.floatingCapsuleEnabled) {
+                SystemLyricBridge.syncProgressFromService(p.currentPosition, true)
+                mainHandler?.postDelayed(this, 160L)
+            }
+        }
+    }
+
+    private fun startBackgroundDesktopLyricProgressTicker() {
+        val h = mainHandler ?: return
+        h.removeCallbacks(bgLyricProgressRunnable)
+        if (player?.isPlaying == true && SystemLyricBridge.state.value.floatingCapsuleEnabled) {
+            h.post(bgLyricProgressRunnable)
+        }
+    }
+
+    private fun stopBackgroundDesktopLyricProgressTicker() {
+        mainHandler?.removeCallbacks(bgLyricProgressRunnable)
+    }
+
+    @OptIn(UnstableApi::class)
+    internal fun refreshMediaSessionCustomLayoutInternal() {
+        val session = mediaSession ?: return
+        val buttons = buildNotificationCustomLayout()
+        runCatching {
+            session.setCustomLayout(buttons)
+            for (controller in session.connectedControllers) {
+                session.setCustomLayout(controller, buttons)
+            }
+            onUpdateNotification(session, player?.isPlaying == true)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -1047,6 +1219,14 @@ class PlaybackService : MediaSessionService() {
             }
             ConceptMusicWidgetUpdater.ACTION_WIDGET_PREV -> {
                 PlaybackCoordinator.handleSkipToPrevious(applicationContext, player)
+            }
+            ACTION_CUSTOM_TOGGLE_DESKTOP_LYRIC -> {
+                SystemLyricBridge.handleNotificationToggleDesktopLyric(applicationContext)
+                refreshMediaSessionCustomLayoutInternal()
+            }
+            ACTION_CUSTOM_TOGGLE_DESKTOP_LYRIC_LOCK -> {
+                SystemLyricBridge.handleNotificationToggleLock(applicationContext)
+                refreshMediaSessionCustomLayoutInternal()
             }
         }
         return res
@@ -1068,6 +1248,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        stopBackgroundDesktopLyricProgressTicker()
+        SystemLyricBridge.onDesktopLyricNotificationStateChanged = null
         headsetButtonController.reset()
         abandonDuckAudioFocusRequest()
         audioFocusDuckGain = 1.0f

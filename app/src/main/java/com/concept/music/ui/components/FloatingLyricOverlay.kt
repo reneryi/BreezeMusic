@@ -185,8 +185,9 @@ fun FloatingLyricOverlay(
         singleRowSlotDp * 3 + 8.dp
     }
 
+    // 当系统级悬浮窗 (`systemOverlayActive`) 已挂载时，不再在 Activity 内重复叠加渲染，彻底消除双层重影
     AnimatedVisibility(
-        visible = state.floatingCapsuleEnabled && song != null,
+        visible = state.floatingCapsuleEnabled && !state.systemOverlayActive && song != null,
         enter = scaleIn(
             initialScale = 0.94f,
             animationSpec = ConceptMotion.expressiveSpring()
@@ -297,7 +298,7 @@ fun FloatingLyricOverlay(
                                     showSettingsPanel = false
                                     showHudControls = false
                                     SystemLyricBridge.setFloatingCapsuleLocked(true)
-                                    Toast.makeText(context, "桌面歌词已锁定，点击左上角小锁图标即可解锁", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "桌面歌词已锁定，可在通知栏或流体云中解锁", Toast.LENGTH_SHORT).show()
                                 },
                                 onCyclePlayModeClick = {
                                     onCyclePlayMode()
@@ -436,28 +437,7 @@ fun FloatingLyricOverlay(
                     }
                 }
 
-                // 锁定状态下在左上角原锁定键位置保留圆润小锁解锁按钮
-                if (state.floatingCapsuleLocked) {
-                    Surface(
-                        shape = CircleShape,
-                        color = Color(0x880D1524),
-                        modifier = Modifier
-                            .padding(start = 12.dp, top = 6.dp)
-                            .size(34.dp)
-                            .softClickable {
-                                SystemLyricBridge.setFloatingCapsuleLocked(false)
-                                showHudControls = true
-                                Toast.makeText(context, "桌面歌词已解锁", Toast.LENGTH_SHORT).show()
-                            }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            PlumpDesktopLockCanvasIcon(
-                                color = VipGold,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
+                // 锁定状态下屏幕上不再保留任何悬浮小锁图标，统一通过系统通知栏 / OPPO 流体云或 App 内按钮解锁
             }
         }
     }

@@ -65,6 +65,70 @@ object PlaybackCoordinator {
         cachedPlayModeName = playModeName
     }
 
+    /**
+     * 当 App 在后台通过系统通知栏或 OPPO 流体云快捷开启桌面歌词时，
+     * 确保 `SystemLyricBridge` 已持有当前播放曲目与歌词快照。
+     */
+    fun ensureDesktopLyricSongSnapshot(context: Context) {
+        if (SystemLyricBridge.currentSongSnapshot != null && SystemLyricBridge.currentLyricSnapshot.lines.isNotEmpty()) {
+            return
+        }
+        val appCtx = context.applicationContext
+        val prefs = appCtx.getSharedPreferences("concept_player_prefs", Context.MODE_PRIVATE)
+        val userScopeKey = runCatching {
+            VipManager.initialize(appCtx)
+            VipManager.accounts.state.value.currentId ?: "guest"
+        }.getOrDefault("guest")
+
+        val queue: List<Song> = cachedQueue.ifEmpty {
+            val queueJson = prefs.getString("saved_queue_json_$userScopeKey", null)
+                ?: prefs.getString("saved_queue_json", null)
+            if (queueJson.isNullOrBlank()) {
+                emptyList()
+            } else {
+                runCatching {
+                    val type = object : TypeToken<List<Song>>() {}.type
+                    KugouSigner.gson.fromJson<List<Song>>(queueJson, type)
+                        ?.map { it.sanitizeFromJson() }
+                        .orEmpty()
+                }.getOrDefault(emptyList())
+            }
+        }
+        if (queue.isEmpty()) return
+        val idx = (if (cachedQueue.isNotEmpty()) cachedIndex else {
+            prefs.getInt("saved_current_index_$userScopeKey", prefs.getInt("saved_current_index", 0))
+        }).coerceIn(0, queue.lastIndex)
+        val targetSong = queue.getOrNull(idx) ?: return
+        val savedPos = prefs.getLong("saved_position_ms_$userScopeKey", prefs.getLong("saved_position_ms", 0L)).coerceAtLeast(0L)
+
+        if (SystemLyricBridge.currentSongSnapshot == null) {
+            SystemLyricBridge.updatePlaybackSnapshot(
+                song = targetSong,
+                lyricData = SystemLyricBridge.currentLyricSnapshot,
+                currentLyricIndex = SystemLyricBridge.currentLineIndexSnapshot,
+                currentPositionMs = savedPos,
+                isPlaying = SystemLyricBridge.isPlayingSnapshot
+            )
+        }
+        if (SystemLyricBridge.currentLyricSnapshot.lines.isEmpty()) {
+            mainScope.launch {
+                val fetchedLyric = withContext(Dispatchers.IO) {
+                    suspendRunCatching { VipManager.lyric.getLyric(targetSong) }.getOrNull()
+                }
+                if (fetchedLyric != null && fetchedLyric.lines.isNotEmpty()) {
+                    val lineIdx = fetchedLyric.getLineIndexAt(SystemLyricBridge.currentPositionMsSnapshot).coerceAtLeast(0)
+                    SystemLyricBridge.updatePlaybackSnapshot(
+                        song = targetSong,
+                        lyricData = fetchedLyric,
+                        currentLyricIndex = lineIdx,
+                        currentPositionMs = SystemLyricBridge.currentPositionMsSnapshot,
+                        isPlaying = SystemLyricBridge.isPlayingSnapshot
+                    )
+                }
+            }
+        }
+    }
+
     fun persistAsync(prefs: SharedPreferences, block: SharedPreferences.Editor.() -> Unit): Job {
         return ioScope.launch {
             runCatching {
@@ -253,6 +317,27 @@ object PlaybackCoordinator {
                     songTitle = targetSong.title,
                     artist = targetSong.artist,
                     isPlaying = true
+                )
+                SystemLyricBridge.updatePlaybackSnapshot(
+                    song = targetSong,
+                    lyricData = com.concept.music.data.model.LyricData.Empty,
+                    currentLyricIndex = -1,
+                    currentPositionMs = 0L,
+                    isPlaying = true,
+                    playMode = playMode
+                )
+                val fetchedLyric = withContext(Dispatchers.IO) {
+                    suspendRunCatching { VipManager.lyric.getLyric(targetSong) }.getOrNull()
+                } ?: com.concept.music.data.model.LyricData.Empty
+                val livePos = player.currentPosition.coerceAtLeast(0L)
+                val lineIdx = if (fetchedLyric.lines.isNotEmpty()) fetchedLyric.getLineIndexAt(livePos) else -1
+                SystemLyricBridge.updatePlaybackSnapshot(
+                    song = targetSong,
+                    lyricData = fetchedLyric,
+                    currentLyricIndex = lineIdx,
+                    currentPositionMs = livePos,
+                    isPlaying = player.isPlaying,
+                    playMode = playMode
                 )
             }
         }

@@ -1,7 +1,5 @@
 package com.concept.music
 
-import com.concept.music.ui.viewmodel.PlayMode
-
 import com.concept.music.data.kugou.*
 import com.concept.music.data.model.*
 import com.concept.music.ui.theme.CoverTonalPalette
@@ -18,6 +16,7 @@ import com.concept.music.ui.viewmodel.LyricHighlightTheme
 import com.concept.music.ui.viewmodel.PlayerBackgroundStyle
 import com.concept.music.ui.viewmodel.PlayerUiState
 import com.concept.music.ui.viewmodel.SavedPlayQueue
+import com.concept.music.ui.viewmodel.PlayMode
 import com.concept.music.service.AudioEffectState
 import com.concept.music.service.SystemLyricState
 import com.google.gson.JsonObject
@@ -1333,6 +1332,64 @@ class UiAlignmentRegressionTest {
         } finally {
             com.concept.music.service.SystemLyricBridge.onDesktopColorChangedCallback = null
             com.concept.music.service.SystemLyricBridge.onDesktopFontSizeChangedCallback = null
+        }
+    }
+
+    @Test
+    fun `系统通知栏与流体云桌面歌词开关及锁定解锁自定义按钮适配验证`() {
+        com.concept.music.service.AppPermissionManager.resetForTest()
+        var notifRefreshCount = 0
+        com.concept.music.service.SystemLyricBridge.onDesktopLyricNotificationStateChanged = {
+            notifRefreshCount++
+        }
+        try {
+            // 1. 默认未开启、未锁定态：通知栏/流体云按钮应显示「开启桌面歌词」与「锁定桌面歌词」
+            val layoutOffUnlocked = com.concept.music.service.PlaybackService.buildNotificationCustomLayout(
+                lyricEnabled = false,
+                lyricLocked = false
+            )
+            assertEquals(2, layoutOffUnlocked.size)
+            assertEquals("开启桌面歌词", layoutOffUnlocked[0].displayName.toString())
+            assertEquals(
+                com.concept.music.service.PlaybackService.ACTION_CUSTOM_TOGGLE_DESKTOP_LYRIC,
+                layoutOffUnlocked[0].sessionCommand?.customAction
+            )
+            assertEquals(R.drawable.ic_notif_lyric_off, layoutOffUnlocked[0].iconResId)
+
+            assertEquals("锁定桌面歌词", layoutOffUnlocked[1].displayName.toString())
+            assertEquals(
+                com.concept.music.service.PlaybackService.ACTION_CUSTOM_TOGGLE_DESKTOP_LYRIC_LOCK,
+                layoutOffUnlocked[1].sessionCommand?.customAction
+            )
+            assertEquals(R.drawable.ic_notif_lyric_unlocked, layoutOffUnlocked[1].iconResId)
+
+            // 2. 开启并锁定桌面歌词：触发通知栏刷新，且按钮切换为「关闭桌面歌词」与「解锁桌面歌词」
+            com.concept.music.service.SystemLyricBridge.setFloatingCapsuleEnabled(true)
+            com.concept.music.service.SystemLyricBridge.setFloatingCapsuleLocked(true)
+            assertTrue(com.concept.music.service.SystemLyricBridge.state.value.floatingCapsuleEnabled)
+            assertTrue(com.concept.music.service.SystemLyricBridge.state.value.floatingCapsuleLocked)
+            assertTrue("切换桌面歌词开关与锁定态应通知刷新系统媒体通知与流体云", notifRefreshCount >= 2)
+
+            val layoutOnLocked = com.concept.music.service.PlaybackService.buildNotificationCustomLayout(
+                lyricEnabled = com.concept.music.service.SystemLyricBridge.state.value.floatingCapsuleEnabled,
+                lyricLocked = com.concept.music.service.SystemLyricBridge.state.value.floatingCapsuleLocked
+            )
+            assertEquals("关闭桌面歌词", layoutOnLocked[0].displayName.toString())
+            assertEquals(R.drawable.ic_notif_lyric_on, layoutOnLocked[0].iconResId)
+            assertEquals("解锁桌面歌词", layoutOnLocked[1].displayName.toString())
+            assertEquals(R.drawable.ic_notif_lyric_locked, layoutOnLocked[1].iconResId)
+
+            // 3. 关闭桌面歌词时自动重置锁定状态为未锁定
+            com.concept.music.service.SystemLyricBridge.setFloatingCapsuleEnabled(false)
+            assertFalse(com.concept.music.service.SystemLyricBridge.state.value.floatingCapsuleEnabled)
+            assertFalse(
+                "关闭桌面歌词后锁定状态应自动复位为未锁定",
+                com.concept.music.service.SystemLyricBridge.state.value.floatingCapsuleLocked
+            )
+        } finally {
+            com.concept.music.service.SystemLyricBridge.onDesktopLyricNotificationStateChanged = null
+            com.concept.music.service.SystemLyricBridge.setFloatingCapsuleEnabled(false)
+            com.concept.music.service.AppPermissionManager.resetForTest()
         }
     }
 }

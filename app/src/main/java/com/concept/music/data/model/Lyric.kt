@@ -110,4 +110,8 @@ data class LyricData(
         val remainMs = (nextStart - positionMs).coerceAtLeast(0L)
         return ((remainMs + 999L) / 1000L).toInt()
     }
+
+    companion object {
+        val Empty = LyricData()
+    }
 }

@@ -79,11 +79,11 @@ enum class LyricHighlightTheme(val label: String, val primaryHex: Long, val seco
     PURE_WHITE("流光皓白", 0xFFFFFFFF, 0xFFB8DCFF),
     VIP_GOLD("鎏金岁华", 0xFFFFC857, 0xFFFF9F1C),
     SAKURA_PINK("霓虹樱粉", 0xFFFF6B9D, 0xFFFF8E53),
-    AURORA_MINT("极光薄荷", 0xFF2CE5B5, 0xFF3898FF)
-;
+    AURORA_MINT("极光薄荷", 0xFF2CE5B5, 0xFF3898FF);
 
     companion object {
-        @JvmField val EMERALD_GREEN = AURORA_MINT
+        @JvmField
+        val EMERALD_GREEN = AURORA_MINT
     }
 }
 

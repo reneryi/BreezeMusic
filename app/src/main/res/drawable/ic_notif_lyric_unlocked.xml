@@ -1,0 +1,26 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 圆润开锁锁梁（未锁定态，点击可锁定桌面歌词） -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M8.5,10.5V7.2C8.5,5.16 10.07,3.5 12,3.5C13.68,3.5 15.08,4.72 15.42,6.35"
+        android:strokeWidth="2.2"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- 圆润锁身外框 -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M7.5,10.5L16.5,10.5A2.8,2.8 0,0 1,19.3 13.3L19.3,17.2A2.8,2.8 0,0 1,16.5 20L7.5,20A2.8,2.8 0,0 1,4.7 17.2L4.7,13.3A2.8,2.8 0,0 1,7.5 10.5z"
+        android:strokeWidth="2.1"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- 锁芯圆点 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,15.2m-1.4,0a1.4,1.4 0,1 1,2.8 0a1.4,1.4 0,1 1,-2.8 0" />
+</vector>

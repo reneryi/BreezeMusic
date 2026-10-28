@@ -290,7 +290,7 @@ internal fun resolveDesktopLyricLayoutPlan(
         else -> "♪  •  •  •"
     }
 
-    val safeMaxUnits = (maxCharsPerSingleRow.takeIf { it > 0f } ?: maxVisualUnitsPerLine).coerceAtLeast(10f)
+    val safeMaxUnits = maxVisualUnitsPerLine.coerceAtLeast(10f)
     val primaryUnits = estimateVisualCharUnits(primaryText)
     val isPrimaryLong = currentLine != null && primaryUnits > safeMaxUnits
 
@@ -393,12 +393,11 @@ object SystemLyricBridge {
     var onCyclePlayModeCallback: (() -> Unit)? = null
     var onDesktopColorChangedCallback: ((LyricHighlightTheme) -> Unit)? = null
     var onDesktopFontSizeChangedCallback: ((Float) -> Unit)? = null
+    var onDesktopLyricNotificationStateChanged: (() -> Unit)? = null
 
     private var windowManager: WindowManager? = null
     private var overlayView: NativeDesktopLyricView? = null
     private var overlayParams: WindowManager.LayoutParams? = null
-    private var unlockPillView: NativeUnlockPillView? = null
-    private var unlockPillParams: WindowManager.LayoutParams? = null
 
     private val coverExtractScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var coverExtractJob: Job? = null
@@ -476,6 +475,7 @@ object SystemLyricBridge {
     }
 
     fun toggleDesktopLyricWithPermissionCheck(context: Context) {
+        init(context)
         if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.SYSTEM_OVERLAY)) {
             setFloatingCapsuleEnabled(false)
             Toast.makeText(
@@ -485,12 +485,109 @@ object SystemLyricBridge {
             ).show()
             return
         }
+        // 若当前桌面歌词已开启且处于锁定态，在 App 内点击桌面歌词按钮优先为其解锁，再点则关闭
+        if (_state.value.floatingCapsuleEnabled && _state.value.floatingCapsuleLocked) {
+            setFloatingCapsuleLocked(false)
+            Toast.makeText(context, "桌面歌词已解锁", Toast.LENGTH_SHORT).show()
+            return
+        }
         val nextEnabled = !_state.value.floatingCapsuleEnabled
-        if (nextEnabled && !canDrawSystemOverlays(context)) {
-            requestOverlayPermissionIfNeeded(context)
+        if (nextEnabled) {
+            PlaybackCoordinator.ensureDesktopLyricSongSnapshot(context)
+            if (!canDrawSystemOverlays(context)) {
+                requestOverlayPermissionIfNeeded(context)
+            }
         }
         setFloatingCapsuleEnabled(nextEnabled)
         syncSystemOverlayWindow()
+        val msg = if (nextEnabled) "已开启桌面歌词" else "已关闭桌面歌词"
+        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * 供系统媒体通知栏与 OPPO ColorOS 流体云（Fluid Cloud）/ 灵动岛直接调用的「桌面歌词开关」动作：
+     * 支持 App 置于后台时一键快捷开启或关闭桌面歌词。
+     */
+    fun handleNotificationToggleDesktopLyric(context: Context) {
+        init(context)
+        if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.SYSTEM_OVERLAY)) {
+            setFloatingCapsuleEnabled(false)
+            Toast.makeText(
+                context,
+                "已在权限管理中关闭「全局悬浮窗（桌面歌词）」权限，请先在设置中开启",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        val nextEnabled = !_state.value.floatingCapsuleEnabled
+        if (nextEnabled) {
+            PlaybackCoordinator.ensureDesktopLyricSongSnapshot(context)
+            if (!canDrawSystemOverlays(context)) {
+                requestOverlayPermissionIfNeeded(context)
+            }
+            setFloatingCapsuleLocked(false)
+            setFloatingCapsuleEnabled(true)
+            Toast.makeText(context, "已开启桌面歌词", Toast.LENGTH_SHORT).show()
+        } else {
+            setFloatingCapsuleEnabled(false)
+            Toast.makeText(context, "已关闭桌面歌词", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 供系统媒体通知栏与 OPPO ColorOS 流体云（Fluid Cloud）/ 灵动岛直接调用的「桌面歌词锁定/解锁」动作：
+     * - 若桌面歌词已锁定，点击立即解锁；
+     * - 若桌面歌词未锁定，点击立即锁定并开启触摸穿透（屏幕上不留任何锁定图标，完全由通知栏/流体云控制解锁）；
+     * - 若桌面歌词尚未开启，点击则直接开启并锁定桌面歌词。
+     */
+    fun handleNotificationToggleLock(context: Context) {
+        init(context)
+        if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.SYSTEM_OVERLAY)) {
+            Toast.makeText(
+                context,
+                "已在权限管理中关闭「全局悬浮窗（桌面歌词）」权限，请先在设置中开启",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        val cur = _state.value
+        if (!cur.floatingCapsuleEnabled) {
+            PlaybackCoordinator.ensureDesktopLyricSongSnapshot(context)
+            if (!canDrawSystemOverlays(context)) {
+                requestOverlayPermissionIfNeeded(context)
+            }
+            setFloatingCapsuleEnabled(true)
+            setFloatingCapsuleLocked(true)
+            Toast.makeText(context, "已开启并锁定桌面歌词，可在通知栏或流体云中解锁", Toast.LENGTH_SHORT).show()
+        } else if (cur.floatingCapsuleLocked) {
+            setFloatingCapsuleLocked(false)
+            Toast.makeText(context, "桌面歌词已解锁", Toast.LENGTH_SHORT).show()
+        } else {
+            setFloatingCapsuleLocked(true)
+            Toast.makeText(context, "桌面歌词已锁定，可在通知栏或流体云中解锁", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 当 App 处于后台时由 `PlaybackService` 定时推送实时播放进度，确保后台开启桌面歌词时逐字动效与换行持续运行
+     */
+    fun syncProgressFromService(positionMs: Long, isPlaying: Boolean) {
+        currentPositionMsSnapshot = positionMs.coerceAtLeast(0L)
+        lastPositionSyncRealtimeMs = android.os.SystemClock.elapsedRealtime()
+        isPlayingSnapshot = isPlaying
+        val lyric = currentLyricSnapshot
+        if (lyric.lines.isNotEmpty()) {
+            val idx = lyric.getLineIndexAt(currentPositionMsSnapshot)
+            if (idx >= 0) {
+                currentLineIndexSnapshot = idx
+            }
+        }
+        if (_state.value.floatingCapsuleEnabled) {
+            mainHandler.post {
+                syncSystemOverlayWindow()
+                overlayView?.onPlaybackUpdated()
+            }
+        }
     }
 
     fun onHostResumed(context: Context) {
@@ -640,9 +737,19 @@ object SystemLyricBridge {
 
     fun setFloatingCapsuleEnabled(enabled: Boolean) {
         val effectiveEnabled = enabled && AppPermissionManager.isPermissionEnabled(AppPermissionType.SYSTEM_OVERLAY)
-        _state.value = _state.value.copy(floatingCapsuleEnabled = effectiveEnabled)
-        prefs?.edit()?.putBoolean("floating_capsule_enabled", effectiveEnabled)?.apply()
+        // 关闭桌面歌词时自动重置锁定状态，避免下次开启时仍处于不可点击的锁定穿透态
+        val nextLocked = if (!effectiveEnabled) false else _state.value.floatingCapsuleLocked
+        _state.value = _state.value.copy(
+            floatingCapsuleEnabled = effectiveEnabled,
+            floatingCapsuleLocked = nextLocked
+        )
+        prefs?.edit()
+            ?.putBoolean("floating_capsule_enabled", effectiveEnabled)
+            ?.putBoolean("floating_capsule_locked", nextLocked)
+            ?.apply()
         syncSystemOverlayWindow()
+        onDesktopLyricNotificationStateChanged?.invoke()
+        PlaybackService.refreshMediaNotificationCustomLayout()
     }
 
     fun setDesktopLyricEnabled(enabled: Boolean) = setFloatingCapsuleEnabled(enabled)
@@ -651,9 +758,14 @@ object SystemLyricBridge {
         _state.value = _state.value.copy(floatingCapsuleLocked = locked)
         prefs?.edit()?.putBoolean("floating_capsule_locked", locked)?.apply()
         mainHandler.post {
+            if (locked) {
+                overlayView?.collapseHudOnLock()
+            }
             applyOverlayLockFlags()
             overlayView?.invalidate()
         }
+        onDesktopLyricNotificationStateChanged?.invoke()
+        PlaybackService.refreshMediaNotificationCustomLayout()
     }
 
     fun setDesktopColorScheme(scheme: DesktopLyricColorScheme, syncToApp: Boolean = true) {
@@ -841,7 +953,6 @@ object SystemLyricBridge {
                         if (isFinished) {
                             saveDesktopPosition(0f, curLp.y.toFloat())
                         }
-                        syncUnlockPillPosition()
                     },
                     onRequestWindowLayoutUpdate = {
                         val curLp = overlayParams
@@ -878,7 +989,6 @@ object SystemLyricBridge {
     }
 
     private fun applyOverlayLockFlags() {
-        val ctx = appContext ?: return
         val wm = windowManager ?: return
         val view = overlayView ?: return
         val lp = overlayParams ?: return
@@ -888,133 +998,23 @@ object SystemLyricBridge {
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
 
+        // 锁定态直接挂载 FLAG_NOT_TOUCHABLE 全穿透，不再在屏幕上挂载任何悬浮小锁图标，
+        // 解锁与开关统一交由系统媒体通知栏 / OPPO 流体云 (Fluid Cloud) 及 App 内控制完成
         lp.flags = if (locked) {
             baseFlags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         } else {
             baseFlags
         }
         runCatching { wm.updateViewLayout(view, lp) }
-
-        if (locked) {
-            ensureUnlockPillMounted(ctx, wm)
-        } else {
-            removeUnlockPillView()
-        }
-    }
-
-    private fun ensureUnlockPillMounted(ctx: Context, wm: WindowManager) {
-        if (unlockPillView != null) {
-            syncUnlockPillPosition()
-            return
-        }
-        runCatching {
-            val dm = ctx.resources.displayMetrics
-            val density = dm.density
-            val pillSize = (36f * density).roundToInt()
-            val windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE
-            }
-            val mainLp = overlayParams
-            val pillLp = WindowManager.LayoutParams(
-                pillSize,
-                pillSize,
-                windowType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                x = (16f * density).roundToInt()
-                y = (mainLp?.y ?: 140) + (8f * density).roundToInt()
-            }
-            val pill = NativeUnlockPillView(ctx) {
-                setFloatingCapsuleLocked(false)
-                overlayView?.expandHudOnUnlock()
-                Toast.makeText(ctx, "桌面歌词已解锁", Toast.LENGTH_SHORT).show()
-            }
-            wm.addView(pill, pillLp)
-            unlockPillView = pill
-            unlockPillParams = pillLp
-        }
-    }
-
-    private fun syncUnlockPillPosition() {
-        val wm = windowManager ?: return
-        val pill = unlockPillView ?: return
-        val pillLp = unlockPillParams ?: return
-        val mainLp = overlayParams ?: return
-        pillLp.y = mainLp.y + 12
-        runCatching { wm.updateViewLayout(pill, pillLp) }
-    }
-
-    private fun removeUnlockPillView() {
-        val wm = windowManager
-        unlockPillView?.let { v ->
-            runCatching { wm?.removeViewImmediate(v) }
-        }
-        unlockPillView = null
-        unlockPillParams = null
     }
 
     private fun removeSystemOverlayViews() {
-        removeUnlockPillView()
         val wm = windowManager
         overlayView?.let { v ->
             runCatching { wm?.removeViewImmediate(v) }
         }
         overlayView = null
         overlayParams = null
-    }
-}
-
-/**
- * 锁定状态下的圆润无框悬浮解锁小锁图标（位于左上角原锁定键位置，点击即可解锁）
- */
-private class NativeUnlockPillView(
-    context: Context,
-    private val onUnlockClick: () -> Unit
-) : View(context) {
-    private val d = resources.displayMetrics.density
-    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0x780D1524
-        style = Paint.Style.FILL
-    }
-    private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFFFD166.toInt()
-        style = Paint.Style.STROKE
-        strokeWidth = 2.1f * d
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
-    private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFFFD166.toInt()
-        style = Paint.Style.FILL
-    }
-    private val rect = RectF()
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val cx = width / 2f
-        val cy = height / 2f
-        val r = (width.coerceAtMost(height) / 2f) - 1f * d
-        canvas.drawCircle(cx, cy, r, bgPaint)
-
-        val bw = 11f * d
-        val bh = 8.5f * d
-        rect.set(cx - bw / 2f, cy - 0.5f * d, cx + bw / 2f, cy - 0.5f * d + bh)
-        canvas.drawRoundRect(rect, 3f * d, 3f * d, bodyPaint)
-        rect.set(cx - 3.6f * d, cy - 6.8f * d, cx + 3.6f * d, cy + 1f * d)
-        canvas.drawArc(rect, 180f, 180f, false, iconPaint)
-    }
-
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_UP) {
-            onUnlockClick()
-            return true
-        }
-        return true
     }
 }
 
@@ -1121,6 +1121,11 @@ private class NativeDesktopLyricView(
 
     fun expandHudOnUnlock() {
         setHudVisible(true)
+    }
+
+    fun collapseHudOnLock() {
+        setSettingsPanelVisible(false)
+        setHudVisible(false)
     }
 
     private fun setHudVisible(visible: Boolean) {
@@ -1511,7 +1516,7 @@ private class NativeDesktopLyricView(
                 setSettingsPanelVisible(false)
                 setHudVisible(false)
                 SystemLyricBridge.setFloatingCapsuleLocked(true)
-                Toast.makeText(context, "桌面歌词已锁定，点击左上角小锁图标即可解锁", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "桌面歌词已锁定，可在通知栏或流体云中解锁", Toast.LENGTH_SHORT).show()
             })
         }
 
