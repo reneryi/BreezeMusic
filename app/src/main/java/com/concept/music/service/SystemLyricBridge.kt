@@ -29,10 +29,19 @@ import com.concept.music.data.model.LyricData
 import com.concept.music.data.model.LyricLine
 import com.concept.music.data.model.LyricWord
 import com.concept.music.data.model.Song
+import androidx.compose.ui.graphics.toArgb
+import com.concept.music.ui.components.coverPaletteMemoryCache
+import com.concept.music.ui.components.extractCoverMeshColors
+import com.concept.music.ui.theme.readableOnDarkSurface
 import com.concept.music.ui.viewmodel.LyricHighlightTheme
 import com.concept.music.ui.viewmodel.PlayMode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.min
@@ -46,33 +55,46 @@ enum class DesktopLyricColorScheme(
     val unplayedHex: Long,
     val strokeHex: Long = 0xFF060A12
 ) {
+    DYNAMIC_COVER("封面随动", 0xFF3898FF, 0xFF00E5FF, 0xFFF1F5F9),
     ICE_BLUE("概念冰蓝", 0xFF3898FF, 0xFF00E5FF, 0xFFF1F5F9),
-    VIP_GOLD("鎏金岁华", 0xFFFFD166, 0xFFFF9F1C, 0xFFFFF8E7),
+    PURE_SNOW("流光皓白", 0xFFFFFFFF, 0xFFB8DCFF, 0xFFCBD5E1),
+    VIP_GOLD("鎏金岁华", 0xFFFFC857, 0xFFFF9F1C, 0xFFFFF8E7),
     SAKURA_NEON("霓虹樱粉", 0xFFFF6B9D, 0xFFFF8E53, 0xFFFFF0F5),
-    AURORA_MINT("极光薄荷", 0xFF2CE5B5, 0xFF00B4D8, 0xFFECFEFF),
-    CYBER_VIOLET("赛博星紫", 0xFFA855F7, 0xFF6366F1, 0xFFF3E8FF),
-    PURE_SNOW("流光皓白", 0xFFFFFFFF, 0xFF93C5FD, 0xFFCBD5E1);
+    AURORA_MINT("极光薄荷", 0xFF2CE5B5, 0xFF3898FF, 0xFFECFEFF);
 
     fun toHighlightTheme(): LyricHighlightTheme = when (this) {
+        DYNAMIC_COVER -> LyricHighlightTheme.DYNAMIC_COVER
         ICE_BLUE -> LyricHighlightTheme.ICE_BLUE
+        PURE_SNOW -> LyricHighlightTheme.PURE_WHITE
         VIP_GOLD -> LyricHighlightTheme.VIP_GOLD
         SAKURA_NEON -> LyricHighlightTheme.SAKURA_PINK
         AURORA_MINT -> LyricHighlightTheme.AURORA_MINT
-        PURE_SNOW -> LyricHighlightTheme.PURE_WHITE
-        CYBER_VIOLET -> LyricHighlightTheme.DYNAMIC_COVER
     }
 
     companion object {
-        @JvmField val SAKURA_PINK = SAKURA_NEON
-        @JvmField val EMERALD_GREEN = AURORA_MINT
+        val SAKURA_PINK: DesktopLyricColorScheme get() = SAKURA_NEON
+        val PURE_WHITE: DesktopLyricColorScheme get() = PURE_SNOW
+        val CYBER_VIOLET: DesktopLyricColorScheme get() = DYNAMIC_COVER
+        val EMERALD_GREEN: DesktopLyricColorScheme get() = AURORA_MINT
 
         fun fromHighlightTheme(theme: LyricHighlightTheme): DesktopLyricColorScheme = when (theme) {
+            LyricHighlightTheme.DYNAMIC_COVER -> DYNAMIC_COVER
             LyricHighlightTheme.ICE_BLUE -> ICE_BLUE
+            LyricHighlightTheme.PURE_WHITE -> PURE_SNOW
             LyricHighlightTheme.VIP_GOLD -> VIP_GOLD
             LyricHighlightTheme.SAKURA_PINK -> SAKURA_NEON
             LyricHighlightTheme.AURORA_MINT -> AURORA_MINT
-            LyricHighlightTheme.PURE_WHITE -> PURE_SNOW
-            LyricHighlightTheme.DYNAMIC_COVER -> CYBER_VIOLET
+        }
+
+        fun fromPersistedName(name: String?): DesktopLyricColorScheme {
+            if (name.isNullOrBlank()) return ICE_BLUE
+            return when (name) {
+                "CYBER_VIOLET", "DYNAMIC_COVER" -> DYNAMIC_COVER
+                "SAKURA_PINK", "SAKURA_NEON" -> SAKURA_NEON
+                "PURE_WHITE", "PURE_SNOW" -> PURE_SNOW
+                "EMERALD_GREEN", "AURORA_MINT" -> AURORA_MINT
+                else -> runCatching { valueOf(name) }.getOrDefault(ICE_BLUE)
+            }
         }
     }
 }
@@ -90,13 +112,43 @@ data class SystemLyricState(
     val desktopColorScheme: DesktopLyricColorScheme = DesktopLyricColorScheme.ICE_BLUE,
     val desktopLineMode: DesktopLyricLineMode = DesktopLyricLineMode.DUAL_BILINGUAL,
     val desktopFontSize: Float = 20f,
-    val desktopWidthFraction: Float = 1.0f,     // 保留兼容字段，实际窗口自适应铺满全屏宽度
+    val desktopWidthFraction: Float = 1.0f,      // 横向自适应占满全屏宽度
     val desktopBgAlpha: Float = 0.68f,
     val desktopAlignment: Int = 0,               // 0: 居中, 1: 居左
     val desktopShowTranslation: Boolean = true,
     val savedOffsetX: Float = 0f,
-    val savedOffsetY: Float = 140f
-)
+    val savedOffsetY: Float = 140f,
+    val dynamicCoverPrimaryHex: Long = 0xFF3898FF,
+    val dynamicCoverSecondaryHex: Long = 0xFF00E5FF
+) {
+    /**
+     * 当前生效的歌词主高亮渐变起点色：
+     * 当选中「封面随动 (`DYNAMIC_COVER`)」时返回与 App 内歌词完全一致的封面智能取色结果。
+     */
+    val effectivePlayedStartHex: Long
+        get() = if (desktopColorScheme == DesktopLyricColorScheme.DYNAMIC_COVER) {
+            dynamicCoverPrimaryHex
+        } else {
+            desktopColorScheme.playedStartHex
+        }
+
+    /**
+     * 当前生效的歌词主高亮渐变终点色：
+     * 当选中「封面随动 (`DYNAMIC_COVER`)」时返回与 App 内歌词完全一致的封面次级取色结果。
+     */
+    val effectivePlayedEndHex: Long
+        get() = if (desktopColorScheme == DesktopLyricColorScheme.DYNAMIC_COVER) {
+            dynamicCoverSecondaryHex
+        } else {
+            desktopColorScheme.playedEndHex
+        }
+
+    fun swatchStartHex(scheme: DesktopLyricColorScheme): Long =
+        if (scheme == DesktopLyricColorScheme.DYNAMIC_COVER) dynamicCoverPrimaryHex else scheme.playedStartHex
+
+    fun swatchEndHex(scheme: DesktopLyricColorScheme): Long =
+        if (scheme == DesktopLyricColorScheme.DYNAMIC_COVER) dynamicCoverSecondaryHex else scheme.playedEndHex
+}
 
 /**
  * 桌面歌词单行渲染描述：
@@ -113,7 +165,8 @@ internal data class DesktopLyricRenderRow(
     val isSecondaryRow: Boolean = false,
     val verticalCenterFraction: Float = 0.50f
 ) {
-    val isPrimary: Boolean get() = !isSecondaryRow
+    val isPrimary: Boolean
+        get() = !isSecondaryRow
 }
 
 internal data class DesktopLyricLayoutPlan(
@@ -347,6 +400,11 @@ object SystemLyricBridge {
     private var unlockPillView: NativeUnlockPillView? = null
     private var unlockPillParams: WindowManager.LayoutParams? = null
 
+    private val coverExtractScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var coverExtractJob: Job? = null
+    @Volatile
+    private var lastExtractedCoverUrl: String = ""
+
     private val _state = MutableStateFlow(SystemLyricState())
     val state = _state.asStateFlow()
 
@@ -365,12 +423,11 @@ object SystemLyricBridge {
             floatingCapsuleEnabled = p.getBoolean("floating_capsule_enabled", false),
             floatingCapsuleLocked = p.getBoolean("floating_capsule_locked", false),
             systemOverlayActive = false,
-            desktopColorScheme = runCatching { DesktopLyricColorScheme.valueOf(schemeName) }
-                .getOrDefault(DesktopLyricColorScheme.ICE_BLUE),
+            desktopColorScheme = DesktopLyricColorScheme.fromPersistedName(schemeName),
             desktopLineMode = runCatching { DesktopLyricLineMode.valueOf(modeName) }
                 .getOrDefault(DesktopLyricLineMode.DUAL_BILINGUAL),
             desktopFontSize = p.getFloat("desktop_font_size", 20f).coerceIn(15f, 26f),
-            desktopWidthFraction = p.getFloat("desktop_width_fraction", 0.88f).coerceIn(0.68f, 0.96f),
+            desktopWidthFraction = 1.0f,
             desktopBgAlpha = p.getFloat("desktop_bg_alpha", 0.68f).coerceIn(0f, 0.96f),
             desktopAlignment = p.getInt("desktop_alignment", 0).coerceIn(0, 1),
             desktopShowTranslation = p.getBoolean("desktop_show_translation", true),
@@ -465,6 +522,8 @@ object SystemLyricBridge {
         if (onNext != null) onNextCallback = onNext
         if (onCyclePlayMode != null) onCyclePlayModeCallback = onCyclePlayMode
 
+        refreshDynamicCoverColorsIfNeeded(song)
+
         val st = _state.value
         if (st.floatingCapsuleEnabled) {
             mainHandler.post {
@@ -475,19 +534,75 @@ object SystemLyricBridge {
     }
 
     /**
+     * 更新桌面歌词的封面动态随动取色（与 App 内 `NowPlayingSheet` 取色管线完全同源）：
+     * - 当 `NowPlayingSheet` 前台展开时，直接由 `NowPlayingSheet` 的平滑过渡动画推送实时取色；
+     * - 当应用处于后台、小窗或未展开播放页切歌时，由 `refreshDynamicCoverColorsIfNeeded` 自动调用同一套
+     *   24-bin HSV 色相直方图算法 (`extractCoverMeshColors`) + 深色背景可读性色阶提升 (`readableOnDarkSurface`) 实时提取。
+     */
+    fun updateDynamicCoverColors(
+        primaryHex: Long,
+        secondaryHex: Long,
+        coverUrl: String? = null
+    ) {
+        val normPrimary = (primaryHex and 0x00FFFFFFL) or 0xFF000000L
+        val normSecondary = (secondaryHex and 0x00FFFFFFL) or 0xFF000000L
+        if (!coverUrl.isNullOrBlank()) {
+            lastExtractedCoverUrl = coverUrl
+        }
+        val cur = _state.value
+        if (cur.dynamicCoverPrimaryHex != normPrimary || cur.dynamicCoverSecondaryHex != normSecondary) {
+            _state.value = cur.copy(
+                dynamicCoverPrimaryHex = normPrimary,
+                dynamicCoverSecondaryHex = normSecondary
+            )
+            mainHandler.post {
+                overlayView?.postInvalidateOnAnimation()
+            }
+        }
+    }
+
+    private fun refreshDynamicCoverColorsIfNeeded(song: Song?) {
+        val coverUrl = song?.coverUrl?.trim().orEmpty()
+        if (coverUrl.isBlank()) {
+            if (lastExtractedCoverUrl.isNotEmpty()) {
+                lastExtractedCoverUrl = ""
+                updateDynamicCoverColors(0xFF3898FFL, 0xFF00E5FFL, coverUrl = "")
+            }
+            return
+        }
+        // 1. 优先命中内存调色板缓存，零延迟同步
+        coverPaletteMemoryCache[coverUrl]?.let { cached ->
+            val pHex = cached.dominantAccent.readableOnDarkSurface(minLuminance = 0.46f).toArgb().toLong() and 0xFFFFFFFFL
+            val sHex = cached.secondaryAccent.readableOnDarkSurface(minLuminance = 0.50f).toArgb().toLong() and 0xFFFFFFFFL
+            updateDynamicCoverColors(pHex, sHex, coverUrl = coverUrl)
+            return
+        }
+        if (coverUrl == lastExtractedCoverUrl) return
+        val ctx = appContext ?: return
+        coverExtractJob?.cancel()
+        coverExtractJob = coverExtractScope.launch {
+            val palette = extractCoverMeshColors(ctx, coverUrl) ?: return@launch
+            if (currentSongSnapshot?.coverUrl?.trim() == coverUrl) {
+                val pHex = palette.dominantAccent.readableOnDarkSurface(minLuminance = 0.46f).toArgb().toLong() and 0xFFFFFFFFL
+                val sHex = palette.secondaryAccent.readableOnDarkSurface(minLuminance = 0.50f).toArgb().toLong() and 0xFFFFFFFFL
+                updateDynamicCoverColors(pHex, sHex, coverUrl = coverUrl)
+            }
+        }
+    }
+
+    /**
      * 当 App 内修改了歌词高亮配色、字号、译文显示或播放模式时，单向同步至桌面歌词（不触发反向回环）
      */
     fun syncFromAppSettings(
         highlightTheme: LyricHighlightTheme? = null,
         inAppLyricFontSize: Float? = null,
-        appLyricFontSize: Float? = inAppLyricFontSize,
+        appLyricFontSize: Float? = null,
         showTranslation: Boolean? = null,
         playMode: PlayMode? = null
     ) {
         if (playMode != null) {
             playModeSnapshot = playMode
         }
-        val targetFontSize = inAppLyricFontSize ?: appLyricFontSize
         var current = _state.value
         var changed = false
         if (highlightTheme != null) {
@@ -498,9 +613,10 @@ object SystemLyricBridge {
                 changed = true
             }
         }
-        if (targetFontSize != null) {
-            // 将 App 内歌词字号 (18..34sp) 映射并同步至桌面歌词字号 (15..26sp)
-            val mappedSize = (targetFontSize - 4f).coerceIn(15f, 26f)
+        val effectiveFontSize = inAppLyricFontSize ?: appLyricFontSize
+        if (effectiveFontSize != null) {
+            // 将全屏歌词字号 (18..34sp) 映射或同步至桌面歌词舒适字号区间 (15..26sp)
+            val mappedSize = (effectiveFontSize - 4f).coerceIn(15f, 26f)
             if (abs(current.desktopFontSize - mappedSize) >= 0.4f) {
                 current = current.copy(desktopFontSize = mappedSize)
                 prefs?.edit()?.putFloat("desktop_font_size", mappedSize)?.apply()
@@ -515,6 +631,7 @@ object SystemLyricBridge {
         if (changed) {
             _state.value = current
         }
+        refreshDynamicCoverColorsIfNeeded(currentSongSnapshot)
         mainHandler.post {
             overlayView?.requestLayout()
             overlayView?.invalidate()
@@ -1056,8 +1173,8 @@ private class NativeDesktopLyricView(
 
         val st = SystemLyricBridge.state.value
         val scheme = st.desktopColorScheme
-        val startColor = scheme.playedStartHex.toInt()
-        val endColor = scheme.playedEndHex.toInt()
+        val startColor = st.effectivePlayedStartHex.toInt()
+        val endColor = st.effectivePlayedEndHex.toInt()
         val unplayedColor = (scheme.unplayedHex.toInt() and 0x00FFFFFF) or (0xE8 shl 24)
         val strokeColor = scheme.strokeHex.toInt()
 
@@ -1671,8 +1788,8 @@ private class NativeDesktopLyricView(
         schemes.forEachIndexed { idx, item ->
             val scx = swatchStartLeft + swatchStep * (idx + 0.5f)
             val selected = state.desktopColorScheme == item
-            val cStart = ((alphaInt) shl 24) or (item.playedStartHex.toInt() and 0x00FFFFFF)
-            val cEnd = ((alphaInt) shl 24) or (item.playedEndHex.toInt() and 0x00FFFFFF)
+            val cStart = ((alphaInt) shl 24) or (state.swatchStartHex(item).toInt() and 0x00FFFFFF)
+            val cEnd = ((alphaInt) shl 24) or (state.swatchEndHex(item).toInt() and 0x00FFFFFF)
 
             if (selected) {
                 iconStrokePaint.color = ((alpha * 235).roundToInt() shl 24) or 0xFFFFFF

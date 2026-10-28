@@ -1296,17 +1296,32 @@ class UiAlignmentRegressionTest {
             assertNotNull(syncedFontSize)
             assertTrue(syncedFontSize!! >= 18f)
 
-            // 2. App 内修改配色、字号、播放顺序 -> 实时同步到桌面歌词状态
+            // 2. App 内修改配色（含「封面随动 DYNAMIC_COVER」）、字号、播放顺序 -> 实时同步到桌面歌词状态
             com.concept.music.service.SystemLyricBridge.syncFromAppSettings(
-                highlightTheme = LyricHighlightTheme.EMERALD_GREEN,
+                highlightTheme = LyricHighlightTheme.DYNAMIC_COVER,
                 inAppLyricFontSize = 26f,
                 playMode = PlayMode.REPEAT_ONE
             )
+            com.concept.music.service.SystemLyricBridge.updateDynamicCoverColors(
+                primaryHex = 0xFFFF7A45L,
+                secondaryHex = 0xFFFFB347L,
+                coverUrl = "https://example.com/cover.jpg"
+            )
             val bridgeState = com.concept.music.service.SystemLyricBridge.state.value
             assertEquals(
-                com.concept.music.service.DesktopLyricColorScheme.EMERALD_GREEN,
+                com.concept.music.service.DesktopLyricColorScheme.DYNAMIC_COVER,
                 bridgeState.desktopColorScheme
             )
+            assertEquals(
+                "封面随动模式下桌面歌词主高亮色应与 App 封面取色完全一致，而非固定紫色",
+                0xFFFF7A45L,
+                bridgeState.effectivePlayedStartHex
+            )
+            assertEquals(
+                0xFFFFB347L,
+                bridgeState.effectivePlayedEndHex
+            )
+            assertEquals(0xFFFF7A45L, bridgeState.swatchStartHex(com.concept.music.service.DesktopLyricColorScheme.DYNAMIC_COVER))
             assertEquals(PlayMode.REPEAT_ONE, com.concept.music.service.SystemLyricBridge.playModeSnapshot)
             assertEquals(1.0f, bridgeState.desktopWidthFraction, 0.001f)
 

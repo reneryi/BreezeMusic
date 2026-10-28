@@ -566,6 +566,32 @@ fun NowPlayingSheet(
         label = "activeSecondaryAccent"
     )
 
+    val coverDynamicPrimary by animateColorAsState(
+        targetValue = extractedPalette.dominantAccent,
+        animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing),
+        label = "coverDynamicPrimary"
+    )
+    val coverDynamicSecondary by animateColorAsState(
+        targetValue = extractedPalette.secondaryAccent,
+        animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing),
+        label = "coverDynamicSecondary"
+    )
+
+    // 将播放页当前实时计算的封面随动可读高亮色（与全屏歌词完全同源）同步至桌面歌词
+    val syncedDesktopPrimary = remember(coverDynamicPrimary) {
+        coverDynamicPrimary.readableOnDarkSurface(minLuminance = 0.46f)
+    }
+    val syncedDesktopSecondary = remember(coverDynamicSecondary) {
+        coverDynamicSecondary.readableOnDarkSurface(minLuminance = 0.50f)
+    }
+    LaunchedEffect(syncedDesktopPrimary, syncedDesktopSecondary, song.coverUrl) {
+        SystemLyricBridge.updateDynamicCoverColors(
+            primaryHex = syncedDesktopPrimary.toArgb().toLong() and 0xFFFFFFFFL,
+            secondaryHex = syncedDesktopSecondary.toArgb().toLong() and 0xFFFFFFFFL,
+            coverUrl = song.coverUrl
+        )
+    }
+
     val effectiveLyricPositionMs = (currentPositionMs + lyricOffsetMs).coerceAtLeast(0L)
     val lyricPositionProvider: () -> Long = remember(positionProvider, lyricOffsetMs) {
         { (positionProvider() + lyricOffsetMs).coerceAtLeast(0L) }
@@ -858,8 +884,8 @@ fun NowPlayingSheet(
                             lyricBlurIntensity = lyricBlurIntensity,
                             lyricLineSpacing = lyricLineSpacing,
                             lyricHighlightTheme = lyricHighlightTheme,
-                            dynamicCoverAccent = activeAccentColor,
-                            dynamicCoverSecondary = activeSecondaryAccent,
+                            dynamicCoverAccent = coverDynamicPrimary,
+                            dynamicCoverSecondary = coverDynamicSecondary,
                             onLineClick = onSeekToLyricLine,
                             onReturnToCover = { showLyricView = false },
                             onTogglePlay = onTogglePlay,
@@ -990,7 +1016,7 @@ fun NowPlayingSheet(
             highlightTheme = lyricHighlightTheme,
             backgroundDim = lyricBackgroundDim,
             keepScreenOn = lyricKeepScreenOn,
-            dynamicAccentColor = activeAccentColor,
+            dynamicAccentColor = coverDynamicPrimary,
             onSetFontSize = onSetLyricFontSize,
             onSetTranslationScale = onSetLyricTranslationScale,
             onSetAlignment = onSetLyricAlignment,
@@ -5479,17 +5505,28 @@ private fun LyricPageMinimalBottomBar(
     }
 }
 
-private data class CoverExtractedPalette(
+internal data class CoverExtractedPalette(
     val meshPrimary: Color,
     val meshSecondary: Color,
     val dominantAccent: Color,
     val secondaryAccent: Color
 )
 
-private suspend fun extractCoverMeshColors(
+internal val coverPaletteMemoryCache: MutableMap<String, CoverExtractedPalette> =
+    java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, CoverExtractedPalette>(64, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CoverExtractedPalette>?): Boolean {
+                return size > 64
+            }
+        }
+    )
+
+internal suspend fun extractCoverMeshColors(
     context: Context,
     coverUrl: String
 ): CoverExtractedPalette? {
+    if (coverUrl.isBlank()) return null
+    coverPaletteMemoryCache[coverUrl]?.let { return it }
     return try {
         val request = ImageRequest.Builder(context)
             .data(coverUrl)
@@ -5599,7 +5636,9 @@ private suspend fun extractCoverMeshColors(
             meshSecondary = c2,
             dominantAccent = dominantAccent,
             secondaryAccent = secondaryAccent
-        )
+        ).also { palette ->
+            coverPaletteMemoryCache[coverUrl] = palette
+        }
     } catch (_: Exception) {
         null
     }

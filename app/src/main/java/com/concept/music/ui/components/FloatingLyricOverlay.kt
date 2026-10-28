@@ -2,6 +2,7 @@ package com.concept.music.ui.components
 
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -157,8 +158,16 @@ fun FloatingLyricOverlay(
     )
 
     val scheme = state.desktopColorScheme
-    val playedStartColor = Color(scheme.playedStartHex)
-    val playedEndColor = Color(scheme.playedEndHex)
+    val playedStartColor by animateColorAsState(
+        targetValue = Color(state.effectivePlayedStartHex),
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "desktopPlayedStartColor"
+    )
+    val playedEndColor by animateColorAsState(
+        targetValue = Color(state.effectivePlayedEndHex),
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "desktopPlayedEndColor"
+    )
     val unplayedColor = Color(scheme.unplayedHex).copy(alpha = 0.92f)
     val textShadow = remember(scheme) {
         Shadow(
@@ -416,6 +425,8 @@ fun FloatingLyricOverlay(
                         ) {
                             DesktopExpandableSettingsSection(
                                 selectedScheme = state.desktopColorScheme,
+                                dynamicCoverPrimaryHex = state.dynamicCoverPrimaryHex,
+                                dynamicCoverSecondaryHex = state.dynamicCoverSecondaryHex,
                                 fontSizeSp = state.desktopFontSize,
                                 accentColor = playedStartColor,
                                 onSelectScheme = { SystemLyricBridge.setDesktopColorScheme(it) },
@@ -805,6 +816,8 @@ private fun PlumpDesktopCloseCanvasIcon(
 @Composable
 private fun DesktopExpandableSettingsSection(
     selectedScheme: DesktopLyricColorScheme,
+    dynamicCoverPrimaryHex: Long,
+    dynamicCoverSecondaryHex: Long,
     fontSizeSp: Float,
     accentColor: Color,
     onSelectScheme: (DesktopLyricColorScheme) -> Unit,
@@ -864,7 +877,11 @@ private fun DesktopExpandableSettingsSection(
                                 .clip(CircleShape)
                                 .background(
                                     Brush.linearGradient(
-                                        listOf(Color(scheme.playedStartHex), Color(scheme.playedEndHex))
+                                        if (scheme == DesktopLyricColorScheme.DYNAMIC_COVER) {
+                                            listOf(Color(dynamicCoverPrimaryHex), Color(dynamicCoverSecondaryHex))
+                                        } else {
+                                            listOf(Color(scheme.playedStartHex), Color(scheme.playedEndHex))
+                                        }
                                     )
                                 ),
                             contentAlignment = Alignment.Center
