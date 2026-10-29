@@ -115,7 +115,27 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ConceptMusicTheme {
-                MainContent()
+                val isDark = com.concept.music.ui.theme.isConceptDarkTheme()
+                var showSplashOverlay by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(true) }
+                var mountMainContentBehindSplash by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(!showSplashOverlay) }
+
+                androidx.compose.runtime.LaunchedEffect(Unit) {
+                    if (!mountMainContentBehindSplash) {
+                        androidx.compose.runtime.withFrameNanos { }
+                        mountMainContentBehindSplash = true
+                    }
+                }
+
+                androidx.compose.foundation.layout.Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
+                    if (mountMainContentBehindSplash) {
+                        MainContent()
+                    }
+                    com.concept.music.ui.components.BreezeSplashOverlay(
+                        visible = showSplashOverlay,
+                        isDark = isDark,
+                        onDismiss = { showSplashOverlay = false }
+                    )
+                }
             }
         }
     }
