@@ -1,20 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- 默认夜间主题：启动开屏统一为水彩浸润浅色风格与 96dp 黄金比例小图标，消除暗色模式手机冷启动黑屏闪烁与图标跳变 -->
+    <!--
+        夜间资源目录启动主题：
+        修复此前 values-night 中 Theme.ConceptMusic 错误指向浅色 (_light) 导致暗色主题启动页显示为浅色的问题，
+        统一为深海「幽邃微蓝」底色与 96dp 深色圆角图标。
+    -->
     <style name="Theme.ConceptMusic" parent="android:Theme.Material.NoActionBar">
-        <item name="android:isLightTheme">true</item>
+        <item name="android:isLightTheme">false</item>
         <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
-        <item name="android:windowBackground">@drawable/bg_splash_window</item>
-        <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/concept_window_bg_light</item>
-        <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/ic_splash_window_icon_light</item>
+        <item name="android:windowBackground">@drawable/bg_splash_window_dark</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/concept_window_bg_dark</item>
+        <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/ic_splash_window_icon_dark</item>
         <item name="android:windowSplashScreenAnimationDuration" tools:targetApi="31">0</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
     </style>
 
-    <!-- 强制浅色水彩浸润主题 -->
+    <!-- 强制浅色「水彩浸润」启动主题（即使手机系统处于暗色模式也恒定显示浅色启动页） -->
     <style name="Theme.ConceptMusic.Light" parent="Theme.ConceptMusic">
         <item name="android:isLightTheme">true</item>
         <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
@@ -26,7 +30,7 @@
         <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
     </style>
 
-    <!-- 强制深色幽邃微蓝主题 -->
+    <!-- 强制深色「幽邃微蓝」启动主题（不受手机系统浅色模式影响） -->
     <style name="Theme.ConceptMusic.Dark" parent="Theme.ConceptMusic">
         <item name="android:isLightTheme">false</item>
         <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
@@ -37,4 +41,7 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
     </style>
+
+    <!-- 「跟随系统」模式启动主题：夜间 (values-night) 下使用深色幽邃微蓝启动页 -->
+    <style name="Theme.ConceptMusic.FollowSystem" parent="Theme.ConceptMusic.Dark" />
 </resources>

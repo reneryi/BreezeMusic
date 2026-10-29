@@ -97,20 +97,30 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         // 读取 App 内部独立主题设置（完全独立于手机系统深浅模式）
         val isAppDark = com.concept.music.ui.theme.ThemeManager.isDarkTheme(this)
+        val activeThemeMode = com.concept.music.ui.theme.ThemeManager.themeMode.value
         setTheme(if (isAppDark) R.style.Theme_ConceptMusic_Dark else R.style.Theme_ConceptMusic_Light)
 
         // 针对 ColorOS / HyperOS / OriginOS / OneUI 及原生 Android 12+：
-        // 极速移除系统层跟随系统的 Starting Window，无缝切入独立于系统、与 App 主题完全统一的启动层
+        // 通过 SplashScreen.setSplashScreenTheme + UiModeManager.setApplicationNightMode 双重持久化启动页主题，
+        // 确保幽邃微蓝(深色)与水彩浸润(浅色)两套启动页颜色与 App 主题 100% 统一，不受手机系统暗色模式影响
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             runCatching {
+                splashScreen.setSplashScreenTheme(
+                    com.concept.music.ui.theme.ThemeManager.resolveSplashThemeResId(activeThemeMode)
+                )
+                val targetSplashBgColor = getColor(
+                    if (isAppDark) R.color.concept_window_bg_dark else R.color.concept_window_bg_light
+                )
                 splashScreen.setOnExitAnimationListener { splashScreenView ->
+                    runCatching { splashScreenView.setBackgroundColor(targetSplashBgColor) }
                     runCatching { splashScreenView.iconView?.alpha = 0f }
                     runCatching { splashScreenView.remove() }
                 }
             }
         }
+        com.concept.music.ui.theme.ThemeManager.syncSystemSplashAndNightMode(this, activeThemeMode)
         super.onCreate(savedInstanceState)
-        val windowBgRes = if (isAppDark) R.color.concept_window_bg_dark else R.color.concept_window_bg_light
+        val windowBgRes = if (isAppDark) R.drawable.bg_splash_window_dark else R.drawable.bg_splash_window_light
         runCatching { window.setBackgroundDrawableResource(windowBgRes) }
         requestHighRefreshRateDisplayMode()
         if (isAppDark) {

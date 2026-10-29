@@ -1621,8 +1621,33 @@ class UiAlignmentRegressionTest {
     }
 
     @Test
-    fun `单启动页96dp小图标规范对齐与移除冗余第二启动页验证`() {
+    fun `单启动页96dp小图标规范对齐与深浅两套启动页主题独立持久化验证`() {
         assertEquals(0L, com.concept.music.ui.components.SPLASH_ICON_HOLD_DURATION_MS)
+        assertEquals(
+            R.style.Theme_ConceptMusic_Dark,
+            com.concept.music.ui.theme.ThemeManager.resolveSplashThemeResId(com.concept.music.ui.theme.AppThemeMode.DARK_ABYSS_BLUE)
+        )
+        assertEquals(
+            R.style.Theme_ConceptMusic_Light,
+            com.concept.music.ui.theme.ThemeManager.resolveSplashThemeResId(com.concept.music.ui.theme.AppThemeMode.LIGHT_WATERCOLOR)
+        )
+        assertEquals(
+            R.style.Theme_ConceptMusic_FollowSystem,
+            com.concept.music.ui.theme.ThemeManager.resolveSplashThemeResId(com.concept.music.ui.theme.AppThemeMode.SYSTEM)
+        )
+        assertEquals(
+            android.app.UiModeManager.MODE_NIGHT_YES,
+            com.concept.music.ui.theme.ThemeManager.resolvePlatformNightMode(com.concept.music.ui.theme.AppThemeMode.DARK_ABYSS_BLUE)
+        )
+        assertEquals(
+            android.app.UiModeManager.MODE_NIGHT_NO,
+            com.concept.music.ui.theme.ThemeManager.resolvePlatformNightMode(com.concept.music.ui.theme.AppThemeMode.LIGHT_WATERCOLOR)
+        )
+        assertEquals(
+            android.app.UiModeManager.MODE_NIGHT_AUTO,
+            com.concept.music.ui.theme.ThemeManager.resolvePlatformNightMode(com.concept.music.ui.theme.AppThemeMode.SYSTEM)
+        )
+
         val projectRoot = java.io.File(".").canonicalFile.let { dir ->
             if (java.io.File(dir, "app/src/main").exists()) dir else dir.parentFile
         }
@@ -1638,10 +1663,20 @@ class UiAlignmentRegressionTest {
         assertTrue(darkXml.contains("android:width=\"288dp\""))
         assertTrue(darkXml.contains("android:scaleX=\"0.33333334\""))
 
+        val valuesThemesXml = java.io.File(projectRoot, "app/src/main/res/values/themes.xml").readText(Charsets.UTF_8)
+        val nightThemesXml = java.io.File(projectRoot, "app/src/main/res/values-night/themes.xml").readText(Charsets.UTF_8)
+        assertTrue("默认启动主题应匹配默认幽邃微蓝深色主题", valuesThemesXml.contains("name=\"Theme.ConceptMusic\"") && valuesThemesXml.contains("@color/concept_window_bg_dark"))
+        assertTrue("values-night 启动主题必须使用深色背景与深色图标", nightThemesXml.contains("@color/concept_window_bg_dark") && nightThemesXml.contains("@drawable/ic_splash_window_icon_dark"))
+        assertTrue("应提供 FollowSystem 启动主题以支持跟随系统模式", valuesThemesXml.contains("Theme.ConceptMusic.FollowSystem") && nightThemesXml.contains("Theme.ConceptMusic.FollowSystem"))
+
+        val nightWindowXml = java.io.File(projectRoot, "app/src/main/res/drawable-night/bg_splash_window.xml").readText(Charsets.UTF_8)
+        assertTrue("drawable-night 启动窗口必须为深色底色与深色图标", nightWindowXml.contains("@color/concept_window_bg_dark") && nightWindowXml.contains("@drawable/ic_launcher_concept"))
+
         val darkWindowXml = java.io.File(projectRoot, "app/src/main/res/drawable/bg_splash_window_dark.xml").readText(Charsets.UTF_8)
         assertTrue("深色传统窗口背景图标尺寸应统一为 96dp", darkWindowXml.contains("android:width=\"96dp\""))
 
         val mainActivityCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/MainActivity.kt").readText(Charsets.UTF_8)
         assertFalse("MainActivity 不应再挂载第二层 PureSplashIconView 开屏覆盖层", mainActivityCode.contains("PureSplashIconView("))
+        assertTrue("MainActivity 应调用 setSplashScreenTheme 持久化启动页主题", mainActivityCode.contains("setSplashScreenTheme("))
     }
 }

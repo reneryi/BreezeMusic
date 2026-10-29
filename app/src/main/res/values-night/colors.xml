@@ -9,8 +9,8 @@
     <color name="white">#FFFFFFFF</color>
     <color name="concept_cyan">#FF00D2B4</color>
     <color name="concept_dark">#FF121418</color>
-    <!-- 统一启动窗口底色为水彩浸润浅色底色，消除暗黑模式手机下的黑屏闪烁 -->
-    <color name="concept_window_bg">#FFF2F6FC</color>
+    <!-- 夜间主题窗口底色统一为幽邃微蓝深色底色 (#FF0A0E17)，修复此前误配为浅色 #FFF2F6FC 的问题 -->
+    <color name="concept_window_bg">#FF0A0E17</color>
     <color name="concept_window_bg_light">#FFF2F6FC</color>
     <color name="concept_window_bg_dark">#FF0A0E17</color>
     <color name="concept_primary">#FF2B8CFF</color>

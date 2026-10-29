@@ -138,6 +138,27 @@ object ThemeManager {
     private val _dynamicColor = MutableStateFlow(false)
     val dynamicColor = _dynamicColor.asStateFlow()
 
+    /**
+     * 根据 App 内部主题偏好解析对应的系统级 SplashScreen 样式资源 ID：
+     * - DARK_ABYSS_BLUE（幽邃微蓝）：强制使用 Theme.ConceptMusic.Dark（深色底 + 96dp 深色圆角图标，不受系统浅色模式影响）
+     * - LIGHT_WATERCOLOR（水彩浸润）：强制使用 Theme.ConceptMusic.Light（浅色底 + 96dp 浅色圆角图标，不受系统暗色模式影响）
+     * - SYSTEM（跟随系统）：使用 Theme.ConceptMusic.FollowSystem（随系统 values / values-night 自动切换）
+     */
+    fun resolveSplashThemeResId(mode: AppThemeMode = _themeMode.value): Int = when (mode) {
+        AppThemeMode.DARK_ABYSS_BLUE -> com.concept.music.R.style.Theme_ConceptMusic_Dark
+        AppThemeMode.LIGHT_WATERCOLOR -> com.concept.music.R.style.Theme_ConceptMusic_Light
+        AppThemeMode.SYSTEM -> com.concept.music.R.style.Theme_ConceptMusic_FollowSystem
+    }
+
+    /**
+     * 解析 Android 12+ (API 31+) UiModeManager.setApplicationNightMode 对应的系统持久化夜间模式常量
+     */
+    fun resolvePlatformNightMode(mode: AppThemeMode = _themeMode.value): Int = when (mode) {
+        AppThemeMode.DARK_ABYSS_BLUE -> android.app.UiModeManager.MODE_NIGHT_YES
+        AppThemeMode.LIGHT_WATERCOLOR -> android.app.UiModeManager.MODE_NIGHT_NO
+        AppThemeMode.SYSTEM -> android.app.UiModeManager.MODE_NIGHT_AUTO
+    }
+
     fun applyNightMode(mode: AppThemeMode) {
         val nightMode = when (mode) {
             AppThemeMode.DARK_ABYSS_BLUE -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
@@ -145,6 +166,55 @@ object ThemeManager {
             AppThemeMode.SYSTEM -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
         }
         androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(nightMode)
+    }
+
+    /**
+     * 双重持久化同步系统级启动页主题与应用夜间模式：
+     * 1. 通过 Activity.splashScreen.setSplashScreenTheme(themeResId) 将 Theme.ConceptMusic.Dark / Light / FollowSystem
+     *    直接持久化至系统 PackageManager，使下次冷启动第 0ms 起无论手机处于浅色还是暗色模式均严格显示对应启动页；
+     * 2. 通过 UiModeManager.setApplicationNightMode(platformNightMode) 在系统服务层持久化应用级 -night / notnight 资源限定符；
+     * 3. 实时同步当前 Activity 的窗口背景 Drawable。
+     */
+    fun syncSystemSplashAndNightMode(
+        context: Context?,
+        mode: AppThemeMode = _themeMode.value,
+        forcePersist: Boolean = false
+    ) {
+        applyNightMode(mode)
+        if (context == null) return
+        val activity = runCatching { context.findActivity() }.getOrNull()
+        val splashThemeResId = resolveSplashThemeResId(mode)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (activity != null) {
+                runCatching {
+                    activity.splashScreen.setSplashScreenTheme(splashThemeResId)
+                }
+            }
+            val targetPlatformMode = resolvePlatformNightMode(mode)
+            val sp = prefs
+            val lastSyncedPlatformMode = sp?.getInt("synced_platform_night_mode", -99) ?: -99
+            if (forcePersist || lastSyncedPlatformMode != targetPlatformMode) {
+                runCatching {
+                    val appCtx = context.applicationContext ?: context
+                    val uiModeManager = appCtx.getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager
+                    uiModeManager?.setApplicationNightMode(targetPlatformMode)
+                    sp?.edit()?.putInt("synced_platform_night_mode", targetPlatformMode)?.apply()
+                }
+            }
+        }
+
+        if (activity != null) {
+            runCatching {
+                val darkNow = isDarkTheme(activity)
+                val windowBgRes = if (darkNow) {
+                    com.concept.music.R.drawable.bg_splash_window_dark
+                } else {
+                    com.concept.music.R.drawable.bg_splash_window_light
+                }
+                activity.window.setBackgroundDrawableResource(windowBgRes)
+            }
+        }
     }
 
     fun isDarkTheme(context: Context): Boolean {
@@ -161,13 +231,14 @@ object ThemeManager {
 
     fun init(context: Context) {
         if (prefs != null) return
-        val p = context.applicationContext.getSharedPreferences("concept_theme_prefs", Context.MODE_PRIVATE)
+        val appCtx = context.applicationContext ?: context
+        val p = appCtx.getSharedPreferences("concept_theme_prefs", Context.MODE_PRIVATE)
         prefs = p
         val savedMode = p.getString("theme_mode", AppThemeMode.DARK_ABYSS_BLUE.name) ?: AppThemeMode.DARK_ABYSS_BLUE.name
         val resolvedMode = runCatching { AppThemeMode.valueOf(savedMode) }.getOrDefault(AppThemeMode.DARK_ABYSS_BLUE)
         _themeMode.value = resolvedMode
         _dynamicColor.value = p.getBoolean("dynamic_color", false)
-        applyNightMode(resolvedMode)
+        syncSystemSplashAndNightMode(context, resolvedMode, forcePersist = false)
     }
 
     fun setThemeMode(mode: AppThemeMode) {
@@ -178,7 +249,9 @@ object ThemeManager {
 
     fun setThemeMode(context: Context, mode: AppThemeMode) {
         init(context)
-        setThemeMode(mode)
+        _themeMode.value = mode
+        prefs?.edit()?.putString("theme_mode", mode.name)?.apply()
+        syncSystemSplashAndNightMode(context, mode, forcePersist = true)
     }
 
     fun setDynamicColor(enabled: Boolean) {
