@@ -3,10 +3,10 @@
     <!-- 水彩浸润浅色底色，统一浅色窗口底色 -->
     <item android:drawable="@color/concept_window_bg_light" />
 
-    <!-- 中心展示微风音乐水彩浅色品牌图标 -->
+    <!-- 中心展示微风音乐水彩浅色品牌圆角卡片图标（96dp与应用内首屏尺寸完全统一） -->
     <item
-        android:width="128dp"
-        android:height="128dp"
+        android:width="96dp"
+        android:height="96dp"
         android:gravity="center"
         android:drawable="@drawable/ic_splash_icon_light" />
 </layer-list>

@@ -206,9 +206,7 @@ fun PureSplashIconView(
                 painter = painterResource(id = iconRes),
                 contentDescription = "BreezeMusic 图标",
                 contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .size(96.dp)
-                    .clip(RoundedCornerShape(22.dp))
+                modifier = Modifier.size(96.dp)
             )
         }
     }
