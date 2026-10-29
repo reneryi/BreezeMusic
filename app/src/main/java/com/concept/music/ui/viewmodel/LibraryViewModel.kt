@@ -98,7 +98,8 @@ class LibraryViewModel(
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            hydrateLibraryFromLocalCache(accountState.value.currentId)
+            val initUid = accountState.value.currentId
+            hydrateLibraryFromLocalCache(initUid)
             accountState.collect { state ->
                 if (state.auth != AuthState.RESTORING) {
                     if (state.currentId != loadedLibraryUserId || state.auth != loadedLibraryAuth) {
@@ -107,8 +108,8 @@ class LibraryViewModel(
                         hydrateLibraryFromLocalCache(state.currentId)
                         val hasCached = _playlists.value.isNotEmpty() || _likedSongs.value.isNotEmpty()
                         if (hasCached) {
-                            // 错峰延后静默同步，避开冷启动首屏渲染与发现页加载高峰，彻底消除打开 App 时的掉帧卡顿
-                            delay(1500L)
+                            // 开屏页展示期间在 IO 线程静默同步歌单与喜欢曲库
+                            delay(80L)
                         }
                         loadMusicLibrary()
                     }

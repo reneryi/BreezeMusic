@@ -25,7 +25,7 @@ class AccountRepository(private val store: SessionStore, private val auth: AuthR
         store.setActive(id)
         val saved = store.accounts().find { it.userId == id }
         mutable.value = AccountState(store.accounts(), id, saved?.let { AccountProfile(it.userId, it.nickname, it.avatarUrl) },
-            if (id == null) AuthState.GUEST else if (store.session(id) == null || saved?.needsLogin == true) AuthState.NEEDS_LOGIN else AuthState.RESTORING)
+            if (id == null) AuthState.GUEST else if (!store.hasSessionRecord(id) || saved?.needsLogin == true) AuthState.NEEDS_LOGIN else AuthState.RESTORING)
     }
     fun accept(result: LoginResult.Success) {
         store.saveSession(result.session)

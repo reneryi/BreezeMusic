@@ -16,6 +16,10 @@ import com.concept.music.service.MusicDownloadManager
 import com.concept.music.service.SystemLyricBridge
 import com.concept.music.service.VipGuardianManager
 import com.concept.music.ui.theme.ThemeManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.Dispatcher
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLException
@@ -26,12 +30,15 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
         ThemeManager.init(this)
         com.concept.music.service.AppPermissionManager.init(this)
         VipManager.initialize(this)
-        MusicDownloadManager.init(this)
         com.concept.music.service.AudioEffectManager.init(this)
-        AmbientSoundManager.init(this)
-        FocusPodManager.init(this)
         SystemLyricBridge.init(this)
-        VipGuardianManager.init(this)
+        val appCtx = applicationContext
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
+            runCatching { MusicDownloadManager.init(appCtx) }
+            runCatching { AmbientSoundManager.init(appCtx) }
+            runCatching { FocusPodManager.init(appCtx) }
+            runCatching { VipGuardianManager.init(appCtx) }
+        }
     }
 
     override fun newImageLoader(): ImageLoader {
@@ -40,8 +47,8 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
             maxRequestsPerHost = 10
         }
 
-        // 复用全局共享连接池，减少 TLS 握手与 Socket 创建开销；
-        // 对酷狗静态图片 CDN (如 webimg.bssdl.kugou.com 等无多级通配符证书的子域) 提供 HTTPS -> HTTP 降级容错
+        // 复用全局共享连接池，减少 TLS 握手�?Socket 创建开销�?
+        // 对酷狗静态图�?CDN (�?webimg.bssdl.kugou.com 等无多级通配符证书的子域) 提供 HTTPS -> HTTP 降级容错
         val okHttpClient = NetworkClientProvider.baseClient.newBuilder()
             .dispatcher(imageDispatcher)
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -75,8 +82,8 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
             }
             .build()
 
-        // 必须保持 allowHardware(false) + ARGB_8888 并剥离 Gainmap：
-        // 酷狗封面图含有非标 AGTM Gainmap 元数据，若使用 HARDWARE 位图在 Android 14+ 旋转/缩放绘制会触发 libhwui 原生闪退
+        // 必须保持 allowHardware(false) + ARGB_8888 并剥�?Gainmap�?
+        // 酷狗封面图含有非�?AGTM Gainmap 元数据，若使�?HARDWARE 位图�?Android 14+ 旋转/缩放绘制会触�?libhwui 原生闪退
         return ImageLoader.Builder(this)
             .okHttpClient(okHttpClient)
             .allowHardware(false)

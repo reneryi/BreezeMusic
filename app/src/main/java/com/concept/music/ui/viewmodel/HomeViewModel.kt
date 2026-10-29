@@ -70,16 +70,21 @@ class HomeViewModel : ViewModel() {
     private var hasInitialLoaded: Boolean = false
 
     init {
-        // 在后台 IO 线程水合本地缓存快照，彻底消除冷启动时主线程 Gson 反序列化引起的首帧卡顿
+        // 开屏期间在后台 IO 线程立即水合本地快照并同步启动静默网络预加载，使开屏结束进入首页时数据已就绪
         viewModelScope.launch(Dispatchers.IO) {
-            hydrateFromLocalCache(accountState.value.currentId)
+            val initialUserId = accountState.value.currentId
+            hydrateFromLocalCache(initialUserId)
+            loadedUser = initialUserId
+            hasInitialLoaded = true
+            refresh(isBackgroundRevalidate = hasAnyContentLoaded(), allowWhileRestoring = true)
+
             accountState.collect { state ->
                 if (state.auth != AuthState.RESTORING) {
                     if (state.currentId != loadedUser || !hasInitialLoaded) {
                         loadedUser = state.currentId
                         hasInitialLoaded = true
                         hydrateFromLocalCache(state.currentId)
-                        refresh(isBackgroundRevalidate = hasAnyContentLoaded())
+                        refresh(isBackgroundRevalidate = hasAnyContentLoaded(), allowWhileRestoring = false)
                     }
                 }
             }
@@ -130,10 +135,14 @@ class HomeViewModel : ViewModel() {
      * - 主动下拉刷新 (isBackgroundRevalidate = false)：始终置 _loading = true 并在完成后回调 onFinished
      * - 静默后台更新 (isBackgroundRevalidate = true)：全程在 Dispatchers.IO 深度错峰执行，完全避开刚打开 App 前 1.2s 的动画与交互窗口
      */
-    fun refresh(isBackgroundRevalidate: Boolean = false, onFinished: (() -> Unit)? = null) {
+    fun refresh(
+        isBackgroundRevalidate: Boolean = false,
+        allowWhileRestoring: Boolean = false,
+        onFinished: (() -> Unit)? = null
+    ) {
         request?.cancel()
         val authState = accountState.value.auth
-        if (authState == AuthState.RESTORING) {
+        if (authState == AuthState.RESTORING && !allowWhileRestoring) {
             onFinished?.invoke()
             return
         }
@@ -143,8 +152,8 @@ class HomeViewModel : ViewModel() {
             if (!isBackgroundRevalidate) {
                 _loading.value = true
             } else {
-                // 若已有本地秒开缓存，彻底避开刚打开 App 前 1200ms 的首屏渲染、JIT 预热与用户首次交互期
-                delay(1200L)
+                // 开屏展示期间（约 60ms 后）立即在 IO 线程池并发启动静默预加载，无需等待 1200ms
+                delay(60L)
             }
             _error.value = null
             try {
@@ -158,7 +167,7 @@ class HomeViewModel : ViewModel() {
                     }
                 }
                 val fmJob = launch {
-                    if (isBackgroundRevalidate) delay(280L)
+                    if (isBackgroundRevalidate) delay(30L)
                     val fm = runCatching { VipManager.music.personalFm(size = 20) }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && fm.isNotEmpty()) {
                         val wasEmpty = _personalFmSongs.value.isEmpty()
@@ -170,7 +179,7 @@ class HomeViewModel : ViewModel() {
                     }
                 }
                 val newSongJob = launch {
-                    if (isBackgroundRevalidate) delay(560L)
+                    if (isBackgroundRevalidate) delay(60L)
                     val period = _selectedNewSongPeriod.value
                     if (_currentNewSongs.value.isEmpty()) {
                         _newSongsLoading.value = true
@@ -186,7 +195,7 @@ class HomeViewModel : ViewModel() {
                     _newSongsLoading.value = false
                 }
                 val radioJob = launch {
-                    if (isBackgroundRevalidate) delay(840L)
+                    if (isBackgroundRevalidate) delay(90L)
                     val radios = runCatching { VipManager.music.fmChannels() }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && radios.isNotEmpty()) {
                         if (_fmChannels.value.map { it.id } != radios.map { it.id }) {
@@ -196,7 +205,7 @@ class HomeViewModel : ViewModel() {
                     }
                 }
                 val rankJob = launch {
-                    if (isBackgroundRevalidate) delay(1100L)
+                    if (isBackgroundRevalidate) delay(120L)
                     val rankList = runCatching { VipManager.music.rankList() }.getOrDefault(emptyList())
                     if (accountState.value.currentId == currentUserId && rankList.isNotEmpty()) {
                         if (_ranks.value.map { it.rankId } != rankList.map { it.rankId }) {

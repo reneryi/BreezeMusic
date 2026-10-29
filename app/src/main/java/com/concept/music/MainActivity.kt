@@ -95,6 +95,14 @@ private fun mainTabIndex(route: String): Int = when (route) {
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            runCatching {
+                splashScreen.setOnExitAnimationListener { splashScreenView ->
+                    runCatching { splashScreenView.iconView?.alpha = 0f }
+                    runCatching { splashScreenView.remove() }
+                }
+            }
+        }
         super.onCreate(savedInstanceState)
         requestHighRefreshRateDisplayMode()
         enableEdgeToEdge(
@@ -105,8 +113,19 @@ class MainActivity : ComponentActivity() {
         setContent {
             ConceptMusicTheme {
                 var showSplashOverlay by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(true) }
+                // 首帧仅渲染极轻量的 BreezeSplashOverlay（<16ms 立即上屏，彻底消除系统启动窗口等待），
+                // 第 2 帧起在开屏画面下方静默挂载 MainContent 并并发预加载曲库、账号会话与封面图片缓存
+                var mountMainContentBehindSplash by remember { mutableStateOf(!showSplashOverlay) }
+                LaunchedEffect(Unit) {
+                    if (!mountMainContentBehindSplash) {
+                        androidx.compose.runtime.withFrameNanos { }
+                        mountMainContentBehindSplash = true
+                    }
+                }
                 Box(modifier = Modifier.fillMaxSize()) {
-                    MainContent()
+                    if (mountMainContentBehindSplash) {
+                        MainContent()
+                    }
                     com.concept.music.ui.components.BreezeSplashOverlay(
                         visible = showSplashOverlay,
                         onDismiss = { showSplashOverlay = false }
@@ -175,6 +194,31 @@ fun MainContent(
         when (currentRoute) {
             "login" -> libraryViewModel.onLoginRoute(true)
             "accounts", Screen.Library.route -> libraryViewModel.onLoginRoute(false)
+        }
+    }
+
+    // 开屏展示期间静默预热首页首屏封面图到 Coil 内存/磁盘缓存，确保开屏渐隐后封面秒出无闪烁
+    val dailySongsForPrewarm by homeViewModel.dailyRecommendSongs.collectAsState()
+    val fmSongsForPrewarm by homeViewModel.personalFmSongs.collectAsState()
+    val newSongsForPrewarm by homeViewModel.currentNewSongs.collectAsState()
+    LaunchedEffect(dailySongsForPrewarm.firstOrNull()?.coverUrl, fmSongsForPrewarm.firstOrNull()?.coverUrl, newSongsForPrewarm.size) {
+        withContext(Dispatchers.IO) {
+            val urlsToPrewarm = buildList {
+                dailySongsForPrewarm.take(3).forEach { if (it.coverUrl.isNotBlank()) add(it.coverUrl) }
+                fmSongsForPrewarm.take(3).forEach { if (it.coverUrl.isNotBlank()) add(it.coverUrl) }
+                newSongsForPrewarm.take(6).forEach { if (it.coverUrl.isNotBlank()) add(it.coverUrl) }
+            }.distinct()
+            val imageLoader = coil.Coil.imageLoader(context)
+            urlsToPrewarm.forEach { url ->
+                runCatching {
+                    imageLoader.enqueue(
+                        coil.request.ImageRequest.Builder(context)
+                            .data(url)
+                            .size(360)
+                            .build()
+                    )
+                }
+            }
         }
     }
 

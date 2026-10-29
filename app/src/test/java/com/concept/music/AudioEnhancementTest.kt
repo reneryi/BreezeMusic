@@ -571,11 +571,26 @@ class AudioEnhancementTest {
             }
             input.flip()
 
+            // 验证预设 10 段均衡曲线具备真实母带级毫贝尔量纲 (±400~860 mB)
             manager.setPreset(EffectPreset.VIPER_BASS)
+            assertTrue("超重低音 31Hz 频段应 >= 700 mB (+7dB)", manager.state.value.tenBandLevels[0] >= 700)
             manager.setChannelBalance(0.5f)
             processor.queueInput(input)
             val output = processor.output.order(java.nio.ByteOrder.LITTLE_ENDIAN)
             assertEquals(frameCount * 4, output.remaining())
+
+            // 验证处于 OFF 状态时直接拖动声场调音滑杆或混响模式会自动激活 CUSTOM 预设并使 DSP 立即生效
+            manager.setPreset(EffectPreset.OFF)
+            assertFalse(manager.state.value.isEnabled)
+            manager.setBassBoostStrength(750)
+            assertTrue("OFF 态下调节超重低音应自动开启音效", manager.state.value.isEnabled)
+            assertEquals("OFF 态下调节声场参数应自动切至 CUSTOM 预设", EffectPreset.CUSTOM, manager.state.value.currentPreset)
+
+            manager.setPreset(EffectPreset.OFF)
+            manager.setReverbMode(ReverbMode.LARGE_HALL)
+            assertTrue("OFF 态下选择混响模式应自动开启音效", manager.state.value.isEnabled)
+            assertEquals(EffectPreset.CUSTOM, manager.state.value.currentPreset)
+            assertEquals(ReverbMode.LARGE_HALL, manager.state.value.reverbMode)
         } finally {
             manager.setEnabled(false)
             manager.setChannelBalance(0f)

@@ -136,7 +136,7 @@ BreezeMusic/
 │       │   │       │   ├── NowPlayingDialogs.kt # 播放页更多控制台、音质选择、倍速变调、睡眠定时与 2K 海报
 │       │   │       │   ├── SongDownloadDialog.kt# 单曲多音质下载选择与内嵌开关弹窗
 │       │   │       │   ├── SongDetailSheet.kt   # 音乐技术参数与特征码详情面板（实时展示硬件采样率/位深）
-│       │   │       │   ├── ViperSoundEffectScreen.kt # 蝰蛇音效与 10 段参量均衡器可视化调音台
+│       │   │       │   ├── AudioEffectDialog.kt     # 蝰蛇音效与 10 段参量均衡器可视化调音台 (ViperSoundEffectScreen)
 │       │   │       │   └── FloatingLyricOverlay.kt   # 全局悬浮桌面歌词与内嵌歌词胶囊渲染组件
 │       │   │       ├── home/                    # 发现页、每日推荐、私人 FM、新歌速递与排行榜详情
 │       │   │       ├── library/                 # 我的音乐库、自建/收藏歌单、歌手主页与专辑详情页

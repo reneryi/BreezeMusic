@@ -17,7 +17,6 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -26,12 +25,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -48,12 +46,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -69,6 +67,7 @@ import com.concept.music.ui.theme.ConceptMintAccent
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
 import kotlinx.coroutines.delay
+import kotlin.math.cos
 import kotlin.math.sin
 
 /**
@@ -114,15 +113,15 @@ fun resolveAppVersionInfo(context: Context?): AppVersionInfo {
         }
     }
     return AppVersionInfo(
-        rawVersionName = BuildConfig.VERSION_NAME.trim().removePrefix("v").removePrefix("V").ifBlank { "1.0.0" },
+        rawVersionName = BuildConfig.VERSION_NAME.trim().removePrefix("v").removePrefix("V").ifBlank { "1.0.1" },
         versionCode = BuildConfig.VERSION_CODE.toLong().coerceAtLeast(1L)
     )
 }
 
 /**
  * 微风音乐 (BreezeMusic) 统一品牌应用图标组件：
- * 直接渲染 `@drawable/ic_launcher_concept` 高精度矢量图标，并附带微风流光玻璃边框与柔光阴影，
- * 在「开屏页面」与「设置 -> 关于微风音乐」中共享使用，确保全应用品牌视觉高度一致。
+ * 采用无边框纯净深海柔光设计，渲染 `@drawable/ic_launcher_concept` 高精度矢量图标与弥散光晕，
+ * 在「开屏页面」与「设置 -> 关于微风音乐」中共享使用，保持全应用品牌视觉高度一致。
  */
 @Composable
 fun BreezeAppLogo(
@@ -141,13 +140,13 @@ fun BreezeAppLogo(
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            ConceptCyanAccent.copy(alpha = 0.30f),
-                            ConceptPrimary.copy(alpha = 0.12f),
+                            ConceptCyanAccent.copy(alpha = 0.32f),
+                            ConceptPrimary.copy(alpha = 0.14f),
                             Color.Transparent
                         ),
-                        radius = this.size.minDimension * 0.72f
+                        radius = this.size.minDimension * 0.78f
                     ),
-                    radius = this.size.minDimension * 0.72f
+                    radius = this.size.minDimension * 0.78f
                 )
             }
         }
@@ -157,23 +156,12 @@ fun BreezeAppLogo(
             modifier = Modifier
                 .fillMaxSize()
                 .shadow(
-                    elevation = if (showAmbientHalo) 14.dp else 4.dp,
+                    elevation = if (showAmbientHalo) 16.dp else 4.dp,
                     shape = shape,
                     ambientColor = ConceptPrimary,
                     spotColor = ConceptCyanAccent
                 )
                 .clip(shape)
-                .border(
-                    width = 1.2.dp,
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            ConceptCyanAccent.copy(alpha = 0.65f),
-                            Color.White.copy(alpha = 0.25f),
-                            ConceptMintAccent.copy(alpha = 0.55f)
-                        )
-                    ),
-                    shape = shape
-                )
         ) {
             Image(
                 painter = painterResource(id = R.drawable.ic_launcher_concept),
@@ -186,14 +174,78 @@ fun BreezeAppLogo(
 }
 
 /**
- * 微风音乐沉浸式品牌开屏页面（Splash Screen）：
- * 融合「深海微风 · 黑胶流光」动态波浪声场、旋转黑胶光环、统一品牌图标与实时版本号展示，
- * 支持右上角一键「跳过」或 1.35 秒后自动平滑渐隐进入主界面。
+ * 微风声学频谱律动动画组件（无边框圆角渐变音律波柱）：
+ * 通过 9 根对称排布的流光声学能量柱与相位差正弦包络，呈现灵动柔和的音频律动效果。
  */
+@Composable
+fun BreezeAcousticRhythmBars(
+    phase: Float,
+    modifier: Modifier = Modifier,
+    barCount: Int = 9,
+    maxBarHeight: Dp = 26.dp,
+    barWidth: Dp = 4.dp,
+    barSpacing: Dp = 5.5.dp
+) {
+    val totalWidth = (barWidth * barCount) + (barSpacing * (barCount - 1).coerceAtLeast(0))
+    Canvas(
+        modifier = modifier
+            .width(totalWidth)
+            .height(maxBarHeight)
+    ) {
+        val wPx = barWidth.toPx()
+        val gapPx = barSpacing.toPx()
+        val maxH = size.height
+        val centerIdx = (barCount - 1) / 2f
+
+        for (i in 0 until barCount) {
+            val distFromCenter = kotlin.math.abs(i - centerIdx) / centerIdx.coerceAtLeast(1f)
+            val envelopeWeight = 1f - (distFromCenter * 0.48f)
+            val wave1 = (sin(phase * 2.2f + i * 0.78f) + 1f) * 0.5f
+            val wave2 = (cos(phase * 1.4f - i * 1.15f) + 1f) * 0.5f
+            val normalizedAmp = (0.24f + (wave1 * 0.52f + wave2 * 0.24f) * envelopeWeight).coerceIn(0.20f, 1.0f)
+
+            val barH = (maxH * normalizedAmp).coerceAtLeast(wPx)
+            val x = i * (wPx + gapPx)
+            val y = (maxH - barH) / 2f
+
+            val topColor = when (i % 3) {
+                0 -> ConceptCyanAccent
+                1 -> ConceptMintAccent
+                else -> ConceptPrimary
+            }
+            val bottomColor = ConceptPrimary.copy(alpha = 0.65f)
+
+            drawRoundRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        topColor.copy(alpha = 0.92f),
+                        bottomColor
+                    ),
+                    startY = y,
+                    endY = y + barH
+                ),
+                topLeft = Offset(x, y),
+                size = Size(wPx, barH),
+                cornerRadius = CornerRadius(wPx / 2f, wPx / 2f)
+            )
+        }
+    }
+}
+
+/**
+ * 微风音乐沉浸式品牌开屏页面（Splash Screen v1.0.1）：
+ * 1. 移除右上角「跳过」按钮，点击桌面图标后零中间页直达本开屏画面；
+ * 2. 全面采用无边框线（Borderless）流体光晕与磨砂胶囊设计，告别生硬描边；
+ * 3. 融合双层呼吸极光光晕、微风柔和流体波浪与 9 频段声学律动波柱动画；
+ * 4. 保持黄金展示时长（1.38 秒后自动平滑渐隐进入主界面）。
+ */
+const val BREEZE_SPLASH_DISPLAY_DURATION_MS = 2150L
+
 @Composable
 fun BreezeSplashOverlay(
     visible: Boolean,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    durationMillis: Long = BREEZE_SPLASH_DISPLAY_DURATION_MS
 ) {
     val context = LocalContext.current
     val versionInfo = remember(context) { resolveAppVersionInfo(context) }
@@ -202,45 +254,41 @@ fun BreezeSplashOverlay(
     LaunchedEffect(visible) {
         if (visible) {
             startEntranceAnim = true
-            delay(1380L)
+            delay(durationMillis)
             onDismiss()
         }
     }
 
     val logoScale by animateFloatAsState(
-        targetValue = if (startEntranceAnim) 1f else 0.84f,
-        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
+        targetValue = if (startEntranceAnim) 1f else 0.94f,
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "SplashLogoScale"
     )
-    val contentAlpha by animateFloatAsState(
-        targetValue = if (startEntranceAnim) 1f else 0f,
-        animationSpec = tween(durationMillis = 460, easing = FastOutSlowInEasing),
-        label = "SplashContentAlpha"
-    )
+    val contentAlpha = 1f
 
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(animationSpec = tween(220)),
+        enter = androidx.compose.animation.EnterTransition.None,
         exit = fadeOut(animationSpec = tween(380)) + scaleOut(
-            targetScale = 1.05f,
+            targetScale = 1.03f,
             animationSpec = tween(380, easing = FastOutSlowInEasing)
         )
     ) {
-        val infiniteTransition = rememberInfiniteTransition(label = "SplashWaveTransition")
-        val wavePhase by infiniteTransition.animateFloat(
+        val infiniteTransition = rememberInfiniteTransition(label = "SplashRhythmTransition")
+        val rhythmPhase by infiniteTransition.animateFloat(
             initialValue = 0f,
             targetValue = (2f * Math.PI).toFloat(),
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 3600, easing = LinearEasing),
+                animation = tween(durationMillis = 2400, easing = LinearEasing),
                 repeatMode = RepeatMode.Restart
             ),
-            label = "SplashWavePhase"
+            label = "SplashRhythmPhase"
         )
         val haloPulse by infiniteTransition.animateFloat(
-            initialValue = 0.92f,
-            targetValue = 1.08f,
+            initialValue = 0.90f,
+            targetValue = 1.12f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 1600, easing = FastOutSlowInEasing),
+                animation = tween(durationMillis = 1500, easing = FastOutSlowInEasing),
                 repeatMode = RepeatMode.Reverse
             ),
             label = "SplashHaloPulse"
@@ -265,77 +313,74 @@ fun BreezeSplashOverlay(
                     onClick = {}
                 )
         ) {
-            // 背景动态微风声波流光曲线与深海星芒光晕
+            // 背景无边框流体极光光晕与微风声场柔光色带（全填充渐变，不使用任何线条描边）
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val w = size.width
                 val h = size.height
 
+                // 主极光呼吸光晕
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            ConceptPrimary.copy(alpha = 0.22f),
-                            ConceptCyanAccent.copy(alpha = 0.08f),
+                            ConceptPrimary.copy(alpha = 0.24f),
+                            ConceptCyanAccent.copy(alpha = 0.10f),
                             Color.Transparent
                         ),
-                        center = Offset(w * 0.5f, h * 0.40f),
-                        radius = w * 0.68f * haloPulse
+                        center = Offset(w * 0.5f, h * 0.39f),
+                        radius = w * 0.72f * haloPulse
                     ),
-                    center = Offset(w * 0.5f, h * 0.40f),
-                    radius = w * 0.68f * haloPulse
+                    center = Offset(w * 0.5f, h * 0.39f),
+                    radius = w * 0.72f * haloPulse
                 )
 
-                // 绘制三道灵动微风声波丝带
-                val ribbonConfigs = listOf(
-                    Triple(0.42f, 26f, ConceptCyanAccent.copy(alpha = 0.22f)),
-                    Triple(0.46f, 20f, ConceptPrimary.copy(alpha = 0.18f)),
-                    Triple(0.50f, 16f, ConceptMintAccent.copy(alpha = 0.15f))
+                // 次级薄荷青律动弥散光斑
+                val driftX = w * 0.5f + sin(rhythmPhase) * (w * 0.08f)
+                val driftY = h * 0.45f + cos(rhythmPhase) * (h * 0.03f)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            ConceptMintAccent.copy(alpha = 0.12f),
+                            ConceptCyanAccent.copy(alpha = 0.04f),
+                            Color.Transparent
+                        ),
+                        center = Offset(driftX, driftY),
+                        radius = w * 0.48f
+                    ),
+                    center = Offset(driftX, driftY),
+                    radius = w * 0.48f
                 )
-                ribbonConfigs.forEachIndexed { idx, (yFrac, ampDp, color) ->
-                    val path = Path()
-                    val baseY = h * yFrac
-                    val ampPx = ampDp * density
-                    val steps = 48
+
+                // 底部微风柔光波浪填充层（无边框面状渐变）
+                val wavePath = Path().apply {
+                    val baseY = h * 0.78f
+                    val ampPx = 18.dp.toPx()
+                    moveTo(0f, h)
+                    lineTo(0f, baseY)
+                    val steps = 36
                     for (i in 0..steps) {
                         val t = i / steps.toFloat()
                         val x = w * t
-                        val y = baseY + sin(t * 4.2f + wavePhase + idx * 0.9f) * ampPx
-                        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                        val y = baseY + sin(t * 3.6f + rhythmPhase) * ampPx
+                        lineTo(x, y)
                     }
-                    drawPath(
-                        path = path,
-                        color = color,
-                        style = Stroke(width = (2.2f - idx * 0.4f) * density, cap = StrokeCap.Round)
-                    )
+                    lineTo(w, h)
+                    close()
                 }
+                drawPath(
+                    path = wavePath,
+                    brush = Brush.verticalGradient(
+                        colors = listOf(
+                            ConceptCyanAccent.copy(alpha = 0.06f),
+                            ConceptPrimary.copy(alpha = 0.02f),
+                            Color.Transparent
+                        ),
+                        startY = h * 0.74f,
+                        endY = h
+                    )
+                )
             }
 
-            // 右上角「跳过」胶囊按钮
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(top = 14.dp, end = 18.dp),
-                contentAlignment = Alignment.TopEnd
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color.White.copy(alpha = 0.08f),
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .border(0.8.dp, Color.White.copy(alpha = 0.16f), CircleShape)
-                        .clickable { onDismiss() }
-                ) {
-                    Text(
-                        text = "跳过",
-                        color = Color.White.copy(alpha = 0.82f),
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 13.dp, vertical = 5.dp)
-                    )
-                }
-            }
-
-            // 中心主体：微风音乐品牌图标 + 标题 + Slogan + 特性徽章
+            // 中心主体：无边框呼吸声学光环 + 品牌图标 + 标题 + 声学律动波柱 + 无边框圆点特性标识
             Column(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -349,20 +394,25 @@ fun BreezeSplashOverlay(
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(136.dp)
+                    modifier = Modifier.size(144.dp)
                 ) {
-                    // 外层呼吸黑胶声波环
+                    // 无边框双层柔光声学呼吸光晕（替代原先的细线圆环）
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val r = (size.minDimension / 2f) * haloPulse
+                        val rOuter = (size.minDimension / 2f) * haloPulse
                         drawCircle(
-                            color = ConceptCyanAccent.copy(alpha = 0.22f),
-                            radius = r,
-                            style = Stroke(width = 1.4.dp.toPx())
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    ConceptCyanAccent.copy(alpha = 0.24f),
+                                    ConceptPrimary.copy(alpha = 0.10f),
+                                    Color.Transparent
+                                ),
+                                radius = rOuter
+                            ),
+                            radius = rOuter
                         )
                         drawCircle(
-                            color = ConceptPrimary.copy(alpha = 0.14f),
-                            radius = r * 0.88f,
-                            style = Stroke(width = 1.dp.toPx())
+                            color = ConceptCyanAccent.copy(alpha = 0.08f),
+                            radius = rOuter * 0.78f
                         )
                     }
 
@@ -373,14 +423,14 @@ fun BreezeSplashOverlay(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(22.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 Text(
                     text = "微风音乐",
                     style = MaterialTheme.typography.headlineMedium.copy(
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 28.sp,
-                        letterSpacing = 1.5.sp
+                        letterSpacing = 1.8.sp
                     ),
                     color = Color.White
                 )
@@ -392,7 +442,7 @@ fun BreezeSplashOverlay(
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.sp,
-                        letterSpacing = 3.2.sp
+                        letterSpacing = 3.4.sp
                     ),
                     color = ConceptCyanAccent.copy(alpha = 0.88f)
                 )
@@ -404,15 +454,27 @@ fun BreezeSplashOverlay(
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontWeight = FontWeight.Medium,
                         fontSize = 14.sp,
-                        letterSpacing = 0.8.sp
+                        letterSpacing = 1.0.sp
                     ),
                     color = Color.White.copy(alpha = 0.78f)
                 )
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(22.dp))
 
+                // 实时声学频谱律动波柱动画
+                BreezeAcousticRhythmBars(
+                    phase = rhythmPhase,
+                    barCount = 9,
+                    maxBarHeight = 24.dp,
+                    barWidth = 3.8.dp,
+                    barSpacing = 5.5.dp
+                )
+
+                Spacer(modifier = Modifier.height(22.dp))
+
+                // 无边框柔光胶囊标识（采用呼吸光点 + 柔和底色，完全去除边框线）
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     listOf(
@@ -421,21 +483,27 @@ fun BreezeSplashOverlay(
                         "KRC 逐字流光" to ConceptMintAccent
                     ).forEach { (badgeText, accent) ->
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = accent.copy(alpha = 0.12f),
-                            modifier = Modifier.border(
-                                width = 0.7.dp,
-                                color = accent.copy(alpha = 0.35f),
-                                shape = RoundedCornerShape(8.dp)
-                            )
+                            shape = CircleShape,
+                            color = accent.copy(alpha = 0.12f)
                         ) {
-                            Text(
-                                text = badgeText,
-                                color = accent,
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.5.dp)
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(5.dp)
+                                        .clip(CircleShape)
+                                        .background(accent)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = badgeText,
+                                    color = accent.copy(alpha = 0.95f),
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }

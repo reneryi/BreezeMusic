@@ -15,15 +15,23 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 
-enum class ReverbMode(val label: String, val preset: Short) {
-    NONE("无混响", PresetReverb.PRESET_NONE),
-    SMALL_ROOM("小型房间", PresetReverb.PRESET_SMALLROOM),
-    MEDIUM_ROOM("中型房间", PresetReverb.PRESET_MEDIUMROOM),
-    LARGE_ROOM("大型房间", PresetReverb.PRESET_LARGEROOM),
-    MEDIUM_HALL("音乐大厅", PresetReverb.PRESET_MEDIUMHALL),
-    LARGE_HALL("混响礼堂", PresetReverb.PRESET_LARGEHALL),
-    PLATE("录音室板式", PresetReverb.PRESET_PLATE)
+enum class ReverbMode(
+    val label: String,
+    val preset: Short,
+    val roomScale: Float,
+    val decayFeedback: Float,
+    val damping: Float,
+    val wetMix: Float
+) {
+    NONE("无混响", PresetReverb.PRESET_NONE, 0f, 0f, 0f, 0f),
+    SMALL_ROOM("小型房间", PresetReverb.PRESET_SMALLROOM, 0.52f, 0.44f, 0.42f, 0.18f),
+    MEDIUM_ROOM("中型房间", PresetReverb.PRESET_MEDIUMROOM, 0.70f, 0.56f, 0.36f, 0.23f),
+    LARGE_ROOM("大型房间", PresetReverb.PRESET_LARGEROOM, 0.86f, 0.66f, 0.32f, 0.27f),
+    MEDIUM_HALL("音乐大厅", PresetReverb.PRESET_MEDIUMHALL, 1.00f, 0.74f, 0.28f, 0.31f),
+    LARGE_HALL("混响礼堂", PresetReverb.PRESET_LARGEHALL, 1.18f, 0.81f, 0.24f, 0.36f),
+    PLATE("录音室板式", PresetReverb.PRESET_PLATE, 0.78f, 0.76f, 0.18f, 0.29f)
 }
 
 /**
@@ -408,6 +416,11 @@ object AudioEffectManager {
     private var currentSessionId: Int = 0
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * 每次音效状态或详细调音参数修改时递增，供 `ConceptMasteringAudioProcessor` 在音频帧级别零延迟感知并重算 64-bit DSP 滤波器系数
+     */
+    val dspConfigVersion = AtomicLong(1L)
+
     private var equalizer: Equalizer? = null
     private var bassBoost: BassBoost? = null
     private var virtualizer: Virtualizer? = null
@@ -421,6 +434,7 @@ object AudioEffectManager {
     val state = _state.asStateFlow()
 
     val TEN_BAND_FREQUENCIES = listOf("31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k")
+    val TEN_BAND_CENTER_HZ = doubleArrayOf(31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0)
     val FIVE_BAND_FREQUENCIES = listOf("60Hz", "230Hz", "910Hz", "3.6kHz", "14kHz")
 
     fun init(context: Context) {
@@ -453,19 +467,6 @@ object AudioEffectManager {
             currentSessionId = sessionId
         }
         applyCurrentState()
-    }
-
-    private fun ensureEffectsCreated() {
-        val sessionId = currentSessionId
-        if (sessionId <= 0) return
-        try {
-            if (equalizer == null) runCatching { equalizer = Equalizer(0, sessionId) }
-            if (bassBoost == null) runCatching { bassBoost = BassBoost(0, sessionId) }
-            if (virtualizer == null) runCatching { virtualizer = Virtualizer(0, sessionId) }
-            if (loudnessEnhancer == null) runCatching { loudnessEnhancer = LoudnessEnhancer(sessionId) }
-            if (presetReverb == null) runCatching { presetReverb = PresetReverb(0, sessionId) }
-        } catch (_: Exception) {
-        }
     }
 
     internal fun defaultBandsForPreset(preset: EffectPreset): List<Int> = when (preset) {
@@ -507,6 +508,50 @@ object AudioEffectManager {
         EffectPreset.EQ_ACOUSTIC -> listOf(40, 50, 60, 70, 60)
         EffectPreset.EQ_SOFT -> listOf(40, 30, 10, -40, -70)
         EffectPreset.CUSTOM -> listOf(0, 0, 0, 0, 0)
+    }
+
+    /**
+     * 针对 10 段参量均衡器 (31Hz ~ 16kHz, 单位 mB: -1000..+1000 即 -10dB..+10dB) 的高辨识度声学频响曲线：
+     * 解决此前将 5 段缩略值 (20..180) 原样填入 10 段导致只产生 0.2~1.8dB 微弱变化、听感与关闭无异的问题。
+     */
+    internal fun defaultTenBandsForPreset(preset: EffectPreset): List<Int> = when (preset) {
+        EffectPreset.OFF, EffectPreset.FLAT -> List(10) { 0 }
+        EffectPreset.VIPER_3D -> listOf(420, 340, 120, -140, -240, 80, 340, 520, 640, 680)
+        EffectPreset.VIPER_BASS -> listOf(780, 700, 480, 180, -160, -240, -120, 80, 180, 220)
+        EffectPreset.VIPER_VOCAL -> listOf(-420, -260, -60, 180, 420, 580, 640, 480, 260, 140)
+        EffectPreset.VIPER_HIFI -> listOf(380, 300, 140, 60, 100, 180, 340, 500, 620, 660)
+        EffectPreset.VIPER_PANORAMA_51 -> listOf(560, 460, 200, -80, -160, 120, 380, 540, 660, 700)
+        EffectPreset.VIPER_BLACK_DIAMOND -> listOf(480, 400, 220, 100, 140, 240, 400, 520, 580, 520)
+        EffectPreset.VIPER_CLEAR_MASTER -> listOf(280, 220, 120, 80, 160, 300, 480, 640, 760, 820)
+        EffectPreset.VIPER_3D_ROTATE -> listOf(440, 320, 80, -160, -220, 140, 400, 560, 660, 640)
+        EffectPreset.VIPER_SURROUND -> listOf(460, 360, 140, -120, -180, 160, 440, 600, 700, 720)
+        EffectPreset.VIPER_CONCERT -> listOf(620, 520, 280, 40, -120, 140, 360, 500, 600, 580)
+        EffectPreset.VIPER_LIVEHOUSE -> listOf(680, 580, 360, 140, 60, 180, 340, 460, 480, 420)
+        EffectPreset.VIPER_STUDIO -> listOf(180, 140, 80, 60, 100, 180, 280, 360, 400, 380)
+        EffectPreset.VIPER_VINYL -> listOf(460, 420, 320, 220, 160, 120, 40, -180, -380, -520)
+        EffectPreset.VIPER_TAPE -> listOf(420, 460, 380, 260, 180, 80, -120, -280, -440, -580)
+        EffectPreset.VIPER_TUBE -> listOf(400, 440, 380, 340, 360, 320, 200, 40, -160, -320)
+        EffectPreset.VIPER_GRAMOPHONE -> listOf(-720, -540, -180, 320, 640, 720, 520, -120, -560, -780)
+        EffectPreset.VIPER_GUFENG -> listOf(-220, -80, 120, 280, 480, 600, 660, 580, 480, 420)
+        EffectPreset.VIPER_FOLK -> listOf(240, 320, 380, 320, 440, 520, 460, 360, 280, 220)
+        EffectPreset.VIPER_ACG -> listOf(340, 260, 80, 120, 320, 540, 680, 740, 700, 640)
+        EffectPreset.VIPER_EDM -> listOf(820, 740, 460, 80, -280, -220, 160, 480, 680, 760)
+        EffectPreset.VIPER_RNB -> listOf(660, 600, 420, 180, 100, 240, 380, 440, 460, 400)
+        EffectPreset.VIPER_IEM -> listOf(340, 280, 180, 100, 140, 180, -120, -320, 360, 520)
+        EffectPreset.VIPER_HEADPHONE -> listOf(440, 360, 220, 100, 60, 160, 300, 420, 520, 540)
+        EffectPreset.VIPER_TWS -> listOf(580, 480, 240, 60, 80, 220, 400, 540, 660, 700)
+        EffectPreset.VIPER_CAR_LUXURY -> listOf(640, 540, 320, 120, 100, 240, 400, 520, 600, 620)
+        EffectPreset.VIPER_CAR_SUBWOOFER -> listOf(860, 780, 540, 220, -140, -100, 140, 280, 360, 380)
+        EffectPreset.VIPER_DYNAMIC -> listOf(580, 480, 260, 60, -40, 120, 320, 480, 600, 640)
+        EffectPreset.ROCK -> listOf(560, 480, 280, -120, -360, -200, 220, 460, 580, 620)
+        EffectPreset.POP -> listOf(320, 280, 340, 440, 520, 480, 380, 280, 220, 180)
+        EffectPreset.EQ_CLASSICAL -> listOf(340, 280, 140, 0, -60, 80, 260, 420, 540, 600)
+        EffectPreset.EQ_JAZZ -> listOf(400, 360, 260, 180, 140, 220, 320, 380, 420, 380)
+        EffectPreset.EQ_DANCE -> listOf(720, 640, 400, 80, -220, -140, 180, 420, 580, 640)
+        EffectPreset.EQ_HIPHOP -> listOf(780, 680, 440, 160, 0, 140, 320, 400, 460, 480)
+        EffectPreset.EQ_ACOUSTIC -> listOf(260, 300, 340, 280, 360, 420, 440, 400, 360, 320)
+        EffectPreset.EQ_SOFT -> listOf(280, 260, 200, 120, 40, -80, -220, -360, -480, -560)
+        EffectPreset.CUSTOM -> expandFiveToTenBands(defaultBandsForPreset(EffectPreset.CUSTOM))
     }
 
     internal fun expandFiveToTenBands(fiveBands: List<Int>): List<Int> {
@@ -551,6 +596,63 @@ object AudioEffectManager {
         return defaultBandsForPreset(fallbackPreset)
     }
 
+    /**
+     * 计算当前状态在 10 个中心频点上的综合等效频响曲线（单位 mB，-1000..+1000 对应 -10dB..+10dB）：
+     * 同时融合 10 段参量均衡推杆、重低音下潜与截止频点 (45/60/85Hz)、人声通透激励、胆机温暖度以及等响度补偿，
+     * 供 UI 频响曲线画布与 DSP 状态展示实时联动。
+     */
+    fun computeEffectiveTenBandsMb(state: AudioEffectState): List<Int> {
+        val baseTen = if (state.tenBandLevels.size == 10) state.tenBandLevels else List(10) { 0 }
+        if (!state.isEnabled) return baseTen
+
+        val bassNorm = (state.bassBoostStrength / 1000f).coerceIn(0f, 1f)
+        val clarityNorm = (state.vocalClarityStrength / 1000f).coerceIn(0f, 1f)
+        val warmthNorm = (state.analogWarmthStrength / 1000f).coerceIn(0f, 1f)
+        val eqLoudness = state.equalLoudnessCompensation
+        val cutoff = state.bassCutoffHz
+
+        return List(10) { idx ->
+            val baseMb = baseTen[idx]
+            val bassModMb = when (idx) {
+                0 -> (bassNorm * (if (cutoff <= 50) 620f else if (cutoff <= 65) 520f else 400f)).toInt()
+                1 -> (bassNorm * (if (cutoff <= 50) 480f else if (cutoff <= 65) 560f else 520f)).toInt()
+                2 -> (bassNorm * (if (cutoff <= 50) 200f else if (cutoff <= 65) 280f else 420f)).toInt()
+                3 -> (bassNorm * (if (cutoff >= 80) 140f else 40f)).toInt()
+                else -> 0
+            }
+            val clarityModMb = when (idx) {
+                3 -> (-clarityNorm * 140f).toInt()
+                5 -> (clarityNorm * 280f).toInt()
+                6 -> (clarityNorm * 460f).toInt()
+                7 -> (clarityNorm * 520f).toInt()
+                8 -> (clarityNorm * 380f).toInt()
+                9 -> (clarityNorm * 320f).toInt()
+                else -> 0
+            }
+            val warmthModMb = when (idx) {
+                1 -> (warmthNorm * 220f).toInt()
+                2 -> (warmthNorm * 360f).toInt()
+                3 -> (warmthNorm * 320f).toInt()
+                4 -> (warmthNorm * 180f).toInt()
+                8 -> (-warmthNorm * 180f).toInt()
+                9 -> (-warmthNorm * 260f).toInt()
+                else -> 0
+            }
+            val loudnessCompMb = if (eqLoudness) {
+                when (idx) {
+                    0 -> 380
+                    1 -> 280
+                    2 -> 120
+                    8 -> 220
+                    9 -> 320
+                    else -> 0
+                }
+            } else 0
+
+            (baseMb + bassModMb + clarityModMb + warmthModMb + loudnessCompMb).coerceIn(-1000, 1000)
+        }
+    }
+
     private data class PresetDetailedProfile(
         val bass: Int,
         val cutoffHz: Int,
@@ -560,49 +662,51 @@ object AudioEffectManager {
         val rotationSpeed: Int,
         val loudness: Int,
         val reverb: ReverbMode,
-        val bands: List<Int>
+        val bands: List<Int>,
+        val tenBands: List<Int>
     )
 
     private fun profileForPreset(preset: EffectPreset): PresetDetailedProfile {
         val bands = defaultBandsForPreset(preset)
+        val tenBands = defaultTenBandsForPreset(preset)
         return when (preset) {
-            EffectPreset.OFF -> PresetDetailedProfile(0, 60, 0, 0, 0, 0, 0, ReverbMode.NONE, bands)
-            EffectPreset.FLAT -> PresetDetailedProfile(0, 60, 0, 0, 0, 0, 0, ReverbMode.NONE, bands)
-            EffectPreset.VIPER_3D -> PresetDetailedProfile(180, 60, 380, 340, 120, 0, 80, ReverbMode.NONE, bands)
-            EffectPreset.VIPER_VOCAL -> PresetDetailedProfile(40, 85, 160, 480, 220, 0, 60, ReverbMode.NONE, bands)
-            EffectPreset.VIPER_BASS -> PresetDetailedProfile(420, 45, 140, 180, 260, 0, 100, ReverbMode.NONE, bands)
-            EffectPreset.VIPER_HIFI -> PresetDetailedProfile(140, 60, 280, 320, 180, 0, 80, ReverbMode.MEDIUM_HALL, bands)
-            EffectPreset.VIPER_PANORAMA_51 -> PresetDetailedProfile(240, 45, 520, 300, 160, 20, 100, ReverbMode.LARGE_HALL, bands)
-            EffectPreset.VIPER_BLACK_DIAMOND -> PresetDetailedProfile(200, 60, 260, 420, 380, 0, 90, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.VIPER_CLEAR_MASTER -> PresetDetailedProfile(120, 60, 220, 520, 140, 0, 80, ReverbMode.NONE, bands)
-            EffectPreset.VIPER_3D_ROTATE -> PresetDetailedProfile(160, 60, 600, 260, 100, 65, 90, ReverbMode.MEDIUM_HALL, bands)
-            EffectPreset.VIPER_SURROUND -> PresetDetailedProfile(200, 60, 480, 280, 140, 15, 100, ReverbMode.LARGE_HALL, bands)
-            EffectPreset.VIPER_CONCERT -> PresetDetailedProfile(250, 60, 500, 280, 200, 0, 110, ReverbMode.LARGE_HALL, bands)
-            EffectPreset.VIPER_LIVEHOUSE -> PresetDetailedProfile(280, 60, 320, 300, 240, 0, 100, ReverbMode.MEDIUM_ROOM, bands)
-            EffectPreset.VIPER_STUDIO -> PresetDetailedProfile(80, 60, 120, 380, 100, 0, 40, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.VIPER_VINYL -> PresetDetailedProfile(160, 60, 180, 180, 520, 0, 60, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.VIPER_TAPE -> PresetDetailedProfile(180, 85, 150, 160, 560, 0, 70, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.VIPER_TUBE -> PresetDetailedProfile(150, 60, 200, 280, 620, 0, 80, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.VIPER_GRAMOPHONE -> PresetDetailedProfile(0, 85, 80, 240, 480, 0, 50, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.VIPER_GUFENG -> PresetDetailedProfile(60, 85, 320, 460, 200, 0, 70, ReverbMode.MEDIUM_HALL, bands)
-            EffectPreset.VIPER_FOLK -> PresetDetailedProfile(110, 60, 220, 380, 340, 0, 60, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.VIPER_ACG -> PresetDetailedProfile(140, 60, 280, 500, 120, 0, 90, ReverbMode.NONE, bands)
-            EffectPreset.VIPER_EDM -> PresetDetailedProfile(460, 45, 380, 360, 160, 0, 120, ReverbMode.LARGE_ROOM, bands)
-            EffectPreset.VIPER_RNB -> PresetDetailedProfile(320, 60, 260, 300, 320, 0, 90, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.VIPER_IEM -> PresetDetailedProfile(140, 60, 340, 280, 220, 0, 60, ReverbMode.NONE, bands)
-            EffectPreset.VIPER_HEADPHONE -> PresetDetailedProfile(160, 45, 380, 320, 240, 0, 70, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.VIPER_TWS -> PresetDetailedProfile(260, 60, 300, 380, 180, 0, 90, ReverbMode.NONE, bands)
-            EffectPreset.VIPER_CAR_LUXURY -> PresetDetailedProfile(280, 45, 440, 340, 260, 0, 110, ReverbMode.MEDIUM_ROOM, bands)
-            EffectPreset.VIPER_CAR_SUBWOOFER -> PresetDetailedProfile(480, 45, 260, 220, 280, 0, 120, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.VIPER_DYNAMIC -> PresetDetailedProfile(260, 60, 260, 340, 180, 0, 120, ReverbMode.NONE, bands)
-            EffectPreset.ROCK -> PresetDetailedProfile(220, 60, 200, 300, 160, 0, 100, ReverbMode.NONE, bands)
-            EffectPreset.POP -> PresetDetailedProfile(140, 60, 160, 320, 200, 0, 60, ReverbMode.NONE, bands)
-            EffectPreset.EQ_CLASSICAL -> PresetDetailedProfile(100, 45, 320, 340, 180, 0, 60, ReverbMode.MEDIUM_HALL, bands)
-            EffectPreset.EQ_JAZZ -> PresetDetailedProfile(160, 60, 220, 280, 360, 0, 60, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.EQ_DANCE -> PresetDetailedProfile(340, 45, 240, 280, 140, 0, 100, ReverbMode.NONE, bands)
-            EffectPreset.EQ_HIPHOP -> PresetDetailedProfile(380, 45, 200, 320, 220, 0, 100, ReverbMode.NONE, bands)
-            EffectPreset.EQ_ACOUSTIC -> PresetDetailedProfile(100, 60, 180, 340, 280, 0, 50, ReverbMode.SMALL_ROOM, bands)
-            EffectPreset.EQ_SOFT -> PresetDetailedProfile(90, 60, 140, 120, 380, 0, 30, ReverbMode.NONE, bands)
+            EffectPreset.OFF -> PresetDetailedProfile(0, 60, 0, 0, 0, 0, 0, ReverbMode.NONE, bands, tenBands)
+            EffectPreset.FLAT -> PresetDetailedProfile(0, 60, 0, 0, 0, 0, 0, ReverbMode.NONE, bands, tenBands)
+            EffectPreset.VIPER_3D -> PresetDetailedProfile(360, 60, 560, 460, 160, 0, 260, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_VOCAL -> PresetDetailedProfile(60, 85, 220, 680, 280, 0, 220, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_BASS -> PresetDetailedProfile(720, 45, 240, 220, 340, 0, 340, ReverbMode.NONE, bands, tenBands)
+            EffectPreset.VIPER_HIFI -> PresetDetailedProfile(280, 60, 460, 440, 240, 0, 260, ReverbMode.MEDIUM_HALL, bands, tenBands)
+            EffectPreset.VIPER_PANORAMA_51 -> PresetDetailedProfile(420, 45, 720, 420, 200, 24, 320, ReverbMode.LARGE_HALL, bands, tenBands)
+            EffectPreset.VIPER_BLACK_DIAMOND -> PresetDetailedProfile(200, 60, 260, 420, 380, 0, 280, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_CLEAR_MASTER -> PresetDetailedProfile(220, 60, 340, 680, 160, 0, 260, ReverbMode.NONE, bands, tenBands)
+            EffectPreset.VIPER_3D_ROTATE -> PresetDetailedProfile(300, 60, 780, 360, 140, 72, 280, ReverbMode.MEDIUM_HALL, bands, tenBands)
+            EffectPreset.VIPER_SURROUND -> PresetDetailedProfile(360, 60, 680, 380, 180, 18, 300, ReverbMode.LARGE_HALL, bands, tenBands)
+            EffectPreset.VIPER_CONCERT -> PresetDetailedProfile(440, 60, 680, 380, 240, 0, 340, ReverbMode.LARGE_HALL, bands, tenBands)
+            EffectPreset.VIPER_LIVEHOUSE -> PresetDetailedProfile(480, 60, 460, 420, 320, 0, 320, ReverbMode.MEDIUM_ROOM, bands, tenBands)
+            EffectPreset.VIPER_STUDIO -> PresetDetailedProfile(140, 60, 180, 480, 140, 0, 160, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_VINYL -> PresetDetailedProfile(300, 60, 240, 200, 680, 0, 220, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_TAPE -> PresetDetailedProfile(340, 85, 200, 180, 720, 0, 240, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_TUBE -> PresetDetailedProfile(280, 60, 260, 340, 780, 0, 260, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_GRAMOPHONE -> PresetDetailedProfile(0, 85, 100, 360, 640, 0, 200, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_GUFENG -> PresetDetailedProfile(120, 85, 440, 620, 240, 0, 240, ReverbMode.MEDIUM_HALL, bands, tenBands)
+            EffectPreset.VIPER_FOLK -> PresetDetailedProfile(220, 60, 300, 500, 440, 0, 220, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_ACG -> PresetDetailedProfile(260, 60, 380, 660, 140, 0, 280, ReverbMode.NONE, bands, tenBands)
+            EffectPreset.VIPER_EDM -> PresetDetailedProfile(760, 45, 520, 480, 200, 0, 380, ReverbMode.LARGE_ROOM, bands, tenBands)
+            EffectPreset.VIPER_RNB -> PresetDetailedProfile(540, 60, 380, 420, 440, 0, 280, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_IEM -> PresetDetailedProfile(260, 60, 460, 360, 280, 0, 200, ReverbMode.NONE, bands, tenBands)
+            EffectPreset.VIPER_HEADPHONE -> PresetDetailedProfile(300, 45, 520, 420, 300, 0, 240, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_TWS -> PresetDetailedProfile(460, 60, 420, 500, 220, 0, 280, ReverbMode.NONE, bands, tenBands)
+            EffectPreset.VIPER_CAR_LUXURY -> PresetDetailedProfile(480, 45, 600, 460, 340, 0, 340, ReverbMode.MEDIUM_ROOM, bands, tenBands)
+            EffectPreset.VIPER_CAR_SUBWOOFER -> PresetDetailedProfile(800, 45, 380, 300, 360, 0, 380, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.VIPER_DYNAMIC -> PresetDetailedProfile(440, 60, 380, 460, 220, 0, 320, ReverbMode.NONE, bands, tenBands)
+            EffectPreset.ROCK -> PresetDetailedProfile(400, 60, 300, 400, 220, 0, 280, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.POP -> PresetDetailedProfile(260, 60, 240, 440, 260, 0, 220, ReverbMode.NONE, bands, tenBands)
+            EffectPreset.EQ_CLASSICAL -> PresetDetailedProfile(200, 45, 440, 460, 220, 0, 200, ReverbMode.MEDIUM_HALL, bands, tenBands)
+            EffectPreset.EQ_JAZZ -> PresetDetailedProfile(280, 60, 320, 380, 480, 0, 220, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.EQ_DANCE -> PresetDetailedProfile(600, 45, 360, 380, 180, 0, 320, ReverbMode.NONE, bands, tenBands)
+            EffectPreset.EQ_HIPHOP -> PresetDetailedProfile(660, 45, 300, 420, 280, 0, 320, ReverbMode.NONE, bands, tenBands)
+            EffectPreset.EQ_ACOUSTIC -> PresetDetailedProfile(200, 60, 260, 460, 360, 0, 180, ReverbMode.SMALL_ROOM, bands, tenBands)
+            EffectPreset.EQ_SOFT -> PresetDetailedProfile(180, 60, 200, 160, 480, 0, 120, ReverbMode.NONE, bands, tenBands)
             EffectPreset.CUSTOM -> {
                 val cur = _state.value
                 PresetDetailedProfile(
@@ -614,11 +718,15 @@ object AudioEffectManager {
                     cur.surroundRotationSpeed,
                     cur.loudnessGainMb,
                     cur.reverbMode,
-                    cur.bandLevels
+                    cur.bandLevels,
+                    cur.tenBandLevels.let { if (it.size == 10) it else expandFiveToTenBands(cur.bandLevels) }
                 )
             }
         }
     }
+
+    private fun resolveActivePresetWhenTuning(current: EffectPreset): EffectPreset =
+        if (current == EffectPreset.OFF) EffectPreset.CUSTOM else current
 
     fun setEnabled(enabled: Boolean) {
         val nextPreset = if (enabled && _state.value.currentPreset == EffectPreset.OFF) {
@@ -651,7 +759,7 @@ object AudioEffectManager {
             loudnessGainMb = p.loudness,
             reverbMode = p.reverb,
             bandLevels = p.bands,
-            tenBandLevels = expandFiveToTenBands(p.bands)
+            tenBandLevels = p.tenBands
         )
         applyCurrentState()
         saveToPrefs()
@@ -683,7 +791,7 @@ object AudioEffectManager {
 
     fun setTenBandLevel(tenBandIndex: Int, levelMb: Int) {
         val currentTen = _state.value.tenBandLevels.toMutableList().let {
-            if (it.size == 10) it else expandFiveToTenBands(_state.value.bandLevels).toMutableList()
+            if (it.size == 10) it else defaultTenBandsForPreset(_state.value.currentPreset).toMutableList()
         }
         if (tenBandIndex in currentTen.indices) {
             currentTen[tenBandIndex] = levelMb.coerceIn(-1000, 1000)
@@ -701,8 +809,10 @@ object AudioEffectManager {
 
     fun setBassBoostStrength(strength: Int) {
         val s = strength.coerceIn(0, 1000)
-        _state.value = _state.value.copy(
+        val cur = _state.value
+        _state.value = cur.copy(
             isEnabled = true,
+            currentPreset = resolveActivePresetWhenTuning(cur.currentPreset),
             bassBoostStrength = s
         )
         applyCurrentState()
@@ -711,8 +821,10 @@ object AudioEffectManager {
 
     fun setBassCutoffHz(cutoffHz: Int) {
         val c = cutoffHz.coerceIn(40, 120)
-        _state.value = _state.value.copy(
+        val cur = _state.value
+        _state.value = cur.copy(
             isEnabled = true,
+            currentPreset = resolveActivePresetWhenTuning(cur.currentPreset),
             bassCutoffHz = c
         )
         applyCurrentState()
@@ -721,8 +833,10 @@ object AudioEffectManager {
 
     fun setVirtualizerStrength(strength: Int) {
         val s = strength.coerceIn(0, 1000)
-        _state.value = _state.value.copy(
+        val cur = _state.value
+        _state.value = cur.copy(
             isEnabled = true,
+            currentPreset = resolveActivePresetWhenTuning(cur.currentPreset),
             virtualizerStrength = s
         )
         applyCurrentState()
@@ -731,8 +845,10 @@ object AudioEffectManager {
 
     fun setVocalClarityStrength(strength: Int) {
         val s = strength.coerceIn(0, 1000)
-        _state.value = _state.value.copy(
+        val cur = _state.value
+        _state.value = cur.copy(
             isEnabled = true,
+            currentPreset = resolveActivePresetWhenTuning(cur.currentPreset),
             vocalClarityStrength = s
         )
         applyCurrentState()
@@ -741,8 +857,10 @@ object AudioEffectManager {
 
     fun setAnalogWarmthStrength(strength: Int) {
         val s = strength.coerceIn(0, 1000)
-        _state.value = _state.value.copy(
+        val cur = _state.value
+        _state.value = cur.copy(
             isEnabled = true,
+            currentPreset = resolveActivePresetWhenTuning(cur.currentPreset),
             analogWarmthStrength = s
         )
         applyCurrentState()
@@ -751,8 +869,10 @@ object AudioEffectManager {
 
     fun setSurroundRotationSpeed(speed: Int) {
         val s = speed.coerceIn(0, 100)
-        _state.value = _state.value.copy(
+        val cur = _state.value
+        _state.value = cur.copy(
             isEnabled = true,
+            currentPreset = resolveActivePresetWhenTuning(cur.currentPreset),
             surroundRotationSpeed = s
         )
         applyCurrentState()
@@ -761,8 +881,10 @@ object AudioEffectManager {
 
     fun setLoudnessGain(gainMb: Int) {
         val g = gainMb.coerceIn(0, 1500)
-        _state.value = _state.value.copy(
+        val cur = _state.value
+        _state.value = cur.copy(
             isEnabled = true,
+            currentPreset = resolveActivePresetWhenTuning(cur.currentPreset),
             loudnessGainMb = g
         )
         applyCurrentState()
@@ -771,8 +893,10 @@ object AudioEffectManager {
 
     fun setPreampGainDb(gainDb: Float) {
         val g = gainDb.coerceIn(-6f, 6f)
-        _state.value = _state.value.copy(
+        val cur = _state.value
+        _state.value = cur.copy(
             isEnabled = true,
+            currentPreset = resolveActivePresetWhenTuning(cur.currentPreset),
             preampGainDb = g
         )
         applyCurrentState()
@@ -784,6 +908,7 @@ object AudioEffectManager {
         _state.value = _state.value.copy(
             channelBalance = b
         )
+        dspConfigVersion.incrementAndGet()
         saveToPrefs()
     }
 
@@ -794,19 +919,27 @@ object AudioEffectManager {
     }
 
     fun setEqualLoudnessCompensation(enabled: Boolean) {
-        _state.value = _state.value.copy(equalLoudnessCompensation = enabled)
+        val cur = _state.value
+        _state.value = cur.copy(
+            isEnabled = if (enabled) true else cur.isEnabled,
+            currentPreset = if (enabled) resolveActivePresetWhenTuning(cur.currentPreset) else cur.currentPreset,
+            equalLoudnessCompensation = enabled
+        )
         applyCurrentState()
         saveToPrefs()
     }
 
     fun setVolumeNormalizationEnabled(enabled: Boolean) {
         _state.value = _state.value.copy(volumeNormalizationEnabled = enabled)
+        dspConfigVersion.incrementAndGet()
         saveToPrefs()
     }
 
     fun setReverbMode(mode: ReverbMode) {
-        _state.value = _state.value.copy(
+        val cur = _state.value
+        _state.value = cur.copy(
             isEnabled = true,
+            currentPreset = resolveActivePresetWhenTuning(cur.currentPreset),
             reverbMode = mode
         )
         applyCurrentState()
@@ -814,85 +947,17 @@ object AudioEffectManager {
     }
 
     private fun applyCurrentState() {
+        dspConfigVersion.incrementAndGet()
         val s = _state.value
         if (!s.isEnabled || s.currentPreset == EffectPreset.OFF) {
             releaseEffects()
             return
         }
-
-        ensureEffectsCreated()
-
-        // 综合计算 5 段硬件 EQ（叠加人声通透激励、模拟温暖度、低频频点修正及前置增益与防削波保护）
-        val clarityBoostMidHigh = (s.vocalClarityStrength / 10) // 0..100 mB
-        val warmthBoostLowMid = (s.analogWarmthStrength / 12)   // 0..83 mB
-        val preampOffsetMb = (s.preampGainDb * 100f).toInt()
-        val loudnessCurveLow = if (s.equalLoudnessCompensation) 55 else 0
-        val loudnessCurveHigh = if (s.equalLoudnessCompensation) 40 else 0
-        val effectiveBands = s.bandLevels.mapIndexed { idx, baseLevel ->
-            val mod = when (idx) {
-                0 -> (if (s.bassCutoffHz <= 50) 40 else 0) + warmthBoostLowMid / 2 + loudnessCurveLow
-                1 -> warmthBoostLowMid + loudnessCurveLow / 3
-                2 -> clarityBoostMidHigh / 2
-                3 -> clarityBoostMidHigh + loudnessCurveHigh / 2
-                4 -> (clarityBoostMidHigh * 2 / 3) - (warmthBoostLowMid / 2) + loudnessCurveHigh
-                else -> 0
-            }
-            val rawTarget = baseLevel + mod + preampOffsetMb
-            val antiClipped = if (s.antiClippingEnabled && rawTarget > 180) rawTarget - 60 else rawTarget
-            antiClipped.coerceIn(-1000, 1000)
-        }
-
-        val hasEqSignal = effectiveBands.any { it != 0 }
-        equalizer?.let { eq ->
-            runCatching {
-                val numBands = eq.numberOfBands.toInt()
-                effectiveBands.forEachIndexed { index, level ->
-                    if (index < numBands) {
-                        val min = eq.bandLevelRange[0]
-                        val max = eq.bandLevelRange[1]
-                        val target = level.toShort().coerceIn(min, max)
-                        eq.setBandLevel(index.toShort(), target)
-                    }
-                }
-                eq.enabled = hasEqSignal
-            }
-        }
-
-        bassBoost?.let { bb ->
-            runCatching {
-                val active = s.bassBoostStrength > 0
-                if (active && bb.strengthSupported) {
-                    bb.setStrength(s.bassBoostStrength.toShort())
-                }
-                bb.enabled = active
-            }
-        }
-
-        virtualizer?.let { vz ->
-            runCatching {
-                // 由自研 ConceptMasteringAudioProcessor 统一负责 M/S 立体声场扩展，避免硬件 Virtualizer 叠加引起双重梳状滤波失真
-                vz.enabled = false
-            }
-        }
-
-        loudnessEnhancer?.let { le ->
-            runCatching {
-                val effectiveLoudness = (s.loudnessGainMb + (s.preampGainDb.coerceAtLeast(0f) * 80f).toInt())
-                    .coerceIn(0, if (s.antiClippingEnabled) 1200 else 1500)
-                val active = effectiveLoudness > 0
-                le.setTargetGain(if (active) effectiveLoudness else 0)
-                le.enabled = active
-            }
-        }
-
-        presetReverb?.let { pr ->
-            runCatching {
-                val active = s.reverbMode != ReverbMode.NONE
-                pr.preset = s.reverbMode.preset
-                pr.enabled = active
-                onAuxEffectChanged?.invoke(if (active) pr.id else 0, if (active) 0.36f else 0f)
-            }
-        }
+        // 全链路音效（10 段参量均衡器 Biquad PEQ、重低音下潜与频点谐振、人声通透激励、黑胶/胆机偶次谐波温暖度、
+        // M/S + Haas 3D 环绕声场、多抽头立体声房间/大厅混响、等响度补偿与防破音软限幅）
+        // 统一由 Media3 管线内的自研 64-bit ConceptMasteringAudioProcessor 直接处理 PCM 采样，
+        // 彻底解决 Android 系统内置 AudioEffect 在高解析 FLAC 音频流及不同 ROM 上失效或叠加失真的问题。
+        releaseEffects()
     }
 
     internal fun releaseEffects() {
@@ -929,7 +994,8 @@ object AudioEffectManager {
         val enabled = p.getBoolean("effect_enabled_v2", false)
         val presetName = p.getString("preset_v2", EffectPreset.OFF.name) ?: EffectPreset.OFF.name
         val preset = runCatching { EffectPreset.valueOf(presetName) }.getOrDefault(EffectPreset.OFF)
-        val defaultProf = profileForPreset(if (enabled) preset else EffectPreset.OFF)
+        val activePreset = if (enabled && preset != EffectPreset.OFF) preset else EffectPreset.OFF
+        val defaultProf = profileForPreset(activePreset)
 
         val bass = p.getInt("bass_v2", defaultProf.bass)
         val cutoffHz = p.getInt("bass_cutoff_v2", defaultProf.cutoffHz)
@@ -946,18 +1012,18 @@ object AudioEffectManager {
         val reverbName = p.getString("reverb_v2", defaultProf.reverb.name) ?: defaultProf.reverb.name
         val reverb = runCatching { ReverbMode.valueOf(reverbName) }.getOrDefault(ReverbMode.NONE)
         val bandsRaw = p.getString("bands_v2", null)
-        val bands = parseBandsString(bandsRaw, if (enabled) preset else EffectPreset.OFF)
-        val tenBandsRaw = p.getString("ten_bands_v2", null)
+        val bands = parseBandsString(bandsRaw, activePreset)
+        val tenBandsRaw = p.getString("ten_bands_v3", null)
         val restoredTenBands = if (!tenBandsRaw.isNullOrBlank()) {
             val parsedTen = tenBandsRaw.split(",").mapNotNull { it.trim().toIntOrNull()?.coerceIn(-1000, 1000) }
-            if (parsedTen.size == 10) parsedTen else expandFiveToTenBands(bands)
+            if (parsedTen.size == 10) parsedTen else defaultProf.tenBands
         } else {
-            expandFiveToTenBands(bands)
+            defaultProf.tenBands
         }
 
         _state.value = AudioEffectState(
-            isEnabled = enabled && preset != EffectPreset.OFF,
-            currentPreset = if (enabled) preset else EffectPreset.OFF,
+            isEnabled = enabled && activePreset != EffectPreset.OFF,
+            currentPreset = activePreset,
             bassBoostStrength = bass,
             bassCutoffHz = cutoffHz,
             virtualizerStrength = virt,
@@ -974,6 +1040,7 @@ object AudioEffectManager {
             bandLevels = bands,
             tenBandLevels = restoredTenBands
         )
+        dspConfigVersion.incrementAndGet()
     }
 
     private fun saveToPrefs() {
@@ -999,7 +1066,7 @@ object AudioEffectManager {
             .putBoolean("vol_norm_v2", s.volumeNormalizationEnabled)
             .putString("reverb_v2", s.reverbMode.name)
             .putString("bands_v2", serializeBands(s.bandLevels))
-            .putString("ten_bands_v2", tenBandsSerialized)
+            .putString("ten_bands_v3", tenBandsSerialized)
             .apply()
     }
 }

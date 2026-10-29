@@ -57,8 +57,12 @@ object VipManager {
         discoverCache = DiscoverLocalCache(appCtx)
         ListeningGradeManager.initialize(appCtx)
 
-        if (!store.isDfidRegistered() || store.device().dfid == "-") {
-            initScope.launch {
+        initScope.launch {
+            // 在后台 IO 线程静默预热 AndroidKeyStore 会话解密与设备风控凭证，彻底避免阻塞主线程首帧渲染
+            runCatching {
+                store.activeId()?.let { activeUid -> store.session(activeUid) }
+            }
+            if (!store.isDfidRegistered() || store.device().dfid == "-") {
                 runCatching { auth.registerDevice(forceRefresh = true) }
             }
         }

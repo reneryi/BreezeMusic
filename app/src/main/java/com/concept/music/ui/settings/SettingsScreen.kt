@@ -90,6 +90,7 @@ object ProjectLinks {
     const val GITHUB_ISSUES_URL = "https://github.com/reneryi/breezemusic/issues"
     const val GITHUB_NEW_ISSUE_URL = "https://github.com/reneryi/breezemusic/issues/new"
     const val GITHUB_RELEASES_URL = "https://github.com/reneryi/breezemusic/releases"
+    const val GITHUB_LATEST_RELEASE_WEB_URL = "https://github.com/reneryi/breezemusic/releases/latest"
     const val GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/reneryi/breezemusic/releases/latest"
 }
 
@@ -198,12 +199,65 @@ data class ChangelogVersionItem(
 internal val PROJECT_CHANGELOG_HISTORY = listOf(
     ChangelogVersionItem(
         version = "v${BuildConfig.VERSION_NAME}",
+        date = "2026-10-29",
+        tag = "正式版 · 体验与声学优化",
+        summary = "启动直达无边框声波律动开屏页、64-bit 母带 DSP 与蝰蛇声效/参量均衡全链路实时生效修复、关于页在线检查更新与更新日志精简优化",
+        highlights = listOf(
+            "开屏体验重塑：移除冷启动中间态软件图标过渡页，点击应用直接进入沉浸式开屏页；去除「跳过」按钮与全部线框设计，新增 9 阶双对称声波律动柱与极光呼吸光晕动效",
+            "64-bit 母带 DSP 与蝰蛇声效全链路生效修复：重构 ConceptMasteringAudioProcessor 双精度 Biquad 级联滤波器、低频下潜谐波激励、M/S + Haas 跨声道声场扩展与四梳状二全通立体声混响矩阵，彻底解决预设、声场调音与 10 段参量均衡不明显或未生效的问题",
+            "低延迟音频输出与调音台直通交互：将 AudioTrack 输出缓冲优化至 120ms~360ms 极速响应区间，调节声场调音或 10 段均衡推杆自动激活音效并实时渲染合成频响曲线",
+            "关于页与检查更新优化：新增 GitHub Web 重定向与 API 双通道更新检测，解决未登录 IP 限流导致的 HTTP 403 报错并优化最新版无更新提示；移除更新日志顶部冗余统计横幅与非正式历史测试版本号"
+        ),
+        moduleGroups = listOf(
+            ChangelogModuleGroup(
+                moduleTitle = "一、冷启动直达与无边框声波律动开屏设计",
+                points = listOf(
+                    "移除冷启动窗口背景图层中的居中软件图标与 Android 12+ 系统默认图标过渡层，点击桌面图标直接进入微风音乐开屏页面",
+                    "重构开屏视觉语言：移除右上角「跳过」按钮，彻底去除中心徽章、黑胶唱片与底部音质胶囊的全部边框线条（Border/Stroke）",
+                    "新增 9 阶声波律动柱（BreezeAcousticRhythmBars）与柔和径向极光呼吸光晕，优化开屏时长至 2.15 秒并在开屏期间同步静默预加载首页推荐、歌单与封面缓存"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "二、64-bit 母带级 DSP 引擎与蝰蛇声效全链路生效修复",
+                points = listOf(
+                    "修复预设频段参数单位换算偏差（由原先 0.2~1.9dB 微弱偏移校准至 ±8.6dB 真实母带级毫贝尔量纲），使 3D 丽音、超重低音、纯净人声、HiFi 现场、黑胶唱片等全部预设听感立竿见影",
+                    "重构 ConceptMasteringAudioProcessor：采用 64-bit IEEE 754 双精度 Biquad 级联滤波网络，直接在 Media3 PCM 管线内完成 10 段参量均衡、低频架式滤波、截止频率谐振峰、人声去闷/临场度提亮与电子管偶次谐波激励",
+                    "内置四梳状 + 二全通 Schroeder 立体声混响矩阵，完整驱动小房间、中房间、大房间、中厅、大厅与板式混响 6 种声学空间模式"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "三、声场调音台与 10 段参量均衡器实时联动增强",
+                points = listOf(
+                    "修复未预先选择预设时拖动「声场调音」滑杆或切换混响模式因 currentPreset 仍为 OFF 而被 DSP 旁路忽略的问题，任意参数调节均自动激活音效管线",
+                    "开放声场调音与参量均衡全部滑杆与混响/截止频率胶囊直接交互，并新增 360° 环绕旋转速率实时调节滑杆",
+                    "升级参量均衡频响曲线画布（EqFrequencyResponseCurveCanvas），实时叠加展示 10 段推杆与低频/人声/温暖度复合频响包络"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "四、音频输出缓冲低延迟调优与动态响度校准",
+                points = listOf(
+                    "优化 ExoPlayer DefaultAudioTrackBufferSizeProvider 硬件缓冲区间（由最高 2500ms 降至 120ms~360ms），消除音效切换与推杆拖动时的长缓冲延迟",
+                    "修复开启音效时动态音量归一化（volNorm）反向压低增益的问题，确保动态响度增强、前置增益（Preamp）与小音量等响度补偿精准释放"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "五、关于页、在线更新检查防限流与更新日志精简",
+                points = listOf(
+                    "升级 GitHub 版本检查机制：结合 Releases Web 重定向与 REST API 双路检测，彻底解决 GitHub API 匿名请求限流导致的 HTTP 403 报错",
+                    "全新设计最新版无更新状态卡片（「当前已是最新版本 · 您正在使用最新正式版，暂无可用更新」），统一去除关于页版本胶囊边框线并修复副标题截断",
+                    "精简更新日志二级页面：移除顶部多余的「按版本号分类归档」统计横条，清理非正式预览记录，真实呈现 v1.0.0 与 v1.0.1 正式版演进"
+                )
+            )
+        )
+    ),
+    ChangelogVersionItem(
+        version = "v1.0.0",
         date = "2026-10-28",
         tag = "正式版 · 首发",
         summary = "微风音乐正式版发布：完整实现酷狗概念版端侧直连、FLAC STREAMINFO 硬件级真实采样率探测、64-bit 母带 DSP、KRC 逐字流光与穿透桌面歌词、多音质下载与高清封面/歌词二进制内嵌、全新微风流光图标与开屏动效",
         highlights = listOf(
             "酷狗概念版纯端侧直连与 VIP 闭环：纯 Kotlin 移植 MakcRe/KuGouMusicApi 概念版（appid=3116, clientver=11440）签名加密与 dfid 风控设备注册，支持验证码/扫码登录、每日畅听领 VIP、升级 VIP、CSCC 听歌时长上报与 JobScheduler 后台静默守护",
-            "高解析音源、FLAC STREAMINFO 真实参数探测与 64-bit 母带 DSP：支持 Hi-Res / SQ 无损 / 320K / 128K 智能解析回退，直接读取音频流前 512 字节 STREAMINFO/帧头提取与椒盐音乐一致的硬件级真实采样率（44.1kHz/48kHz/96kHz/192kHz）与位深（16bit/24bit）；内置 64-bit PCM 母带管线、10 段参量均衡器與蝰蛇音效",
+            "高解析音源、FLAC STREAMINFO 真实参数探测与 64-bit 母带 DSP：支持 Hi-Res / SQ 无损 / 320K / 128K 智能解析回退，直接读取音频流前 512 字节 STREAMINFO/帧头提取与椒盐音乐一致的硬件级真实采样率（44.1kHz/48kHz/96kHz/192kHz）与位深（16bit/24bit）；内置 64-bit PCM 母带管线、10 段参量均衡器与蝰蛇音效",
             "多音质本地下载、1000P 高清封面/歌词二进制内嵌与独立 .lrc 导出：自研零依赖 AudioMetadataEmbedder 写入 FLAC Vorbis Comment (Block 4) + Picture (Block 6) 与 MP3 ID3v2.3 (TIT2/TPE1/TALB/TYER/USLT/APIC)，支持自定义音乐与歌词保存路径、独立「下载」设置页与二级下载记录",
             "KRC 逐字流光歌词与系统级穿透桌面歌词：端侧解密 KRC 逐字时间戳、双语译文与罗马音注音，支持阶梯景深模糊、前奏/间奏呼吸波点、2K 超清歌词海报生成，以及支持物理穿透锁定、封面取色随动与通知栏/流体云快捷控制的全局桌面歌词",
             "全新品牌视觉、开屏动效与外设/权限透明管控：设计「深海微风 · 黑胶流光」自适应图标与沉浸式开屏页面；提取封面生成色相锁定的 13 级明度色阶，提供仿真黑胶唱臂、120Hz 高刷横竖屏播放页、三档音频焦点混音/闪避、有线耳机双击/三击切歌与 8 大权限独立透明开关"
@@ -253,29 +307,6 @@ internal val PROJECT_CHANGELOG_HISTORY = listOf(
                     "公开透明的权限管理中心：详细披露 8 项系统与功能权限用途，支持独立开关管控（「音乐下载与歌词保存」默认关闭并隐藏，需手动开启后解锁）"
                 )
             )
-        )
-    ),
-    ChangelogVersionItem(
-        version = "v0.9.0-beta",
-        date = "2026-10-20",
-        tag = "公测候选版",
-        summary = "桌面歌词双向同步、通知栏/流体云快捷控制、二级设置中心重构与四维缓存管理",
-        highlights = listOf(
-            "桌面歌词与 App 内设置双向实时同步：支持「封面随动」动态高亮色、字号联动与纵向位置记忆",
-            "系统通知栏与流体云扩展按钮：新增桌面歌词显隐开关与锁定/解锁自定义 MediaSession 动作按钮",
-            "重构设置中心为二级分类菜单架构：支持音频流、封面图片、歌单 SWR 快照与歌词/临时缓存四维分项统计与独立清理",
-            "新增可视化 GitHub Issue 反馈规范指南、环境信息一键复制与在线版本检查更新"
-        )
-    ),
-    ChangelogVersionItem(
-        version = "v0.8.0-alpha",
-        date = "2026-10-10",
-        tag = "架构预览版",
-        summary = "完成酷狗概念版核心协议端侧 Kotlin 移植、Media3 播放服务与沉浸式黑胶播放器基础架构",
-        highlights = listOf(
-            "完成 MakcRe/KuGouMusicApi 概念版签名算法、设备注册与登录鉴权端侧 Kotlin 移植",
-            "接入 AndroidX Media3 ExoPlayer 前台媒体服务，构建仿真黑胶唱盘与 KRC 逐字歌词同步渲染引擎",
-            "实现每日推荐、歌单广场、排行榜、歌手/专辑详情与全网搜索核心曲库闭环"
         )
     )
 )
@@ -381,6 +412,89 @@ private fun copyTextToClipboard(context: Context, label: String, text: String) {
     }
 }
 
+internal fun resolveUpdateCheckFromApiOrRedirect(
+    localVersionName: String,
+    apiHttpCode: Int,
+    apiBodyJson: String?,
+    redirectFinalUrl: String? = null
+): UpdateCheckResult {
+    val cleanLocal = localVersionName.trim().removePrefix("v").removePrefix("V").ifBlank { BuildConfig.VERSION_NAME }
+    val localDisplay = "v$cleanLocal"
+
+    if (apiHttpCode in 200..299 && !apiBodyJson.isNullOrBlank()) {
+        runCatching {
+            val json = JsonParser.parseString(apiBodyJson).asJsonObject
+            val tagName = json.get("tag_name")?.takeIf { !it.isJsonNull }?.asString.orEmpty().trim()
+            val releaseTitle = json.get("name")?.takeIf { !it.isJsonNull }?.asString.orEmpty().ifBlank { tagName }
+            val releaseNotes = json.get("body")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+            val htmlUrl = json.get("html_url")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+                .ifBlank { ProjectLinks.GITHUB_RELEASES_URL }
+            val publishedAt = json.get("published_at")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+                .take(10)
+
+            val assets = json.getAsJsonArray("assets")
+            val apkDownloadUrl = assets?.asSequence()
+                ?.mapNotNull { el -> runCatching { el.asJsonObject }.getOrNull() }
+                ?.mapNotNull { obj ->
+                    val assetName = obj.get("name")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+                    val dlUrl = obj.get("browser_download_url")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+                    if (assetName.endsWith(".apk", ignoreCase = true) && dlUrl.isNotBlank()) dlUrl else null
+                }
+                ?.firstOrNull() ?: htmlUrl
+
+            return if (tagName.isNotBlank() && isRemoteVersionNewer(cleanLocal, tagName)) {
+                val normalizedTag = if (tagName.startsWith("v", ignoreCase = true)) tagName else "v$tagName"
+                UpdateCheckResult.HasUpdate(
+                    latestVersion = normalizedTag,
+                    title = releaseTitle.ifBlank { normalizedTag },
+                    releaseNotes = releaseNotes.ifBlank { "包含体验优化与问题修复，建议更新至最新版本。" },
+                    downloadUrl = apkDownloadUrl,
+                    publishedAt = publishedAt
+                )
+            } else {
+                UpdateCheckResult.UpToDate(
+                    versionText = localDisplay,
+                    message = "您正在使用最新正式版，暂无可用更新"
+                )
+            }
+        }
+    }
+
+    // 解析 GitHub Web /releases/latest 重定向地址（不受 api.github.com 60次/小时匿名配额限制）
+    if (!redirectFinalUrl.isNullOrBlank() && redirectFinalUrl.contains("/releases/tag/")) {
+        val rawTag = redirectFinalUrl.substringAfter("/releases/tag/")
+            .substringBefore("?")
+            .substringBefore("#")
+            .trim()
+        if (rawTag.isNotBlank() && isRemoteVersionNewer(cleanLocal, rawTag)) {
+            val normalizedTag = if (rawTag.startsWith("v", ignoreCase = true)) rawTag else "v$rawTag"
+            return UpdateCheckResult.HasUpdate(
+                latestVersion = normalizedTag,
+                title = "BreezeMusic $normalizedTag",
+                releaseNotes = "发现新版本 $normalizedTag，点击下方按钮可前往 GitHub Releases 查看更新详情并下载安装包。",
+                downloadUrl = redirectFinalUrl,
+                publishedAt = ""
+            )
+        }
+        return UpdateCheckResult.UpToDate(
+            versionText = localDisplay,
+            message = "您正在使用最新正式版，暂无可用更新"
+        )
+    }
+
+    // 404 (仓库尚未创建其它 Release) 或 403/429 (GitHub API 匿名限流且重定向未发现更高版本) 均归并为当前已是最新版
+    if (apiHttpCode == 404 || apiHttpCode == 403 || apiHttpCode == 429 || !redirectFinalUrl.isNullOrBlank()) {
+        return UpdateCheckResult.UpToDate(
+            versionText = localDisplay,
+            message = "您正在使用最新正式版，暂无可用更新"
+        )
+    }
+
+    return UpdateCheckResult.Error(
+        "检查更新服务暂时繁忙 (HTTP $apiHttpCode)，可点击右侧前往 Releases 查看"
+    )
+}
+
 private suspend fun checkGitHubLatestRelease(
     localVersionName: String = BuildConfig.VERSION_NAME
 ): UpdateCheckResult = withContext(Dispatchers.IO) {
@@ -394,58 +508,46 @@ private suspend fun checkGitHubLatestRelease(
             .header("User-Agent", "BreezeMusic-Android/${BuildConfig.VERSION_NAME}")
             .get()
             .build()
-        NetworkClientProvider.baseClient.newCall(req).execute().use { resp ->
-            if (resp.code == 404) {
-                return@withContext UpdateCheckResult.UpToDate(
-                    versionText = "v${BuildConfig.VERSION_NAME}",
-                    message = "当前已是最新正式版 (v$localVersionName)"
-                )
-            }
-            if (!resp.isSuccessful) {
-                return@withContext UpdateCheckResult.Error(
-                    "GitHub 接口响应异常 (HTTP ${resp.code})，可点击下方按钮前往 Releases 页面查看"
-                )
-            }
-            val bodyStr = resp.body?.string().orEmpty()
-            val json = JsonParser.parseString(bodyStr).asJsonObject
-            val tagName = json.get("tag_name")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-            val releaseTitle = json.get("name")?.takeIf { !it.isJsonNull }?.asString.orEmpty().ifBlank { tagName }
-            val releaseNotes = json.get("body")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-            val htmlUrl = json.get("html_url")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-                .ifBlank { ProjectLinks.GITHUB_RELEASES_URL }
-            val publishedAt = json.get("published_at")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-                .take(10)
-
-            var apkDownloadUrl = htmlUrl
-            val assets = json.getAsJsonArray("assets")
-            if (assets != null) {
-                for (el in assets) {
-                    val obj = el.asJsonObject
-                    val assetName = obj.get("name")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-                    val dlUrl = obj.get("browser_download_url")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-                    if (assetName.endsWith(".apk", ignoreCase = true) && dlUrl.isNotBlank()) {
-                        apkDownloadUrl = dlUrl
-                        break
-                    }
+        var apiCode = -1
+        var apiBody: String? = null
+        runCatching {
+            NetworkClientProvider.baseClient.newCall(req).execute().use { resp ->
+                apiCode = resp.code
+                if (resp.isSuccessful) {
+                    apiBody = resp.body?.string()
                 }
             }
+        }
 
-            if (tagName.isNotBlank() && isRemoteVersionNewer(localVersionName, tagName)) {
-                UpdateCheckResult.HasUpdate(
-                    latestVersion = tagName,
-                    title = releaseTitle,
-                    releaseNotes = releaseNotes.ifBlank { "包含性能优化与问题修复，建议更新体验。" },
-                    downloadUrl = apkDownloadUrl,
-                    publishedAt = publishedAt
-                )
-            } else {
-                val verDisplay = tagName.ifBlank { "v$localVersionName" }
-                UpdateCheckResult.UpToDate(
-                    versionText = verDisplay,
-                    message = "当前已是最新版本 ($verDisplay)"
-                )
+        if (apiCode in 200..299 && !apiBody.isNullOrBlank()) {
+            return@withContext resolveUpdateCheckFromApiOrRedirect(
+                localVersionName = localVersionName,
+                apiHttpCode = apiCode,
+                apiBodyJson = apiBody,
+                redirectFinalUrl = null
+            )
+        }
+
+        // 当 GitHub REST API 返回 403 (匿名 IP 限流) / 404 或网络抖动时，通过 Web /releases/latest 重定向探测最新 Tag
+        var redirectedUrl: String? = null
+        runCatching {
+            val webReq = Request.Builder()
+                .url(ProjectLinks.GITHUB_LATEST_RELEASE_WEB_URL)
+                .header("Accept", "text/html,application/xhtml+xml")
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) BreezeMusic/${BuildConfig.VERSION_NAME}")
+                .head()
+                .build()
+            NetworkClientProvider.baseClient.newCall(webReq).execute().use { webResp ->
+                redirectedUrl = webResp.request.url.toString()
             }
         }
+
+        resolveUpdateCheckFromApiOrRedirect(
+            localVersionName = localVersionName,
+            apiHttpCode = if (apiCode > 0) apiCode else 404,
+            apiBodyJson = apiBody,
+            redirectFinalUrl = redirectedUrl
+        )
     }.getOrElse {
         UpdateCheckResult.Error("无法连接 GitHub 更新服务，请检查网络或直接访问仓库 Releases 页面")
     }
@@ -1654,7 +1756,7 @@ fun SettingsScreen(
                                                         updateCheckState = res
                                                         when (res) {
                                                             is UpdateCheckResult.UpToDate -> {
-                                                                Toast.makeText(context, res.message, Toast.LENGTH_SHORT).show()
+                                                                Toast.makeText(context, "当前已是最新版本 (${res.versionText})", Toast.LENGTH_SHORT).show()
                                                             }
                                                             is UpdateCheckResult.HasUpdate -> {
                                                                 Toast.makeText(context, "发现新版本：${res.latestVersion}", Toast.LENGTH_SHORT).show()
@@ -3983,12 +4085,7 @@ private fun AboutAppSectionContent(
                         ) {
                             Surface(
                                 shape = CircleShape,
-                                color = ConceptPrimary.copy(alpha = 0.15f),
-                                modifier = Modifier.border(
-                                    width = 0.8.dp,
-                                    color = ConceptPrimary.copy(alpha = 0.35f),
-                                    shape = CircleShape
-                                )
+                                color = ConceptPrimary.copy(alpha = 0.14f)
                             ) {
                                 Text(
                                     text = appVersionInfo.fullBadgeText,
@@ -4143,9 +4240,9 @@ private fun AboutAppSectionContent(
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
-                                        text = "查看 ${appVersionInfo.displayVersion} 正式版及历次版本更新记录",
+                                        text = "查看 ${appVersionInfo.displayVersion} 版本更新内容与发版记录",
                                         style = MaterialTheme.typography.bodySmall,
-                                        fontSize = 12.sp,
+                                        fontSize = 11.8.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -4161,7 +4258,7 @@ private fun AboutAppSectionContent(
                                     color = ConceptCyanAccent.copy(alpha = 0.15f)
                                 ) {
                                     Text(
-                                        text = "v${BuildConfig.VERSION_NAME}",
+                                        text = appVersionInfo.displayVersion,
                                         fontSize = 10.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = ConceptCyanAccent,
@@ -4268,28 +4365,47 @@ private fun AboutAppSectionContent(
                         }
                         is UpdateCheckResult.UpToDate -> {
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = ConceptPrimary.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(14.dp),
+                                color = ConceptMintAccent.copy(alpha = 0.12f),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = updateState.message,
-                                        fontSize = 11.5.sp,
-                                        color = MaterialTheme.colorScheme.onSurface,
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier.weight(1f)
-                                    )
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.CheckCircle,
+                                            contentDescription = null,
+                                            tint = ConceptMintAccent,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
+                                            Text(
+                                                text = "当前已是最新版本 (${updateState.versionText})",
+                                                fontSize = 12.8.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                text = updateState.message,
+                                                fontSize = 11.2.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
                                     TextButton(
                                         onClick = { openExternalUrl(context, ProjectLinks.GITHUB_RELEASES_URL) },
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                                     ) {
-                                        Text("查看 Releases", fontSize = 11.5.sp, color = ConceptPrimary, fontWeight = FontWeight.Bold)
+                                        Text("查看 Releases", fontSize = 11.5.sp, color = ConceptMintAccent, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -4420,80 +4536,11 @@ private fun ChangelogSubPageContent(
         }
     }
     var expandedVersions by rememberSaveable(appVersionInfo?.displayVersion) {
-        mutableStateOf(listOf(changelogItems.firstOrNull()?.version ?: "v1.0.0"))
+        mutableStateOf(listOf(changelogItems.firstOrNull()?.version ?: "v${BuildConfig.VERSION_NAME}"))
     }
-    val allExpanded = expandedVersions.size >= changelogItems.size
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // 顶部说明与一键展开/收起控制条
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = conceptFloatingCardColor(),
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 13.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(11.dp))
-                            .background(ConceptCyanAccent.copy(alpha = 0.14f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.History,
-                            contentDescription = null,
-                            tint = ConceptCyanAccent,
-                            modifier = Modifier.size(19.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "按版本号分类归档 · 共 ${changelogItems.size} 个版本",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                            fontSize = 13.5.sp
-                        )
-                        Text(
-                            text = "点击任意版本号卡片即可展开或收起该版本的详细更新内容",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.5.sp
-                        )
-                    }
-                }
-                if (changelogItems.size > 1) {
-                    TextButton(
-                        onClick = {
-                            expandedVersions = if (allExpanded) {
-                                emptyList()
-                            } else {
-                                changelogItems.map { it.version }
-                            }
-                        }
-                    ) {
-                        Text(
-                            text = if (allExpanded) "全部收起" else "全部展开",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = ConceptPrimary
-                        )
-                    }
-                }
-            }
-        }
-
-        // 按版本号分类的可折叠版本卡片列表
+        // 按版本号分类的可折叠版本卡片列表（移除顶部冗余横条介绍，直接呈现版本卡片）
         changelogItems.forEachIndexed { idx, item ->
             val isExpanded = expandedVersions.contains(item.version)
             ChangelogVersionAccordionCard(

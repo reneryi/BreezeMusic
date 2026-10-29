@@ -78,10 +78,10 @@ private enum class SoundEffectMainTab(
 }
 
 /**
- * 重构后的蝰蛇音效与调音台 (ViperSoundEffectScreen)：
- * - 已将「环境伴音舱」整体迁移至「我的 -> 心流舱」；
- * - 精简顶部概览区域，释放更多纵向浏览空间；
- * - 三大核心板块（蝰蛇声效 / 声场调音 / 参量均衡）排版更清爽、易读。
+ * 蝰蛇音效与调音台 (ViperSoundEffectScreen v1.0.1)：
+ * - 对接 64-bit ConceptMasteringAudioProcessor 实时 PCM 母带引擎；
+ * - 预设切换、声场调音与 10 段参量均衡推杆全链路实时联动生效；
+ * - 调节任意声场或均衡推杆时自动激活音效引擎，无需预先手动开启总开关。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -400,7 +400,7 @@ private fun ViperPresetLibraryTab(
 }
 
 /**
- * 专区二：声场调音
+ * 专区二：声场调音（所有滑杆与选项始终支持直接拖动/点击，修改任意参数立即激活 64-bit DSP 并实时生效）
  */
 @Composable
 private fun AcousticFieldTuningTab(
@@ -464,7 +464,7 @@ private fun AcousticFieldTuningTab(
                         valueText = "${state.bassBoostStrength / 10}% · ${state.bassCutoffHz}Hz",
                         value = state.bassBoostStrength.toFloat(),
                         valueRange = 0f..1000f,
-                        enabled = state.isEnabled,
+                        enabled = true,
                         accentColor = ConceptCoralAccent,
                         onValueChange = { AudioEffectManager.setBassBoostStrength(it.toInt()) }
                     )
@@ -487,7 +487,7 @@ private fun AcousticFieldTuningTab(
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (selected) ConceptCoralAccent.copy(alpha = 0.18f) else elevatedBg,
                                 contentColor = if (selected) ConceptCoralAccent else subText,
-                                modifier = Modifier.softCardClickable(enabled = state.isEnabled) {
+                                modifier = Modifier.softCardClickable(enabled = true) {
                                     AudioEffectManager.setBassCutoffHz(hz)
                                 }
                             ) {
@@ -507,10 +507,22 @@ private fun AcousticFieldTuningTab(
                         valueText = "${state.virtualizerStrength / 10}%",
                         value = state.virtualizerStrength.toFloat(),
                         valueRange = 0f..1000f,
-                        enabled = state.isEnabled,
+                        enabled = true,
                         accentColor = ConceptCyanAccent,
                         onValueChange = { AudioEffectManager.setVirtualizerStrength(it.toInt()) }
                     )
+
+                    if (state.currentPreset == EffectPreset.VIPER_3D_ROTATE || state.surroundRotationSpeed > 0) {
+                        ParameterSliderItem(
+                            title = "360° 动态环绕轨迹速率",
+                            valueText = if (state.surroundRotationSpeed == 0) "固定声场" else "${state.surroundRotationSpeed}%",
+                            value = state.surroundRotationSpeed.toFloat(),
+                            valueRange = 0f..100f,
+                            enabled = true,
+                            accentColor = ConceptVioletAccent,
+                            onValueChange = { AudioEffectManager.setSurroundRotationSpeed(it.toInt()) }
+                        )
+                    }
 
                     Spacer(modifier = Modifier.height(4.dp))
 
@@ -532,7 +544,7 @@ private fun AcousticFieldTuningTab(
                                 contentColor = if (isSelected) Color.White else subText,
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.softCardClickable(
-                                    enabled = state.isEnabled,
+                                    enabled = true,
                                     shape = RoundedCornerShape(12.dp),
                                     onClick = { AudioEffectManager.setReverbMode(mode) }
                                 )
@@ -582,7 +594,7 @@ private fun AcousticFieldTuningTab(
                         valueText = "${state.vocalClarityStrength / 10}%",
                         value = state.vocalClarityStrength.toFloat(),
                         valueRange = 0f..1000f,
-                        enabled = state.isEnabled,
+                        enabled = true,
                         accentColor = ConceptPrimary,
                         onValueChange = { AudioEffectManager.setVocalClarityStrength(it.toInt()) }
                     )
@@ -592,7 +604,7 @@ private fun AcousticFieldTuningTab(
                         valueText = "${state.analogWarmthStrength / 10}%",
                         value = state.analogWarmthStrength.toFloat(),
                         valueRange = 0f..1000f,
-                        enabled = state.isEnabled,
+                        enabled = true,
                         accentColor = VipGold,
                         onValueChange = { AudioEffectManager.setAnalogWarmthStrength(it.toInt()) }
                     )
@@ -602,7 +614,7 @@ private fun AcousticFieldTuningTab(
                         valueText = String.format(Locale.getDefault(), "+%.1f dB", state.loudnessGainMb / 100f),
                         value = state.loudnessGainMb.toFloat(),
                         valueRange = 0f..1500f,
-                        enabled = state.isEnabled,
+                        enabled = true,
                         accentColor = ConceptMintAccent,
                         onValueChange = { AudioEffectManager.setLoudnessGain(it.toInt()) }
                     )
@@ -667,7 +679,6 @@ private fun AcousticMetricMiniBar(
             Text(text = "$percent%", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = color)
         }
         Spacer(modifier = Modifier.height(4.dp))
-        // 使用 Canvas 在 Draw 阶段直接按比例绘制圆角能量条，彻底消除 .fillMaxWidth(animatedFrac) 每帧引发的 Layout 测量重排
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
@@ -860,7 +871,7 @@ private fun ViperEffectPresetCard(
 }
 
 /**
- * 专区三：参量均衡器
+ * 专区三：参量均衡器（支持 10 段独立双二阶 Biquad 滤波推杆、前置放大增益与声道平衡实时生效）
  */
 @Composable
 private fun ProfessionalEqualizerPage(
@@ -886,6 +897,10 @@ private fun ProfessionalEqualizerPage(
             EffectPreset.EQ_SOFT,
             EffectPreset.CUSTOM
         )
+    }
+
+    val effectiveCurveBands = remember(state) {
+        AudioEffectManager.computeEffectiveTenBandsMb(state)
     }
 
     LazyColumn(
@@ -934,7 +949,7 @@ private fun ProfessionalEqualizerPage(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     EqFrequencyResponseCurveCanvas(
-                        tenBandLevels = state.tenBandLevels,
+                        tenBandLevels = effectiveCurveBands,
                         preampDb = state.preampGainDb,
                         enabled = state.isEnabled
                     )
@@ -948,7 +963,7 @@ private fun ProfessionalEqualizerPage(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 items(eqPresets) { preset ->
-                    val isSelected = state.currentPreset == preset
+                    val isSelected = state.isEnabled && state.currentPreset == preset
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = if (isSelected) ConceptPrimary else cardBg,
@@ -1015,11 +1030,13 @@ private fun ProfessionalEqualizerPage(
                             ) {
                                 val dbVal = level / 100f
                                 Text(
-                                    text = if (level > 0) String.format(Locale.getDefault(), "+%.0f", dbVal)
-                                    else String.format(Locale.getDefault(), "%.0f", dbVal),
+                                    text = if (level > 0) String.format(Locale.getDefault(), "+%.1f", dbVal)
+                                    else if (level < 0) String.format(Locale.getDefault(), "%.1f", dbVal)
+                                    else "0",
                                     color = if (level != 0) ConceptPrimary else subText,
-                                    fontSize = 9.5.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Box(
@@ -1040,7 +1057,7 @@ private fun ProfessionalEqualizerPage(
                                         value = level.toFloat(),
                                         onValueChange = { AudioEffectManager.setTenBandLevel(index, it.toInt()) },
                                         valueRange = -1000f..1000f,
-                                        enabled = state.isEnabled,
+                                        enabled = true,
                                         colors = SliderDefaults.colors(
                                             thumbColor = ConceptPrimary,
                                             activeTrackColor = ConceptPrimary,
@@ -1106,7 +1123,7 @@ private fun ProfessionalEqualizerPage(
                         valueText = String.format(Locale.getDefault(), "%+.1f dB", state.preampGainDb),
                         value = state.preampGainDb,
                         valueRange = -6f..6f,
-                        enabled = state.isEnabled,
+                        enabled = true,
                         accentColor = ConceptPrimary,
                         onValueChange = { AudioEffectManager.setPreampGainDb(it) }
                     )

@@ -1129,11 +1129,30 @@ class UiAlignmentRegressionTest {
         assertTrue(issueTemplate.contains("### 复现步骤 (Steps to Reproduce)"))
         assertTrue(issueTemplate.contains("BreezeMusic v1.0.0 (Build 1)"))
 
-        assertTrue(com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.isNotEmpty())
-        val firstRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.first()
-        assertEquals("v1.0.0", firstRelease.version)
-        assertTrue(firstRelease.moduleGroups.size >= 4)
-        assertTrue(firstRelease.highlights.isNotEmpty())
+        assertEquals(2, com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.size)
+        val latestRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.first()
+        val initialRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.last()
+        assertEquals("v${BuildConfig.VERSION_NAME}", latestRelease.version)
+        assertEquals("v1.0.0", initialRelease.version)
+        assertTrue(latestRelease.moduleGroups.size >= 4)
+        assertTrue(initialRelease.moduleGroups.size >= 4)
+
+        // 验证在线检查更新在 HTTP 403 (GitHub API 匿名限流) 与 HTTP 404 时平滑返回 UpToDate，有新 Tag 时返回 HasUpdate
+        val upToDateOn403 = com.concept.music.ui.settings.resolveUpdateCheckFromApiOrRedirect(
+            localVersionName = "1.0.1",
+            apiHttpCode = 403,
+            apiBodyJson = null,
+            redirectFinalUrl = "https://github.com/reneryi/breezemusic/releases/tag/v1.0.1"
+        )
+        assertTrue(upToDateOn403 is com.concept.music.ui.settings.UpdateCheckResult.UpToDate)
+
+        val hasUpdateViaRedirect = com.concept.music.ui.settings.resolveUpdateCheckFromApiOrRedirect(
+            localVersionName = "1.0.1",
+            apiHttpCode = 403,
+            apiBodyJson = null,
+            redirectFinalUrl = "https://github.com/reneryi/breezemusic/releases/tag/v1.0.2"
+        )
+        assertTrue(hasUpdateViaRedirect is com.concept.music.ui.settings.UpdateCheckResult.HasUpdate)
     }
 
     @Test
@@ -1585,9 +1604,11 @@ class UiAlignmentRegressionTest {
         assertEquals("v2.1.0 正式版 · Build 12", customVer.fullBadgeText)
 
         val history = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY
-        assertTrue("更新日志应包含正式版及历史演进版本", history.size >= 3)
+        assertEquals("更新日志仅保留真实发布的 v1.0.1 与 v1.0.0 版本", 2, history.size)
         val latest = history.first()
         assertEquals("v${BuildConfig.VERSION_NAME}", latest.version)
         assertEquals(5, latest.moduleGroups.size)
+        assertEquals("v1.0.0", history.last().version)
+        assertEquals(2150L, com.concept.music.ui.components.BREEZE_SPLASH_DISPLAY_DURATION_MS)
     }
 }

@@ -19,6 +19,7 @@ interface SessionStore {
     fun activeId(): String?
     fun setActive(id: String?)
     fun session(id: String): KugouSession?
+    fun hasSessionRecord(id: String): Boolean = session(id) != null
     fun saveSession(session: KugouSession)
     fun removeSession(id: String)
     fun device(): DeviceIdentity
@@ -184,6 +185,12 @@ class EncryptedSessionStore(context: Context) : SessionStore {
         cachedActiveId = id
         activeIdLoaded = true
         metadata.edit().putString("active", id).apply()
+    }
+
+    override fun hasSessionRecord(id: String): Boolean {
+        if (sessionCache.containsKey(id)) return true
+        val encoded = secrets.getString(id, null) ?: return false
+        return encoded.contains(":")
     }
 
     @Synchronized
