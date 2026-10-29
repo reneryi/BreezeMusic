@@ -27,11 +27,10 @@ import com.concept.music.ui.theme.ConceptCyanAccent
 import com.concept.music.ui.theme.ConceptPrimary
 
 /**
- * 冷启动图标页停留时长（约 1.5 秒）：
- * 配合窗口底层 MainContent 首帧同步静默预加载（首页推荐、歌单、账号会话与封面缓存预热），
- * 1.5s 结束后直接进入已完成数据就绪的主界面，不再叠加第二层开屏页。
+ * 冷启动图标页额外驻留时长（0ms）：
+ * 零额外人为阻塞，首帧渲染完成即刻移除系统 SplashScreen 图标层进入主界面。
  */
-const val SPLASH_ICON_HOLD_DURATION_MS = 1500L
+const val SPLASH_ICON_HOLD_DURATION_MS = 0L
 
 /**
  * 动态读取的实际应用版本信息（兼容 PackageManager 真实安装版本与 BuildConfig 编译版本）

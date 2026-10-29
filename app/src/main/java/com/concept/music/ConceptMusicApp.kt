@@ -30,10 +30,11 @@ class ConceptMusicApp : Application(), ImageLoaderFactory {
         ThemeManager.init(this)
         com.concept.music.service.AppPermissionManager.init(this)
         VipManager.initialize(this)
-        com.concept.music.service.AudioEffectManager.init(this)
-        SystemLyricBridge.init(this)
         val appCtx = applicationContext
+        // 将音效、桌面歌词与下载等组件的磁盘配置读取全部下沉至后台 IO 线程池，缩短冷启动图标页停留时间
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).launch {
+            runCatching { com.concept.music.service.AudioEffectManager.init(appCtx) }
+            runCatching { SystemLyricBridge.init(appCtx) }
             runCatching { MusicDownloadManager.init(appCtx) }
             runCatching { AmbientSoundManager.init(appCtx) }
             runCatching { FocusPodManager.init(appCtx) }

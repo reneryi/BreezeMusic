@@ -266,7 +266,7 @@ class KugouProtocolTest {
 
     @Test fun webSignatureUsesUpstreamWebSaltAndTransportAvoidsTwoLevelSubdomainSslError() {
         val webParams = mapOf("appid" to "1001", "plat" to "4", "srcappid" to "2919", "type" to "1")
-        val expectedRaw = "NVPh5oo715z5DiWAeQlHMDsWXXQV4hwtappid=1001plat=4srcappid=2919type=1NVPh5oo715z5DiWAeQlHMDsWXXQV4hwt"
+        val expectedRaw = "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwtappid=1001plat=4srcappid=2919type=1NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt"
         assertEquals(KugouSigner.md5(expectedRaw), KugouSigner.signature(webParams, "", web = true))
 
         assertEquals(

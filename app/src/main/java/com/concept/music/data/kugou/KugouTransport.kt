@@ -125,6 +125,9 @@ class DirectKugouTransport(
             val loginRouterHeaders = LinkedHashMap(baseHeaders).apply {
                 put("x-router", "login.user.kugou.com")
             }
+            val qrLoginRouterHeaders = LinkedHashMap(baseHeaders).apply {
+                put("x-router", "login-user.kugou.com")
+            }
             return when (hostName) {
                 "login.user.kugou.com" -> listOf(
                     "http://login.user.kugou.com" to baseHeaders,
@@ -134,13 +137,11 @@ class DirectKugouTransport(
                 "loginserviceretry.kugou.com" -> listOf(
                     rawHost to baseHeaders,
                     "https://gateway.kugou.com" to loginRouterHeaders,
-                    "https://login-user.kugou.com" to baseHeaders,
                     "http://login.user.kugou.com" to baseHeaders
                 )
                 "login-user.kugou.com" -> listOf(
                     rawHost to baseHeaders,
-                    "https://gateway.kugou.com" to loginRouterHeaders,
-                    "http://login.user.kugou.com" to baseHeaders
+                    "https://gateway.kugou.com" to qrLoginRouterHeaders
                 )
                 "gateway.kugou.com" -> listOf(
                     rawHost to baseHeaders,
@@ -211,27 +212,14 @@ class DirectKugouTransport(
         val d = device ?: identity()
         val params = linkedMapOf<String, String>()
         if (includeDefaultParams) {
-            if (web) {
-                params.putAll(mapOf(
-                    "dfid" to d.dfid,
-                    "mid" to d.mid,
-                    "uuid" to "-",
-                    "appid" to "3116",
-                    "srcappid" to "2919",
-                    "clientver" to "1000",
-                    "clienttime" to clock.instant().epochSecond.toString(),
-                    "platid" to "4"
-                ))
-            } else {
-                params.putAll(mapOf(
-                    "dfid" to d.dfid,
-                    "mid" to d.mid,
-                    "uuid" to "-",
-                    "appid" to "3116",
-                    "clientver" to "11440",
-                    "clienttime" to clock.instant().epochSecond.toString()
-                ))
-            }
+            params.putAll(mapOf(
+                "dfid" to d.dfid,
+                "mid" to d.mid,
+                "uuid" to "-",
+                "appid" to "3116",
+                "clientver" to "11440",
+                "clienttime" to clock.instant().epochSecond.toString()
+            ))
             session?.let { params["token"] = it.token; params["userid"] = it.userId }
         }
         params.putAll(query)

@@ -95,59 +95,24 @@ private fun mainTabIndex(route: String): Int = when (route) {
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val onCreateRealtimeMs = android.os.SystemClock.elapsedRealtime()
-        val processStartRealtimeMs = runCatching { android.os.Process.getStartElapsedRealtime() }
-            .getOrDefault(onCreateRealtimeMs)
-        // 冷启动时从进程创建时刻起算图标页展示时长（约 1.5s），热重启时从 onCreate 起算
-        val splashStartRealtimeMs = if (onCreateRealtimeMs - processStartRealtimeMs in 0L..1200L) {
-            processStartRealtimeMs
-        } else {
-            onCreateRealtimeMs
-        }
-        val shouldHoldSplashIcon = savedInstanceState == null
-
+        // 针对 ColorOS / HyperOS / OriginOS / OneUI 及原生 Android 12+：
+        // 首帧一旦就绪立即移除系统 SplashScreen 起始图标层（0ms 退出动画），将图标页停留时间压缩至物理极限
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             runCatching {
                 splashScreen.setOnExitAnimationListener { splashScreenView ->
-                    splashScreenView.animate()
-                        .alpha(0f)
-                        .setDuration(160L)
-                        .withEndAction { runCatching { splashScreenView.remove() } }
-                        .start()
+                    runCatching { splashScreenView.iconView?.alpha = 0f }
+                    runCatching { splashScreenView.remove() }
                 }
             }
         }
         super.onCreate(savedInstanceState)
+        runCatching { window.setBackgroundDrawableResource(R.color.concept_window_bg) }
         requestHighRefreshRateDisplayMode()
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
         )
 
-        if (shouldHoldSplashIcon) {
-            val decorView = window.decorView
-            val holdDurationMs = com.concept.music.ui.components.SPLASH_ICON_HOLD_DURATION_MS
-            val preDrawListener = object : android.view.ViewTreeObserver.OnPreDrawListener {
-                override fun onPreDraw(): Boolean {
-                    val elapsed = android.os.SystemClock.elapsedRealtime() - splashStartRealtimeMs
-                    return if (elapsed >= holdDurationMs) {
-                        if (decorView.viewTreeObserver.isAlive) {
-                            decorView.viewTreeObserver.removeOnPreDrawListener(this)
-                        }
-                        true
-                    } else {
-                        decorView.postInvalidateOnAnimation()
-                        false
-                    }
-                }
-            }
-            decorView.viewTreeObserver.addOnPreDrawListener(preDrawListener)
-            val remainingMs = (holdDurationMs - (android.os.SystemClock.elapsedRealtime() - splashStartRealtimeMs))
-                .coerceAtLeast(16L)
-            decorView.postDelayed({ decorView.postInvalidateOnAnimation() }, remainingMs)
-        }
-
-        // 启动即刻挂载 MainContent，在 1.5s 图标启动页展示期间同步静默预加载首页 5 大模块、歌单、账号会话与封面缓存
         setContent {
             ConceptMusicTheme {
                 MainContent()

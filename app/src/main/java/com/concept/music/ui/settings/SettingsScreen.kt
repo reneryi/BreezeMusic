@@ -205,19 +205,19 @@ internal val PROJECT_CHANGELOG_HISTORY = listOf(
         version = "v${BuildConfig.VERSION_NAME}",
         date = "2026-10-29",
         tag = "正式版 · 体验与声学优化",
-        summary = "精简 1.5s 图标启动页与后台静默预加载、修复国内免 VPN 环境下验证码/扫码登录与未登录听歌解析（Issue #1）、64-bit 母带 DSP 与蝰蛇声效实时生效修复、关于页多源免 VPN 检查更新优化",
+        summary = "极速图标启动直达与后台静默预加载、修复国内免 VPN 环境下验证码/扫码登录与未登录听歌解析（Issue #1）、64-bit 母带 DSP 与蝰蛇声效实时生效修复、关于页多源免 VPN 检查更新优化",
         highlights = listOf(
-            "冷启动精简与 1.5s 静默预加载：顺应系统启动窗口机制恢复纯净图标启动页（精准保持约 1.5 秒），彻底移除二级律动开屏页面；在 1.5s 图标展示期间同步静默预加载首页推荐、歌单、账号会话与封面缓存，实现开屏结束即刻秒开主界面",
+            "极速冷启动与静默预加载：顺应 ColorOS / Android 系统启动窗口机制恢复纯净图标启动页并徹底移除二级律动开屏页；零人为驻留等待、下沉非核心组件初始化与播放器服务绑定至首帧之后，将图标页停留时长压缩至极限",
             "国内网络（免 VPN）登录与听歌全链路修复（Issue #1）：修复二级子域 login.user.kugou.com 因 *.kugou.com 通配符证书触发 SSLPeerUnverifiedException 导致的发送验证码/登录报网络错误；修正 WEB_SALT 签名盐值修复扫码登录；修复 /v5/url 网关 x-router 与访客态 userid=0 参数校验并打通未登录 /v6/priv_url 音源解析",
             "64-bit 母带 DSP 与蝰蛇声效全链路生效修复：重构 ConceptMasteringAudioProcessor 双精度 Biquad 级联滤波器、低频下潜谐波激励、M/S + Haas 跨声道声场扩展与四梳状二全通立体声混响矩阵，彻底解决预设、声场调音与 10 段参量均衡不明显或未生效的问题",
             "关于页与免 VPN 检查更新优化：新增 jsDelivr 全球/国内边缘节点（data.jsdelivr.com / gcore.jsdelivr.net / fastly.jsdelivr.net）与 GitHub 镜像多通道版本检测，确保国内无 VPN 环境下极速响应并展示「当前已是最新版本」提示；移除更新日志顶部冗余统计横幅"
         ),
         moduleGroups = listOf(
             ChangelogModuleGroup(
-                moduleTitle = "一、精简 1.5s 图标启动页与国内免 VPN 登录/播放修复 (Issue #1)",
+                moduleTitle = "一、极速图标启动优化与国内免 VPN 登录/播放修复 (Issue #1)",
                 points = listOf(
-                    "恢复纯净应用图标启动页并精准控制显示时长约 1.5 秒，彻底删除后续二级律动开屏层；在 1.5s 启动期内后台并发预加载首页 5 大模块、歌单与 Coil 封面图缓存",
-                    "解决国内网络下 login.user.kugou.com 二级子域 HTTPS 证书校验异常导致的手机验证码无法发送问题，支持 gateway.kugou.com (x-router)、login-user.kugou.com 与 http://login.user.kugou.com 自动容灾切换，并修正扫码登录 WEB_SALT 签名盐值",
+                    "恢复纯净应用图标启动页并彻底删除二级律动开屏层，设置 0ms 退出动画与首帧后异步绑定 PlaybackService，大幅缩短 ColorOS 及各系统启动图标页停留时长",
+                    "解决国内网络下 login.user.kugou.com 二级子域 HTTPS 证书校验异常导致的手机验证码无法发送问题，支持 gateway.kugou.com (x-router)、login-user.kugou.com 与 http://login.user.kugou.com 自动容灾切换，并统一扫码登录 dfid='-' 默认设备参数与 1001/1014 双通道回退",
                     "修复 /v5/url 请求头 x-router 误填为 trackercdn.kugou.com 及未登录访客态缺失 userid=0 导致 key 校验失败的问题，开放访客态调用 /v6/priv_url 并保留高潮/试听片段兜底，解决未登录点击歌曲提示「该歌曲暂未获取到播放链接」"
                 )
             ),

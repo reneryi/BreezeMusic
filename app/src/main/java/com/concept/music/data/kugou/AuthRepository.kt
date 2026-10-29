@@ -222,20 +222,47 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
 
     /**
      * 生成酷狗扫码登录二维码 (对齐 MakcRe/KuGouMusicApi module/login_qr_key.js)
+     * 采用 dfid="-" 避免未向酷狗风控注册过的本地合成 dfid 触发网关拦截，并支持 appid=1001 / 1014 双通道回退。
      */
     suspend fun createQr(): KugouQrCode {
-        val r = transport.call(
-            "/v2/qrcode",
-            host = "https://login-user.kugou.com",
-            web = true,
-            query = mapOf(
-                "appid" to "1001",
-                "type" to "1",
-                "plat" to "4",
-                "qrcode_txt" to "https://h5.kugou.com/apps/loginQRCode/html/index.html?appid=3116&",
-                "srcappid" to "2919"
+        val qrDevice = store.device().copy(dfid = "-")
+        val primaryResp = suspendRunCatching {
+            transport.call(
+                "/v2/qrcode",
+                host = "https://login-user.kugou.com",
+                web = true,
+                query = mapOf(
+                    "appid" to "1001",
+                    "type" to "1",
+                    "plat" to "4",
+                    "qrcode_txt" to "https://h5.kugou.com/apps/loginQRCode/html/index.html?appid=3116&",
+                    "srcappid" to "2919"
+                ),
+                device = qrDevice
             )
-        ).requireSuccess()
+        }.getOrNull()
+
+        val r = if (primaryResp != null && primaryResp.success) {
+            primaryResp
+        } else {
+            val fallbackResp = suspendRunCatching {
+                transport.call(
+                    "/v2/qrcode",
+                    host = "https://login-user.kugou.com",
+                    web = true,
+                    query = mapOf(
+                        "appid" to "1014",
+                        "type" to "1",
+                        "plat" to "4",
+                        "qrcode_txt" to "https://h5.kugou.com/apps/loginQRCode/html/index.html?appid=3116&",
+                        "srcappid" to "2919"
+                    ),
+                    device = qrDevice
+                )
+            }.getOrNull()
+            (fallbackResp?.takeIf { it.success } ?: primaryResp ?: fallbackResp ?: error("二维码请求失败")).requireSuccess()
+        }
+
         val d = r.data
         val ttl = d.number("expire") ?: d.number("expires_in") ?: 120
         val rawImg = d.text("qrcode_img")?.trim()?.takeIf { it.isNotBlank() } ?: error("二维码图片缺失")
@@ -264,7 +291,8 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
             "srcappid" to "2919",
             "qrcode" to key,
             "dev" to store.device().dev
-        )
+        ),
+        device = store.device().copy(dfid = "-")
     ).requireSuccess()
 
     fun qrSession(data: JsonObject): LoginResult.Success = decodeLogin(data, null)

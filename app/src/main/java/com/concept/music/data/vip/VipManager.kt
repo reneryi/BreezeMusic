@@ -58,9 +58,21 @@ object VipManager {
         ListeningGradeManager.initialize(appCtx)
 
         initScope.launch {
-            // 在后台 IO 线程静默预热 AndroidKeyStore 会话解密与设备风控凭证，彻底避免阻塞主线程首帧渲染
+            // 在进程启动初期（系统图标动画尚未结束前）于 IO 线程并发预热首页/歌单磁盘快照、AndroidKeyStore 会话与风控凭证
+            val activeUid = runCatching { store.activeId() }.getOrNull()
+            launch {
+                runCatching {
+                    discoverCache.getDailyRecommend(activeUid)
+                    discoverCache.getPersonalFm(activeUid)
+                    discoverCache.getNewSongs("CHINESE")
+                    discoverCache.getRanks()
+                    discoverCache.getFmChannels()
+                    discoverCache.getUserPlaylists(activeUid)
+                    discoverCache.getLikedSongs(activeUid)
+                }
+            }
             runCatching {
-                store.activeId()?.let { activeUid -> store.session(activeUid) }
+                activeUid?.let { uid -> store.session(uid) }
             }
             if (!store.isDfidRegistered() || store.device().dfid == "-") {
                 runCatching { auth.registerDevice(forceRefresh = true) }

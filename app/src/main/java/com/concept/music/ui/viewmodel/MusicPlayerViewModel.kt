@@ -629,37 +629,47 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             hasQueue
         }
 
-        runCatching {
-            val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
-            controllerFuture = MediaController.Builder(context, token).buildAsync().also { future ->
-                future.addListener({
-                    runCatching { future.get() }.onSuccess { player ->
-                        controller = player
-                        player.addListener(listener)
-                        val st = mutableState.value
-                        player.playbackParameters = PlaybackParameters(st.playbackSpeed, st.playbackPitch)
-                        PlaybackService.updateHandleAudioBecomingNoisy(st.pauseOnHeadsetDisconnect)
-                        PlaybackService.updateAudioFocusMode(st.audioFocusMode)
-                        PlaybackService.updateWiredHeadsetControlEnabled(st.wiredHeadsetControlEnabled)
-                        PlaybackService.updateSwapHeadsetDoubleTripleClick(st.swapHeadsetDoubleTripleClick)
-                        PlaybackService.updateHeadsetClickSensitivity(st.headsetClickSensitivity)
-                        PlaybackService.updateHeadsetAutoPlayConfig(
-                            enabled = st.autoPlayOnHeadsetConnect,
-                            wiredEnabled = st.autoPlayOnWiredConnect,
-                            bluetoothEnabled = st.autoPlayOnBluetoothConnect
-                        )
-                        PlaybackService.updateKeepPlayingOnTaskRemoved(st.keepPlayingOnTaskRemoved)
-                        syncPlayer()
-                        startProgressUpdates()
-                        if (!hasTriggeredStartupAutoPlay && st.autoPlayOnStartup && st.currentSong != null && !player.isPlaying) {
-                            hasTriggeredStartupAutoPlay = true
-                            playSong(st.currentSong, st.playlistQueue, seekToPositionMs = st.currentPositionMs)
+        val connectControllerAction = {
+            runCatching {
+                val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
+                controllerFuture = MediaController.Builder(context, token).buildAsync().also { future ->
+                    future.addListener({
+                        runCatching { future.get() }.onSuccess { player ->
+                            controller = player
+                            player.addListener(listener)
+                            val st = mutableState.value
+                            player.playbackParameters = PlaybackParameters(st.playbackSpeed, st.playbackPitch)
+                            PlaybackService.updateHandleAudioBecomingNoisy(st.pauseOnHeadsetDisconnect)
+                            PlaybackService.updateAudioFocusMode(st.audioFocusMode)
+                            PlaybackService.updateWiredHeadsetControlEnabled(st.wiredHeadsetControlEnabled)
+                            PlaybackService.updateSwapHeadsetDoubleTripleClick(st.swapHeadsetDoubleTripleClick)
+                            PlaybackService.updateHeadsetClickSensitivity(st.headsetClickSensitivity)
+                            PlaybackService.updateHeadsetAutoPlayConfig(
+                                enabled = st.autoPlayOnHeadsetConnect,
+                                wiredEnabled = st.autoPlayOnWiredConnect,
+                                bluetoothEnabled = st.autoPlayOnBluetoothConnect
+                            )
+                            PlaybackService.updateKeepPlayingOnTaskRemoved(st.keepPlayingOnTaskRemoved)
+                            syncPlayer()
+                            startProgressUpdates()
+                            if (!hasTriggeredStartupAutoPlay && st.autoPlayOnStartup && st.currentSong != null && !player.isPlaying) {
+                                hasTriggeredStartupAutoPlay = true
+                                playSong(st.currentSong, st.playlistQueue, seekToPositionMs = st.currentPositionMs)
+                            }
+                        }.onFailure { error ->
+                            mutableState.value = mutableState.value.copy(error = error.message ?: "播放器连接失败")
                         }
-                    }.onFailure { error ->
-                        mutableState.value = mutableState.value.copy(error = error.message ?: "播放器连接失败")
-                    }
-                }, { runnable -> runnable.run() })
+                    }, { runnable -> runnable.run() })
+                }
             }
+        }
+        // 将 PlaybackService (ExoPlayer + MediaSession) 的跨组件绑定推迟至主界面首帧绘制提交之后执行，
+        // 避免 Service.onCreate 占用首帧主线程时间片导致 ColorOS/Android 启动图标页停留过长
+        val mainLooper = runCatching { android.os.Looper.getMainLooper() }.getOrNull()
+        if (mainLooper != null) {
+            android.os.Handler(mainLooper).post { connectControllerAction() }
+        } else {
+            connectControllerAction()
         }
 
         viewModelScope.launch {
