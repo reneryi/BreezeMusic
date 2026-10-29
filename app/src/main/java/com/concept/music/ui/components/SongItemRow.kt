@@ -56,23 +56,70 @@ import com.concept.music.data.model.Song
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
+import com.concept.music.ui.theme.rememberIsLifecycleStarted
 
 private val SongCoverCornerShape = RoundedCornerShape(13.dp)
 private val ActiveRowBgColor = ConceptPrimary.copy(alpha = 0.12f)
 private val HqBadgeColor = ConceptPrimary.copy(alpha = 0.85f)
 
-private fun normalizeSongThumbUrl(rawUrl: String): String {
-    val trimmed = rawUrl.trim()
+private val KUGOU_CDN_LARGE_SIZE_REGEX = Regex("/(240|300|400|480|720|1000)/")
+
+/**
+ * 酷狗封面与头像缩略图 URL 归一化引擎：
+ * 1. 将 `{size}` 模板变量替换为紧凑目标尺寸（列表小图默认 `"150"`，中尺寸卡片默认 `"240"`）；
+ * 2. 将已被上游写死为 `/240/`、`/300/`、`/400/`、`/480/`、`/720/`、`/1000/` 的酷狗 CDN 路径降维至目标缩略图尺寸，
+ *    避免列表高速上下滑动时拉取与解码百万像素原图；
+ * 3. 统一升级 `http://` 为 `https://`，保证与 Coil L1/L2 缓存 Key 100% 一致。
+ */
+fun normalizeKugouThumbUrl(rawUrl: String?, targetCdnSize: String = "150"): String {
+    val trimmed = rawUrl?.trim().orEmpty()
     if (trimmed.isEmpty()) return ""
-    val withSize = if (trimmed.contains("{size}")) {
-        trimmed.replace("{size}", "150")
-    } else {
-        trimmed
+    val withSize = when {
+        trimmed.contains("{size}") -> trimmed.replace("{size}", targetCdnSize)
+        (trimmed.contains("kugou.com", ignoreCase = true) || trimmed.contains("kgimg.com", ignoreCase = true)) &&
+            KUGOU_CDN_LARGE_SIZE_REGEX.containsMatchIn(trimmed) -> {
+            KUGOU_CDN_LARGE_SIZE_REGEX.replaceFirst(trimmed, "/$targetCdnSize/")
+        }
+        else -> trimmed
     }
     return if (withSize.startsWith("http://", ignoreCase = true)) {
         "https://" + withSize.substring(7)
     } else {
         withSize
+    }
+}
+
+private fun normalizeSongThumbUrl(rawUrl: String): String = normalizeKugouThumbUrl(rawUrl, "150")
+
+/**
+ * 120fps 列表滑动专用零抖动图片请求构建器：
+ * - 显式指定目标解码像素尺寸 (`sizePx`) 与 `Precision.INEXACT`，杜绝按全尺寸解码大图；
+ * - 禁用列表项 `crossfade(false)`，消除快速上下滑动时每行 200ms CrossfadeDrawable 透明混合重绘开销；
+ * - 统一 `allowHardware(false)` 与全局 `ConceptMusicApp` ImageLoader 保持一致，既根治 Android 14+ 酷狗 Gainmap 封面硬件纹理崩溃，又确保首屏预热缓存 100% 命中。
+ */
+@Composable
+fun rememberOptimizedAsyncImageModel(
+    rawUrl: String?,
+    sizePx: Int = 144,
+    targetCdnSize: String = if (sizePx <= 160) "150" else "240"
+): ImageRequest? {
+    val context = LocalContext.current
+    val thumbUrl = remember(rawUrl, targetCdnSize) {
+        normalizeKugouThumbUrl(rawUrl, targetCdnSize)
+    }
+    return remember(thumbUrl, sizePx, context) {
+        if (thumbUrl.isNotEmpty()) {
+            val cacheKey = "${thumbUrl}_s$sizePx"
+            ImageRequest.Builder(context)
+                .data(thumbUrl)
+                .size(sizePx, sizePx)
+                .precision(Precision.INEXACT)
+                .memoryCacheKey(cacheKey)
+                .diskCacheKey(thumbUrl)
+                .allowHardware(false)
+                .crossfade(false)
+                .build()
+        } else null
     }
 }
 
@@ -85,24 +132,9 @@ fun SongItemRow(
     orderIndex: Int? = null,
     onMoreClick: (() -> Unit)? = null
 ) {
-    val context = LocalContext.current
     val isDark = LocalIsDarkTheme.current
     val goldTagColor = if (isDark) VipGold else Color(0xFFC47F00)
-
-    val thumbUrl = remember(song.coverUrl) { normalizeSongThumbUrl(song.coverUrl) }
-    val imageModel = remember(thumbUrl, context) {
-        if (thumbUrl.isNotEmpty()) {
-            ImageRequest.Builder(context)
-                .data(thumbUrl)
-                .size(144, 144)
-                .precision(Precision.INEXACT)
-                .memoryCacheKey(thumbUrl)
-                .diskCacheKey(thumbUrl)
-                .allowHardware(true)
-                .crossfade(false)
-                .build()
-        } else null
-    }
+    val imageModel = rememberOptimizedAsyncImageModel(rawUrl = song.coverUrl, sizePx = 144, targetCdnSize = "150")
 
     val orderLabel = remember(orderIndex) {
         orderIndex?.toString()?.padStart(2, '0').orEmpty()
@@ -261,10 +293,12 @@ fun PlayingAudioWaveIndicator(
     modifier: Modifier = Modifier,
     isPlaying: Boolean = true
 ) {
+    val isLifecycleStarted = rememberIsLifecycleStarted()
+    val effectiveAnimating = isPlaying && isLifecycleStarted
     val bar1: Float
     val bar2: Float
     val bar3: Float
-    if (isPlaying) {
+    if (effectiveAnimating) {
         val infiniteTransition = rememberInfiniteTransition(label = "audioWave")
         val animBar1 by infiniteTransition.animateFloat(
             initialValue = 0.3f,

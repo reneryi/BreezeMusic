@@ -263,6 +263,29 @@ object ThemeManager {
 val LocalIsDarkTheme = staticCompositionLocalOf { true }
 
 /**
+ * 感知当前宿主 Activity 是否处于前台可见状态 (`Lifecycle.State.STARTED` 及以上)：
+ * 当用户切至后台或锁屏熄屏 (`ON_STOP`) 时自动返回 `false`，挂起所有 UI 层的 120Hz VSYNC 帧循环、
+ * 唱针旋转、流光着色器、进度采样与硬件方向传感器，实现后台 0 UI 功耗。
+ */
+@Composable
+fun rememberIsLifecycleStarted(): Boolean {
+    val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
+    var isStarted by androidx.compose.runtime.remember(lifecycle) {
+        androidx.compose.runtime.mutableStateOf(
+            lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        )
+    }
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, _ ->
+            isStarted = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    return isStarted
+}
+
+/**
  * 便捷获取当前概念版主题是否处于深色状态
  */
 @Composable

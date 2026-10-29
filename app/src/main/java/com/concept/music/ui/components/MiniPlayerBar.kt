@@ -47,6 +47,7 @@ import com.concept.music.ui.theme.ConceptCyanAccent
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.LocalIsDarkTheme
+import com.concept.music.ui.theme.rememberIsLifecycleStarted
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
@@ -99,13 +100,15 @@ fun MiniPlayerBar(
     val subTextColor = MaterialTheme.colorScheme.onSurfaceVariant
     val goldColor = if (isDark) VipGold else Color(0xFFC47F00)
 
+    val isLifecycleStarted = rememberIsLifecycleStarted()
+    val effectiveMiniPlaying = isPlaying && isLifecycleStarted
     val scope = rememberCoroutineScope()
     val rotationAnim = remember { Animatable(0f) }
-    var wasMiniVinylPlaying by remember { mutableStateOf(isPlaying) }
+    var wasMiniVinylPlaying by remember { mutableStateOf(effectiveMiniPlaying) }
     val dragOffsetX = remember { Animatable(0f) }
 
-    LaunchedEffect(isPlaying) {
-        if (isPlaying) {
+    LaunchedEffect(effectiveMiniPlaying) {
+        if (effectiveMiniPlaying) {
             wasMiniVinylPlaying = true
             while (isActive) {
                 rotationAnim.animateTo(
@@ -113,7 +116,7 @@ fun MiniPlayerBar(
                     animationSpec = tween(durationMillis = 16000, easing = LinearEasing)
                 )
             }
-        } else if (wasMiniVinylPlaying) {
+        } else if (wasMiniVinylPlaying && !isPlaying) {
             wasMiniVinylPlaying = false
             rotationAnim.animateTo(
                 targetValue = rotationAnim.value + 14f,
@@ -390,15 +393,16 @@ private fun MiniPlayerPlayProgressButton(
     positionProvider: () -> Long,
     onTogglePlay: () -> Unit
 ) {
+    val isLifecycleStarted = rememberIsLifecycleStarted()
     var sampledPositionMs by remember { mutableLongStateOf(positionProvider()) }
     LaunchedEffect(initialPositionMs) {
         sampledPositionMs = positionProvider()
     }
-    LaunchedEffect(isPlaying, positionProvider) {
-        if (isPlaying) {
+    LaunchedEffect(isPlaying, isLifecycleStarted, positionProvider) {
+        if (isPlaying && isLifecycleStarted) {
             while (isActive) {
                 sampledPositionMs = positionProvider()
-                kotlinx.coroutines.delay(100L)
+                kotlinx.coroutines.delay(200L)
             }
         } else {
             sampledPositionMs = positionProvider()

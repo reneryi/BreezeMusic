@@ -31,7 +31,9 @@ import com.concept.music.data.model.AlbumItem
 import com.concept.music.data.model.ArtistItem
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
+import androidx.compose.ui.graphics.FilterQuality
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.rememberOptimizedAsyncImageModel
 import com.concept.music.ui.components.rememberProgressiveSongList
 import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
@@ -379,7 +381,7 @@ fun ArtistDetailScreen(
                 contentPadding = PaddingValues(bottom = 112.dp)
             ) {
                 // 1. 开放式无框歌手头部（消除厚重灰盒与胶囊分段栏，视觉开阔通透）
-                item {
+                item(key = "artist_header", contentType = "artist_header") {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -537,7 +539,7 @@ fun ArtistDetailScreen(
                 when (selectedTab) {
                     0 -> {
                         // 单曲页：极简搜索栏（不显示“在已加载的xx首单曲中搜索”）+ 开放式全播与最热/最新文字切换
-                        item {
+                        item(key = "artist_songs_toolbar", contentType = "artist_songs_toolbar") {
                             val tabAnimMod = rememberCategorySwitchGraphicModifier(selectedTab)
                             Column(
                                 modifier = Modifier
@@ -828,11 +830,13 @@ private fun ArtistAlbumRow(
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
-                if (album.coverUrl.isNotBlank()) {
+                val albumCoverModel = rememberOptimizedAsyncImageModel(rawUrl = album.coverUrl, sizePx = 156, targetCdnSize = "150")
+                if (albumCoverModel != null) {
                     AsyncImage(
-                        model = album.coverUrl,
+                        model = albumCoverModel,
                         contentDescription = album.name,
                         contentScale = ContentScale.Crop,
+                        filterQuality = FilterQuality.Low,
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {

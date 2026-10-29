@@ -62,6 +62,7 @@ import com.concept.music.ui.theme.ConceptPrimaryDark
 import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.LocalIsDarkTheme
+import com.concept.music.ui.theme.rememberIsLifecycleStarted
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.softCardClickable
@@ -187,8 +188,9 @@ fun RadioScreen(
         return "FM $major.$minor"
     }
 
-    // 电台黑胶唱盘按需旋转：仅在音乐处于播放状态时驱动旋转，暂停或静态浏览时平滑阻尼减速停转（0 空跑帧循环）
-    val isTunerPlaying = isPlaying && currentSong != null
+    // 电台黑胶唱盘按需旋转：仅在前台且音乐处于播放状态时驱动旋转，暂停或切后台时零空跑帧循环
+    val isLifecycleStarted = rememberIsLifecycleStarted()
+    val isTunerPlaying = isPlaying && currentSong != null && isLifecycleStarted
     val vinylRotationAnim = remember { Animatable(0f) }
     var wasTunerPlaying by remember { mutableStateOf(isTunerPlaying) }
     LaunchedEffect(isTunerPlaying) {
@@ -200,7 +202,7 @@ fun RadioScreen(
                     animationSpec = tween(durationMillis = 18000, easing = LinearEasing)
                 )
             }
-        } else if (wasTunerPlaying) {
+        } else if (wasTunerPlaying && !isPlaying) {
             wasTunerPlaying = false
             vinylRotationAnim.animateTo(
                 targetValue = vinylRotationAnim.value + 15f,

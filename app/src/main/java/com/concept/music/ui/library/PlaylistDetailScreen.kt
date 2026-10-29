@@ -266,7 +266,7 @@ fun PlaylistDetailScreen(
                     contentPadding = PaddingValues(bottom = 128.dp)
                 ) {
                     // 1. 歌单头部 Header（封面、信息与操作栏）
-                    item {
+                    item(key = "pl_header", contentType = "pl_header") {
                         PlaylistHeaderCard(
                             playlist = currentPlaylist,
                             songCount = songs.size,
@@ -291,7 +291,7 @@ fun PlaylistDetailScreen(
                     }
 
                     // 2. 歌单直接标配「歌单内搜索 + 排序切换 + 批量多选栏」
-                    item {
+                    item(key = "pl_toolbar", contentType = "pl_toolbar") {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()

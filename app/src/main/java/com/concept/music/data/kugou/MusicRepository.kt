@@ -61,6 +61,15 @@ class MusicApiRepository(
         return cleaned
     }
 
+    private fun lookupTechAlbumByKey(rawKey: String): String? {
+        if (rawKey.isEmpty()) return null
+        val directHit = songTechMetaCache[rawKey]?.albumName
+        if (!directHit.isNullOrBlank()) return directHit
+        val normKey = rawKey.trim().lowercase()
+        if (normKey.isEmpty()) return null
+        return songTechMetaCache[normKey]?.albumName?.takeIf { it.isNotBlank() }
+    }
+
     fun peekCachedAlbumName(song: Song): String {
         val direct = cleanResolvedAlbumName(song.album)
         if (direct.isNotBlank()) return direct
@@ -72,9 +81,13 @@ class MusicApiRepository(
         if (aaid > 0L) {
             albumNameCache["aaid_$aaid"]?.let { if (it.isNotBlank()) return it }
         }
-        val fromTech = listOf(song.id, song.hash, song.hash128, song.hash320, song.hashFlac, song.hashHiRes)
-            .map { it.trim().lowercase() }
-            .firstNotNullOfOrNull { k -> if (k.isNotBlank()) songTechMetaCache[k]?.albumName?.takeIf { it.isNotBlank() } else null }
+        if (songTechMetaCache.isEmpty()) return ""
+        val fromTech = lookupTechAlbumByKey(song.hash)
+            ?: lookupTechAlbumByKey(song.id)
+            ?: lookupTechAlbumByKey(song.hash128)
+            ?: lookupTechAlbumByKey(song.hash320)
+            ?: lookupTechAlbumByKey(song.hashFlac)
+            ?: lookupTechAlbumByKey(song.hashHiRes)
         return cleanResolvedAlbumName(fromTech)
     }
 

@@ -135,6 +135,7 @@ import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
 import com.concept.music.ui.theme.conceptSheetSpringEntrance
 import com.concept.music.ui.theme.isConceptDarkTheme
+import com.concept.music.ui.theme.rememberIsLifecycleStarted
 import com.concept.music.ui.theme.readableOnDarkSurface
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
@@ -379,15 +380,22 @@ fun NowPlayingSheet(
     // 严格限制横屏自动触发范围：
     // 1. 仅在封面播放页 (!showLyricView) 且未打开其它弹窗时才允许通过横放手机进入横屏；
     // 2. 必须同时满足：已开启「设备动作与方向」权限 + 手机系统「自动旋转」开关处于打开状态。
-    val canSensorTriggerLandscape = !showLyricView &&
+    val isLifecycleStarted = rememberIsLifecycleStarted()
+    val canSensorTriggerLandscape = isLifecycleStarted &&
+        !showLyricView &&
         !showQueueSheet &&
         !showMoreControlSheet &&
         !showLyricSettingsDialog &&
         !showLyricPosterDialog &&
         autoRotateSensorEnabled &&
         motionOrientationPermissionEnabled
+    val shouldListenOrientationSensor = isLifecycleStarted &&
+        (canSensorTriggerLandscape || (isLandscapeMode && enteredLandscapeViaSensor))
 
-    DisposableEffect(context, canSensorTriggerLandscape, isLandscapeMode, enteredLandscapeViaSensor) {
+    DisposableEffect(context, shouldListenOrientationSensor, canSensorTriggerLandscape, isLandscapeMode, enteredLandscapeViaSensor) {
+        if (!shouldListenOrientationSensor) {
+            return@DisposableEffect onDispose {}
+        }
         var consecutiveHorizontalSamples = 0
         var consecutiveVerticalSamples = 0
         val orientationListener = object : OrientationEventListener(context) {
@@ -480,12 +488,13 @@ fun NowPlayingSheet(
     val sheetDragScope = rememberCoroutineScope()
     val verticalDragAnim = remember { Animatable(0f) }
 
-    // 仅在黑胶封面模式下驱动连续旋转相位；暂停时执行物理惯性阻尼减速停转（告别瞬间急停）
+    // 仅在黑胶封面模式且封面页处于前台可见时驱动连续旋转相位；切至全屏歌词页或退后台时自动挂起 120Hz 旋转循环
     val rotationAnim = remember(song.id) { Animatable(0f) }
     var wasVinylPlaying by remember(song.id) { mutableStateOf(isPlaying) }
-    LaunchedEffect(isPlaying, song.id, coverStyle) {
+    val shouldSpinVinyl = isPlaying && isLifecycleStarted && !showLyricView && coverStyle == CoverStyle.VINYL
+    LaunchedEffect(shouldSpinVinyl, isPlaying, song.id, coverStyle) {
         if (coverStyle == CoverStyle.VINYL) {
-            if (isPlaying) {
+            if (shouldSpinVinyl) {
                 wasVinylPlaying = true
                 while (isActive) {
                     val target = rotationAnim.value + 360f
@@ -494,7 +503,7 @@ fun NowPlayingSheet(
                         animationSpec = tween(durationMillis = 20000, easing = LinearEasing)
                     )
                 }
-            } else if (wasVinylPlaying) {
+            } else if (wasVinylPlaying && !isPlaying && isLifecycleStarted && !showLyricView) {
                 wasVinylPlaying = false
                 // 物理摩擦惯性减速停转：
                 // 播放态恒定角速度 ω0 = 360° / 20000ms = 18°/s；
@@ -512,10 +521,12 @@ fun NowPlayingSheet(
     }
 
     // 顶层驻留圆角封面色散相位、呼吸脉冲与缩放弹簧状态：
-    // 置于 AnimatedContent(showLyricView) 之上，确保进出歌词页或切换横竖屏时相位与光晕状态永不销毁重置
+    // 置于 AnimatedContent(showLyricView) 之上，确保进出歌词页或切换横竖屏时相位与光晕状态永不销毁重置，
+    // 同时仅在封面页可见且处于圆角流光模式时才运行 120Hz 相位积分
     val sharedRoundedCoverMotionState = rememberRoundedCoverMotionState(
         isPlaying = isPlaying,
-        songKey = song.coverUrl.ifBlank { song.id }
+        songKey = song.coverUrl.ifBlank { song.id },
+        activeAndVisible = isLifecycleStarted && !showLyricView && coverStyle == CoverStyle.SQUARE
     )
 
     // 封面智能动态流光取色
@@ -2535,7 +2546,8 @@ internal fun evaluateRoundedCoverDecelerationStep(
 @Composable
 internal fun rememberRoundedCoverMotionState(
     isPlaying: Boolean,
-    songKey: Any? = null
+    songKey: Any? = null,
+    activeAndVisible: Boolean = true
 ): RoundedCoverMotionState {
     var phaseRad by remember(songKey) { mutableFloatStateOf(ROUNDED_COVER_INITIAL_REST_PHASE_RAD) }
     var velocityRadPerSec by remember(songKey) { mutableFloatStateOf(0f) }
@@ -2553,7 +2565,8 @@ internal fun rememberRoundedCoverMotionState(
         label = "squareCoverScale"
     )
 
-    LaunchedEffect(isPlaying, songKey) {
+    LaunchedEffect(isPlaying, songKey, activeAndVisible) {
+        if (!activeAndVisible) return@LaunchedEffect
         val twoPi = ROUNDED_COVER_TWO_PI_RAD
         if (isPlaying) {
             hasEverPlayed = true
@@ -2932,9 +2945,13 @@ private fun FullWidthLyricPreviewSection(
     LaunchedEffect(currentPositionMs, currentLyricIndex) {
         sampledPositionMs = positionProvider()
     }
+    val isLifecycleStarted = rememberIsLifecycleStarted()
     val currentLineHasWordTiming = lyricData.lines.getOrNull(currentLyricIndex)?.hasWordTiming == true
-    LaunchedEffect(isPlaying, currentLyricIndex, lyricWordByWord, currentLineHasWordTiming, lyricData.lines.size, positionProvider) {
-        if (isPlaying && ((lyricWordByWord && currentLineHasWordTiming) || lyricData.lines.isNotEmpty())) {
+    val hasInterludeCandidate = remember(lyricData, currentLyricIndex) {
+        lyricData.hasInterludeCandidateAt(currentLyricIndex)
+    }
+    LaunchedEffect(isPlaying, isLifecycleStarted, currentLyricIndex, lyricWordByWord, currentLineHasWordTiming, hasInterludeCandidate, positionProvider) {
+        if (isPlaying && isLifecycleStarted && ((lyricWordByWord && currentLineHasWordTiming) || hasInterludeCandidate)) {
             while (isActive) {
                 withFrameMillis {
                     sampledPositionMs = positionProvider()
@@ -3261,12 +3278,13 @@ private fun PlayerControlsSection(
             sampledPositionMs = sampleWithSeekHold()
         }
     }
-    // 消除每 8ms 重建 animateFloatAsState 协程的 120Hz 全树重组风暴，按 50ms 节流采样驱动平滑进度
-    LaunchedEffect(isPlaying, isInteractingWithBar, positionProvider) {
-        if (isPlaying && !isInteractingWithBar) {
+    val isLifecycleStarted = rememberIsLifecycleStarted()
+    // 消除每 8ms 重建 animateFloatAsState 协程的 120Hz 全树重组风暴，仅在前台按 66ms 节流采样驱动平滑进度
+    LaunchedEffect(isPlaying, isLifecycleStarted, isInteractingWithBar, positionProvider) {
+        if (isPlaying && isLifecycleStarted && !isInteractingWithBar) {
             while (isActive) {
                 sampledPositionMs = sampleWithSeekHold()
-                kotlinx.coroutines.delay(50L)
+                kotlinx.coroutines.delay(66L)
             }
         } else if (!isInteractingWithBar) {
             sampledPositionMs = sampleWithSeekHold()
@@ -4541,7 +4559,11 @@ private fun RedesignedDedicatedLyricPage(
                     contentPadding = PaddingValues(vertical = 170.dp),
                     horizontalAlignment = horizontalAlignment
                 ) {
-                    itemsIndexed(lyricData.lines, key = { idx, item -> "${idx}_${item.startTimeMs}" }) { index, line ->
+                    itemsIndexed(
+                        items = lyricData.lines,
+                        key = { idx, item -> "${idx}_${item.startTimeMs}" },
+                        contentType = { _, _ -> "lyric_line" }
+                    ) { index, line ->
                         val isCurrent = index == currentLyricIndex
                         val isScrubTarget = isUserScrubbing && index == scrubLineIndex
                         val distance = abs(index - currentLyricIndex)
@@ -4970,12 +4992,13 @@ private fun DedicatedActiveKaraokeWords(
     activePrimaryColor: Color,
     activeSecondaryColor: Color
 ) {
+    val isLifecycleStarted = rememberIsLifecycleStarted()
     var sampledPosMs by remember { mutableLongStateOf(lyricPositionProvider()) }
     LaunchedEffect(initialPositionMs) {
         sampledPosMs = lyricPositionProvider()
     }
-    LaunchedEffect(isPlaying, lyricPositionProvider) {
-        if (isPlaying) {
+    LaunchedEffect(isPlaying, isLifecycleStarted, lyricPositionProvider) {
+        if (isPlaying && isLifecycleStarted) {
             while (isActive) {
                 withFrameMillis {
                     sampledPosMs = lyricPositionProvider()
@@ -5076,12 +5099,16 @@ internal fun LyricInterludeBreathingIndicator(
     horizontalAlignment: Alignment.Horizontal = Alignment.Start,
     modifier: Modifier = Modifier
 ) {
+    val isLifecycleStarted = rememberIsLifecycleStarted()
+    val hasCandidate = remember(lyricData, lineIndex) {
+        lyricData.hasInterludeCandidateAt(lineIndex)
+    }
     var sampledPosMs by remember(lyricData, lineIndex) { mutableLongStateOf(lyricPositionProvider()) }
     LaunchedEffect(initialPositionMs) {
         sampledPosMs = lyricPositionProvider()
     }
-    LaunchedEffect(isPlaying, lyricData, lineIndex, lyricPositionProvider) {
-        if (isPlaying) {
+    LaunchedEffect(isPlaying, isLifecycleStarted, hasCandidate, lyricData, lineIndex, lyricPositionProvider) {
+        if (isPlaying && isLifecycleStarted && hasCandidate) {
             while (isActive) {
                 withFrameMillis {
                     sampledPosMs = lyricPositionProvider()
@@ -5092,7 +5119,9 @@ internal fun LyricInterludeBreathingIndicator(
         }
     }
 
-    val progress = lyricData.getInterludeProgressAt(sampledPosMs, lineIndex)
+    val progress = if (hasCandidate) {
+        lyricData.getInterludeProgressAt(sampledPosMs, lineIndex)
+    } else -1f
     val visible = progress >= 0f
 
     androidx.compose.animation.AnimatedVisibility(
@@ -5337,11 +5366,12 @@ private fun LyricPageMinimalBottomBar(
             sampledPositionMs = sampleWithSeekHold()
         }
     }
-    LaunchedEffect(isPlaying, isDragging, positionProvider) {
-        if (isPlaying && !isDragging) {
+    val isLifecycleStarted = rememberIsLifecycleStarted()
+    LaunchedEffect(isPlaying, isLifecycleStarted, isDragging, positionProvider) {
+        if (isPlaying && isLifecycleStarted && !isDragging) {
             while (isActive) {
                 sampledPositionMs = sampleWithSeekHold()
-                kotlinx.coroutines.delay(50L)
+                kotlinx.coroutines.delay(66L)
             }
         } else if (!isDragging) {
             sampledPositionMs = sampleWithSeekHold()

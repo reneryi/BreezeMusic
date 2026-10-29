@@ -73,11 +73,13 @@ fun PlaylistListItem(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                if (playlist.coverUrl.isNotEmpty()) {
+                val coverModel = rememberOptimizedAsyncImageModel(rawUrl = playlist.coverUrl, sizePx = 156, targetCdnSize = "150")
+                if (coverModel != null) {
                     AsyncImage(
-                        model = playlist.coverUrl,
+                        model = coverModel,
                         contentDescription = playlist.title,
                         contentScale = ContentScale.Crop,
+                        filterQuality = androidx.compose.ui.graphics.FilterQuality.Low,
                         modifier = Modifier.fillMaxSize()
                     )
                 } else if (playlist.isLiked) {

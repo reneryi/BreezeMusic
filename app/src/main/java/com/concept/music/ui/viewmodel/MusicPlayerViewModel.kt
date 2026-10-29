@@ -33,6 +33,7 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -291,6 +292,19 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     private var lastSerializedQueueRef: List<Song>? = null
     @Volatile
     private var lastSerializedQueueJson: String = "[]"
+    @Volatile
+    private var isAppInForeground: Boolean = true
+
+    fun onAppForegroundChanged(inForeground: Boolean) {
+        val changed = isAppInForeground != inForeground
+        isAppInForeground = inForeground
+        if (inForeground && changed) {
+            syncPlayer()
+            if (mutableState.value.isPlaying || resolveJob?.isActive == true) {
+                startProgressUpdates()
+            }
+        }
+    }
 
     private fun resolveEffectiveIsPlaying(player: Player, isResolving: Boolean): Boolean {
         if (isPausingWithFade) return false
@@ -303,7 +317,9 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
     internal val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             syncPlayer()
-            if (!isPlaying) {
+            if (isPlaying) {
+                startProgressUpdates()
+            } else {
                 persistPlaybackStateAsync()
             }
         }
@@ -1230,6 +1246,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             bufferedPositionMs = 0L,
             isPlaying = true
         )
+        startProgressUpdates()
         loadLyric(song)
         loadComments(isRefresh = true)
         persistPlaybackStateAsync()
@@ -1451,6 +1468,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 player.volume = 1f
                 player.play()
             }
+            startProgressUpdates()
         }
     }
 
@@ -2838,17 +2856,18 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
         if (!isResolving) {
             updateLyricIndex(pos)
+        } else {
+            val latestState = mutableState.value
+            val adjustedPos = (pos + latestState.effectiveLyricOffsetMs).coerceAtLeast(0L)
+            SystemLyricBridge.updatePlaybackSnapshot(
+                song = latestState.currentSong,
+                lyricData = latestState.currentLyric,
+                currentLyricIndex = latestState.currentLyricIndex,
+                currentPositionMs = adjustedPos,
+                isPlaying = latestState.isPlaying,
+                playMode = latestState.playMode
+            )
         }
-        val latestState = mutableState.value
-        val adjustedPos = (pos + latestState.effectiveLyricOffsetMs).coerceAtLeast(0L)
-        SystemLyricBridge.updatePlaybackSnapshot(
-            song = latestState.currentSong,
-            lyricData = latestState.currentLyric,
-            currentLyricIndex = latestState.currentLyricIndex,
-            currentPositionMs = adjustedPos,
-            isPlaying = latestState.isPlaying,
-            playMode = latestState.playMode
-        )
     }
 
     internal fun updateLyricIndex(pos: Long) {
@@ -2897,20 +2916,53 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
 
     private fun mediaId(song: Song): String = song.id
 
-    private fun startProgressUpdates() {
-        if (progressJob?.isActive == true) return
-        progressJob = viewModelScope.launch {
-            while (true) {
-                val delayMs = if (mutableState.value.isPlaying) 120L else 500L
-                syncPlayer()
+    internal fun computeOptimalProgressPollIntervalMs(
+        isPlaying: Boolean,
+        inForeground: Boolean = isAppInForeground,
+        desktopLyricEnabled: Boolean = SystemLyricBridge.state.value.floatingCapsuleEnabled,
+        needFineVolumeEnvelope: Boolean = false
+    ): Long {
+        if (!isPlaying) return -1L
+        return when {
+            inForeground -> 120L
+            desktopLyricEnabled -> 200L
+            needFineVolumeEnvelope -> 400L
+            else -> 1000L
+        }
+    }
 
-                if (mutableState.value.isPlaying) {
+    private fun startProgressUpdates() {
+        if (controller == null || progressJob?.isActive == true) return
+        progressJob = viewModelScope.launch {
+            while (isActive) {
+                syncPlayer()
+                val st = mutableState.value
+                val activelyPlayingOrResolving = st.isPlaying ||
+                    resolveJob?.isActive == true ||
+                    activePlayer?.isPlaying == true ||
+                    activePlayer?.playWhenReady == true
+                if (!activelyPlayingOrResolving) {
+                    // 暂停且无待解析切歌任务时：彻底退出主线程轮询循环（0 次/秒唤醒，零待机功耗），待下次播放或切歌时自动唤醒
+                    break
+                }
+
+                if (st.isPlaying) {
                     val now = safeElapsedRealtime()
                     if (now - lastPersistPosTimestamp >= 5_000L) {
                         lastPersistPosTimestamp = now
                         persistPositionOnlyAsync()
                     }
                 }
+
+                val needFineVolumeEnvelope = st.climaxModeEnabled ||
+                    st.crossfadeSeconds > 0 ||
+                    (st.sleepPendingStopAtTrackEnd && st.sleepTimerRemainingSec <= 5L)
+                val delayMs = computeOptimalProgressPollIntervalMs(
+                    isPlaying = true,
+                    inForeground = isAppInForeground,
+                    desktopLyricEnabled = SystemLyricBridge.state.value.floatingCapsuleEnabled,
+                    needFineVolumeEnvelope = needFineVolumeEnvelope
+                ).coerceAtLeast(120L)
 
                 delay(delayMs)
             }

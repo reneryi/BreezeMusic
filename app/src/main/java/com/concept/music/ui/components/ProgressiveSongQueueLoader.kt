@@ -28,10 +28,10 @@ fun rememberProgressiveSongList(
     sourceSongs: List<Song>,
     listState: LazyListState,
     resetKey: Any? = Unit,
-    initialBatchSize: Int = 15,
-    microBatchSize: Int = 10,
-    frameIntervalMs: Long = 36L,
-    bottomPreloadThreshold: Int = 12
+    initialBatchSize: Int = 60,
+    microBatchSize: Int = 100,
+    frameIntervalMs: Long = 96L,
+    bottomPreloadThreshold: Int = 24
 ): State<List<Song>> {
     val latestSource by rememberUpdatedState(sourceSongs)
     var renderedCount by remember(resetKey) {

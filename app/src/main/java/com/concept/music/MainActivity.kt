@@ -375,10 +375,20 @@ fun MainContent(
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) libraryViewModel.onForeground(true)
-            if (event == Lifecycle.Event.ON_PAUSE) libraryViewModel.onForeground(false)
+            when (event) {
+                Lifecycle.Event.ON_START -> musicPlayerViewModel.onAppForegroundChanged(true)
+                Lifecycle.Event.ON_RESUME -> {
+                    musicPlayerViewModel.onAppForegroundChanged(true)
+                    libraryViewModel.onForeground(true)
+                }
+                Lifecycle.Event.ON_PAUSE -> libraryViewModel.onForeground(false)
+                Lifecycle.Event.ON_STOP -> musicPlayerViewModel.onAppForegroundChanged(false)
+                else -> {}
+            }
         }
         lifecycle.addObserver(observer)
+        val isStartedNow = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        musicPlayerViewModel.onAppForegroundChanged(isStartedNow)
         if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) libraryViewModel.onForeground(true)
         onDispose { lifecycle.removeObserver(observer) }
     }
@@ -1194,13 +1204,21 @@ private fun CoverPrewarmEffect(homeViewModel: HomeViewModel) {
             if (urlsToPrewarm.isEmpty()) return@withContext
             val imageLoader = coil.Coil.imageLoader(context)
             urlsToPrewarm.forEach { url ->
-                runCatching {
-                    imageLoader.enqueue(
-                        coil.request.ImageRequest.Builder(context)
-                            .data(url)
-                            .size(360)
-                            .build()
-                    )
+                val thumb150 = com.concept.music.ui.components.normalizeKugouThumbUrl(url, "150")
+                if (thumb150.isNotEmpty()) {
+                    runCatching {
+                        imageLoader.enqueue(
+                            coil.request.ImageRequest.Builder(context)
+                                .data(thumb150)
+                                .size(144, 144)
+                                .precision(coil.size.Precision.INEXACT)
+                                .memoryCacheKey("${thumb150}_s144")
+                                .diskCacheKey(thumb150)
+                                .allowHardware(false)
+                                .crossfade(false)
+                                .build()
+                        )
+                    }
                 }
             }
         }
@@ -1331,6 +1349,9 @@ private fun IsolatedDesktopLyricHost(
     onOpenPlayer: () -> Unit
 ) {
     if (!visible) return
+    val bridgeState by SystemLyricBridge.state.collectAsState()
+    // 当桌面歌词总开关关闭或已由系统级跨应用悬浮窗接管时，跳过应用内悬浮歌词树与高频状态订阅
+    if (!bridgeState.floatingCapsuleEnabled || bridgeState.systemOverlayActive) return
     val playerUiState by viewModel.uiState.collectAsState()
     val lyricOffsetMs = playerUiState.effectiveLyricOffsetMs
     val positionProvider = remember(viewModel, lyricOffsetMs) {

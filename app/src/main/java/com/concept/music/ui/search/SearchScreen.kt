@@ -40,7 +40,9 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import coil.compose.AsyncImage
 import com.concept.music.data.model.*
+import androidx.compose.ui.graphics.FilterQuality
 import com.concept.music.ui.components.FloatingScrollToTopButton
+import com.concept.music.ui.components.rememberOptimizedAsyncImageModel
 import com.concept.music.ui.components.rememberProgressiveSongList
 import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
@@ -277,7 +279,7 @@ fun SearchScreen(
                                 .fillMaxSize()
                                 .background(MaterialTheme.colorScheme.background)
                         ) {
-                            items(suggestions) { text ->
+                            items(items = suggestions, key = { it }, contentType = { "search_suggestion" }) { text ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -963,11 +965,13 @@ private fun ArtistHeroCard(
                     .background(elevatedColor),
                 contentAlignment = Alignment.Center
             ) {
-                if (artist.avatarUrl.isNotBlank()) {
+                val artistThumbModel = rememberOptimizedAsyncImageModel(rawUrl = artist.avatarUrl, sizePx = 156, targetCdnSize = "150")
+                if (artistThumbModel != null) {
                     AsyncImage(
-                        model = artist.avatarUrl,
+                        model = artistThumbModel,
                         contentDescription = artist.name,
                         contentScale = ContentScale.Crop,
+                        filterQuality = FilterQuality.Low,
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
@@ -1059,11 +1063,13 @@ private fun ArtistSearchCard(artist: ArtistItem, onClick: () -> Unit = {}) {
                     .background(conceptElevatedSurfaceColor()),
                 contentAlignment = Alignment.Center
             ) {
-                if (artist.avatarUrl.isNotBlank()) {
+                val artistThumbModel = rememberOptimizedAsyncImageModel(rawUrl = artist.avatarUrl, sizePx = 156, targetCdnSize = "150")
+                if (artistThumbModel != null) {
                     AsyncImage(
-                        model = artist.avatarUrl,
+                        model = artistThumbModel,
                         contentDescription = artist.name,
                         contentScale = ContentScale.Crop,
+                        filterQuality = FilterQuality.Low,
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
@@ -1248,7 +1254,7 @@ private fun PlaylistGalleryBlock(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            items(playlists) { pl ->
+            items(items = playlists, key = { "cpl_${it.id}" }, contentType = { "complex_playlist_card" }) { pl ->
                 Column(
                     modifier = Modifier
                         .width(134.dp)
@@ -1389,10 +1395,12 @@ private fun AlbumCardItem(album: AlbumItem, onClick: () -> Unit = {}) {
                     .background(conceptElevatedSurfaceColor()),
                 contentAlignment = Alignment.Center
             ) {
+                val albumThumbModel = rememberOptimizedAsyncImageModel(rawUrl = album.coverUrl, sizePx = 156, targetCdnSize = "150")
                 AsyncImage(
-                    model = album.coverUrl,
+                    model = albumThumbModel ?: album.coverUrl,
                     contentDescription = album.name,
                     contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.Low,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -1462,10 +1470,12 @@ private fun PlaylistSearchCard(playlist: PlaylistItem, onClick: () -> Unit = {})
                 .padding(vertical = 10.dp, horizontal = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val playlistThumbModel = rememberOptimizedAsyncImageModel(rawUrl = playlist.coverUrl, sizePx = 156, targetCdnSize = "150")
             AsyncImage(
-                model = playlist.coverUrl,
+                model = playlistThumbModel ?: playlist.coverUrl,
                 contentDescription = playlist.name,
                 contentScale = ContentScale.Crop,
+                filterQuality = FilterQuality.Low,
                 modifier = Modifier
                     .size(58.dp)
                     .clip(RoundedCornerShape(14.dp))

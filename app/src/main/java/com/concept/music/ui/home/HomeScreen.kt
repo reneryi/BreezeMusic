@@ -58,7 +58,9 @@ import coil.compose.AsyncImage
 import com.concept.music.data.model.FmChannel
 import com.concept.music.data.model.RankItem
 import com.concept.music.data.model.Song
+import androidx.compose.ui.graphics.FilterQuality
 import com.concept.music.ui.components.BadgeTag
+import com.concept.music.ui.components.rememberOptimizedAsyncImageModel
 import com.concept.music.ui.components.FloatingScrollToTopButton
 import com.concept.music.ui.components.rememberProgressiveSongList
 import com.concept.music.ui.components.smoothFastScrollToItem
@@ -243,12 +245,12 @@ fun HomeScreen(
             }
 
             // 1. 顶部标题与右上角长圆形搜索按钮 + 全时段精细化问候文案
-            item {
+            item(key = "discover_header", contentType = "discover_header") {
                 DiscoverTopHeader(onSearchClick = onSearchClick)
             }
 
             // 2. 每日推荐大横幅
-            item {
+            item(key = "discover_daily_banner", contentType = "discover_daily_banner") {
                 DailyRecommendBanner(
                     songs = dailySongs,
                     onCardClick = onOpenDailyRecommend,
@@ -263,7 +265,7 @@ fun HomeScreen(
             }
 
             // 3. 私人随心听 FM（猜你喜欢定位 · 类播放器交互卡片）
-            item {
+            item(key = "discover_personal_fm", contentType = "discover_personal_fm") {
                 val safeIdx = if (fmPool.isEmpty()) 0 else personalFmIndex.coerceIn(0, fmPool.lastIndex)
                 val activeFmSong = fmPool.getOrNull(safeIdx)
                 val nextFmSong = if (fmPool.size > 1) fmPool.getOrNull((safeIdx + 1) % fmPool.size) else null
@@ -309,7 +311,7 @@ fun HomeScreen(
             }
 
             // 4. 新歌速递（对接 module/top_song.js: /musicadservice/container/v1/newsong_publish，采用横向三行分栏流卡片设计）
-            item {
+            item(key = "discover_new_songs", contentType = "discover_new_songs") {
                 NewSongExpressSectionCard(
                     selectedPeriod = selectedNewSongPeriod,
                     songs = currentNewSongs,
@@ -337,7 +339,7 @@ fun HomeScreen(
 
             // 5. 巅峰排行榜（开放式排版：无胶囊按钮堆叠，采用底部多彩指示条与单层微渐变榜单卡）
             if (ranks.isNotEmpty()) {
-                item {
+                item(key = "discover_ranks", contentType = "discover_ranks") {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
@@ -427,7 +429,7 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                itemsIndexed(currentRanksForCat, key = { idx, r -> "rank_card_${r.rankId}_$idx" }) { _, rank ->
+                                itemsIndexed(currentRanksForCat, key = { idx, r -> "rank_card_${r.rankId}_$idx" }, contentType = { _, _ -> "rank_card" }) { _, rank ->
                                     RankCardView(
                                         rank = rank,
                                         onCardClick = { onOpenRank(rank.rankId) },
@@ -456,7 +458,7 @@ fun HomeScreen(
 
             // 6. 精选场景电台（画廊式无外框封面卡片 + 极简文字链入口）
             if (fmChannels.isNotEmpty()) {
-                item {
+                item(key = "discover_fm_channels", contentType = "discover_fm_channels") {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier
@@ -498,7 +500,7 @@ fun HomeScreen(
                             horizontalArrangement = Arrangement.spacedBy(18.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            itemsIndexed(fmChannels, key = { idx, it -> "fm_ch_${it.id}_$idx" }) { idx, channel ->
+                            itemsIndexed(fmChannels, key = { idx, it -> "fm_ch_${it.id}_$idx" }, contentType = { _, _ -> "fm_channel_card" }) { idx, channel ->
                                 val fallbackCover = coverPool.getOrNull((idx + 2) % coverPool.size.coerceAtLeast(1)).orEmpty()
                                 FmChannelCardView(
                                     channel = channel,
@@ -1482,7 +1484,7 @@ private fun NewSongExpressSectionCard(
                     horizontalArrangement = Arrangement.spacedBy(22.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                itemsIndexed(columns, key = { colIdx, group -> "ns_col_${colIdx}_${group.firstOrNull()?.id}" }) { _, group ->
+                itemsIndexed(columns, key = { colIdx, group -> "ns_col_${colIdx}_${group.firstOrNull()?.id}" }, contentType = { _, _ -> "new_song_column" }) { _, group ->
                     Column(
                         modifier = Modifier.width(292.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -1513,11 +1515,13 @@ private fun NewSongExpressSectionCard(
                                         .background(Brush.linearGradient(listOf(ConceptVioletAccent, ConceptPrimaryDark))),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (song.coverUrl.isNotBlank()) {
+                                    val nsThumbModel = rememberOptimizedAsyncImageModel(rawUrl = song.coverUrl, sizePx = 144, targetCdnSize = "150")
+                                    if (nsThumbModel != null) {
                                         AsyncImage(
-                                            model = song.coverUrl,
+                                            model = nsThumbModel,
                                             contentDescription = song.title,
                                             contentScale = ContentScale.Crop,
+                                            filterQuality = FilterQuality.Low,
                                             modifier = Modifier.fillMaxSize()
                                         )
                                     } else {
@@ -2030,11 +2034,13 @@ private fun FmChannelCardView(
                 .clip(RoundedCornerShape(22.dp))
                 .background(fallbackBrush)
         ) {
-            if (effectiveCover.isNotBlank()) {
+            val fmCoverModel = rememberOptimizedAsyncImageModel(rawUrl = effectiveCover, sizePx = 240, targetCdnSize = "240")
+            if (fmCoverModel != null) {
                 AsyncImage(
-                    model = effectiveCover,
+                    model = fmCoverModel,
                     contentDescription = channel.name,
                     contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.Low,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
@@ -3207,6 +3213,9 @@ private fun StaggeredThreeCovers(
     val cover1 = songs.getOrNull(0)?.coverUrl.orEmpty()
     val cover2 = songs.getOrNull(1)?.coverUrl?.takeIf { it.isNotBlank() } ?: cover1
     val cover3 = songs.getOrNull(2)?.coverUrl?.takeIf { it.isNotBlank() } ?: cover2
+    val cover1Model = rememberOptimizedAsyncImageModel(rawUrl = cover1, sizePx = 240, targetCdnSize = "240")
+    val cover2Model = rememberOptimizedAsyncImageModel(rawUrl = cover2, sizePx = 200, targetCdnSize = "240")
+    val cover3Model = rememberOptimizedAsyncImageModel(rawUrl = cover3, sizePx = 160, targetCdnSize = "150")
 
     Box(
         modifier = Modifier
@@ -3226,11 +3235,12 @@ private fun StaggeredThreeCovers(
                 .clip(RoundedCornerShape(16.dp))
                 .background(Brush.linearGradient(listOf(Color(0xFF3A5A8C), Color(0xFF1F3252))))
         ) {
-            if (cover3.isNotBlank()) {
+            if (cover3Model != null) {
                 AsyncImage(
-                    model = cover3,
+                    model = cover3Model,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.Low,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -3248,11 +3258,12 @@ private fun StaggeredThreeCovers(
                 .clip(RoundedCornerShape(18.dp))
                 .background(Brush.linearGradient(listOf(Color(0xFF284B7E), Color(0xFF182A49))))
         ) {
-            if (cover2.isNotBlank()) {
+            if (cover2Model != null) {
                 AsyncImage(
-                    model = cover2,
+                    model = cover2Model,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.Low,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -3273,11 +3284,12 @@ private fun StaggeredThreeCovers(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            if (cover1.isNotBlank()) {
+            if (cover1Model != null) {
                 AsyncImage(
-                    model = cover1,
+                    model = cover1Model,
                     contentDescription = "今日推荐封面",
                     contentScale = ContentScale.Crop,
+                    filterQuality = FilterQuality.Low,
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
@@ -3345,11 +3357,13 @@ private fun RankCardView(
                         .clip(RoundedCornerShape(16.dp))
                         .background(Brush.linearGradient(listOf(accent, ConceptPrimaryDark)))
                 ) {
-                    if (rank.coverUrl.isNotBlank()) {
+                    val rankCoverModel = rememberOptimizedAsyncImageModel(rawUrl = rank.coverUrl, sizePx = 160, targetCdnSize = "150")
+                    if (rankCoverModel != null) {
                         AsyncImage(
-                            model = rank.coverUrl,
+                            model = rankCoverModel,
                             contentDescription = rank.rankName,
                             contentScale = ContentScale.Crop,
+                            filterQuality = FilterQuality.Low,
                             modifier = Modifier.fillMaxSize()
                         )
                     } else {

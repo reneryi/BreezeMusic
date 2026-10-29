@@ -210,7 +210,7 @@ fun AlbumDetailScreen(
                 contentPadding = PaddingValues(bottom = 112.dp)
             ) {
                 // 1. 开放式无框专辑头部（去除外层灰盒与简介内嵌框，营造大视野呼吸感）
-                item {
+                item(key = "album_header", contentType = "album_header") {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -357,7 +357,7 @@ fun AlbumDetailScreen(
 
                 // 2. 专辑内歌曲搜索过滤框
                 if (songs.size > 5) {
-                    item {
+                    item(key = "album_search_bar", contentType = "album_search_bar") {
                         OutlinedTextField(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },

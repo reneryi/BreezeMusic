@@ -235,7 +235,7 @@ internal class BiquadStereoFilter {
     private var b2 = 0.0
     private var a1 = 0.0
     private var a2 = 0.0
-    private var isBypass = true
+    var isBypass = true
 
     private var z1L = 0.0
     private var z2L = 0.0
@@ -414,6 +414,10 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
     private var cachedWidthFactor = 0f
     private var cachedHaasCrossMix = 0f
     private var cachedReverbMode = ReverbMode.NONE
+    private var hasActiveEqBands = false
+    private var hasActiveBassFilter = false
+    private var hasActiveVocalFilter = false
+    private var hasActiveWarmthFilter = false
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         val validEncoding = inputAudioFormat.encoding == C.ENCODING_PCM_16BIT ||
@@ -497,6 +501,10 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             cachedWidthFactor = 0f
             cachedHaasCrossMix = 0f
             cachedReverbMode = ReverbMode.NONE
+            hasActiveEqBands = false
+            hasActiveBassFilter = false
+            hasActiveVocalFilter = false
+            hasActiveWarmthFilter = false
             return
         }
 
@@ -585,6 +593,10 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         } else 0.0
         val netGainDb = (preampDb + loudnessDb + headroomPadDb).coerceIn(-12.0, 14.0)
         cachedLinearPreampAndLoudnessGain = (10.0.pow(netGainDb / 20.0)).toFloat()
+        hasActiveEqBands = eqFilters.any { !it.isBypass }
+        hasActiveBassFilter = !bassShelfFilter.isBypass || !bassPunchFilter.isBypass || cachedSubHarmonicDrive > 0.005f
+        hasActiveVocalFilter = !vocalMudCutFilter.isBypass || !vocalPresenceFilter.isBypass || !vocalAirShelfFilter.isBypass
+        hasActiveWarmthFilter = !warmthBodyFilter.isBypass || cachedWarmthDrive > 0.005f
     }
 
     private fun processStereoReverb(inL: Float, inR: Float, mode: ReverbMode, outPair: FloatArray) {
@@ -726,39 +738,49 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             var sR = rawR * normGain
 
             if (dspActive || eqLoudnessComp) {
-                // 1. 10段 Biquad 参量均衡滤波级联
-                for (b in 0 until 10) {
-                    val f = eqFilters[b]
-                    sL = f.processLeft(sL)
-                    sR = f.processRight(sR)
+                // 1. 10段 Biquad 参量均衡滤波级联（当 10 段均为 0dB 平直时直接整组短路跳过）
+                if (hasActiveEqBands) {
+                    for (b in 0 until 10) {
+                        val f = eqFilters[b]
+                        if (!f.isBypass) {
+                            sL = f.processLeft(sL)
+                            sR = f.processRight(sR)
+                        }
+                    }
                 }
 
                 // 2. 重低音下潜低架 + 截止频点谐振峰 (45Hz / 60Hz / 85Hz) + 亚低频泛音激励
-                sL = bassPunchFilter.processLeft(bassShelfFilter.processLeft(sL))
-                sR = bassPunchFilter.processRight(bassShelfFilter.processRight(sR))
-                if (subDrive > 0.005f) {
-                    subLowpassL += subAlpha * (sL - subLowpassL)
-                    subLowpassR += subAlpha * (sR - subLowpassR)
-                    val subHarmL = subLowpassL * abs(subLowpassL) * 1.6f
-                    val subHarmR = subLowpassR * abs(subLowpassR) * 1.6f
-                    sL += subHarmL * subDrive
-                    sR += subHarmR * subDrive
+                if (hasActiveBassFilter) {
+                    sL = bassPunchFilter.processLeft(bassShelfFilter.processLeft(sL))
+                    sR = bassPunchFilter.processRight(bassShelfFilter.processRight(sR))
+                    if (subDrive > 0.005f) {
+                        subLowpassL += subAlpha * (sL - subLowpassL)
+                        subLowpassR += subAlpha * (sR - subLowpassR)
+                        val subHarmL = subLowpassL * abs(subLowpassL) * 1.6f
+                        val subHarmR = subLowpassR * abs(subLowpassR) * 1.6f
+                        sL += subHarmL * subDrive
+                        sR += subHarmR * subDrive
+                    }
                 }
 
                 // 3. 人声通透去浊 (265Hz)、中高频贴耳存在感 (2.75kHz) 与极高频空气泛音 (9.2kHz)
-                sL = vocalAirShelfFilter.processLeft(vocalPresenceFilter.processLeft(vocalMudCutFilter.processLeft(sL)))
-                sR = vocalAirShelfFilter.processRight(vocalPresenceFilter.processRight(vocalMudCutFilter.processRight(sR)))
+                if (hasActiveVocalFilter) {
+                    sL = vocalAirShelfFilter.processLeft(vocalPresenceFilter.processLeft(vocalMudCutFilter.processLeft(sL)))
+                    sR = vocalAirShelfFilter.processRight(vocalPresenceFilter.processRight(vocalMudCutFilter.processRight(sR)))
+                }
 
                 // 4. 黑胶与黄金胆机温暖度 (175Hz 醇厚共振 + 甲类电子管非对称偶次谐波软饱和)
-                sL = warmthBodyFilter.processLeft(sL)
-                sR = warmthBodyFilter.processRight(sR)
-                if (warmthDrive > 0.005f) {
-                    val evenL = sL * sL * (if (sL >= 0f) 0.55f else -0.32f)
-                    val evenR = sR * sR * (if (sR >= 0f) 0.55f else -0.32f)
-                    val cubicL = sL - (sL * sL * sL) * 0.18f
-                    val cubicR = sR - (sR * sR * sR) * 0.18f
-                    sL = sL * (1f - warmthDrive * 0.35f) + cubicL * (warmthDrive * 0.35f) + evenL * (warmthDrive * 0.45f)
-                    sR = sR * (1f - warmthDrive * 0.35f) + cubicR * (warmthDrive * 0.35f) + evenR * (warmthDrive * 0.45f)
+                if (hasActiveWarmthFilter) {
+                    sL = warmthBodyFilter.processLeft(sL)
+                    sR = warmthBodyFilter.processRight(sR)
+                    if (warmthDrive > 0.005f) {
+                        val evenL = sL * sL * (if (sL >= 0f) 0.55f else -0.32f)
+                        val evenR = sR * sR * (if (sR >= 0f) 0.55f else -0.32f)
+                        val cubicL = sL - (sL * sL * sL) * 0.18f
+                        val cubicR = sR - (sR * sR * sR) * 0.18f
+                        sL = sL * (1f - warmthDrive * 0.35f) + cubicL * (warmthDrive * 0.35f) + evenL * (warmthDrive * 0.45f)
+                        sR = sR * (1f - warmthDrive * 0.35f) + cubicR * (warmthDrive * 0.35f) + evenR * (warmthDrive * 0.45f)
+                    }
                 }
 
                 // 5. 3D 环绕声场扩展 (低频居中保护 M/S 拓宽 + Haas 跨声道微延迟空间成像)
@@ -1627,10 +1649,42 @@ class PlaybackService : MediaSessionService() {
             }
     }
 
+    private var screenStateReceiverRegistered = false
+    private val screenStateReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    // 手机熄屏锁屏后立即停止后台桌面歌词 160ms 主线程 Ticker，消除熄屏待机耗电
+                    stopBackgroundDesktopLyricProgressTicker()
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    if (player?.isPlaying == true && SystemLyricBridge.state.value.floatingCapsuleEnabled) {
+                        startBackgroundDesktopLyricProgressTicker()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun ensureScreenStateReceiverRegistered() {
+        if (screenStateReceiverRegistered) return
+        runCatching {
+            val filter = android.content.IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            }
+            registerReceiver(screenStateReceiver, filter)
+            screenStateReceiverRegistered = true
+        }
+    }
+
     private val bgLyricProgressRunnable = object : Runnable {
         override fun run() {
             val p = player ?: return
-            if (p.isPlaying && SystemLyricBridge.state.value.floatingCapsuleEnabled) {
+            if (p.isPlaying &&
+                SystemLyricBridge.state.value.floatingCapsuleEnabled &&
+                SystemLyricBridge.isScreenInteractive(applicationContext)
+            ) {
                 SystemLyricBridge.syncProgressFromService(p.currentPosition, true)
                 mainHandler?.postDelayed(this, 160L)
             }
@@ -1638,9 +1692,13 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun startBackgroundDesktopLyricProgressTicker() {
+        ensureScreenStateReceiverRegistered()
         val h = mainHandler ?: return
         h.removeCallbacks(bgLyricProgressRunnable)
-        if (player?.isPlaying == true && SystemLyricBridge.state.value.floatingCapsuleEnabled) {
+        if (player?.isPlaying == true &&
+            SystemLyricBridge.state.value.floatingCapsuleEnabled &&
+            SystemLyricBridge.isScreenInteractive(applicationContext)
+        ) {
             h.post(bgLyricProgressRunnable)
         }
     }
@@ -1709,6 +1767,10 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         stopBackgroundDesktopLyricProgressTicker()
+        if (screenStateReceiverRegistered) {
+            runCatching { unregisterReceiver(screenStateReceiver) }
+            screenStateReceiverRegistered = false
+        }
         SystemLyricBridge.onDesktopLyricNotificationStateChanged = null
         headsetButtonController.reset()
         abandonDuckAudioFocusRequest()

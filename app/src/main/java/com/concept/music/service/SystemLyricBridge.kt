@@ -167,6 +167,12 @@ internal data class DesktopLyricRenderRow(
 ) {
     val isPrimary: Boolean
         get() = !isSecondaryRow
+
+    val joinedWordsText: String = if (words.isNotEmpty()) {
+        words.joinToString("") { it.text }
+    } else {
+        text
+    }
 }
 
 internal data class DesktopLyricLayoutPlan(
@@ -571,6 +577,12 @@ object SystemLyricBridge {
     /**
      * 当 App 处于后台时由 `PlaybackService` 定时推送实时播放进度，确保后台开启桌面歌词时逐字动效与换行持续运行
      */
+    internal fun isScreenInteractive(context: Context? = appContext): Boolean {
+        val ctx = context ?: return true
+        val pm = runCatching { ctx.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager }.getOrNull()
+        return pm?.isInteractive ?: true
+    }
+
     fun syncProgressFromService(positionMs: Long, isPlaying: Boolean) {
         currentPositionMsSnapshot = positionMs.coerceAtLeast(0L)
         lastPositionSyncRealtimeMs = android.os.SystemClock.elapsedRealtime()
@@ -582,9 +594,11 @@ object SystemLyricBridge {
                 currentLineIndexSnapshot = idx
             }
         }
-        if (_state.value.floatingCapsuleEnabled) {
+        if (_state.value.floatingCapsuleEnabled && isScreenInteractive()) {
             mainHandler.post {
-                syncSystemOverlayWindow()
+                if (overlayView == null || currentSongSnapshot == null) {
+                    syncSystemOverlayWindow()
+                }
                 overlayView?.onPlaybackUpdated()
             }
         }
@@ -592,7 +606,9 @@ object SystemLyricBridge {
 
     fun onHostResumed(context: Context) {
         appContext = context.applicationContext
-        syncSystemOverlayWindow()
+        if (_state.value.floatingCapsuleEnabled || overlayView != null) {
+            syncSystemOverlayWindow()
+        }
     }
 
     fun updatePlaybackSnapshot(
@@ -607,6 +623,7 @@ object SystemLyricBridge {
         onNext: (() -> Unit)? = null,
         onCyclePlayMode: (() -> Unit)? = null
     ) {
+        val songChanged = currentSongSnapshot?.id != song?.id || currentSongSnapshot?.coverUrl != song?.coverUrl
         currentSongSnapshot = song
         currentLyricSnapshot = lyricData
         currentLineIndexSnapshot = currentLyricIndex
@@ -619,14 +636,22 @@ object SystemLyricBridge {
         if (onNext != null) onNextCallback = onNext
         if (onCyclePlayMode != null) onCyclePlayModeCallback = onCyclePlayMode
 
-        refreshDynamicCoverColorsIfNeeded(song)
+        if (songChanged || lastExtractedCoverUrl != song?.coverUrl?.trim().orEmpty()) {
+            refreshDynamicCoverColorsIfNeeded(song)
+        }
 
         val st = _state.value
         if (st.floatingCapsuleEnabled) {
-            mainHandler.post {
-                syncSystemOverlayWindow()
-                overlayView?.onPlaybackUpdated()
+            if (isScreenInteractive()) {
+                mainHandler.post {
+                    if (overlayView == null || song == null || songChanged) {
+                        syncSystemOverlayWindow()
+                    }
+                    overlayView?.onPlaybackUpdated()
+                }
             }
+        } else if (overlayView != null || st.systemOverlayActive) {
+            syncSystemOverlayWindow()
         }
     }
 
@@ -667,14 +692,14 @@ object SystemLyricBridge {
             }
             return
         }
-        // 1. 优先命中内存调色板缓存，零延迟同步
+        if (coverUrl == lastExtractedCoverUrl) return
+        // 1. 优先命中内存调色板缓存，零延迟同步（仅在曲目封面切换时计算一次色阶）
         coverPaletteMemoryCache[coverUrl]?.let { cached ->
             val pHex = cached.dominantAccent.readableOnDarkSurface(minLuminance = 0.46f).toArgb().toLong() and 0xFFFFFFFFL
             val sHex = cached.secondaryAccent.readableOnDarkSurface(minLuminance = 0.50f).toArgb().toLong() and 0xFFFFFFFFL
             updateDynamicCoverColors(pHex, sHex, coverUrl = coverUrl)
             return
         }
-        if (coverUrl == lastExtractedCoverUrl) return
         val ctx = appContext ?: return
         coverExtractJob?.cancel()
         coverExtractJob = coverExtractScope.launch {
@@ -998,14 +1023,16 @@ object SystemLyricBridge {
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
 
-        // 锁定态直接挂载 FLAG_NOT_TOUCHABLE 全穿透，不再在屏幕上挂载任何悬浮小锁图标，
-        // 解锁与开关统一交由系统媒体通知栏 / OPPO 流体云 (Fluid Cloud) 及 App 内控制完成
-        lp.flags = if (locked) {
+        // 锁定态直接挂载 FLAG_NOT_TOUCHABLE 全穿透，仅当窗口 Flags 实际发生变化时才执行跨进程 WindowManager IPC 更新
+        val targetFlags = if (locked) {
             baseFlags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         } else {
             baseFlags
         }
-        runCatching { wm.updateViewLayout(view, lp) }
+        if (lp.flags != targetFlags) {
+            lp.flags = targetFlags
+            runCatching { wm.updateViewLayout(view, lp) }
+        }
     }
 
     private fun removeSystemOverlayViews() {
@@ -1277,7 +1304,7 @@ private class NativeDesktopLyricView(
         val availableTextWidth = (w - sideMargin * 2f - 28f * d).coerceAtLeast(160f * d)
         val maxVisualUnits = (availableTextWidth / mainFontSizePx).coerceAtLeast(10f)
 
-        val layoutPlan = resolveDesktopLyricLayoutPlan(
+        val layoutPlan = obtainCachedLayoutPlan(
             currentLine = currentLine,
             nextLine = nextLine,
             fallbackTitle = fallbackTitle,
@@ -1306,7 +1333,11 @@ private class NativeDesktopLyricView(
         }
 
         // 前奏 / 长间奏三点流光呼吸波点指示（与 App 内歌词动效统一）
-        val interludeProgress = lyricData.getInterludeProgressAt(livePosMs)
+        val interludeProgress = if (lyricData.hasInterludeCandidateAt(safeIdx)) {
+            lyricData.getInterludeProgressAt(livePosMs, safeIdx)
+        } else {
+            -1f
+        }
         if (interludeProgress >= 0f) {
             drawInterludeBreathingDots(
                 canvas = canvas,
@@ -1340,14 +1371,67 @@ private class NativeDesktopLyricView(
             canvas.restore()
         }
 
-        // 播放中按 60fps 持续刷新逐字扫光与弹性跃动动画
-        if (SystemLyricBridge.isPlayingSnapshot && currentLine != null) {
+        // 仅在屏幕亮起、视图可见且当前行具备逐字/行级流光或间奏呼吸动画时按 60fps 刷新，静态行与熄屏态严格 0fps 休眠
+        val hasAnimatedKaraokeRow = layoutPlan.rows.any {
+            it.isActiveKaraoke && (it.words.isNotEmpty() || it.lineDurationMs > 0L)
+        }
+        if (SystemLyricBridge.isPlayingSnapshot &&
+            isShown &&
+            windowVisibility == VISIBLE &&
+            SystemLyricBridge.isScreenInteractive(context) &&
+            (hasAnimatedKaraokeRow || interludeProgress >= 0f)
+        ) {
             postInvalidateDelayed(16L)
         }
     }
 
+    private var cachedPlanCurrentLine: LyricLine? = null
+    private var cachedPlanNextLine: LyricLine? = null
+    private var cachedPlanFallbackTitle: String = ""
+    private var cachedPlanShowTranslation: Boolean = true
+    private var cachedPlanMaxUnits: Float = -1f
+    private var cachedPlanSlotH: Float = -1f
+    private var cachedLayoutPlan: DesktopLyricLayoutPlan? = null
+
+    private fun obtainCachedLayoutPlan(
+        currentLine: LyricLine?,
+        nextLine: LyricLine?,
+        fallbackTitle: String,
+        showTranslation: Boolean,
+        maxVisualUnitsPerLine: Float,
+        singleRowSlotHeightPx: Float
+    ): DesktopLyricLayoutPlan {
+        val existing = cachedLayoutPlan
+        if (existing != null &&
+            cachedPlanCurrentLine === currentLine &&
+            cachedPlanNextLine === nextLine &&
+            cachedPlanFallbackTitle == fallbackTitle &&
+            cachedPlanShowTranslation == showTranslation &&
+            abs(cachedPlanMaxUnits - maxVisualUnitsPerLine) < 0.05f &&
+            abs(cachedPlanSlotH - singleRowSlotHeightPx) < 0.05f
+        ) {
+            return existing
+        }
+        val computed = resolveDesktopLyricLayoutPlan(
+            currentLine = currentLine,
+            nextLine = nextLine,
+            fallbackTitle = fallbackTitle,
+            showTranslation = showTranslation,
+            maxVisualUnitsPerLine = maxVisualUnitsPerLine,
+            singleRowSlotHeightPx = singleRowSlotHeightPx
+        )
+        cachedPlanCurrentLine = currentLine
+        cachedPlanNextLine = nextLine
+        cachedPlanFallbackTitle = fallbackTitle
+        cachedPlanShowTranslation = showTranslation
+        cachedPlanMaxUnits = maxVisualUnitsPerLine
+        cachedPlanSlotH = singleRowSlotHeightPx
+        cachedLayoutPlan = computed
+        return computed
+    }
+
     /**
-     * 绘制与 App 内动效统一的 KRC 逐字流光 + 唱诵单字正弦波弹性上浮行
+     * 绘制与 App 内动效统一的 KRC 逐字流光 + 唱诵单字正弦波弹性上浮行（预缓存行文本，消除 onDraw 每帧字符串拼接分配）
      */
     private fun drawUnifiedAnimatedLyricRow(
         canvas: Canvas,
@@ -1367,7 +1451,7 @@ private class NativeDesktopLyricView(
 
         // 若该行包含逐字时间戳且处于激活唱诵状态，逐词绘制流光渐变与弹性上浮跃动
         if (row.isActiveKaraoke && row.words.isNotEmpty() && posMs >= 0L) {
-            val fullLineText = row.words.joinToString("") { it.text }
+            val fullLineText = row.joinedWordsText
             val totalW = mainTextPaint.measureText(fullLineText).coerceAtLeast(1f)
             if (totalW <= maxWidthPx * 1.04f) {
                 var cursorX = ((width - totalW) / 2f).coerceAtLeast(16f * d)

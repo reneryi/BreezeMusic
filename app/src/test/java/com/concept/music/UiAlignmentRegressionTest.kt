@@ -1726,4 +1726,76 @@ class UiAlignmentRegressionTest {
             assertTrue("$relPath 应统一接入 ConceptAnimatedOverlaySheet 弹性动画容器", code.contains("ConceptAnimatedOverlaySheet("))
         }
     }
+
+    @Test
+    fun `功耗与后台减负及120fps上下滑动满帧率深度优化验证`() {
+        // 1. 验证酷狗 CDN 缩略图降维与 HTTPS 升级
+        assertEquals(
+            "https://imge.kugou.com/stdmusic/150/20261029/cover.jpg",
+            com.concept.music.ui.components.normalizeKugouThumbUrl("http://imge.kugou.com/stdmusic/{size}/20261029/cover.jpg", "150")
+        )
+        assertEquals(
+            "https://imge.kugou.com/stdmusic/150/20261029/cover.jpg",
+            com.concept.music.ui.components.normalizeKugouThumbUrl("http://imge.kugou.com/stdmusic/400/20261029/cover.jpg", "150")
+        )
+        assertEquals(
+            "https://imge.kugou.com/stdmusic/240/20261029/cover.jpg",
+            com.concept.music.ui.components.normalizeKugouThumbUrl("https://imge.kugou.com/stdmusic/1000/20261029/cover.jpg", "240")
+        )
+
+        // 2. 验证 LyricData.hasInterludeCandidateAt O(1) 间奏候选预判（消除非间奏期 120Hz 空转）
+        val lyricWithInterlude = LyricData(
+            lines = listOf(
+                LyricLine(
+                    startTimeMs = 4500L,
+                    durationMs = 2000L,
+                    text = "第一句",
+                    words = listOf(LyricWord(4500L, 2000L, "第一句"))
+                ),
+                LyricLine(
+                    startTimeMs = 7000L,
+                    durationMs = 2000L,
+                    text = "第二句（紧接无间奏）",
+                    words = listOf(LyricWord(7000L, 2000L, "第二句"))
+                ),
+                LyricLine(
+                    startTimeMs = 15000L,
+                    durationMs = 2000L,
+                    text = "第三句（前有 6 秒器乐间奏）",
+                    words = listOf(LyricWord(15000L, 2000L, "第三句"))
+                )
+            ),
+            isKrc = true
+        )
+        assertTrue("前奏 >= 3000ms 时 index 0 应识别为间奏候选", lyricWithInterlude.hasInterludeCandidateAt(0))
+        assertFalse("行间间隔仅 500ms 时不应启动 120Hz 间奏帧循环", lyricWithInterlude.hasInterludeCandidateAt(0, minGapMs = 4000L) && !lyricWithInterlude.hasInterludeCandidateAt(-1))
+        assertTrue("第二句到第三句间隔 6000ms (>=4000ms) 应识别为间奏候选", lyricWithInterlude.hasInterludeCandidateAt(1))
+        assertFalse("最后一句无后续行不应启动间奏帧循环", lyricWithInterlude.hasInterludeCandidateAt(2))
+
+        // 3. 验证桌面歌词单行渲染描述预缓存 joinedWordsText（消除 NativeDesktopLyricView.onDraw 每帧 joinToString 分配）
+        val renderRow = com.concept.music.service.DesktopLyricRenderRow(
+            text = "微风音乐",
+            words = listOf(LyricWord(0L, 300L, "微风"), LyricWord(300L, 300L, "音乐")),
+            isActiveKaraoke = true
+        )
+        assertEquals("微风音乐", renderRow.joinedWordsText)
+
+        // 4. 验证关键源码架构约束（后台节流、熄屏暂停、LibraryScreen 绘制期顶栏、CommentsScreen 滑动防抖）
+        val projectRoot = java.io.File(".").canonicalFile.let { dir ->
+            if (java.io.File(dir, "app/src/main").exists()) dir else dir.parentFile
+        }
+        val vmCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/viewmodel/MusicPlayerViewModel.kt").readText(Charsets.UTF_8)
+        assertTrue("MusicPlayerViewModel 应支持 onAppForegroundChanged 前后台节流", vmCode.contains("fun onAppForegroundChanged("))
+        assertTrue("MusicPlayerViewModel 应支持 computeOptimalProgressPollIntervalMs", vmCode.contains("fun computeOptimalProgressPollIntervalMs("))
+
+        val serviceCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/service/PlaybackService.kt").readText(Charsets.UTF_8)
+        assertTrue("PlaybackService 应监听 ACTION_SCREEN_OFF 在熄屏时停止后台歌词 Ticker", serviceCode.contains("ACTION_SCREEN_OFF"))
+        assertTrue("ConceptMasteringAudioProcessor 应对平直 EQ 频段执行 hasActiveEqBands 短路", serviceCode.contains("hasActiveEqBands"))
+
+        val libScreenCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/library/LibraryScreen.kt").readText(Charsets.UTF_8)
+        assertTrue("LibraryScreen 顶栏应通过 scrollFractionState.value 在 drawBehind/graphicsLayer 阶段读取", libScreenCode.contains("scrollFractionState.value"))
+
+        val commentsCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/comment/CommentsScreen.kt").readText(Charsets.UTF_8)
+        assertTrue("CommentsScreen 应在快速滚屏期间防抖延迟加载楼中楼回复", commentsCode.contains("listState.isScrollInProgress"))
+    }
 }

@@ -24,9 +24,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +44,7 @@ import com.concept.music.data.model.*
 import com.concept.music.data.vip.VipManager
 import com.concept.music.service.FocusPodManager
 import com.concept.music.ui.components.BadgeTag
+import com.concept.music.ui.components.rememberOptimizedAsyncImageModel
 import com.concept.music.ui.components.CreatePlaylistDialog
 import com.concept.music.ui.components.FocusPodBottomSheet
 import com.concept.music.ui.components.PlaylistGridItem
@@ -139,7 +143,10 @@ fun LibraryScreen(
         }
     }
 
-    val scrollFraction by remember {
+    // 关键 120fps 性能优化：不在 LibraryScreen 根组合作用域直接解包读取 scrollFraction，
+    // 而是将 scrollFractionState 传入顶栏的 drawBehind 与 graphicsLayer 闭包中仅在绘制期读取，
+    // 使「我的」页上下滑动全程触发 0 次整屏重组与 0 次 Layout 重排！
+    val scrollFractionState = remember {
         derivedStateOf {
             if (listState.firstVisibleItemIndex > 0) {
                 1f
@@ -170,7 +177,7 @@ fun LibraryScreen(
             )
         ) {
             // 1. 头像账号与听歌等级时长一体式数字名片（去嵌套盒子化，视觉通透开阔）
-            item {
+            item(key = "lib_profile_card", contentType = "lib_profile_card") {
                 UnifiedProfileAndGradeCard(
                     profile = profile,
                     isLoggedIn = isLoggedIn,
@@ -187,7 +194,7 @@ fun LibraryScreen(
             }
 
             // 2. VIP 概念版领取入口
-            item {
+            item(key = "lib_vip_banner", contentType = "lib_vip_banner") {
                 VipBannerCard(
                     state = vip,
                     loggedIn = isLoggedIn,
@@ -198,7 +205,7 @@ fun LibraryScreen(
             }
 
             // 3. 核心快捷入口（我喜欢的音乐 + 最近播放，双色渐变点缀）
-            item {
+            item(key = "lib_shortcuts", contentType = "lib_shortcuts") {
                 val likeGradient = if (isDark) {
                     listOf(Color(0xFF2B1822), Color(0xFF191724))
                 } else {
@@ -238,7 +245,7 @@ fun LibraryScreen(
             }
 
             // 4. 概念胶囊工作台 · Focus Pod（去除右侧胶囊按钮，改为极简文字指示，减少页面圆角按钮密度）
-            item {
+            item(key = "lib_focus_pod", contentType = "lib_focus_pod") {
                 val podActive = focusPodState.isRunning || focusPodState.activeTracks.isNotEmpty()
                 val podAccent = if (isDark) Color(0xFF9688FF) else ConceptVioletAccent
                 val podBrush = if (isDark) {
@@ -339,7 +346,7 @@ fun LibraryScreen(
             }
 
             // 5. 开放式极简音乐资产导航栏（彻底告别 4 个胶囊按钮 + 4 个图标按钮的密集感）
-            item {
+            item(key = "lib_asset_tabs", contentType = "lib_asset_tabs") {
                 val assetTabs = listOf(
                     ConceptCategoryTabItem("0", "自建", myPlaylists.size.toString(), ConceptPrimary),
                     ConceptCategoryTabItem("1", "收藏", favoritePlaylists.size.toString(), ConceptCoralAccent),
@@ -575,11 +582,13 @@ fun LibraryScreen(
                                         .padding(vertical = 10.dp, horizontal = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (artist.avatarUrl.isNotBlank()) {
+                                    val artistAvatarModel = rememberOptimizedAsyncImageModel(rawUrl = artist.avatarUrl, sizePx = 156, targetCdnSize = "150")
+                                    if (artistAvatarModel != null) {
                                         AsyncImage(
-                                            model = artist.avatarUrl,
+                                            model = artistAvatarModel,
                                             contentDescription = artist.name,
                                             contentScale = ContentScale.Crop,
+                                            filterQuality = FilterQuality.Low,
                                             modifier = Modifier
                                                 .size(54.dp)
                                                 .clip(CircleShape)
@@ -688,7 +697,12 @@ fun LibraryScreen(
                                     )
                                 }
                             }
-                            itemsIndexed(purchasedAlbums, key = { idx, a -> "album_${a.albumId}_$idx" }) { _, album ->
+                            itemsIndexed(
+                                items = purchasedAlbums,
+                                key = { idx, a -> "album_${a.albumId}_$idx" },
+                                contentType = { _, _ -> "purchased_album_item" }
+                            ) { _, album ->
+                                val albumThumbModel = rememberOptimizedAsyncImageModel(rawUrl = album.coverUrl, sizePx = 156, targetCdnSize = "150")
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -703,9 +717,10 @@ fun LibraryScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         AsyncImage(
-                                            model = album.coverUrl,
+                                            model = albumThumbModel ?: album.coverUrl,
                                             contentDescription = album.albumName,
                                             contentScale = ContentScale.Crop,
+                                            filterQuality = FilterQuality.Low,
                                             modifier = Modifier
                                                 .size(56.dp)
                                                 .clip(RoundedCornerShape(14.dp))
@@ -769,8 +784,13 @@ fun LibraryScreen(
                                 }
                             }
                             val allPurchasedSongs = purchasedSongs.mapNotNull { it.song }
-                            itemsIndexed(purchasedSongs, key = { idx, s -> "song_${s.songId}_${s.songName}_$idx" }) { _, item ->
+                            itemsIndexed(
+                                items = purchasedSongs,
+                                key = { idx, s -> "song_${s.songId}_${s.songName}_$idx" },
+                                contentType = { _, _ -> "purchased_song_item" }
+                            ) { _, item ->
                                 val s = item.song
+                                val songThumbModel = rememberOptimizedAsyncImageModel(rawUrl = s?.coverUrl, sizePx = 144, targetCdnSize = "150")
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -786,11 +806,12 @@ fun LibraryScreen(
                                             .padding(vertical = 10.dp, horizontal = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        if (!s?.coverUrl.isNullOrBlank()) {
+                                        if (songThumbModel != null) {
                                             AsyncImage(
-                                                model = s?.coverUrl,
+                                                model = songThumbModel,
                                                 contentDescription = item.songName,
                                                 contentScale = ContentScale.Crop,
+                                                filterQuality = FilterQuality.Low,
                                                 modifier = Modifier
                                                     .size(50.dp)
                                                     .clip(RoundedCornerShape(12.dp))
@@ -868,19 +889,20 @@ fun LibraryScreen(
             )
         }
 
-        // 7. 固定沉浸式顶栏
-        val topBarSurfaceColor = if (isDark) {
-            Color(0xFF0A0F1A).copy(alpha = (scrollFraction * 0.96f).coerceIn(0f, 0.96f))
-        } else {
-            Color(0xFFF3F8FF).copy(alpha = (scrollFraction * 0.96f).coerceIn(0f, 0.96f))
-        }
+        // 7. 固定沉浸式顶栏（100% Draw/Layer 阶段读取 scrollFractionState，上下滑动 0 重组、0 重排）
+        val topBarBaseColor = if (isDark) Color(0xFF0A0F1A) else Color(0xFFF3F8FF)
+        val topAvatarModel = rememberOptimizedAsyncImageModel(rawUrl = profile?.avatarUrl, sizePx = 120, targetCdnSize = "150")
 
-        Surface(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .align(Alignment.TopCenter),
-            color = topBarSurfaceColor,
-            tonalElevation = (scrollFraction * 4).dp
+                .align(Alignment.TopCenter)
+                .drawBehind {
+                    val sf = scrollFractionState.value
+                    if (sf > 0.005f) {
+                        drawRect(color = topBarBaseColor.copy(alpha = (sf * 0.96f).coerceIn(0f, 0.96f)))
+                    }
+                }
         ) {
             Column(
                 modifier = Modifier
@@ -906,19 +928,23 @@ fun LibraryScreen(
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 24.sp
                             ),
-                            modifier = Modifier
-                                .alpha((1f - scrollFraction * 1.5f).coerceIn(0f, 1f))
-                                .offset(y = (-10 * scrollFraction).dp)
+                            modifier = Modifier.graphicsLayer {
+                                val sf = scrollFractionState.value
+                                alpha = (1f - sf * 1.5f).coerceIn(0f, 1f)
+                                translationY = -10.dp.toPx() * sf
+                            }
                         )
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier
-                                .alpha(((scrollFraction - 0.4f) * 1.67f).coerceIn(0f, 1f))
-                                .offset(y = (10 * (1f - scrollFraction)).dp)
+                            modifier = Modifier.graphicsLayer {
+                                val sf = scrollFractionState.value
+                                alpha = ((sf - 0.4f) * 1.67f).coerceIn(0f, 1f)
+                                translationY = 10.dp.toPx() * (1f - sf)
+                            }
                         ) {
-                            if (profile?.avatarUrl.isNullOrEmpty()) {
+                            if (topAvatarModel == null) {
                                 Surface(
                                     modifier = Modifier.size(34.dp),
                                     shape = CircleShape,
@@ -935,8 +961,9 @@ fun LibraryScreen(
                                 }
                             } else {
                                 AsyncImage(
-                                    model = profile?.avatarUrl,
+                                    model = topAvatarModel,
                                     contentDescription = null,
+                                    filterQuality = FilterQuality.Low,
                                     modifier = Modifier
                                         .size(34.dp)
                                         .clip(CircleShape),

@@ -75,6 +75,7 @@ import com.concept.music.ui.theme.ConceptCyanAccent
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.readableOnDarkSurface
+import com.concept.music.ui.theme.rememberIsLifecycleStarted
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.CoverStyle
@@ -464,7 +465,11 @@ internal fun LandscapePlayerPage(
                         contentPadding = PaddingValues(vertical = dynamicVerticalPadDp),
                         horizontalAlignment = Alignment.Start
                     ) {
-                        itemsIndexed(lyricData.lines, key = { idx, item -> "land_${idx}_${item.startTimeMs}" }) { index, line ->
+                        itemsIndexed(
+                            items = lyricData.lines,
+                            key = { idx, item -> "land_${idx}_${item.startTimeMs}" },
+                            contentType = { _, _ -> "landscape_lyric_line" }
+                        ) { index, line ->
                             val effectiveActiveIdx = currentLyricIndex.coerceAtLeast(0)
                             val isCurrent = index == effectiveActiveIdx
                             val isScrubTarget = isUserScrubbing && index == scrubLineIndex
@@ -862,10 +867,11 @@ private fun LandscapeActiveKaraokeWords(
     activePrimaryColor: Color,
     activeSecondaryColor: Color
 ) {
+    val isLifecycleStarted = rememberIsLifecycleStarted()
     var sampledPosMs by remember(line) { mutableLongStateOf(lyricPositionProvider()) }
-    LaunchedEffect(line, isPlaying) {
+    LaunchedEffect(line, isPlaying, isLifecycleStarted) {
         sampledPosMs = lyricPositionProvider()
-        if (isPlaying) {
+        if (isPlaying && isLifecycleStarted) {
             while (isActive) {
                 withFrameMillis {
                     sampledPosMs = lyricPositionProvider()
@@ -984,16 +990,17 @@ private fun LandscapeBottomControlDock(
         }
     }
 
+    val isLifecycleStarted = rememberIsLifecycleStarted()
     var livePosMs by remember(song.id) { mutableLongStateOf(sampleLandscapePos()) }
 
-    LaunchedEffect(song.id, isPlaying, isInteractingWithBar, rawPositionMs) {
+    LaunchedEffect(song.id, isPlaying, isLifecycleStarted, isInteractingWithBar, rawPositionMs) {
         if (!isInteractingWithBar) {
             livePosMs = sampleLandscapePos()
         }
-        if (isPlaying && !isInteractingWithBar) {
+        if (isPlaying && isLifecycleStarted && !isInteractingWithBar) {
             while (isActive) {
                 livePosMs = sampleLandscapePos()
-                kotlinx.coroutines.delay(50L)
+                kotlinx.coroutines.delay(66L)
             }
         }
     }

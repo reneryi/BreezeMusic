@@ -73,7 +73,10 @@ import com.concept.music.data.model.KugouCommentEmojiParser
 import com.concept.music.data.model.Song
 import com.concept.music.data.model.SongComment
 import com.concept.music.data.vip.VipManager
+import androidx.compose.ui.graphics.FilterQuality
+import com.concept.music.ui.components.rememberOptimizedAsyncImageModel
 import com.concept.music.ui.components.smoothFastScrollToItem
+import kotlinx.coroutines.flow.first
 import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
@@ -789,6 +792,13 @@ fun CommentsScreen(
                                 ) { _, comment ->
                                     LaunchedEffect(comment.id, comment.replyCount, comment.replies.size) {
                                         if (comment.replyCount > 0 && comment.replies.isEmpty()) {
+                                            // 滑动零掉帧保护：若用户正在快速滑动评论列表，先防抖等待 180ms 并等待快速滚屏停歇，
+                                            // 若评论项在高速滑屏中仅一闪而过则自动取消协程，避免滚屏中途并发数十个请求及高频回写重组
+                                            if (listState.isScrollInProgress) {
+                                                kotlinx.coroutines.delay(180L)
+                                                androidx.compose.runtime.snapshotFlow { listState.isScrollInProgress }
+                                                    .first { !it }
+                                            }
                                             onLoadReplies(comment.id)
                                         }
                                     }
@@ -1166,7 +1176,7 @@ fun CommentFloorDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 // 1. 楼主原评置顶卡片
-                item(key = "floor_root_${rootComment.id}") {
+                item(key = "floor_root_${rootComment.id}", contentType = "floor_root") {
                     Surface(
                         shape = RoundedCornerShape(20.dp),
                         color = cardColor,
@@ -1204,7 +1214,7 @@ fun CommentFloorDetailScreen(
                 }
 
                 // 2. 全部回复标题栏
-                item(key = "floor_section_header") {
+                item(key = "floor_section_header", contentType = "floor_header") {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1260,7 +1270,7 @@ fun CommentFloorDetailScreen(
                     }
                 }
 
-                item(key = "floor_footer") {
+                item(key = "floor_footer", contentType = "floor_footer") {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1411,7 +1421,8 @@ private fun CommentConversationDetailScreen(
             ) {
                 itemsIndexed(
                     items = conversation.dialogueList,
-                    key = { idx, (cmt, _) -> "conv_item_${cmt.id}_$idx" }
+                    key = { idx, (cmt, _) -> "conv_item_${cmt.id}_$idx" },
+                    contentType = { _, _ -> "conv_dialogue_item" }
                 ) { idx, (cmt, _) ->
                     Surface(
                         shape = RoundedCornerShape(16.dp),
@@ -1556,7 +1567,7 @@ private fun CommentConversationDetailScreen(
                     }
                 }
 
-                item(key = "conv_footer") {
+                item(key = "conv_footer", contentType = "conv_footer") {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -2167,10 +2178,12 @@ private fun CommentUserHeaderRow(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top
     ) {
-        if (comment.userAvatar.isNotBlank()) {
+        val rootAvatarModel = rememberOptimizedAsyncImageModel(rawUrl = comment.userAvatar, sizePx = 120, targetCdnSize = "150")
+        if (rootAvatarModel != null) {
             AsyncImage(
-                model = comment.userAvatar,
+                model = rootAvatarModel,
                 contentDescription = null,
+                filterQuality = FilterQuality.Low,
                 modifier = Modifier
                     .size(38.dp)
                     .clip(CircleShape),

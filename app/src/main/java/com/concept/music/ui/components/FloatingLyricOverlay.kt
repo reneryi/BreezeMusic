@@ -60,6 +60,7 @@ import com.concept.music.service.SystemLyricBridge
 import com.concept.music.service.resolveDesktopLyricLayoutPlan
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.VipGold
+import com.concept.music.ui.theme.rememberIsLifecycleStarted
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.PlayMode
 import kotlinx.coroutines.isActive
@@ -407,6 +408,7 @@ fun FloatingLyricOverlay(
                         // 前奏 / 间奏三点呼吸波点（与 App 内动效统一）
                         DesktopInterludeBreathingIndicator(
                             lyricData = lyricData,
+                            currentLyricIndex = safeIdx,
                             isPlaying = isPlaying,
                             positionProvider = positionProvider,
                             accentColor = playedStartColor,
@@ -955,13 +957,14 @@ private fun DesktopUnifiedAnimatedLyricRow(
     unplayedColor: Color,
     textShadow: Shadow
 ) {
+    val isLifecycleStarted = rememberIsLifecycleStarted()
     var sampledPosMs by remember(row, isPlaying) {
         mutableLongStateOf(if (row.isActiveKaraoke) positionProvider() else -1L)
     }
-    LaunchedEffect(row, isPlaying) {
+    LaunchedEffect(row, isPlaying, isLifecycleStarted) {
         if (row.isActiveKaraoke) {
             sampledPosMs = positionProvider()
-            if (isPlaying) {
+            if (isPlaying && isLifecycleStarted && row.words.isNotEmpty()) {
                 while (isActive) {
                     withFrameMillis {
                         sampledPosMs = positionProvider()
@@ -1065,17 +1068,22 @@ private fun DesktopUnifiedAnimatedLyricRow(
 @Composable
 private fun DesktopInterludeBreathingIndicator(
     lyricData: LyricData,
+    currentLyricIndex: Int = -1,
     isPlaying: Boolean,
     positionProvider: () -> Long,
     accentColor: Color,
     modifier: Modifier = Modifier
 ) {
-    var sampledPosMs by remember(lyricData, isPlaying) {
+    val isLifecycleStarted = rememberIsLifecycleStarted()
+    val hasCandidate = remember(lyricData, currentLyricIndex) {
+        lyricData.hasInterludeCandidateAt(currentLyricIndex)
+    }
+    var sampledPosMs by remember(lyricData, currentLyricIndex, isPlaying) {
         mutableLongStateOf(positionProvider())
     }
-    LaunchedEffect(lyricData, isPlaying) {
+    LaunchedEffect(lyricData, currentLyricIndex, hasCandidate, isPlaying, isLifecycleStarted) {
         sampledPosMs = positionProvider()
-        if (isPlaying && lyricData.lines.isNotEmpty()) {
+        if (isPlaying && isLifecycleStarted && hasCandidate) {
             while (isActive) {
                 withFrameMillis {
                     sampledPosMs = positionProvider()
@@ -1083,7 +1091,9 @@ private fun DesktopInterludeBreathingIndicator(
             }
         }
     }
-    val interludeProgress = lyricData.getInterludeProgressAt(sampledPosMs)
+    val interludeProgress = if (hasCandidate) {
+        lyricData.getInterludeProgressAt(sampledPosMs, currentLyricIndex)
+    } else -1f
     if (interludeProgress >= 0f) {
         Row(
             modifier = modifier,
