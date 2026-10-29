@@ -102,6 +102,7 @@ class SongPlaybackSwitchTest {
                 "getFloat" -> (args?.getOrNull(1) as? Float) ?: 1.0f
                 "getInt" -> (args?.getOrNull(1) as? Int) ?: 0
                 "getLong" -> (args?.getOrNull(1) as? Long) ?: 0L
+                "contains" -> false
                 "edit" -> editorProxy
                 else -> null
             }

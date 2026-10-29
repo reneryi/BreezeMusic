@@ -32,9 +32,12 @@ class EncryptedSessionStore(context: Context) : SessionStore {
         private const val KEY_ALIAS = "concept_music_accounts"
     }
 
-    private val metadata = context.getSharedPreferences("kugou_accounts_v2", Context.MODE_PRIVATE)
-    private val secrets = context.getSharedPreferences("kugou_secrets_v2", Context.MODE_PRIVATE)
-    private val gson = KugouSigner.gson
+    private val appContext = context.applicationContext ?: context
+    private val metadata = appContext.getSharedPreferences("kugou_accounts_v2", Context.MODE_PRIVATE)
+    private val secrets by lazy {
+        appContext.getSharedPreferences("kugou_secrets_v2", Context.MODE_PRIVATE)
+    }
+    private val gson get() = KugouSigner.gson
 
     @Volatile
     private var cachedAccounts: List<SavedAccount>? = null
@@ -128,6 +131,7 @@ class EncryptedSessionStore(context: Context) : SessionStore {
                 .putString("dev", dev)
                 .putString("dfid", initialDfid)
                 .putBoolean("device.dfid_registered", false)
+                .putBoolean("legacy_session_migrated", true)
                 .apply()
             cachedDevice = DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = initialDfid)
         } else {
@@ -144,22 +148,30 @@ class EncryptedSessionStore(context: Context) : SessionStore {
             }
             cachedDevice = DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = resolvedDfid)
         }
-        val old = context.getSharedPreferences("kugou_session", Context.MODE_PRIVATE)
-        val id = old.getString("userId", null)
-        val token = old.getString("token", null)
-        if (!id.isNullOrBlank() && !token.isNullOrBlank()) {
-            if (session(id) == null) saveSession(KugouSession(id, token, old.getString("t1", null)))
-            if (accounts().none { it.userId == id }) saveAccounts(accounts() + SavedAccount(id))
-            if (activeId() == null) setActive(id)
-            old.edit().clear().apply()
+        if (!metadata.getBoolean("legacy_session_migrated", false)) {
+            val old = appContext.getSharedPreferences("kugou_session", Context.MODE_PRIVATE)
+            val id = old.getString("userId", null)
+            val token = old.getString("token", null)
+            if (!id.isNullOrBlank() && !token.isNullOrBlank()) {
+                if (session(id) == null) saveSession(KugouSession(id, token, old.getString("t1", null)))
+                if (accounts().none { it.userId == id }) saveAccounts(accounts() + SavedAccount(id))
+                if (activeId() == null) setActive(id)
+                old.edit().clear().apply()
+            }
+            metadata.edit().putBoolean("legacy_session_migrated", true).apply()
         }
     }
 
     @Synchronized
     override fun accounts(): List<SavedAccount> {
         cachedAccounts?.let { return it }
+        val rawJson = metadata.getString("accounts", null)
+        if (rawJson.isNullOrBlank() || rawJson == "[]") {
+            cachedAccounts = emptyList()
+            return emptyList()
+        }
         val loaded = runCatching {
-            gson.fromJson<List<SavedAccount>>(metadata.getString("accounts", "[]"), object : TypeToken<List<SavedAccount>>() {}.type)
+            gson.fromJson<List<SavedAccount>>(rawJson, object : TypeToken<List<SavedAccount>>() {}.type)
         }.getOrNull().orEmpty()
         cachedAccounts = loaded
         return loaded
@@ -182,6 +194,7 @@ class EncryptedSessionStore(context: Context) : SessionStore {
 
     @Synchronized
     override fun setActive(id: String?) {
+        if (activeIdLoaded && cachedActiveId == id) return
         cachedActiveId = id
         activeIdLoaded = true
         metadata.edit().putString("active", id).apply()

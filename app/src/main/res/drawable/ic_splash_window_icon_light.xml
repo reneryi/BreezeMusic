@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Android 12+ (API 31+) 浅色开屏图标：288dp 容器内中心缩放 1/3 (0.33333334) 严格呈现 96dp × 96dp 圆角卡片 -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.33333334"
+        android:scaleY="0.33333334">
+
+
+    <!-- 水彩浸润浅色对角微光浮空底板：内置22dp圆润卡片造型，确保系统原生启动与应用内首屏图标形状100%一致 -->
+    <path android:pathData="M22,0 L86,0 A22,22 0 0,1 108,22 L108,86 A22,22 0 0,1 86,108 L22,108 A22,22 0 0,1 0,86 L0,22 A22,22 0 0,1 22,0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="0"
+                android:startY="0"
+                android:endX="108"
+                android:endY="108"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFFFFFFF" />
+                <item android:offset="0.55" android:color="#FFF5F8FD" />
+                <item android:offset="1.0" android:color="#FFE6EFFC" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 卡片极细柔和水彩微蓝精致轮廓线 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#241A73E8"
+        android:strokeWidth="0.8"
+        android:pathData="M22,0.4 L86,0.4 A21.6,21.6 0 0,1 107.6,22 L107.6,86 A21.6,21.6 0 0,1 86,107.6 L22,107.6 A21.6,21.6 0 0,1 0.4,86 L0.4,22 A21.6,21.6 0 0,1 22,0.4 Z" />
+
+    <!-- 中心水彩柔光晕染 -->
+    <path android:pathData="M54,54m-42,0a42,42 0,1 1,84 0a42,42 0,1 1,-84 0">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="54"
+                android:centerY="50"
+                android:gradientRadius="42"
+                android:type="radial">
+                <item android:offset="0.0" android:color="#2400D2B4" />
+                <item android:offset="0.55" android:color="#1A1A73E8" />
+                <item android:offset="1.0" android:color="#00FFFFFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 隐约浅调唱片同心声波纹理环 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#1E1A73E8"
+        android:strokeWidth="0.8"
+        android:pathData="M54,54m-38,0a38,38 0,1 1,76 0a38,38 0,1 1,-76 0" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#1600D2B4"
+        android:strokeWidth="0.7"
+        android:pathData="M54,54m-31,0a31,31 0,1 1,62 0a31,31 0,1 1,-62 0" />
+
+    <!-- 纯白霜晶黑胶圆盘 -->
+    <path android:pathData="M54,54m-30,0a30,30 0,1 1,60 0a30,30 0,1 1,-60 0">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="24"
+                android:startY="24"
+                android:endX="84"
+                android:endY="84"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFFFFFFF" />
+                <item android:offset="0.5" android:color="#FFF8FAFD" />
+                <item android:offset="1.0" android:color="#FFECF4FD" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 唱片外圈水彩流光渐变环 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeWidth="1.8"
+        android:pathData="M54,54m-30,0a30,30 0,1 1,60 0a30,30 0,1 1,-60 0">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="24"
+                android:startY="24"
+                android:endX="84"
+                android:endY="84"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FF00D2B4" />
+                <item android:offset="0.5" android:color="#FF1A73E8" />
+                <item android:offset="1.0" android:color="#FF2B8CFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 唱片高光精细声轨弧线 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#301A73E8"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M30,54 A24,24 0 0,1 54,30" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#3000D2B4"
+        android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M78,54 A24,24 0 0,1 54,78" />
+
+    <!-- 流线型微风丝带 1（水彩天蓝至概念青） -->
+    <path android:pathData="M21,59 C31,45 43,45 54,52 C65,59 75,56 86,43 C76,61 64,64 53,57 C42,50 31,50 21,59 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="21"
+                android:startY="59"
+                android:endX="86"
+                android:endY="43"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#2800D2B4" />
+                <item android:offset="0.35" android:color="#EE00D2B4" />
+                <item android:offset="0.75" android:color="#EE1A73E8" />
+                <item android:offset="1.0" android:color="#332B8CFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 流线型微风丝带 2（薄荷翠绿伴生微风轨） -->
+    <path android:pathData="M25,67 C35,57 46,57 56,63 C66,68 75,65 84,54 C76,69 65,72 55,66 C45,61 35,61 25,67 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="25"
+                android:startY="67"
+                android:endX="84"
+                android:endY="54"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#2200B894" />
+                <item android:offset="0.4" android:color="#D900C4A7" />
+                <item android:offset="0.85" android:color="#CC1A73E8" />
+                <item android:offset="1.0" android:color="#222B8CFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 现代流线型微风音符主体（酷狗蓝到概念青明亮渐变） -->
+    <path android:pathData="M56,26.5 C56,25.1 57.1,24 58.5,24 C65.8,24 73.2,27.8 76.8,34.5 C77.6,36.0 76.2,37.6 74.6,36.9 C70.5,35.1 65.8,34.2 61.2,34.6 L61.2,60.2 C61.2,67.0 55.3,72.4 48.0,72.4 C40.8,72.4 35.0,67.0 35.0,60.2 C35.0,53.4 40.8,48.0 48.0,48.0 C51.2,48.0 54.0,49.0 56.0,50.8 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="35"
+                android:startY="24"
+                android:endX="76"
+                android:endY="72"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FF1A73E8" />
+                <item android:offset="0.55" android:color="#FF00B4D8" />
+                <item android:offset="1.0" android:color="#FF00C4A7" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 音符中心白霜内孔 -->
+    <path
+        android:fillColor="#FFDDE9F8"
+        android:pathData="M48.0,60.2m-4.4,0a4.4,4.4 0,1 1,8.8 0a4.4,4.4 0,1 1,-8.8 0" />
+
+    <!-- 右上角 Hi-Res 金色璀璨高光圆点 -->
+    <path
+        android:fillColor="#FFF59E0B"
+        android:pathData="M74.5,25.5m-2.5,0a2.5,2.5 0,1 1,5.0 0a2.5,2.5 0,1 1,-5.0 0" />
+
+    </group>
+</vector>

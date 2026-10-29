@@ -6,8 +6,8 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- 深海微风对角渐变底色 -->
-    <path android:pathData="M0,0h108v108h-108z">
+    <!-- 深海微风对角渐变底板：内置22dp圆润卡片造型，与浅色品牌图标保持100%几何一致 -->
+    <path android:pathData="M22,0 L86,0 A22,22 0 0,1 108,22 L108,86 A22,22 0 0,1 86,108 L22,108 A22,22 0 0,1 0,86 L0,22 A22,22 0 0,1 22,0 Z">
         <aapt:attr name="android:fillColor">
             <gradient
                 android:startX="0"
@@ -21,6 +21,13 @@
             </gradient>
         </aapt:attr>
     </path>
+
+    <!-- 卡片极细深海流光精致轮廓线 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#283898FF"
+        android:strokeWidth="0.8"
+        android:pathData="M22,0.4 L86,0.4 A21.6,21.6 0 0,1 107.6,22 L107.6,86 A21.6,21.6 0 0,1 86,107.6 L22,107.6 A21.6,21.6 0 0,1 0.4,86 L0.4,22 A21.6,21.6 0 0,1 22,0.4 Z" />
 
     <!-- 中心柔光氛围晕染 -->
     <path android:pathData="M54,54m-46,0a46,46 0,1 1,92 0a46,46 0,1 1,-92 0">
@@ -48,9 +55,6 @@
         android:strokeColor="#1000E5FF"
         android:strokeWidth="0.7"
         android:pathData="M54,54m-31,0a31,31 0,1 1,62 0a31,31 0,1 1,-62 0" />
-
-
-    android:viewportHeight="108">
 
     <!-- 黑胶唱片深邃圆盘 -->
     <path android:pathData="M54,54m-30,0a30,30 0,1 1,60 0a30,30 0,1 1,-60 0">

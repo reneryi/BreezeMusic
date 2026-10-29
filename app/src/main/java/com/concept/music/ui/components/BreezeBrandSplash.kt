@@ -35,7 +35,7 @@ import com.concept.music.ui.theme.isConceptDarkTheme
 
 /**
  * 冷启动图标页额外驻留时长（0ms）：
- * 零额外人为阻塞，首帧渲染完成即刻平滑过渡进入主界面。
+ * 零额外人为阻塞，系统级 96dp 启动窗口首帧渲染完成即刻无缝进入主界面。
  */
 const val SPLASH_ICON_HOLD_DURATION_MS = 0L
 
@@ -160,10 +160,9 @@ fun BreezeAppLogo(
 
 
 /**
- * 微风音乐 (BreezeMusic) 独立纯净启动图标开屏页面：
- * - 纯净呈现中间品牌图标，绝无任何音律跳动效果；
- * - 页面底色与图标完全独立绑定于 App 内的主题偏好（深色「幽邃微蓝」vs 浅色「水彩浸润」），不受手机系统日夜模式影响；
- * - 极速轻量（默认停留约 850ms，支持轻触即刻跳过），240ms 自然平滑淡出，全链路色彩零色差统一。
+ * 微风音乐 (BreezeMusic) 启动图标开屏视图（向后兼容保留）：
+ * - 现已由系统级 Starting Window (96dp 小图标) 直接无缝进入主界面，不再在 MainActivity 挂载第二层开屏页；
+ * - 严格遵循 SPLASH_ICON_HOLD_DURATION_MS = 0L，移除原 850ms 人为阻塞延时。
  */
 @Composable
 fun PureSplashIconView(
@@ -173,17 +172,21 @@ fun PureSplashIconView(
 ) {
     androidx.compose.runtime.LaunchedEffect(visible) {
         if (visible) {
-            kotlinx.coroutines.delay(850L)
+            if (SPLASH_ICON_HOLD_DURATION_MS > 0L) {
+                kotlinx.coroutines.delay(SPLASH_ICON_HOLD_DURATION_MS)
+            }
             onDismiss()
         }
     }
+
+    if (!visible || SPLASH_ICON_HOLD_DURATION_MS <= 0L) return
 
     androidx.compose.animation.AnimatedVisibility(
         visible = visible,
         enter = androidx.compose.animation.EnterTransition.None,
         exit = androidx.compose.animation.fadeOut(
             animationSpec = androidx.compose.animation.core.tween(
-                durationMillis = 240,
+                durationMillis = 160,
                 easing = androidx.compose.animation.core.FastOutSlowInEasing
             )
         )

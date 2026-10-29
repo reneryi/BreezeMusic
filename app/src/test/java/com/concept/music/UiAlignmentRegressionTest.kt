@@ -1619,4 +1619,29 @@ class UiAlignmentRegressionTest {
             com.concept.music.ui.settings.extractLatestVersionFromJsDelivrPackageJson("{\"versions\":[\"v1.0.1\",\"v1.0.0\"]}")
         )
     }
+
+    @Test
+    fun `单启动页96dp小图标规范对齐与移除冗余第二启动页验证`() {
+        assertEquals(0L, com.concept.music.ui.components.SPLASH_ICON_HOLD_DURATION_MS)
+        val projectRoot = java.io.File(".").canonicalFile.let { dir ->
+            if (java.io.File(dir, "app/src/main").exists()) dir else dir.parentFile
+        }
+        val lightSplashIcon = java.io.File(projectRoot, "app/src/main/res/drawable/ic_splash_window_icon_light.xml")
+        val darkSplashIcon = java.io.File(projectRoot, "app/src/main/res/drawable/ic_splash_window_icon_dark.xml")
+        assertTrue("Android 12+ 浅色 96dp 启动窗口图标文件应存在", lightSplashIcon.exists())
+        assertTrue("Android 12+ 深色 96dp 启动窗口图标文件应存在", darkSplashIcon.exists())
+
+        val lightXml = lightSplashIcon.readText(Charsets.UTF_8)
+        val darkXml = darkSplashIcon.readText(Charsets.UTF_8)
+        assertTrue(lightXml.contains("android:width=\"288dp\""))
+        assertTrue(lightXml.contains("android:scaleX=\"0.33333334\""))
+        assertTrue(darkXml.contains("android:width=\"288dp\""))
+        assertTrue(darkXml.contains("android:scaleX=\"0.33333334\""))
+
+        val darkWindowXml = java.io.File(projectRoot, "app/src/main/res/drawable/bg_splash_window_dark.xml").readText(Charsets.UTF_8)
+        assertTrue("深色传统窗口背景图标尺寸应统一为 96dp", darkWindowXml.contains("android:width=\"96dp\""))
+
+        val mainActivityCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/MainActivity.kt").readText(Charsets.UTF_8)
+        assertFalse("MainActivity 不应再挂载第二层 PureSplashIconView 开屏覆盖层", mainActivityCode.contains("PureSplashIconView("))
+    }
 }

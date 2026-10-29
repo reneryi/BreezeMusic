@@ -127,17 +127,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ConceptMusicTheme {
-                val isDark = com.concept.music.ui.theme.isConceptDarkTheme()
-                var showSplash by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(true) }
-
-                androidx.compose.foundation.layout.Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
-                    MainContent()
-                    com.concept.music.ui.components.PureSplashIconView(
-                        visible = showSplash,
-                        isDark = isDark,
-                        onDismiss = { showSplash = false }
-                    )
-                }
+                // 系统级 Starting Window 已统一为 96dp 黄金比例圆角图标（ic_splash_window_icon_light/dark），
+                // 移除冗余的第二层 Compose 开屏页 PureSplashIconView（消除大图标跳小图标的双开屏现象与 850ms+240ms 阻塞延迟），
+                // 首帧渲染完成即刻无缝直达应用主界面。
+                MainContent()
             }
         }
     }
@@ -204,30 +197,8 @@ fun MainContent(
         }
     }
 
-    // 开屏展示期间静默预热首页首屏封面图到 Coil 内存/磁盘缓存，确保开屏渐隐后封面秒出无闪烁
-    val dailySongsForPrewarm by homeViewModel.dailyRecommendSongs.collectAsState()
-    val fmSongsForPrewarm by homeViewModel.personalFmSongs.collectAsState()
-    val newSongsForPrewarm by homeViewModel.currentNewSongs.collectAsState()
-    LaunchedEffect(dailySongsForPrewarm.firstOrNull()?.coverUrl, fmSongsForPrewarm.firstOrNull()?.coverUrl, newSongsForPrewarm.size) {
-        withContext(Dispatchers.IO) {
-            val urlsToPrewarm = buildList {
-                dailySongsForPrewarm.take(3).forEach { if (it.coverUrl.isNotBlank()) add(it.coverUrl) }
-                fmSongsForPrewarm.take(3).forEach { if (it.coverUrl.isNotBlank()) add(it.coverUrl) }
-                newSongsForPrewarm.take(6).forEach { if (it.coverUrl.isNotBlank()) add(it.coverUrl) }
-            }.distinct()
-            val imageLoader = coil.Coil.imageLoader(context)
-            urlsToPrewarm.forEach { url ->
-                runCatching {
-                    imageLoader.enqueue(
-                        coil.request.ImageRequest.Builder(context)
-                            .data(url)
-                            .size(360)
-                            .build()
-                    )
-                }
-            }
-        }
-    }
+    // 独立叶子组件静默预热首页首屏封面图到 Coil 缓存，避免在根组件 MainContent 订阅高频列表引发整树重组
+    CoverPrewarmEffect(homeViewModel = homeViewModel)
 
     // 关键性能优化：在根组件 MainContent 层仅订阅低频状态（当前曲目、播放状态、错误提示），
     // 高频播放进度由 playbackPositionFlow 与 currentSmoothPositionMs() 按需在叶节点绘制期读取
@@ -242,9 +213,7 @@ fun MainContent(
         derivedStateOf { playerStateHolder.value.error }
     }
 
-    val likedSongs by libraryViewModel.likedSongs.collectAsState()
-    val playlists by libraryViewModel.playlists.collectAsState()
-    val followedArtists by libraryViewModel.followedArtists.collectAsState()
+    // 将 likedSongs / playlists / followedArtists 下沉至实际消费的叶子作用域订阅，避免冷启动曲库水合触发 MainContent 根级重组
 
     var showNowPlaying by remember { mutableStateOf(false) }
     var showGlobalQueueSheet by remember { mutableStateOf(false) }
@@ -720,6 +689,7 @@ fun MainContent(
                 // 歌手详情页
                 composable("artist_detail/{artistId}") { backStackEntry ->
                     val artistId = backStackEntry.arguments?.getString("artistId") ?: ""
+                    val followedArtists by libraryViewModel.followedArtists.collectAsState()
                     val isArtistFollowed = libraryViewModel.isArtistFollowed(artistId, followedArtists)
                     ArtistDetailScreen(
                         artistId = artistId,
@@ -903,7 +873,6 @@ fun MainContent(
             IsolatedNowPlayingHost(
                 musicPlayerViewModel = musicPlayerViewModel,
                 libraryViewModel = libraryViewModel,
-                likedSongs = likedSongs,
                 onDismiss = {
                     showNowPlaying = false
                     reopenNowPlayingAtBackStackId = null
@@ -982,6 +951,7 @@ fun MainContent(
 
         if (actionSheetSong != null) {
             val targetSong = actionSheetSong!!
+            val likedSongs by libraryViewModel.likedSongs.collectAsState()
             val isTargetLiked = libraryViewModel.isSongLiked(targetSong, likedSongs)
             SongActionBottomSheet(
                 song = targetSong,
@@ -1025,6 +995,7 @@ fun MainContent(
 
         if (songToAddToPlaylist != null) {
             val targetSong = songToAddToPlaylist!!
+            val playlists by libraryViewModel.playlists.collectAsState()
             AddToPlaylistDialog(
                 song = targetSong,
                 playlists = playlists,
@@ -1121,10 +1092,38 @@ private fun IsolatedMiniPlayerBarHost(
 }
 
 @Composable
+private fun CoverPrewarmEffect(homeViewModel: HomeViewModel) {
+    val context = LocalContext.current
+    val dailySongsForPrewarm by homeViewModel.dailyRecommendSongs.collectAsState()
+    val fmSongsForPrewarm by homeViewModel.personalFmSongs.collectAsState()
+    val newSongsForPrewarm by homeViewModel.currentNewSongs.collectAsState()
+    LaunchedEffect(dailySongsForPrewarm.firstOrNull()?.coverUrl, fmSongsForPrewarm.firstOrNull()?.coverUrl, newSongsForPrewarm.size) {
+        withContext(Dispatchers.IO) {
+            val urlsToPrewarm = buildList {
+                dailySongsForPrewarm.take(3).forEach { if (it.coverUrl.isNotBlank()) add(it.coverUrl) }
+                fmSongsForPrewarm.take(3).forEach { if (it.coverUrl.isNotBlank()) add(it.coverUrl) }
+                newSongsForPrewarm.take(6).forEach { if (it.coverUrl.isNotBlank()) add(it.coverUrl) }
+            }.distinct()
+            if (urlsToPrewarm.isEmpty()) return@withContext
+            val imageLoader = coil.Coil.imageLoader(context)
+            urlsToPrewarm.forEach { url ->
+                runCatching {
+                    imageLoader.enqueue(
+                        coil.request.ImageRequest.Builder(context)
+                            .data(url)
+                            .size(360)
+                            .build()
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun IsolatedNowPlayingHost(
     musicPlayerViewModel: MusicPlayerViewModel,
     libraryViewModel: LibraryViewModel,
-    likedSongs: List<Song>,
     onDismiss: () -> Unit,
     onAddToPlaylist: (Song) -> Unit,
     onOpenComments: () -> Unit,
@@ -1135,6 +1134,7 @@ private fun IsolatedNowPlayingHost(
     val context = LocalContext.current
     val playerUiState by musicPlayerViewModel.uiState.collectAsState()
     val currentSong = playerUiState.currentSong ?: return
+    val likedSongs by libraryViewModel.likedSongs.collectAsState()
     val isCurrentSongLiked = libraryViewModel.isSongLiked(currentSong, likedSongs)
     val positionProvider = remember(musicPlayerViewModel) { { musicPlayerViewModel.currentSmoothPositionMs() } }
 

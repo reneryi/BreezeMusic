@@ -116,17 +116,21 @@ fun deduplicateAndMergeSongs(songs: List<Song>): List<Song> {
 }
 
 open class PlaybackHistoryRepository(private val context: Context?) {
-    private val prefs: SharedPreferences? = try {
-        context?.applicationContext?.getSharedPreferences("play_history", Context.MODE_PRIVATE)
-    } catch (_: Exception) {
-        null
-    }
-    private val historyDir: File? = try {
-        context?.applicationContext?.filesDir?.resolve("play_history_store")?.apply {
-            if (!exists()) mkdirs()
+    private val prefs: SharedPreferences? by lazy {
+        try {
+            context?.applicationContext?.getSharedPreferences("play_history", Context.MODE_PRIVATE)
+        } catch (_: Exception) {
+            null
         }
-    } catch (_: Exception) {
-        null
+    }
+    private val historyDir: File? by lazy {
+        try {
+            context?.applicationContext?.filesDir?.resolve("play_history_store")?.apply {
+                if (!exists()) mkdirs()
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -217,15 +221,19 @@ open class PlaybackHistoryRepository(private val context: Context?) {
  */
 class DiscoverLocalCache(context: Context? = null) {
     private val appCtx: Context? = try { context?.applicationContext } catch (_: Exception) { null }
-    private val prefs: SharedPreferences? = try {
-        appCtx?.getSharedPreferences("concept_discover_swr_cache_v3", Context.MODE_PRIVATE)
-    } catch (_: Exception) {
-        null
+    private val prefs: SharedPreferences? by lazy {
+        try {
+            appCtx?.getSharedPreferences("concept_discover_swr_cache_v3", Context.MODE_PRIVATE)
+        } catch (_: Exception) {
+            null
+        }
     }
-    private val playlistCacheDir: File? = try {
-        appCtx?.cacheDir?.resolve("swr_playlists")?.apply { if (!exists()) mkdirs() }
-    } catch (_: Exception) {
-        null
+    private val playlistCacheDir: File? by lazy {
+        try {
+            appCtx?.cacheDir?.resolve("swr_playlists")?.apply { if (!exists()) mkdirs() }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)

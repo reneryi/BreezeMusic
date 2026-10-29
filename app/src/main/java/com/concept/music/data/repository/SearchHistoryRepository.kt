@@ -13,13 +13,17 @@ import kotlinx.coroutines.launch
 /**
  * 搜索历史记录持久化存储仓库
  * - 线程安全读写并返回不可变快照；
+ * - 惰性初始化 SharedPreferences，避免冷启动在主线程抢占磁盘 IO；
  * - 使用单线程串行 IO 调度器保序落盘。
  */
 class SearchHistoryRepository(context: Context? = null) {
-    private val prefs: SharedPreferences? = try {
-        context?.applicationContext?.getSharedPreferences("search_history", Context.MODE_PRIVATE)
-    } catch (_: Exception) {
-        null
+    private val appCtx: Context? = try { context?.applicationContext } catch (_: Exception) { null }
+    private val prefs: SharedPreferences? by lazy {
+        try {
+            appCtx?.getSharedPreferences("search_history", Context.MODE_PRIVATE)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -37,7 +41,11 @@ class SearchHistoryRepository(context: Context? = null) {
                 return memoryCache.toList()
             }
             val json = sp.getString("history_keywords", "[]") ?: "[]"
-            val list: List<String> = KugouSigner.gson.fromJson(json, object : TypeToken<List<String>>() {}.type) ?: emptyList()
+            val list: List<String> = if (json.isBlank() || json == "[]") {
+                emptyList()
+            } else {
+                KugouSigner.gson.fromJson(json, object : TypeToken<List<String>>() {}.type) ?: emptyList()
+            }
             memoryCache = list.toMutableList()
             loadedFromDisk = true
             memoryCache.toList()

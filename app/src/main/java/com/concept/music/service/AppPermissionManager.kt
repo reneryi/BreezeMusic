@@ -167,12 +167,17 @@ object AppPermissionManager {
     var onMotionPermissionSyncedCallback: ((Boolean) -> Unit)? = null
 
     fun init(context: Context) {
-        val appCtx = context.applicationContext
+        if (prefs != null) return
+        val appCtx = context.applicationContext ?: context
         val p = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs = p
 
-        val playerPrefs = appCtx.getSharedPreferences("concept_player_prefs", Context.MODE_PRIVATE)
-        val legacyMotionEnabled = playerPrefs.getBoolean("motion_orientation_sensor_enabled", true)
+        val legacyMotionEnabled = if (runCatching { p.contains(AppPermissionType.MOTION_ORIENTATION.key) }.getOrDefault(false)) {
+            true
+        } else {
+            val playerPrefs = appCtx.getSharedPreferences("concept_player_prefs", Context.MODE_PRIVATE)
+            playerPrefs.getBoolean("motion_orientation_sensor_enabled", true)
+        }
 
         val loaded = AppPermissionState(
             networkAccessEnabled = p.getBoolean(AppPermissionType.NETWORK_ACCESS.key, true),

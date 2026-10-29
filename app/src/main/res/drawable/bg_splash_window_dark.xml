@@ -3,10 +3,10 @@
     <!-- 幽邃微蓝深海极夜底色，统一深色窗口底色 -->
     <item android:drawable="@color/concept_window_bg_dark" />
 
-    <!-- 中心展示微风音乐深色品牌图标 -->
+    <!-- 中心展示微风音乐深色品牌圆角卡片图标（96dp与浅色窗口及Android 12+开屏尺寸完全统一） -->
     <item
-        android:width="128dp"
-        android:height="128dp"
+        android:width="96dp"
+        android:height="96dp"
         android:gravity="center"
         android:drawable="@drawable/ic_launcher_concept" />
 </layer-list>
