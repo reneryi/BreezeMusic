@@ -558,43 +558,42 @@ fun Modifier.softCardClickable(
  * 灵动多维分类内容切换过渡动画（入场与退场统一采用物理弹簧配速 + 顺向惯性微滑出 + 景深微缩放）：
  * 消除原本入场弹簧、退场 150ms 短促线性硬切造成的物理节奏割裂。
  */
+/**
+ * 同平面灵动分类内容切换过渡动画（入场与退场统一采用欠阻尼弹性物理弹簧 `categoryContentSpring` + 同平面左右滑入滑出）：
+ * 两个分类内容处于同一水平面，根据切换到左侧或右侧标题产生顺向弹性滑移与景深微缩放。
+ */
 fun conceptCategoryContentTransition(direction: Int): ContentTransform {
     val dir = if (direction >= 0) 1 else -1
-    val enterOrigin = TransformOrigin(if (dir >= 0) 0.68f else 0.32f, 0.35f)
-    val exitOrigin = TransformOrigin(if (dir >= 0) 0.32f else 0.68f, 0.35f)
+    val enterOrigin = TransformOrigin(if (dir >= 0) 0.72f else 0.28f, 0.50f)
+    val exitOrigin = TransformOrigin(if (dir >= 0) 0.28f else 0.72f, 0.50f)
     return (
         slideInHorizontally(
-            animationSpec = ConceptMotion.spatialPageSpring()
-        ) { fullWidth -> dir * (fullWidth / 6) } +
-            slideInVertically(
-                animationSpec = ConceptMotion.spatialPageSpring()
-            ) { fullHeight -> (fullHeight / 34).coerceAtLeast(10) } +
+            animationSpec = ConceptMotion.categoryContentSpring()
+        ) { fullWidth -> dir * (fullWidth / 4) } +
             scaleIn(
-                initialScale = 0.945f,
+                initialScale = 0.94f,
                 transformOrigin = enterOrigin,
-                animationSpec = ConceptMotion.spatialPageSpring()
+                animationSpec = ConceptMotion.categoryContentSpring()
             ) +
-            fadeIn(animationSpec = tween(durationMillis = 240, easing = ConceptMotion.EmphasizedDecelerate))
+            fadeIn(animationSpec = tween(durationMillis = 220, easing = ConceptMotion.EmphasizedDecelerate))
         ) togetherWith (
         slideOutHorizontally(
-            animationSpec = ConceptMotion.spatialPageSpring()
-        ) { fullWidth -> -dir * (fullWidth / 9) } +
-            slideOutVertically(
-                animationSpec = ConceptMotion.spatialPageSpring()
-            ) { fullHeight -> -(fullHeight / 48).coerceAtLeast(6) } +
+            animationSpec = ConceptMotion.categoryContentSpring()
+        ) { fullWidth -> -dir * (fullWidth / 5) } +
             scaleOut(
-                targetScale = 0.955f,
+                targetScale = 0.94f,
                 transformOrigin = exitOrigin,
-                animationSpec = ConceptMotion.spatialPageSpring()
+                animationSpec = ConceptMotion.categoryContentSpring()
             ) +
-            fadeOut(animationSpec = tween(durationMillis = 200, easing = ConceptMotion.EmphasizedAccelerate))
+            fadeOut(animationSpec = tween(durationMillis = 190, easing = ConceptMotion.EmphasizedAccelerate))
         )
 }
 
 /**
- * 针对 LazyColumn 内部分类内容流的 120fps GPU 灵动切换修饰符：
- * 【阶段延迟修复】：将 `anim.value` 的读取严格封装在 `Modifier.graphicsLayer { ... }` 内部，
- * 切换分类时仅更新 RenderNode 属性，实现宿主页（我的页/歌手页）0 次全树重组！
+ * 针对同平面分类内容流的 120fps GPU 弹性灵动切换 + 左右方向性运动虚化修饰符：
+ * - 将 `anim.value` 的读取严格封装在 `Modifier.graphicsLayer { ... }` 内部，切换分类时 0 次宿主重组；
+ * - 使用 `ConceptMotion.categoryContentSpring()` 赋予同平面左右切换的弹性回弹灵动感；
+ * - 根据左右切换速度实时通过 `applyDirectionalMotionBlur` 施加水平运动虚化，定格后自动归零。
  */
 @Composable
 fun rememberCategorySwitchGraphicModifier(selectedIndex: Int): Modifier {
@@ -609,23 +608,33 @@ fun rememberCategorySwitchGraphicModifier(selectedIndex: Int): Modifier {
             anim.snapTo(0f)
             anim.animateTo(
                 targetValue = 1f,
-                animationSpec = ConceptMotion.spatialPageSpring()
+                animationSpec = ConceptMotion.categoryContentSpring()
             )
         }
     }
 
     return Modifier.graphicsLayer {
-        val p = anim.value
+        val rawP = anim.value
+        val clampedP = rawP.coerceIn(0f, 1f)
         val dir = direction
-        if (p < 0.999f) {
-            val inv = 1f - p
-            translationX = dir * inv * 64f
-            translationY = inv * 22f
-            val s = 0.95f + 0.05f * p
+        val inv = 1f - rawP
+        if (abs(inv) > 0.002f) {
+            translationX = dir * inv * 72f * (density / 2.75f).coerceAtLeast(0.8f)
+            translationY = 0f
+            val s = (0.945f + 0.055f * rawP).coerceIn(0.88f, 1.035f)
             scaleX = s
             scaleY = s
-            alpha = (0.25f + 0.75f * p).coerceIn(0f, 1f)
-            transformOrigin = TransformOrigin(if (dir >= 0) 0.65f else 0.35f, 0.25f)
+            alpha = (0.28f + 0.72f * clampedP).coerceIn(0f, 1f)
+            transformOrigin = TransformOrigin(if (dir >= 0) 0.68f else 0.32f, 0.45f)
+            val motionBlurX = (abs(inv) * 16f * density).coerceIn(0f, 22f)
+            applyDirectionalMotionBlur(blurX = motionBlurX, blurY = motionBlurX * 0.08f)
+        } else {
+            translationX = 0f
+            translationY = 0f
+            scaleX = 1f
+            scaleY = 1f
+            alpha = 1f
+            applyDirectionalMotionBlur(blurX = 0f, blurY = 0f)
         }
     }
 }
@@ -668,13 +677,31 @@ fun Modifier.horizontalCategorySwipe(
     val onBack by rememberUpdatedState(onSwipeRightAtStart ?: onSwipeBackAtFirst)
     val scope = rememberCoroutineScope()
     val dragFeedbackX = remember { Animatable(0f) }
+    var prevObservedIndex by remember { mutableIntStateOf(currentIndex) }
+    val switchBlurPulse = remember { Animatable(0f) }
+
+    LaunchedEffect(currentIndex) {
+        if (currentIndex != prevObservedIndex) {
+            prevObservedIndex = currentIndex
+            switchBlurPulse.snapTo(1f)
+            switchBlurPulse.animateTo(
+                targetValue = 0f,
+                animationSpec = ConceptMotion.categoryContentSpring()
+            )
+        }
+    }
 
     this
         .graphicsLayer {
             val dx = dragFeedbackX.value
+            val pulse = switchBlurPulse.value.coerceIn(0f, 1f)
             if (abs(dx) > 0.5f) {
                 translationX = dx
+            } else {
+                translationX = 0f
             }
+            val blurX = (pulse * 14f + (abs(dx) / 40f) * 6f) * density
+            applyDirectionalMotionBlur(blurX = blurX, blurY = blurX * 0.08f)
         }
         .pointerInput(Unit) {
             var totalDx = 0f

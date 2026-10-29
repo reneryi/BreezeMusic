@@ -57,6 +57,7 @@ import com.concept.music.data.model.LyricData
 import com.concept.music.data.model.LyricLine
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
+import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
@@ -281,13 +282,13 @@ fun LyricPosterDialog(
         runCatching { LocalDate.now().toString().replace("-", ".") }.getOrDefault("2026.10.27")
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
-        )
+    ConceptAnimatedOverlaySheet(
+        onDismiss = onDismiss,
+        isLandscape = true,
+        scrimAlpha = 0.72f,
+        zIndex = 96f
     ) {
+        val closeStudio = requestDismiss
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -325,7 +326,7 @@ fun LyricPosterDialog(
                             color = Color.White.copy(alpha = 0.08f),
                             modifier = Modifier
                                 .size(34.dp)
-                                .softClickable(onClick = onDismiss)
+                                .softClickable(onClick = closeStudio)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
@@ -357,11 +358,6 @@ fun LyricPosterDialog(
                             color = Color.White.copy(alpha = if (actionButtonsEnabled) 0.11f else 0.05f),
                             modifier = Modifier
                                 .height(34.dp)
-                                .border(
-                                    width = 0.8.dp,
-                                    color = Color.White.copy(alpha = if (actionButtonsEnabled) 0.18f else 0.08f),
-                                    shape = RoundedCornerShape(11.dp)
-                                )
                                 .softCardClickable(
                                     enabled = actionButtonsEnabled,
                                     shape = RoundedCornerShape(11.dp)
@@ -476,7 +472,7 @@ fun LyricPosterDialog(
                                             if (uri != null) "海报已保存至相册 (Pictures/ConceptMusic)" else "保存海报失败",
                                             Toast.LENGTH_SHORT
                                         ).show()
-                                        if (uri != null) onDismiss()
+                                        if (uri != null) closeStudio()
                                     }
                                 }
                         ) {

@@ -34,6 +34,7 @@ import com.concept.music.data.kugou.DeviceIdentity
 import com.concept.music.data.kugou.VipUiState
 import com.concept.music.data.kugou.today
 import com.concept.music.data.vip.VipManager
+import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
 import com.concept.music.ui.theme.ConceptCyanAccent
 import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.ConceptMintAccent
@@ -142,7 +143,6 @@ fun VipCenterScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VipCenterBottomSheet(
     state: VipUiState,
@@ -154,34 +154,53 @@ fun VipCenterBottomSheet(
     onRefresh: () -> Unit,
     onLogin: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        windowInsets = WindowInsets(0, 0, 0, 0),
-        containerColor = conceptSheetContainerColor(),
-        dragHandle = {
-            BottomSheetDefaults.DragHandle(
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
-            )
-        },
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ConceptAnimatedOverlaySheet(
+        onDismiss = onDismiss,
+        isLandscape = false,
+        zIndex = 88f
     ) {
-        VipCenterContentBody(
-            state = state,
-            loggedIn = loggedIn,
-            autoClaim = autoClaim,
-            onClaim = onClaim,
-            onAutoChange = onAutoChange,
-            onLogin = onLogin,
+        Surface(
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            color = conceptSheetContainerColor(),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shadowElevation = 24.dp,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .navigationBarsPadding()
-                .padding(bottom = 32.dp)
-                .verticalScroll(rememberScrollState())
-        )
+                .fillMaxHeight(0.88f)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .sheetVerticalDragGesture()
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .width(42.dp)
+                            .height(4.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.28f)
+                    ) {}
+                }
+                VipCenterContentBody(
+                    state = state,
+                    loggedIn = loggedIn,
+                    autoClaim = autoClaim,
+                    onClaim = onClaim,
+                    onAutoChange = onAutoChange,
+                    onLogin = onLogin,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 20.dp)
+                        .navigationBarsPadding()
+                        .padding(bottom = 24.dp)
+                        .verticalScroll(rememberScrollState())
+                )
+            }
+        }
     }
 }
 

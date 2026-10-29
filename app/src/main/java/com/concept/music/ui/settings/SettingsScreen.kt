@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -325,43 +326,43 @@ enum class SettingsCategory(
 ) {
     APPEARANCE(
         title = "外观与播放样式",
-        subtitle = "主题模式、唱片样式、播放页背景与封面动态取色"
+        subtitle = "深浅主题 · 唱片样式 · 动态背景"
     ),
     AUDIO_QUALITY(
         title = "音质与音效",
-        subtitle = "蝰蛇音效调音台、默认在线音质、移动省流与切歌过渡"
+        subtitle = "蝰蛇调音 · 默认音质 · 切歌过渡"
     ),
     PLAYBACK_CONTROL(
         title = "外设与播放控制",
-        subtitle = "音频焦点混音/闪避、有线线控自定义、耳机连播与后台保活"
+        subtitle = "多应用混音 · 耳机线控 · 后台保活"
     ),
     LYRICS(
         title = "歌词显示设置",
-        subtitle = "全屏歌词字号、译文比例、对齐方式、景深模糊与蓝牙延迟补偿"
+        subtitle = "字号排版 · 景深虚化 · 蓝牙校准"
     ),
     SPEED_SLEEP(
         title = "倍速与睡眠定时",
-        subtitle = "倍速升降调调节与睡眠倒计时自动停止播放"
+        subtitle = "倍速升降调 · 睡眠定时自动停止"
     ),
     STORAGE(
         title = "存储与缓存",
-        subtitle = "音频、图片、歌单快照与歌词分项缓存明细、上限设置与清理"
+        subtitle = "空间占比 · 容量上限 · 分项清理"
     ),
     DOWNLOAD(
         title = "下载",
-        subtitle = "默认下载音质、自定义音乐与歌词保存路径、封面/歌词内嵌与下载记录"
+        subtitle = "下载音质 · 保存目录 · 标签内嵌"
     ),
     PERMISSIONS(
         title = "权限管理",
-        subtitle = "公开说明应用获取的全部权限用途，支持自主开关并管控对应功能"
+        subtitle = "透明用途说明 · 独立自主开关"
     ),
     FEEDBACK(
         title = "问题反馈与建议",
-        subtitle = "标准 GitHub Issue 提交示例、反馈指南与一键跳转仓库"
+        subtitle = "Issue 规范示例 · 一键复制环境"
     ),
     ABOUT(
         title = "关于微风音乐",
-        subtitle = "项目简介、免责与版权声明、开源仓库、检查更新与更新日志"
+        subtitle = "版本检查更新 · 更新日志 · 开源声明"
     )
 }
 
@@ -778,11 +779,31 @@ fun SettingsScreen(
             },
             containerColor = Color.Transparent
         ) { innerPadding ->
+            val subPageTransitionState = Triple(activeCategory, showChangelogSubPage, showDownloadHistorySubPage)
+            var lastSubPageDepth by remember { mutableIntStateOf(0) }
+            val subPageBlurPulse = remember { androidx.compose.animation.core.Animatable(0f) }
+            LaunchedEffect(subPageTransitionState) {
+                val curDepth = when {
+                    subPageTransitionState.second || subPageTransitionState.third -> 2
+                    subPageTransitionState.first != null -> 1
+                    else -> 0
+                }
+                if (curDepth != lastSubPageDepth) {
+                    lastSubPageDepth = curDepth
+                    subPageBlurPulse.snapTo(1f)
+                    subPageBlurPulse.animateTo(0f, ConceptMotion.spatialPageSpring())
+                }
+            }
+
             AnimatedContent(
-                targetState = Triple(activeCategory, showChangelogSubPage, showDownloadHistorySubPage),
+                targetState = subPageTransitionState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+                    .graphicsLayer {
+                        val b = subPageBlurPulse.value.coerceIn(0f, 1f) * 12f * density
+                        applyDirectionalMotionBlur(blurX = b, blurY = b * 0.08f)
+                    },
                 transitionSpec = {
                     fun depth(state: Triple<SettingsCategory?, Boolean, Boolean>): Int = when {
                         state.second || state.third -> 2
@@ -791,22 +812,34 @@ fun SettingsScreen(
                     }
                     if (depth(targetState) > depth(initialState)) {
                         (slideInHorizontally(
-                            initialOffsetX = { fullWidth -> (fullWidth * 0.24f).toInt() },
-                            animationSpec = tween(durationMillis = 340, easing = ConceptMotion.GentleSpatialEnterEasing)
-                        ) + fadeIn(tween(durationMillis = 280, easing = ConceptMotion.GentleSpatialEnterEasing))) togetherWith
+                            initialOffsetX = { fullWidth -> (fullWidth * 0.32f).toInt() },
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + androidx.compose.animation.scaleIn(
+                            initialScale = 0.968f,
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + fadeIn(tween(durationMillis = 240, easing = ConceptMotion.EmphasizedDecelerate))) togetherWith
                             (slideOutHorizontally(
-                                targetOffsetX = { fullWidth -> -(fullWidth * 0.08f).toInt() },
-                                animationSpec = tween(durationMillis = 300, easing = ConceptMotion.GentleSpatialExitEasing)
-                            ) + fadeOut(tween(durationMillis = 220, easing = ConceptMotion.GentleSpatialExitEasing)))
+                                targetOffsetX = { fullWidth -> -(fullWidth * 0.11f).toInt() },
+                                animationSpec = ConceptMotion.spatialPageSpring()
+                            ) + androidx.compose.animation.scaleOut(
+                                targetScale = 0.975f,
+                                animationSpec = ConceptMotion.spatialPageSpring()
+                            ) + fadeOut(tween(durationMillis = 220, easing = ConceptMotion.EmphasizedAccelerate)))
                     } else {
                         (slideInHorizontally(
-                            initialOffsetX = { fullWidth -> -(fullWidth * 0.08f).toInt() },
-                            animationSpec = tween(durationMillis = 320, easing = ConceptMotion.GentleSpatialEnterEasing)
-                        ) + fadeIn(tween(durationMillis = 260, easing = ConceptMotion.GentleSpatialEnterEasing))) togetherWith
+                            initialOffsetX = { fullWidth -> -(fullWidth * 0.11f).toInt() },
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + androidx.compose.animation.scaleIn(
+                            initialScale = 0.975f,
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + fadeIn(tween(durationMillis = 240, easing = ConceptMotion.EmphasizedDecelerate))) togetherWith
                             (slideOutHorizontally(
-                                targetOffsetX = { fullWidth -> (fullWidth * 0.24f).toInt() },
-                                animationSpec = tween(durationMillis = 280, easing = ConceptMotion.GentleSpatialExitEasing)
-                            ) + fadeOut(tween(durationMillis = 220, easing = ConceptMotion.GentleSpatialExitEasing)))
+                                targetOffsetX = { fullWidth -> (fullWidth * 0.32f).toInt() },
+                                animationSpec = ConceptMotion.spatialPageSpring()
+                            ) + androidx.compose.animation.scaleOut(
+                                targetScale = 0.968f,
+                                animationSpec = ConceptMotion.spatialPageSpring()
+                            ) + fadeOut(tween(durationMillis = 220, easing = ConceptMotion.EmphasizedAccelerate)))
                     }
                 },
                 label = "SettingsSubPageTransition"
@@ -828,17 +861,16 @@ fun SettingsScreen(
                                 category = SettingsCategory.APPEARANCE,
                                 icon = Icons.Rounded.Palette,
                                 accentColor = ConceptVioletAccent,
-                                statusText = "${themeMode.label} · ${coverStyle.label} · ${playerBackgroundStyle.label}",
+                                statusText = "${themeMode.label} · ${coverStyle.label}",
                                 onClick = { activeCategoryName = SettingsCategory.APPEARANCE.name }
                             )
                         }
                         item {
-                            val btCompLabel = if (bluetoothLyricOffsetEnabled) " · 蓝牙补偿 ${bluetoothLyricOffsetMs}ms" else ""
                             SettingsMenuEntryCard(
                                 category = SettingsCategory.LYRICS,
                                 icon = Icons.Rounded.Lyrics,
                                 accentColor = ConceptCyanAccent,
-                                statusText = "${lyricFontSize.toInt()}sp · ${lyricAlignment.label} · ${if (lyricBlurEnabled) "景深模糊" else "清晰文本"}$btCompLabel",
+                                statusText = "${lyricFontSize.toInt()}sp · ${lyricAlignment.label}",
                                 onClick = { activeCategoryName = SettingsCategory.LYRICS.name }
                             )
                         }
@@ -852,17 +884,16 @@ fun SettingsScreen(
                                 category = SettingsCategory.AUDIO_QUALITY,
                                 icon = Icons.Rounded.HighQuality,
                                 accentColor = ConceptMintAccent,
-                                statusText = "默认 ${preferredQuality.label} · ${if (audioEffectState.isEnabled) "蝰蛇：${audioEffectState.currentPreset.label}" else "音效关闭"}",
+                                statusText = if (audioEffectState.isEnabled) "${preferredQuality.shortBadge} · 蝰蛇开" else preferredQuality.label,
                                 onClick = { activeCategoryName = SettingsCategory.AUDIO_QUALITY.name }
                             )
                         }
                         item {
-                            val headsetStatus = if (wiredHeadsetControlEnabled) "线控开启(${headsetClickSensitivity.label})" else "线控关闭"
                             SettingsMenuEntryCard(
                                 category = SettingsCategory.PLAYBACK_CONTROL,
                                 icon = Icons.Rounded.Headphones,
                                 accentColor = ConceptCoralAccent,
-                                statusText = "${audioFocusMode.label} · $headsetStatus",
+                                statusText = if (allowPlayWithOtherApps) "混音同播" else audioFocusMode.label,
                                 onClick = { activeCategoryName = SettingsCategory.PLAYBACK_CONTROL.name }
                             )
                         }
@@ -871,7 +902,7 @@ fun SettingsScreen(
                                 category = SettingsCategory.SPEED_SLEEP,
                                 icon = Icons.Rounded.Speed,
                                 accentColor = ConceptPrimary,
-                                statusText = "倍速 ${String.format(Locale.getDefault(), "%.2f", playbackSpeed)}x · $sleepStatusText",
+                                statusText = if (isSleepActive) sleepStatusText else "${String.format(Locale.getDefault(), "%.2f", playbackSpeed)}x",
                                 onClick = { activeCategoryName = SettingsCategory.SPEED_SLEEP.name }
                             )
                         }
@@ -885,18 +916,17 @@ fun SettingsScreen(
                                 category = SettingsCategory.STORAGE,
                                 icon = Icons.Rounded.Storage,
                                 accentColor = ConceptAmberAccent,
-                                statusText = "总缓存 ${AudioCacheManager.formatSize(cacheSizeBytes)} · 音频 ${AudioCacheManager.formatSize(detailedCacheStats.audioBytes)} / 图片 ${AudioCacheManager.formatSize(detailedCacheStats.totalImageBytes)}",
+                                statusText = AudioCacheManager.formatSize(cacheSizeBytes),
                                 onClick = { activeCategoryName = SettingsCategory.STORAGE.name }
                             )
                         }
                         if (permissionState.musicDownloadEnabled) {
                             item {
-                                val lrcTag = if (downloadConfig.saveStandaloneLrcFile) "内嵌 + 独立 .lrc" else "高清封面与歌词内嵌"
                                 SettingsMenuEntryCard(
                                     category = SettingsCategory.DOWNLOAD,
                                     icon = Icons.Rounded.Download,
                                     accentColor = ConceptCyanAccent,
-                                    statusText = "默认 ${downloadConfig.defaultDownloadQuality.label} · $lrcTag",
+                                    statusText = downloadConfig.defaultDownloadQuality.shortBadge,
                                     onClick = {
                                         showDownloadHistorySubPage = false
                                         activeCategoryName = SettingsCategory.DOWNLOAD.name
@@ -911,11 +941,7 @@ fun SettingsScreen(
                                 category = SettingsCategory.PERMISSIONS,
                                 icon = Icons.Rounded.VerifiedUser,
                                 accentColor = ConceptMintAccent,
-                                statusText = if (permEnabledCnt == permTotalCnt) {
-                                    "已开启全部 $permTotalCnt 项权限 · 用途公开透明"
-                                } else {
-                                    "已开启 $permEnabledCnt / $permTotalCnt 项 · 已限制 ${permTotalCnt - permEnabledCnt} 项功能"
-                                },
+                                statusText = "已开 $permEnabledCnt/$permTotalCnt",
                                 onClick = { activeCategoryName = SettingsCategory.PERMISSIONS.name }
                             )
                         }
@@ -924,7 +950,7 @@ fun SettingsScreen(
                                 category = SettingsCategory.FEEDBACK,
                                 icon = Icons.Rounded.BugReport,
                                 accentColor = ConceptRoseAccent,
-                                statusText = "GitHub Issue 规范反馈示例 · 一键复制环境与跳转仓库",
+                                statusText = "GitHub Issue",
                                 onClick = { activeCategoryName = SettingsCategory.FEEDBACK.name }
                             )
                         }
@@ -933,7 +959,7 @@ fun SettingsScreen(
                                 category = SettingsCategory.ABOUT,
                                 icon = Icons.Rounded.Info,
                                 accentColor = ConceptPrimary,
-                                statusText = "BreezeMusic ${appVersionInfo.displayVersion} · 项目地址 · 检查更新 · 版权声明",
+                                statusText = appVersionInfo.displayVersion,
                                 onClick = { activeCategoryName = SettingsCategory.ABOUT.name }
                             )
                         }
@@ -1036,14 +1062,11 @@ fun SettingsScreen(
                                         Spacer(modifier = Modifier.height(8.dp))
                                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                             CoverStyle.entries.forEach { style ->
-                                                FilterChip(
+                                                ConceptBorderlessChoicePill(
                                                     selected = coverStyle == style,
-                                                    onClick = { viewModel.setCoverStyle(style) },
-                                                    label = { Text(style.label, fontSize = 12.sp) },
-                                                    colors = FilterChipDefaults.filterChipColors(
-                                                        selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
-                                                        selectedLabelColor = ConceptPrimary
-                                                    )
+                                                    label = style.label,
+                                                    accentColor = ConceptVioletAccent,
+                                                    onClick = { viewModel.setCoverStyle(style) }
                                                 )
                                             }
                                         }
@@ -1063,14 +1086,11 @@ fun SettingsScreen(
                                             verticalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
                                             PlayerBackgroundStyle.entries.forEach { bgStyle ->
-                                                FilterChip(
+                                                ConceptBorderlessChoicePill(
                                                     selected = playerBackgroundStyle == bgStyle,
-                                                    onClick = { viewModel.setPlayerBackgroundStyle(bgStyle) },
-                                                    label = { Text(bgStyle.label, fontSize = 12.sp) },
-                                                    colors = FilterChipDefaults.filterChipColors(
-                                                        selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
-                                                        selectedLabelColor = ConceptPrimary
-                                                    )
+                                                    label = bgStyle.label,
+                                                    accentColor = ConceptVioletAccent,
+                                                    onClick = { viewModel.setPlayerBackgroundStyle(bgStyle) }
                                                 )
                                             }
                                         }
@@ -1170,18 +1190,14 @@ fun SettingsScreen(
                                             verticalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             AudioQuality.entries.forEach { quality ->
-                                                val selected = preferredQuality == quality
-                                                FilterChip(
-                                                    selected = selected,
+                                                ConceptBorderlessChoicePill(
+                                                    selected = preferredQuality == quality,
+                                                    label = quality.label,
+                                                    accentColor = ConceptMintAccent,
                                                     onClick = {
                                                         viewModel.setPreferredQuality(quality)
                                                         Toast.makeText(context, "默认音质：${quality.label}", Toast.LENGTH_SHORT).show()
-                                                    },
-                                                    label = { Text(quality.label, fontSize = 12.sp) },
-                                                    colors = FilterChipDefaults.filterChipColors(
-                                                        selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
-                                                        selectedLabelColor = ConceptPrimary
-                                                    )
+                                                    }
                                                 )
                                             }
                                         }
@@ -1289,17 +1305,14 @@ fun SettingsScreen(
                                             verticalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
                                             AudioFocusMode.entries.forEach { mode ->
-                                                FilterChip(
+                                                ConceptBorderlessChoicePill(
                                                     selected = audioFocusMode == mode,
+                                                    label = mode.label,
+                                                    accentColor = ConceptCoralAccent,
                                                     onClick = {
                                                         viewModel.setAudioFocusMode(mode)
                                                         Toast.makeText(context, "音频焦点模式：${mode.label}", Toast.LENGTH_SHORT).show()
-                                                    },
-                                                    label = { Text(mode.label, fontSize = 12.sp) },
-                                                    colors = FilterChipDefaults.filterChipColors(
-                                                        selectedContainerColor = ConceptCoralAccent.copy(alpha = 0.2f),
-                                                        selectedLabelColor = ConceptCoralAccent
-                                                    )
+                                                    }
                                                 )
                                             }
                                         }
@@ -1346,14 +1359,11 @@ fun SettingsScreen(
                                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
                                                 HeadsetClickSensitivity.entries.forEach { sens ->
-                                                    FilterChip(
+                                                    ConceptBorderlessChoicePill(
                                                         selected = headsetClickSensitivity == sens,
-                                                        onClick = { viewModel.setHeadsetClickSensitivity(sens) },
-                                                        label = { Text(sens.label, fontSize = 12.sp) },
-                                                        colors = FilterChipDefaults.filterChipColors(
-                                                            selectedContainerColor = ConceptCoralAccent.copy(alpha = 0.2f),
-                                                            selectedLabelColor = ConceptCoralAccent
-                                                        )
+                                                        label = sens.label,
+                                                        accentColor = ConceptCoralAccent,
+                                                        onClick = { viewModel.setHeadsetClickSensitivity(sens) }
                                                     )
                                                 }
                                             }
@@ -1416,23 +1426,17 @@ fun SettingsScreen(
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                FilterChip(
+                                                ConceptBorderlessChoicePill(
                                                     selected = autoPlayOnWiredConnect,
-                                                    onClick = { viewModel.setAutoPlayOnWiredConnect(!autoPlayOnWiredConnect) },
-                                                    label = { Text("有线耳机插入自动播", fontSize = 12.sp) },
-                                                    colors = FilterChipDefaults.filterChipColors(
-                                                        selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
-                                                        selectedLabelColor = ConceptPrimary
-                                                    )
+                                                    label = "有线耳机插入自动播",
+                                                    accentColor = ConceptCoralAccent,
+                                                    onClick = { viewModel.setAutoPlayOnWiredConnect(!autoPlayOnWiredConnect) }
                                                 )
-                                                FilterChip(
+                                                ConceptBorderlessChoicePill(
                                                     selected = autoPlayOnBluetoothConnect,
-                                                    onClick = { viewModel.setAutoPlayOnBluetoothConnect(!autoPlayOnBluetoothConnect) },
-                                                    label = { Text("蓝牙耳机连接自动播", fontSize = 12.sp) },
-                                                    colors = FilterChipDefaults.filterChipColors(
-                                                        selectedContainerColor = ConceptPrimary.copy(alpha = 0.2f),
-                                                        selectedLabelColor = ConceptPrimary
-                                                    )
+                                                    label = "蓝牙耳机连接自动播",
+                                                    accentColor = ConceptCoralAccent,
+                                                    onClick = { viewModel.setAutoPlayOnBluetoothConnect(!autoPlayOnBluetoothConnect) }
                                                 )
                                             }
                                         }
@@ -1596,10 +1600,11 @@ fun SettingsScreen(
                                             Text("歌词对齐方式", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
                                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                                 LyricAlignment.entries.forEach { align ->
-                                                    FilterChip(
+                                                    ConceptBorderlessChoicePill(
                                                         selected = lyricAlignment == align,
-                                                        onClick = { viewModel.setLyricAlignment(align) },
-                                                        label = { Text(align.label, fontSize = 12.sp) }
+                                                        label = align.label,
+                                                        accentColor = ConceptCyanAccent,
+                                                        onClick = { viewModel.setLyricAlignment(align) }
                                                     )
                                                 }
                                             }
@@ -1671,10 +1676,11 @@ fun SettingsScreen(
                                             verticalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
                                             listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { preset ->
-                                                FilterChip(
+                                                ConceptBorderlessChoicePill(
                                                     selected = abs(playbackSpeed - preset) < 0.03f,
-                                                    onClick = { viewModel.setPlaybackSpeed(preset) },
-                                                    label = { Text("${preset}x", fontSize = 12.sp) }
+                                                    label = "${preset}x",
+                                                    accentColor = ConceptPrimary,
+                                                    onClick = { viewModel.setPlaybackSpeed(preset) }
                                                 )
                                             }
                                         }
@@ -1724,22 +1730,24 @@ fun SettingsScreen(
                                             listOf(15, 30, 45, 60).forEach { mins ->
                                                 val targetSec = mins * 60L
                                                 val isPresetActive = sleepTimerRemainingSec in (targetSec - 14 * 60L).coerceAtLeast(1L)..targetSec
-                                                FilterChip(
+                                                ConceptBorderlessChoicePill(
                                                     selected = isPresetActive,
+                                                    label = "${mins}分钟",
+                                                    accentColor = ConceptPrimary,
                                                     onClick = {
                                                         viewModel.setSleepTimer(mins, sleepStopAfterCurrentSong)
                                                         Toast.makeText(context, "已设置 $mins 分钟后停止", Toast.LENGTH_SHORT).show()
-                                                    },
-                                                    label = { Text("${mins}分钟", fontSize = 12.sp) }
+                                                    }
                                                 )
                                             }
-                                            FilterChip(
+                                            ConceptBorderlessChoicePill(
                                                 selected = sleepPendingStopAtTrackEnd && sleepTimerRemainingSec == 0L,
+                                                label = "播完本首",
+                                                accentColor = ConceptPrimary,
                                                 onClick = {
                                                     viewModel.setSleepTimer(0, true)
                                                     Toast.makeText(context, "将在当前歌曲播完后暂停", Toast.LENGTH_SHORT).show()
-                                                },
-                                                label = { Text("播完本首", fontSize = 12.sp) }
+                                                }
                                             )
                                         }
 
@@ -1995,29 +2003,14 @@ private fun DownloadSettingsSectionContent(
                     }
                 }
 
-                OutlinedButton(
+                ConceptTonalActionButton(
+                    text = "存储权限设置",
+                    icon = Icons.AutoMirrored.Rounded.OpenInNew,
+                    accentColor = ConceptPrimary,
                     onClick = {
-                        // 直接打开系统存储权限授权设置页（与权限管理页中的「存储权限设置」完全一致）
                         AppPermissionManager.openSystemPermissionSetting(context, AppPermissionType.STORAGE_EXPORT)
-                    },
-                    shape = RoundedCornerShape(11.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                    modifier = Modifier.height(34.dp)
-                ) {
-                    Text(
-                        text = "存储权限设置",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = ConceptPrimary
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
-                        contentDescription = null,
-                        tint = ConceptPrimary,
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
+                    }
+                )
             }
 
             HorizontalDivider(
@@ -2129,11 +2122,6 @@ private fun DownloadSettingsSectionContent(
                                 },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .border(
-                                        width = if (isSelected) 1.dp else 0.dp,
-                                        color = if (isSelected) ConceptMintAccent.copy(alpha = 0.6f) else Color.Transparent,
-                                        shape = RoundedCornerShape(14.dp)
-                                    )
                                     .softCardClickable(shape = RoundedCornerShape(14.dp)) {
                                         MusicDownloadManager.setDefaultDownloadQuality(qOption)
                                         Toast.makeText(context, "默认下载音质已设为 ${qOption.label}", Toast.LENGTH_SHORT).show()
@@ -2442,9 +2430,11 @@ private fun DownloadSettingsSectionContent(
                             "/storage/emulated/0/Download/BreezeMusic",
                             "/storage/emulated/0/Music"
                         ).forEach { preset ->
-                            AssistChip(
-                                onClick = { customDownloadPathInput = preset },
-                                label = { Text(preset.removePrefix("/storage/emulated/0/"), fontSize = 11.sp) }
+                            ConceptBorderlessChoicePill(
+                                selected = customDownloadPathInput == preset,
+                                label = preset.removePrefix("/storage/emulated/0/"),
+                                accentColor = ConceptCyanAccent,
+                                onClick = { customDownloadPathInput = preset }
                             )
                         }
                     }
@@ -2499,9 +2489,11 @@ private fun DownloadSettingsSectionContent(
                             "/storage/emulated/0/Download/BreezeMusic/Lyrics",
                             config.downloadDirectoryPath
                         ).distinct().forEach { preset ->
-                            AssistChip(
-                                onClick = { customLyricPathInput = preset },
-                                label = { Text(preset.removePrefix("/storage/emulated/0/"), fontSize = 11.sp) }
+                            ConceptBorderlessChoicePill(
+                                selected = customLyricPathInput == preset,
+                                label = preset.removePrefix("/storage/emulated/0/"),
+                                accentColor = ConceptCyanAccent,
+                                onClick = { customLyricPathInput = preset }
                             )
                         }
                     }
@@ -2573,21 +2565,12 @@ private fun DownloadHistorySubPageContent() {
                     )
                 }
                 if (tasks.isNotEmpty()) {
-                    OutlinedButton(
-                        onClick = { MusicDownloadManager.clearCompletedTasks() },
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.CleaningServices,
-                            contentDescription = null,
-                            tint = ConceptPrimary,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text("清理已完成", fontSize = 11.5.sp, color = ConceptPrimary, fontWeight = FontWeight.SemiBold)
-                    }
+                    ConceptTonalActionButton(
+                        text = "清理已完成",
+                        icon = Icons.Rounded.CleaningServices,
+                        accentColor = ConceptPrimary,
+                        onClick = { MusicDownloadManager.clearCompletedTasks() }
+                    )
                 }
             }
         }
@@ -2871,17 +2854,14 @@ private fun StorageAndCacheSectionContent(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 AudioCacheLimit.entries.forEach { limitOption ->
-                    FilterChip(
+                    ConceptBorderlessChoicePill(
                         selected = cacheLimit == limitOption,
+                        label = limitOption.label,
+                        accentColor = ConceptAmberAccent,
                         onClick = {
                             AudioCacheManager.setCacheLimit(context, limitOption)
                             Toast.makeText(context, "音频缓存上限已设为 ${limitOption.label}", Toast.LENGTH_SHORT).show()
-                        },
-                        label = { Text(limitOption.label, fontSize = 12.sp) },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = ConceptAmberAccent.copy(alpha = 0.2f),
-                            selectedLabelColor = ConceptAmberAccent
-                        )
+                        }
                     )
                 }
             }
@@ -2893,21 +2873,29 @@ private fun StorageAndCacheSectionContent(
                 horizontalArrangement = Arrangement.End
             ) {
                 var cacheRefreshSpin by remember { mutableIntStateOf(0) }
-                OutlinedButton(
-                    onClick = {
-                        cacheRefreshSpin += 1
-                        AudioCacheManager.refreshCacheSize(context)
-                        Toast.makeText(context, "已刷新各项缓存统计", Toast.LENGTH_SHORT).show()
-                    },
-                    shape = RoundedCornerShape(12.dp)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = ConceptPrimary.copy(alpha = 0.14f),
+                    modifier = Modifier
+                        .height(38.dp)
+                        .softCardClickable(shape = RoundedCornerShape(12.dp)) {
+                            cacheRefreshSpin += 1
+                            AudioCacheManager.refreshCacheSize(context)
+                            Toast.makeText(context, "已刷新各项缓存统计", Toast.LENGTH_SHORT).show()
+                        }
                 ) {
-                    ConceptFluidRefreshIcon(
-                        tint = ConceptPrimary,
-                        spinTrigger = cacheRefreshSpin,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text("刷新统计", fontSize = 12.sp)
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ConceptFluidRefreshIcon(
+                            tint = ConceptPrimary,
+                            spinTrigger = cacheRefreshSpin,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("刷新统计", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = ConceptPrimary)
+                    }
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Button(
@@ -3050,8 +3038,8 @@ private fun CacheCategoryDetailRow(
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                 Box(
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(11.dp))
                         .background(accentColor.copy(alpha = 0.14f)),
                     contentAlignment = Alignment.Center
                 ) {
@@ -3064,26 +3052,41 @@ private fun CacheCategoryDetailRow(
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = accentColor.copy(alpha = 0.14f)
+                        ) {
+                            Text(
+                                text = sizeText,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = accentColor,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.5.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = badgeText,
                         style = MaterialTheme.typography.labelSmall,
-                        color = accentColor,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp
                     )
                 }
             }
             Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = sizeText,
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+            ConceptTonalActionButton(
+                text = actionLabel,
+                icon = Icons.Rounded.CleaningServices,
+                accentColor = accentColor,
+                onClick = onClearClick
             )
         }
 
@@ -3094,36 +3097,8 @@ private fun CacheCategoryDetailRow(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             fontSize = 11.5.sp,
-            lineHeight = 17.sp
+            lineHeight = 16.5.sp
         )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End
-        ) {
-            OutlinedButton(
-                onClick = onClearClick,
-                shape = RoundedCornerShape(10.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                modifier = Modifier.height(32.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.CleaningServices,
-                    contentDescription = null,
-                    tint = accentColor,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                    text = actionLabel,
-                    fontSize = 11.5.sp,
-                    color = accentColor,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
     }
 }
 
@@ -3265,30 +3240,15 @@ private fun PermissionsSectionContent(
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            OutlinedButton(
-                                onClick = { AppPermissionManager.openAppDetailsSettings(context) },
-                                shape = RoundedCornerShape(13.dp),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 9.dp),
+                            ConceptTonalActionButton(
+                                text = "系统应用权限页",
+                                icon = Icons.Rounded.SettingsApplications,
+                                accentColor = ConceptPrimary,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(40.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.SettingsApplications,
-                                    contentDescription = null,
-                                    tint = ConceptPrimary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "系统应用权限页",
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = ConceptPrimary,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            }
+                                    .height(40.dp),
+                                onClick = { AppPermissionManager.openAppDetailsSettings(context) }
+                            )
 
                             if (restrictedCount > 0) {
                                 Button(
@@ -3362,31 +3322,27 @@ private fun PermissionDisclosureCard(
         AppPermissionType.MOTION_ORIENTATION -> Icons.Rounded.ScreenRotation to ConceptCoralAccent
         AppPermissionType.AUDIO_HARDWARE -> Icons.Rounded.Headphones to ConceptRoseAccent
     }
+    var detailsExpanded by rememberSaveable(type.name) { mutableStateOf(false) }
 
     Surface(
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(22.dp),
         color = conceptFloatingCardColor(),
         contentColor = MaterialTheme.colorScheme.onSurface,
         shadowElevation = 0.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .border(
-                width = if (enabled) 0.8.dp else 1.2.dp,
-                color = if (enabled) {
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
-                } else {
-                    ConceptAmberAccent.copy(alpha = 0.45f)
-                },
-                shape = RoundedCornerShape(24.dp)
+            .softCardClickable(
+                shape = RoundedCornerShape(22.dp),
+                onClick = { detailsExpanded = !detailsExpanded }
             )
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 16.dp, vertical = 15.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // 卡片头部：图标 + 权限标题 + 状态标签 + 自主开关
+            // 1. 卡片头部：色阶图标 + 权限标题 + 状态胶囊 + 独立开关
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -3396,12 +3352,12 @@ private fun PermissionDisclosureCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .weight(1f)
-                        .padding(end = 12.dp)
+                        .padding(end = 10.dp)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(14.dp))
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(13.dp))
                             .background(
                                 if (enabled) accentColor.copy(alpha = 0.15f)
                                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
@@ -3412,16 +3368,16 @@ private fun PermissionDisclosureCard(
                             imageVector = icon,
                             contentDescription = type.title,
                             tint = if (enabled) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(21.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(
                             text = type.title,
                             style = MaterialTheme.typography.titleSmall.copy(
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.5.sp
+                                fontSize = 15.sp
                             ),
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -3435,7 +3391,7 @@ private fun PermissionDisclosureCard(
                             ) {
                                 Text(
                                     text = type.badge,
-                                    fontSize = 11.sp,
+                                    fontSize = 10.5.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = accentColor,
                                     maxLines = 1,
@@ -3453,7 +3409,7 @@ private fun PermissionDisclosureCard(
                             ) {
                                 Text(
                                     text = if (!enabled) "应用内已关闭" else systemGrant.statusLabel,
-                                    fontSize = 11.sp,
+                                    fontSize = 10.5.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = if (enabled && systemGrant.isSystemGranted) {
                                         ConceptMintAccent
@@ -3479,157 +3435,154 @@ private fun PermissionDisclosureCard(
                 )
             }
 
-            // 系统权限标识胶囊条
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.62f),
-                modifier = Modifier.fillMaxWidth()
+            // 2. 一句话精简摘要（或关闭时的停用提示）+ 右侧展开详情/系统设置无框胶囊
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
+                Text(
+                    text = if (enabled) type.purposeDescription else "已停用：${type.disabledImpactDescription}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else ConceptAmberAccent,
+                    fontSize = 12.sp,
+                    maxLines = if (detailsExpanded) 4 else 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                )
+
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Code,
-                        contentDescription = null,
-                        tint = accentColor,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = type.manifestPermissionName,
-                        fontSize = 11.5.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    if (systemGrant.actionButtonLabel != null) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = accentColor.copy(alpha = 0.13f),
+                            modifier = Modifier.softCardClickable(
+                                shape = RoundedCornerShape(8.dp),
+                                onClick = onOpenSystemSetting
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = systemGrant.actionButtonLabel,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = accentColor
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
+                                    contentDescription = null,
+                                    tint = accentColor,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                        modifier = Modifier.softCardClickable(
+                            shape = RoundedCornerShape(8.dp),
+                            onClick = { detailsExpanded = !detailsExpanded }
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (detailsExpanded) "收起" else "详情",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Icon(
+                                imageVector = if (detailsExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
                 }
             }
 
-            // 权限用途公开说明与隐私承诺正文区（大字号、宽行距，清晰易读）
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.52f),
-                modifier = Modifier.fillMaxWidth()
+            // 3. 按需展开的技术标识、完整隐私承诺与关闭影响详情（避免默认满屏堆砌长文）
+            AnimatedVisibility(
+                visible = detailsExpanded,
+                enter = expandVertically(animationSpec = ConceptMotion.spatialPageSpring()) + fadeIn(tween(180)),
+                exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(tween(150))
             ) {
                 Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(
-                            text = "获取用途说明",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.5.sp
-                            ),
-                            color = accentColor
-                        )
-                        Text(
-                            text = type.purposeDescription,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 13.sp,
-                            lineHeight = 19.5.sp
-                        )
-                    }
-
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
-                    )
-
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(
-                            text = "隐私与数据边界",
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.5.sp
-                            ),
-                            color = ConceptMintAccent
-                        )
-                        Text(
-                            text = type.privacyCommitment,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.5.sp,
-                            lineHeight = 18.5.sp
-                        )
-                    }
-                }
-            }
-
-            // 关闭后影响说明区（关闭时高亮警示，开启时清晰预告）
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = if (enabled) {
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                } else {
-                    ConceptAmberAccent.copy(alpha = 0.14f)
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 13.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.Top
+                        .padding(top = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = if (enabled) Icons.Rounded.Info else Icons.Rounded.WarningAmber,
-                        contentDescription = null,
-                        tint = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else ConceptAmberAccent,
-                        modifier = Modifier
-                            .padding(top = 2.dp)
-                            .size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (enabled) "关闭后对功能的影响" else "当前已关闭 · 对应功能已停用",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (enabled) MaterialTheme.colorScheme.onSurface else ConceptAmberAccent
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = type.disabledImpactDescription,
-                            fontSize = 12.2.sp,
-                            lineHeight = 18.sp,
-                            color = if (enabled) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            }
-                        )
-                    }
-                }
-            }
-
-            // 若该权限有关联的系统设置页面，提供快捷跳转入口
-            if (systemGrant.actionButtonLabel != null) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(
-                        onClick = onOpenSystemSetting,
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.62f),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = systemGrant.actionButtonLabel,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = accentColor
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
-                            contentDescription = null,
-                            tint = accentColor,
-                            modifier = Modifier.size(14.dp)
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Code,
+                                contentDescription = null,
+                                tint = accentColor,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = type.manifestPermissionName,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.52f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "隐私与数据边界：${type.privacyCommitment}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                lineHeight = 17.5.sp
+                            )
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)
+                            )
+                            Text(
+                                text = "关闭影响：${type.disabledImpactDescription}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else ConceptAmberAccent,
+                                fontSize = 12.sp,
+                                lineHeight = 17.5.sp
+                            )
+                        }
                     }
                 }
             }
@@ -3666,13 +3619,7 @@ private fun FeedbackGuideSectionContent(context: Context) {
                 shape = RoundedCornerShape(18.dp),
                 color = Color(0xFF0D1117),
                 contentColor = Color(0xFFE6EDF3),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(
-                        width = 1.dp,
-                        color = Color(0xFF30363D),
-                        shape = RoundedCornerShape(18.dp)
-                    )
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     // 浏览器顶部栏
@@ -3727,11 +3674,9 @@ private fun FeedbackGuideSectionContent(context: Context) {
                             accentColor = ConceptPrimary
                         )
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color(0xFF010409),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, ConceptPrimary.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+                            shape = RoundedCornerShape(10.dp),
+                            color = ConceptPrimary.copy(alpha = 0.14f),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
                                 text = "[BUG] 开启蝰蛇音效切换 Hi-Res 音质时偶发短暂杂音",
@@ -3768,11 +3713,9 @@ private fun FeedbackGuideSectionContent(context: Context) {
                             accentColor = ConceptCyanAccent
                         )
                         Surface(
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(12.dp),
                             color = Color(0xFF161B22),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, Color(0xFF30363D), RoundedCornerShape(10.dp))
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(
                                 modifier = Modifier.padding(10.dp),
@@ -3919,24 +3862,19 @@ private fun FeedbackGuideSectionContent(context: Context) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            OutlinedButton(
+            ConceptTonalActionButton(
+                text = "复制标准 Issue 反馈模板（附带本机环境）",
+                icon = Icons.Rounded.ContentCopy,
+                accentColor = ConceptPrimary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp),
                 onClick = {
                     val template = buildStandardIssueMarkdownTemplate()
                     copyTextToClipboard(context, "GitHub Issue 模板", template)
                     Toast.makeText(context, "已复制标准 Issue 模板（含本机环境信息），可直接前往粘贴", Toast.LENGTH_LONG).show()
-                },
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Rounded.ContentCopy, contentDescription = null, tint = ConceptPrimary, modifier = Modifier.size(17.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "复制标准 Issue 反馈模板（附带本机环境）",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    color = ConceptPrimary
-                )
-            }
+                }
+            )
 
             Spacer(modifier = Modifier.height(10.dp))
 
@@ -4031,10 +3969,8 @@ private fun IssueDiagramCalloutLabel(
 private fun IssueTagChip(text: String, color: Color) {
     Surface(
         shape = CircleShape,
-        color = color.copy(alpha = 0.20f),
-        modifier = Modifier
-            .height(22.dp)
-            .border(0.8.dp, color.copy(alpha = 0.65f), CircleShape)
+        color = color.copy(alpha = 0.22f),
+        modifier = Modifier.height(22.dp)
     ) {
         Box(
             contentAlignment = Alignment.Center,
@@ -4878,15 +4814,11 @@ private fun BluetoothLyricCompensationSection(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             listOf(-300L, -200L, -150L, -100L, 0L, 100L).forEach { presetMs ->
-                FilterChip(
+                ConceptBorderlessChoicePill(
                     selected = offsetMs == presetMs,
-                    onClick = { onOffsetChange(presetMs) },
-                    label = {
-                        Text(
-                            text = if (presetMs > 0) "+${presetMs}ms" else "${presetMs}ms",
-                            fontSize = 11.sp
-                        )
-                    }
+                    label = if (presetMs > 0) "+${presetMs}ms" else "${presetMs}ms",
+                    accentColor = ConceptCyanAccent,
+                    onClick = { onOffsetChange(presetMs) }
                 )
             }
         }
@@ -4926,7 +4858,7 @@ private fun SettingsMenuEntryCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 15.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -4949,36 +4881,171 @@ private fun SettingsMenuEntryCard(
                     text = category.title,
                     style = MaterialTheme.typography.titleSmall.copy(
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 15.sp
+                        fontSize = 15.2.sp
                     ),
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = accentColor,
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(3.dp))
                 Text(
                     text = category.subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.8.sp,
+                    fontSize = 12.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
+            if (statusText.isNotBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = accentColor.copy(alpha = 0.13f)
+                ) {
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accentColor,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .widthIn(max = 128.dp)
+                            .padding(horizontal = 9.dp, vertical = 4.5.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
+            }
             Icon(
                 imageVector = Icons.Rounded.ChevronRight,
                 contentDescription = "进入${category.title}",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+/**
+ * 现代无边框色阶选择胶囊 (ConceptBorderlessChoicePill)：
+ * - 彻底摒弃传统 FilterChip / AssistChip 的生硬 1dp 外边框线；
+ * - 采用柔和色阶背景填充 + 选中态呼吸圆点指示器 + `softCardClickable` 弹性按压缩放回弹。
+ */
+@Composable
+private fun ConceptBorderlessChoicePill(
+    selected: Boolean,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    accentColor: Color = ConceptPrimary,
+    leadingIcon: ImageVector? = null
+) {
+    val containerColor by androidx.compose.animation.animateColorAsState(
+        targetValue = if (selected) {
+            accentColor.copy(alpha = 0.18f)
+        } else {
+            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.055f)
+        },
+        animationSpec = tween(durationMillis = 180),
+        label = "pillContainerColor"
+    )
+    val contentColor by androidx.compose.animation.animateColorAsState(
+        targetValue = if (selected) {
+            accentColor
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        animationSpec = tween(durationMillis = 180),
+        label = "pillContentColor"
+    )
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = containerColor,
+        contentColor = contentColor,
+        modifier = modifier.softCardClickable(
+            shape = RoundedCornerShape(12.dp),
+            pressScale = 0.93f,
+            onClick = onClick
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (leadingIcon != null) {
+                Icon(
+                    imageVector = leadingIcon,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+            } else if (selected) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(accentColor)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+            }
+            Text(
+                text = label,
+                fontSize = 12.2.sp,
+                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                color = contentColor,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+    }
+}
+
+/**
+ * 现代无边框色阶操作按钮 (ConceptTonalActionButton)：
+ * - 替代生硬的 OutlinedButton，使用主题色半透明柔光底座承载图标与文案，支持物理弹性按压反馈。
+ */
+@Composable
+private fun ConceptTonalActionButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    accentColor: Color = ConceptPrimary,
+    icon: ImageVector? = null
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = accentColor.copy(alpha = 0.14f),
+        contentColor = accentColor,
+        modifier = modifier.softCardClickable(
+            shape = RoundedCornerShape(12.dp),
+            pressScale = 0.94f,
+            onClick = onClick
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = accentColor,
+                    modifier = Modifier.size(15.dp)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+            }
+            Text(
+                text = text,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = accentColor,
+                maxLines = 1,
+                softWrap = false
             )
         }
     }

@@ -10,6 +10,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -80,6 +81,7 @@ import com.concept.music.ui.navigation.Screen
 import com.concept.music.ui.search.SearchScreen
 import com.concept.music.ui.settings.SettingsScreen
 import com.concept.music.ui.theme.ConceptMotion
+import com.concept.music.ui.theme.applyDirectionalMotionBlur
 import com.concept.music.ui.theme.ConceptMusicTheme
 import com.concept.music.ui.viewmodel.HomeViewModel
 import com.concept.music.ui.viewmodel.LibraryViewModel
@@ -409,6 +411,21 @@ fun MainContent(
         currentRoute != "vip_center" &&
         currentRoute != "viper_effect"
 
+    // 监测底部「发现 ↔ 我的」同平面主页面切换，驱动 120Hz 绘制期水平方向动态虚化 (RenderEffect Motion Blur)
+    val activeMainTab = mainTabIndex(currentRoute)
+    var lastObservedMainTab by remember { mutableIntStateOf(activeMainTab.coerceAtLeast(0)) }
+    val mainTabBlurPulse = remember { Animatable(0f) }
+    LaunchedEffect(activeMainTab) {
+        if (activeMainTab >= 0 && activeMainTab != lastObservedMainTab) {
+            lastObservedMainTab = activeMainTab
+            mainTabBlurPulse.snapTo(1f)
+            mainTabBlurPulse.animateTo(
+                targetValue = 0f,
+                animationSpec = ConceptMotion.coplanarTabSpring()
+            )
+        }
+    }
+
     // 根容器铺设主题背景色，且主界面保持 100% 满幅尺寸不内缩，彻底杜绝全屏浮层进出时四周露出窗口白边
     Box(
         modifier = Modifier
@@ -424,28 +441,40 @@ fun MainContent(
                 startDestination = Screen.Discover.route,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+                    .graphicsLayer {
+                        val pulse = mainTabBlurPulse.value.coerceIn(0f, 1f)
+                        val blurX = pulse * 16f * this.density
+                        applyDirectionalMotionBlur(blurX = blurX, blurY = blurX * 0.08f)
+                    },
                 enterTransition = {
                     val initial = initialState.destination.route.orEmpty()
                     val target = targetState.destination.route.orEmpty()
                     val initTab = mainTabIndex(initial)
                     val tgtTab = mainTabIndex(target)
                     if (initTab >= 0 && tgtTab >= 0) {
-                        // 一级底部 Tab 切换：柔和方向感微平移 (±5% 屏宽，380ms 舒展减速)
+                        // 一级底部 Tab 切换（发现 ↔ 我的）：与底栏胶囊同向的 100% 同平面左右弹性滑动 + 方向虚化
                         val dir = if (tgtTab >= initTab) 1 else -1
                         slideInHorizontally(
-                            initialOffsetX = { fullWidth -> dir * (fullWidth * 0.05f).toInt() },
-                            animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
+                            initialOffsetX = { fullWidth -> dir * fullWidth },
+                            animationSpec = ConceptMotion.coplanarTabSpring()
+                        ) + scaleIn(
+                            initialScale = 0.965f,
+                            animationSpec = ConceptMotion.coplanarTabSpring()
                         ) + fadeIn(
-                            animationSpec = tween(durationMillis = 340, easing = ConceptMotion.GentleSpatialEnterEasing)
+                            animationSpec = tween(durationMillis = 240, easing = ConceptMotion.EmphasizedDecelerate)
                         )
                     } else {
-                        // 独立二级页面推入：加长至 440ms 丝滑无抖动减速推入，保持 100% 满屏宽度不缩放以免露边
+                        // 独立二级页面卡片推入：采用带适度弹性的 spatialPageSpring 平滑推入 + 微妙景深缩放
                         slideInHorizontally(
-                            initialOffsetX = { fullWidth -> (fullWidth * 0.30f).toInt() },
-                            animationSpec = tween(durationMillis = 440, easing = ConceptMotion.GentleSpatialEnterEasing)
+                            initialOffsetX = { fullWidth -> (fullWidth * 0.36f).toInt() },
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + scaleIn(
+                            initialScale = 0.968f,
+                            transformOrigin = TransformOrigin(0.85f, 0.5f),
+                            animationSpec = ConceptMotion.spatialPageSpring()
                         ) + fadeIn(
-                            animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
+                            animationSpec = tween(durationMillis = 250, easing = ConceptMotion.EmphasizedDecelerate)
                         )
                     }
                 },
@@ -455,40 +484,88 @@ fun MainContent(
                     val initTab = mainTabIndex(initial)
                     val tgtTab = mainTabIndex(target)
                     if (initTab >= 0 && tgtTab >= 0) {
+                        // 一级底部 Tab 切换：旧主页面在同一水平面同步向反方向滑出
                         val dir = if (tgtTab >= initTab) 1 else -1
                         slideOutHorizontally(
-                            targetOffsetX = { fullWidth -> -dir * (fullWidth * 0.05f).toInt() },
-                            animationSpec = tween(durationMillis = 340, easing = ConceptMotion.GentleSpatialExitEasing)
+                            targetOffsetX = { fullWidth -> -dir * fullWidth },
+                            animationSpec = ConceptMotion.coplanarTabSpring()
+                        ) + scaleOut(
+                            targetScale = 0.965f,
+                            animationSpec = ConceptMotion.coplanarTabSpring()
                         ) + fadeOut(
-                            animationSpec = tween(durationMillis = 280, easing = ConceptMotion.GentleSpatialExitEasing)
+                            animationSpec = tween(durationMillis = 220, easing = ConceptMotion.EmphasizedAccelerate)
                         )
                     } else {
-                        // 独立二级页面推入时，底层旧页面同步执行 440ms 柔和视差左移 (-9% 屏宽)
+                        // 独立二级页面推入时：底层旧页面同步执行弹性视差左移 (-12% 屏宽) 与微缩景深
                         slideOutHorizontally(
-                            targetOffsetX = { fullWidth -> -(fullWidth * 0.09f).toInt() },
-                            animationSpec = tween(durationMillis = 440, easing = ConceptMotion.GentleSpatialEnterEasing)
+                            targetOffsetX = { fullWidth -> -(fullWidth * 0.12f).toInt() },
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + scaleOut(
+                            targetScale = 0.975f,
+                            animationSpec = ConceptMotion.spatialPageSpring()
                         ) + fadeOut(
-                            animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialExitEasing)
+                            animationSpec = tween(durationMillis = 260, easing = ConceptMotion.EmphasizedAccelerate)
                         )
                     }
                 },
                 popEnterTransition = {
-                    // 独立二级页面返回时：底层页面从 -9% 视差位置以 420ms 柔和复原
-                    slideInHorizontally(
-                        initialOffsetX = { fullWidth -> -(fullWidth * 0.09f).toInt() },
-                        animationSpec = tween(durationMillis = 420, easing = ConceptMotion.GentleSpatialEnterEasing)
-                    ) + fadeIn(
-                        animationSpec = tween(durationMillis = 360, easing = ConceptMotion.GentleSpatialEnterEasing)
-                    )
+                    val initial = initialState.destination.route.orEmpty()
+                    val target = targetState.destination.route.orEmpty()
+                    val initTab = mainTabIndex(initial)
+                    val tgtTab = mainTabIndex(target)
+                    if (initTab >= 0 && tgtTab >= 0) {
+                        val dir = if (tgtTab >= initTab) 1 else -1
+                        slideInHorizontally(
+                            initialOffsetX = { fullWidth -> dir * fullWidth },
+                            animationSpec = ConceptMotion.coplanarTabSpring()
+                        ) + scaleIn(
+                            initialScale = 0.965f,
+                            animationSpec = ConceptMotion.coplanarTabSpring()
+                        ) + fadeIn(
+                            animationSpec = tween(durationMillis = 240, easing = ConceptMotion.EmphasizedDecelerate)
+                        )
+                    } else {
+                        // 独立二级页面返回时：底层页面从 -12% 视差位置以弹性弹簧丝滑复原
+                        slideInHorizontally(
+                            initialOffsetX = { fullWidth -> -(fullWidth * 0.12f).toInt() },
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + scaleIn(
+                            initialScale = 0.975f,
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + fadeIn(
+                            animationSpec = tween(durationMillis = 250, easing = ConceptMotion.EmphasizedDecelerate)
+                        )
+                    }
                 },
                 popExitTransition = {
-                    // 独立二级页面返回退出：400ms 柔顺滑出右侧并渐隐，无缩放露白
-                    slideOutHorizontally(
-                        targetOffsetX = { fullWidth -> (fullWidth * 0.30f).toInt() },
-                        animationSpec = tween(durationMillis = 400, easing = ConceptMotion.GentleSpatialExitEasing)
-                    ) + fadeOut(
-                        animationSpec = tween(durationMillis = 340, easing = ConceptMotion.GentleSpatialExitEasing)
-                    )
+                    val initial = initialState.destination.route.orEmpty()
+                    val target = targetState.destination.route.orEmpty()
+                    val initTab = mainTabIndex(initial)
+                    val tgtTab = mainTabIndex(target)
+                    if (initTab >= 0 && tgtTab >= 0) {
+                        val dir = if (tgtTab >= initTab) 1 else -1
+                        slideOutHorizontally(
+                            targetOffsetX = { fullWidth -> -dir * fullWidth },
+                            animationSpec = ConceptMotion.coplanarTabSpring()
+                        ) + scaleOut(
+                            targetScale = 0.965f,
+                            animationSpec = ConceptMotion.coplanarTabSpring()
+                        ) + fadeOut(
+                            animationSpec = tween(durationMillis = 220, easing = ConceptMotion.EmphasizedAccelerate)
+                        )
+                    } else {
+                        // 独立二级页面返回退出：弹性柔顺滑出右侧并渐隐
+                        slideOutHorizontally(
+                            targetOffsetX = { fullWidth -> (fullWidth * 0.36f).toInt() },
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + scaleOut(
+                            targetScale = 0.968f,
+                            transformOrigin = TransformOrigin(0.85f, 0.5f),
+                            animationSpec = ConceptMotion.spatialPageSpring()
+                        ) + fadeOut(
+                            animationSpec = tween(durationMillis = 240, easing = ConceptMotion.EmphasizedAccelerate)
+                        )
+                    }
                 }
             ) {
                 // 发现页

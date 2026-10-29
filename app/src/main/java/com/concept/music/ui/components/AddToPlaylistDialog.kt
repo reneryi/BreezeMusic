@@ -1,9 +1,8 @@
 package com.concept.music.ui.components
 
-import com.concept.music.ui.theme.softClickable
-
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -18,18 +17,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.concept.music.data.model.Playlist
 import com.concept.music.data.model.Song
+import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.conceptElevatedSurfaceColor
+import com.concept.music.ui.theme.conceptSheetContainerColor
+import com.concept.music.ui.theme.softCardClickable
+import com.concept.music.ui.theme.softClickable
 
 @Composable
 fun AddToPlaylistDialog(
@@ -44,18 +44,36 @@ fun AddToPlaylistDialog(
     val customPlaylists = remember(playlists) {
         playlists.filter { it.isCreatedByMe && !it.isLiked && it.id != "like" && it.id != "history" }
     }
+    var selectedPendingPlaylist by remember { mutableStateOf<Playlist?>(null) }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ConceptAnimatedOverlaySheet(
+        onDismiss = {
+            val chosen = selectedPendingPlaylist
+            selectedPendingPlaylist = null
+            if (chosen != null) {
+                onSelectPlaylist(chosen)
+            } else {
+                onDismiss()
+            }
+        },
+        isLandscape = true,
+        scrimAlpha = 0.54f,
+        zIndex = 92f
     ) {
         Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
+            shape = RoundedCornerShape(26.dp),
+            color = conceptSheetContainerColor(),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shadowElevation = 24.dp,
             modifier = modifier
                 .fillMaxWidth(0.92f)
+                .widthIn(max = 440.dp)
                 .fillMaxHeight(0.72f)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
         ) {
             Column(
                 modifier = Modifier
@@ -72,10 +90,10 @@ fun AddToPlaylistDialog(
                 ) {
                     Text(
                         text = "添加到歌单",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                    IconButton(onClick = requestDismiss, modifier = Modifier.size(32.dp)) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
                             contentDescription = "关闭",
@@ -84,10 +102,10 @@ fun AddToPlaylistDialog(
                     }
                 }
 
-                // 目标歌曲概要卡片
+                // 目标歌曲概要卡片（无边框色阶容器）
                 Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    shape = RoundedCornerShape(14.dp),
+                    color = conceptElevatedSurfaceColor(),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -99,7 +117,7 @@ fun AddToPlaylistDialog(
                         Box(
                             modifier = Modifier
                                 .size(42.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(10.dp))
                                 .background(MaterialTheme.colorScheme.surfaceVariant),
                             contentAlignment = Alignment.Center
                         ) {
@@ -125,7 +143,7 @@ fun AddToPlaylistDialog(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = song.title,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -145,13 +163,17 @@ fun AddToPlaylistDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .softClickable(onClick = onCreateNewPlaylist)
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .softCardClickable(
+                            shape = RoundedCornerShape(14.dp),
+                            onClick = onCreateNewPlaylist
+                        )
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = ConceptPrimary.copy(alpha = 0.15f),
+                        shape = RoundedCornerShape(12.dp),
+                        color = ConceptPrimary.copy(alpha = 0.16f),
                         modifier = Modifier.size(44.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -167,14 +189,14 @@ fun AddToPlaylistDialog(
                     Text(
                         text = "新建歌单",
                         style = MaterialTheme.typography.bodyLarge.copy(
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                             color = ConceptPrimary
                         )
                     )
                 }
 
                 HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 )
 
@@ -203,7 +225,10 @@ fun AddToPlaylistDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .softClickable { onSelectPlaylist(pl) }
+                                    .softClickable {
+                                        selectedPendingPlaylist = pl
+                                        requestDismiss()
+                                    }
                                     .padding(horizontal = 20.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {

@@ -2147,16 +2147,9 @@ internal fun PlayerMoreControlSheet(
     onDownloadSong: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val coroutineScope = rememberCoroutineScope()
-    val dismissThen: (() -> Unit) -> Unit = remember(coroutineScope, sheetState) {
-        { actionAfterHide ->
-            coroutineScope.launch {
-                runCatching { sheetState.hide() }
-                actionAfterHide()
-            }
-        }
-    }
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
+    var pendingAfterDismiss by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     val sheetBg = conceptSheetContainerColor()
     val tileBg = conceptElevatedSurfaceColor()
@@ -2180,33 +2173,72 @@ internal fun PlayerMoreControlSheet(
         }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = sheetBg,
-        contentColor = textPrimary,
-        windowInsets = WindowInsets(0, 0, 0, 0),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        dragHandle = {
-            Surface(
-                modifier = Modifier
-                    .padding(top = 10.dp, bottom = 4.dp)
-                    .width(38.dp)
-                    .height(4.dp),
-                shape = CircleShape,
-                color = textSecondary.copy(alpha = 0.28f)
-            ) {}
-        }
+    val panelShape = if (isLandscape) {
+        RoundedCornerShape(26.dp)
+    } else {
+        RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    }
+
+    ConceptAnimatedOverlaySheet(
+        onDismiss = {
+            onDismiss()
+            pendingAfterDismiss?.invoke()
+            pendingAfterDismiss = null
+        },
+        isLandscape = isLandscape,
+        zIndex = 88f
     ) {
-        CompositionLocalProvider(LocalContentColor provides textPrimary) {
-            Column(
-                modifier = Modifier
+        val dismissThen: (() -> Unit) -> Unit = { actionAfterHide ->
+            pendingAfterDismiss = actionAfterHide
+            requestDismiss()
+        }
+
+        Surface(
+            shape = panelShape,
+            color = sheetBg,
+            contentColor = textPrimary,
+            shadowElevation = 24.dp,
+            modifier = (if (isLandscape) {
+                Modifier
+                    .padding(horizontal = 24.dp, vertical = 14.dp)
+                    .widthIn(max = 540.dp)
                     .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 4.dp)
-                    .navigationBarsPadding()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            } else {
+                Modifier.fillMaxWidth()
+            }).clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {}
+            )
+        ) {
+            CompositionLocalProvider(LocalContentColor provides textPrimary) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 18.dp, vertical = 4.dp)
+                        .navigationBarsPadding()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (!isLandscape) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .sheetVerticalDragGesture()
+                                .padding(top = 8.dp, bottom = 2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier
+                                    .width(40.dp)
+                                    .height(4.dp),
+                                shape = CircleShape,
+                                color = textSecondary.copy(alpha = 0.28f)
+                            ) {}
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
                 // 1. 顶部一体化曲目名片 + 「歌手主页」「专辑详情」双快捷入口
                 Surface(
                     shape = RoundedCornerShape(20.dp),
@@ -2674,6 +2706,7 @@ internal fun PlayerMoreControlSheet(
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
+                }
             }
         }
     }
@@ -2929,9 +2962,10 @@ internal fun SleepTimerDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     presets.forEach { mins ->
-                        FilterChip(
-                            selected = false,
-                            onClick = {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = textPrimary.copy(alpha = 0.06f),
+                            modifier = Modifier.softCardClickable(shape = RoundedCornerShape(12.dp)) {
                                 onSetTimer(mins, stopAfterSong)
                                 Toast.makeText(
                                     context,
@@ -2939,19 +2973,35 @@ internal fun SleepTimerDialog(
                                     Toast.LENGTH_SHORT
                                 ).show()
                                 requestDismiss()
-                            },
-                            label = { Text("${mins}分钟") }
-                        )
+                            }
+                        ) {
+                            Text(
+                                text = "${mins}分钟",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = textPrimary,
+                                modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp)
+                            )
+                        }
                     }
-                    FilterChip(
-                        selected = pendingStopAtTrackEnd && remainingSec == 0L,
-                        onClick = {
+                    val stopEndSelected = pendingStopAtTrackEnd && remainingSec == 0L
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (stopEndSelected) ConceptPrimary.copy(alpha = 0.18f) else textPrimary.copy(alpha = 0.06f),
+                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(12.dp)) {
                             onSetTimer(0, true)
                             Toast.makeText(context, "将在当前歌曲播完后停止", Toast.LENGTH_SHORT).show()
                             requestDismiss()
-                        },
-                        label = { Text("播完本首") }
-                    )
+                        }
+                    ) {
+                        Text(
+                            text = "播完本首",
+                            fontSize = 12.sp,
+                            fontWeight = if (stopEndSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                            color = if (stopEndSelected) ConceptPrimary else textPrimary,
+                            modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp)
+                        )
+                    }
                 }
 
                 Row(
@@ -3080,15 +3130,27 @@ internal fun SpeedPitchDialog(
                         colors = SliderDefaults.colors(thumbColor = ConceptPrimary, activeTrackColor = ConceptPrimary)
                     )
                     FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         speedPresets.forEach { preset ->
-                            FilterChip(
-                                selected = abs(speed - preset) < 0.03f,
-                                onClick = { onSetSpeed(preset) },
-                                label = { Text("${preset}x", fontSize = 11.sp) }
-                            )
+                            val isPresetSelected = abs(speed - preset) < 0.03f
+                            Surface(
+                                shape = RoundedCornerShape(11.dp),
+                                color = if (isPresetSelected) ConceptPrimary.copy(alpha = 0.18f) else textPrimary.copy(alpha = 0.06f),
+                                modifier = Modifier.softCardClickable(shape = RoundedCornerShape(11.dp)) {
+                                    onSetSpeed(preset)
+                                }
+                            ) {
+                                Text(
+                                    text = "${preset}x",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = if (isPresetSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                    color = if (isPresetSelected) ConceptPrimary else textSecondary,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                )
+                            }
                         }
                     }
                 }

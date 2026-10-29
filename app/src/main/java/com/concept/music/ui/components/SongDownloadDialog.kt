@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -17,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -33,8 +33,8 @@ import com.concept.music.ui.theme.*
 /**
  * 单曲多音质下载选择弹窗（参考 lisalee23042605/kgmusicbot & MakcRe/KuGouMusicApi）：
  * 1. 自动异步查询 `/v2/get_res_privilege/lite` 补全该歌曲所有真实可用音质档位（Hi-Res / SQ 无损 FLAC / 高品 320K / 标准 128K）；
- * 2. 展示当前「下载保存路径」、「歌词保存路径」及「高清封面内嵌 / 歌词内嵌 / 独立 .lrc 保存」开关，支持在下载前直接微调；
- * 3. 自动检查并申请手机存储运行时权限 (`WRITE_EXTERNAL_STORAGE` / `READ_MEDIA_AUDIO`)。
+ * 2. 展示当前「下载保存路径」、「歌词保存路径」及无边框色阶胶囊「高清封面内嵌 / 歌词内嵌 / 独立 .lrc 保存」开关；
+ * 3. 采用 `ConceptAnimatedOverlaySheet(isLandscape = true)` 弹性绽放弹出动效。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -101,7 +101,8 @@ fun SongDownloadDialog(
     ConceptAnimatedOverlaySheet(
         onDismiss = onDismiss,
         isLandscape = true,
-        scrimAlpha = 0.56f
+        scrimAlpha = 0.56f,
+        zIndex = 92f
     ) {
         Surface(
             shape = panelShape,
@@ -220,7 +221,7 @@ fun SongDownloadDialog(
 
                         Surface(
                             shape = RoundedCornerShape(14.dp),
-                            color = if (isSelected) ConceptPrimary.copy(alpha = 0.14f) else textPrimary.copy(alpha = 0.04f),
+                            color = if (isSelected) ConceptPrimary.copy(alpha = 0.14f) else textPrimary.copy(alpha = 0.045f),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .softCardClickable(shape = RoundedCornerShape(14.dp)) {
@@ -274,15 +275,15 @@ fun SongDownloadDialog(
                     }
                 }
 
-                // 元数据、高清封面内嵌与歌词保存快捷开关
+                // 元数据、高清封面内嵌与歌词保存快捷开关（全面采用无边框色阶胶囊）
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = textPrimary.copy(alpha = 0.045f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
                             text = "元数据与歌词内嵌选项",
@@ -292,31 +293,25 @@ fun SongDownloadDialog(
                         )
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            FilterChip(
+                            DownloadOptionTonalPill(
                                 selected = downloadConfig.embedHdCover,
-                                onClick = { MusicDownloadManager.setEmbedHdCover(!downloadConfig.embedHdCover) },
-                                label = { Text("内嵌高清封面", fontSize = 11.sp) },
-                                leadingIcon = {
-                                    Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(14.dp))
-                                }
+                                label = "内嵌高清封面",
+                                icon = Icons.Rounded.Image,
+                                onClick = { MusicDownloadManager.setEmbedHdCover(!downloadConfig.embedHdCover) }
                             )
-                            FilterChip(
+                            DownloadOptionTonalPill(
                                 selected = downloadConfig.embedLyrics,
-                                onClick = { MusicDownloadManager.setEmbedLyrics(!downloadConfig.embedLyrics) },
-                                label = { Text("内嵌歌词", fontSize = 11.sp) },
-                                leadingIcon = {
-                                    Icon(Icons.Rounded.Lyrics, contentDescription = null, modifier = Modifier.size(14.dp))
-                                }
+                                label = "内嵌歌词",
+                                icon = Icons.Rounded.Lyrics,
+                                onClick = { MusicDownloadManager.setEmbedLyrics(!downloadConfig.embedLyrics) }
                             )
-                            FilterChip(
+                            DownloadOptionTonalPill(
                                 selected = downloadConfig.saveStandaloneLrcFile,
-                                onClick = { MusicDownloadManager.setSaveStandaloneLrcFile(!downloadConfig.saveStandaloneLrcFile) },
-                                label = { Text("独立保存 .lrc", fontSize = 11.sp) },
-                                leadingIcon = {
-                                    Icon(Icons.Rounded.Description, contentDescription = null, modifier = Modifier.size(14.dp))
-                                }
+                                label = "独立保存 .lrc",
+                                icon = Icons.Rounded.Description,
+                                onClick = { MusicDownloadManager.setSaveStandaloneLrcFile(!downloadConfig.saveStandaloneLrcFile) }
                             )
                         }
                         Text(
@@ -381,6 +376,44 @@ fun SongDownloadDialog(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DownloadOptionTonalPill(
+    selected: Boolean,
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    val bg = if (selected) {
+        ConceptPrimary.copy(alpha = 0.18f)
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+    }
+    val fg = if (selected) {
+        ConceptPrimary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        shape = RoundedCornerShape(11.dp),
+        color = bg,
+        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(11.dp), onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(imageVector = icon, contentDescription = null, tint = fg, modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.width(5.dp))
+            Text(
+                text = label,
+                fontSize = 11.2.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                color = fg
+            )
         }
     }
 }

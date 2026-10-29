@@ -141,19 +141,19 @@ fun FloatingLyricOverlay(
 
     val hudAlpha by animateFloatAsState(
         targetValue = if (showHudControls && !state.floatingCapsuleLocked) 1f else 0f,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        animationSpec = ConceptMotion.floatingPopupSpring(),
         label = "desktopHudAlpha"
     )
 
     val settingsHeightDp by animateDpAsState(
         targetValue = if (showHudControls && showSettingsPanel && !state.floatingCapsuleLocked) 86.dp else 0.dp,
-        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        animationSpec = ConceptMotion.floatingPopupSpring(),
         label = "desktopSettingsExpandHeight"
     )
 
     val settingsAlpha by animateFloatAsState(
         targetValue = if (showHudControls && showSettingsPanel && !state.floatingCapsuleLocked) 1f else 0f,
-        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+        animationSpec = ConceptMotion.floatingPopupSpring(),
         label = "desktopSettingsAlpha"
     )
 

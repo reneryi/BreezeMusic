@@ -1,13 +1,13 @@
 package com.concept.music.ui.components
 
-import kotlinx.coroutines.launch
-
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Comment
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
@@ -20,6 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -27,13 +28,13 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
+import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
 import com.concept.music.ui.theme.ConceptMintAccent
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptSheetContainerColor
 import com.concept.music.ui.theme.softCardClickable
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SongActionBottomSheet(
     song: Song,
@@ -50,17 +51,9 @@ fun SongActionBottomSheet(
     onOpenSongDetail: (() -> Unit)? = null,
     onRemoveFromCurrentPlaylist: (() -> Unit)? = null
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val coroutineScope = rememberCoroutineScope()
-    val dismissWithAction: (() -> Unit) -> Unit = remember(coroutineScope, sheetState, onDismiss) {
-        { action ->
-            coroutineScope.launch {
-                runCatching { sheetState.hide() }
-                onDismiss()
-                action()
-            }
-        }
-    }
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
+    var pendingActionAfterDismiss by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     val initialAlbumName = remember(song) {
         runCatching { VipManager.music.peekCachedAlbumName(song) }.getOrDefault(song.album.trim())
@@ -86,225 +79,256 @@ fun SongActionBottomSheet(
         }
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        windowInsets = WindowInsets(0, 0, 0, 0),
-        containerColor = conceptSheetContainerColor(),
-        shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
-        dragHandle = {
-            Surface(
-                modifier = Modifier
-                    .padding(vertical = 12.dp)
-                    .width(40.dp)
-                    .height(4.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f)
-            ) {}
-        }
+    val panelShape = if (isLandscape) {
+        RoundedCornerShape(26.dp)
+    } else {
+        RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    }
+
+    ConceptAnimatedOverlaySheet(
+        onDismiss = {
+            onDismiss()
+            pendingActionAfterDismiss?.invoke()
+            pendingActionAfterDismiss = null
+        },
+        isLandscape = isLandscape,
+        zIndex = 88f
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 4.dp)
-                .navigationBarsPadding()
+        val dismissWithAction: (() -> Unit) -> Unit = { action ->
+            pendingActionAfterDismiss = action
+            requestDismiss()
+        }
+
+        Surface(
+            shape = panelShape,
+            color = conceptSheetContainerColor(),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shadowElevation = 24.dp,
+            modifier = (if (isLandscape) {
+                Modifier
+                    .padding(horizontal = 24.dp, vertical = 14.dp)
+                    .widthIn(max = 520.dp)
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.88f)
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = (configuration.screenHeightDp * 0.82f).dp)
+            }).clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {}
+            )
         ) {
-            // 1. 歌曲头部名片
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .navigationBarsPadding()
             ) {
-                Box(
+                // 顶部跟手拖拽横条与歌曲名片头部（支持直接下拉关闭，复刻播放队列抽屉丝滑手感）
+                Column(
                     modifier = Modifier
-                        .size(54.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .sheetVerticalDragGesture()
+                        .padding(horizontal = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    if (song.coverUrl.isNotEmpty()) {
-                        AsyncImage(
-                            model = song.coverUrl,
-                            contentDescription = song.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                    if (!isLandscape) {
+                        Surface(
+                            modifier = Modifier
+                                .padding(top = 12.dp, bottom = 10.dp)
+                                .width(40.dp)
+                                .height(4.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)
+                        ) {}
                     } else {
-                        Icon(
-                            imageVector = Icons.Rounded.MusicNote,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(26.dp)
-                        )
+                        Spacer(modifier = Modifier.height(14.dp))
                     }
+
+                    // 1. 歌曲头部名片
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(54.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (song.coverUrl.isNotEmpty()) {
+                                AsyncImage(
+                                    model = song.coverUrl,
+                                    contentDescription = song.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.MusicNote,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(14.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = song.title,
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 16.sp
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (song.isHiRes) {
+                                    BadgeTag(text = "Hi-Res", color = VipGold)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                } else if (song.isLossless) {
+                                    BadgeTag(text = "SQ", color = ConceptPrimary)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                }
+                                if (song.isVip) {
+                                    BadgeTag(text = "VIP", color = VipGold)
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                }
+                                Text(
+                                    text = if (resolvedAlbumName.isNotBlank()) "${song.artist} · $resolvedAlbumName" else song.artist,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = {
+                                dismissWithAction { onToggleFavorite() }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                contentDescription = if (isFavorite) "取消喜欢" else "我喜欢",
+                                tint = if (isFavorite) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
                 }
 
-                Spacer(modifier = Modifier.width(14.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = song.title,
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 16.sp
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (song.isHiRes) {
-                            BadgeTag(text = "Hi-Res", color = VipGold)
-                            Spacer(modifier = Modifier.width(4.dp))
-                        } else if (song.isLossless) {
-                            BadgeTag(text = "SQ", color = ConceptPrimary)
-                            Spacer(modifier = Modifier.width(4.dp))
-                        }
-                        if (song.isVip) {
-                            BadgeTag(text = "VIP", color = VipGold)
-                            Spacer(modifier = Modifier.width(4.dp))
-                        }
-                        Text(
-                            text = if (resolvedAlbumName.isNotBlank()) "${song.artist} · $resolvedAlbumName" else song.artist,
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                IconButton(
-                    onClick = {
-                        dismissWithAction { onToggleFavorite() }
-                    }
+                // 2. 操作菜单项列表
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 6.dp)
                 ) {
-                    Icon(
-                        imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                        contentDescription = if (isFavorite) "取消喜欢" else "我喜欢",
-                        tint = if (isFavorite) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurfaceVariant
+                    SongActionMenuItem(
+                        icon = Icons.Rounded.PlayCircleOutline,
+                        title = "立即播放",
+                        tint = ConceptPrimary,
+                        onClick = { dismissWithAction { onPlayNow() } }
                     )
+
+                    SongActionMenuItem(
+                        icon = Icons.Rounded.QueuePlayNext,
+                        title = "下一首播放",
+                        onClick = { dismissWithAction { onPlayNext() } }
+                    )
+
+                    val permissionState by com.concept.music.service.AppPermissionManager.state.collectAsState()
+                    if (onDownloadSong != null && permissionState.musicDownloadEnabled) {
+                        SongActionMenuItem(
+                            icon = Icons.Rounded.Download,
+                            title = "下载歌曲",
+                            tint = ConceptMintAccent,
+                            onClick = { dismissWithAction { onDownloadSong() } }
+                        )
+                    }
+
+                    SongActionMenuItem(
+                        icon = if (isFavorite) Icons.Rounded.HeartBroken else Icons.Rounded.FavoriteBorder,
+                        title = if (isFavorite) "从「我喜欢的音乐」移除" else "收藏到「我喜欢的音乐」",
+                        tint = if (isFavorite) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                        onClick = { dismissWithAction { onToggleFavorite() } }
+                    )
+
+                    SongActionMenuItem(
+                        icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
+                        title = "添加到其他歌单...",
+                        onClick = { dismissWithAction { onAddToPlaylist() } }
+                    )
+
+                    if (onOpenComments != null) {
+                        SongActionMenuItem(
+                            icon = Icons.AutoMirrored.Rounded.Comment,
+                            title = "查看歌曲评论",
+                            onClick = { dismissWithAction { onOpenComments() } }
+                        )
+                    }
+
+                    if (onOpenArtist != null && song.artist.isNotBlank()) {
+                        val artistNames = song.artist.split("、", "/", "&", "，", ",")
+                            .map { it.trim() }
+                            .filter { it.isNotBlank() }
+                        SongActionMenuItem(
+                            icon = Icons.Rounded.Person,
+                            title = if (artistNames.size > 1) {
+                                "查看歌手：${artistNames.joinToString(" / ")}"
+                            } else {
+                                "查看歌手：${song.artist}"
+                            },
+                            onClick = { dismissWithAction { onOpenArtist() } }
+                        )
+                    }
+
+                    if (onOpenAlbum != null) {
+                        SongActionMenuItem(
+                            icon = Icons.Rounded.Album,
+                            title = "查看专辑：${resolvedAlbumName.ifBlank { "未知专辑" }}",
+                            onClick = { dismissWithAction { onOpenAlbum() } }
+                        )
+                    }
+
+                    if (onOpenSongDetail != null) {
+                        SongActionMenuItem(
+                            icon = Icons.Rounded.Info,
+                            title = "音频技术参数与特征码",
+                            onClick = { dismissWithAction { onOpenSongDetail() } }
+                        )
+                    }
+
+                    if (onRemoveFromCurrentPlaylist != null) {
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                        SongActionMenuItem(
+                            icon = Icons.Rounded.DeleteOutline,
+                            title = "从当前歌单中移除",
+                            tint = MaterialTheme.colorScheme.error,
+                            textColor = MaterialTheme.colorScheme.error,
+                            onClick = { dismissWithAction { onRemoveFromCurrentPlaylist() } }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
                 }
             }
-
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
-            Spacer(modifier = Modifier.height(6.dp))
-
-            // 2. 操作菜单项
-            SongActionMenuItem(
-                icon = Icons.Rounded.PlayCircleOutline,
-                title = "立即播放",
-                tint = ConceptPrimary,
-                onClick = {
-                    dismissWithAction { onPlayNow() }
-                }
-            )
-
-            SongActionMenuItem(
-                icon = Icons.Rounded.QueuePlayNext,
-                title = "下一首播放",
-                onClick = {
-                    dismissWithAction { onPlayNext() }
-                }
-            )
-
-            val permissionState by com.concept.music.service.AppPermissionManager.state.collectAsState()
-            if (onDownloadSong != null && permissionState.musicDownloadEnabled) {
-                SongActionMenuItem(
-                    icon = Icons.Rounded.Download,
-                    title = "下载歌曲",
-                    tint = ConceptMintAccent,
-                    onClick = {
-                        dismissWithAction { onDownloadSong() }
-                    }
-                )
-            }
-
-            SongActionMenuItem(
-                icon = if (isFavorite) Icons.Rounded.HeartBroken else Icons.Rounded.FavoriteBorder,
-                title = if (isFavorite) "从「我喜欢的音乐」移除" else "收藏到「我喜欢的音乐」",
-                tint = if (isFavorite) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
-                onClick = {
-                    dismissWithAction { onToggleFavorite() }
-                }
-            )
-
-            SongActionMenuItem(
-                icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                title = "添加到其他歌单...",
-                onClick = {
-                    dismissWithAction { onAddToPlaylist() }
-                }
-            )
-
-            if (onOpenComments != null) {
-                SongActionMenuItem(
-                    icon = Icons.AutoMirrored.Rounded.Comment,
-                    title = "查看歌曲评论",
-                    onClick = {
-                        dismissWithAction { onOpenComments() }
-                    }
-                )
-            }
-
-            if (onOpenArtist != null && song.artist.isNotBlank()) {
-                val artistNames = song.artist.split("、", "/", "&", "，", ",")
-                    .map { it.trim() }
-                    .filter { it.isNotBlank() }
-                SongActionMenuItem(
-                    icon = Icons.Rounded.Person,
-                    title = if (artistNames.size > 1) {
-                        "查看歌手：${artistNames.joinToString(" / ")}"
-                    } else {
-                        "查看歌手：${song.artist}"
-                    },
-                    onClick = {
-                        dismissWithAction { onOpenArtist() }
-                    }
-                )
-            }
-
-            if (onOpenAlbum != null) {
-                SongActionMenuItem(
-                    icon = Icons.Rounded.Album,
-                    title = "查看专辑：${resolvedAlbumName.ifBlank { "未知专辑" }}",
-                    onClick = {
-                        dismissWithAction { onOpenAlbum() }
-                    }
-                )
-            }
-
-            if (onOpenSongDetail != null) {
-                SongActionMenuItem(
-                    icon = Icons.Rounded.Info,
-                    title = "音频技术参数与特征码",
-                    onClick = {
-                        dismissWithAction { onOpenSongDetail() }
-                    }
-                )
-            }
-
-            if (onRemoveFromCurrentPlaylist != null) {
-                HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-                SongActionMenuItem(
-                    icon = Icons.Rounded.DeleteOutline,
-                    title = "从当前歌单中移除",
-                    tint = MaterialTheme.colorScheme.error,
-                    textColor = MaterialTheme.colorScheme.error,
-                    onClick = {
-                        dismissWithAction { onRemoveFromCurrentPlaylist() }
-                    }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
         }
     }
 }

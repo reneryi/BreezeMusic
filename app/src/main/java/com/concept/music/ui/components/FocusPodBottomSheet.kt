@@ -11,7 +11,10 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.ui.graphics.graphicsLayer
+import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
 import com.concept.music.ui.theme.ConceptMotion
+import com.concept.music.ui.theme.conceptCategoryContentTransition
+import com.concept.music.ui.theme.horizontalCategorySwipe
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -65,16 +68,6 @@ fun FocusPodBottomSheet(
     }
     val state by FocusPodManager.state.collectAsState()
     val ambientState by AmbientSoundManager.state.collectAsState()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val coroutineScope = rememberCoroutineScope()
-    val dismissWithAnimation: () -> Unit = remember(coroutineScope, sheetState, onDismiss) {
-        {
-            coroutineScope.launch {
-                runCatching { sheetState.hide() }
-                onDismiss()
-            }
-        }
-    }
     var selectedSection by remember { mutableIntStateOf(0) }
 
     val podAccent = if (isDark) Color(0xFF9688FF) else ConceptVioletAccent
@@ -104,26 +97,49 @@ fun FocusPodBottomSheet(
     val timerTitleColor = if (isDark) Color.White else Color(0xFF181532)
     val timerSubColor = if (isDark) Color.White.copy(alpha = 0.72f) else Color(0xFF564F7A)
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        windowInsets = WindowInsets(0, 0, 0, 0),
-        containerColor = sheetBgColor,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ConceptAnimatedOverlaySheet(
+        onDismiss = onDismiss,
+        isLandscape = false,
+        zIndex = 88f
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.86f)
-                .padding(horizontal = 20.dp)
-                .navigationBarsPadding()
+        val dismissWithAnimation = requestDismiss
+        Surface(
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            color = sheetBgColor,
+            contentColor = primaryText,
+            shadowElevation = 24.dp,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            // 1. 顶部标题与状态概览
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.86f)
+                    .padding(horizontal = 20.dp)
+                    .navigationBarsPadding()
             ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .sheetVerticalDragGesture()
+                        .padding(top = 12.dp, bottom = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .width(42.dp)
+                            .height(4.dp),
+                        shape = CircleShape,
+                        color = subText.copy(alpha = 0.28f)
+                    ) {}
+                }
+                // 1. 顶部标题与状态概览
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .sheetVerticalDragGesture(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -241,15 +257,16 @@ fun FocusPodBottomSheet(
             AnimatedContent(
                 targetState = selectedSection,
                 transitionSpec = {
-                    val dir = if (targetState > initialState) 1 else -1
-                    (slideInHorizontally(animationSpec = ConceptMotion.spatialPageSpring()) { fullW -> dir * (fullW / 7) } +
-                        fadeIn(tween(240, easing = ConceptMotion.EmphasizedDecelerate))) togetherWith
-                        (slideOutHorizontally(animationSpec = ConceptMotion.spatialPageSpring()) { fullW -> -dir * (fullW / 9) } +
-                            fadeOut(tween(170, easing = ConceptMotion.EmphasizedAccelerate)))
+                    conceptCategoryContentTransition(if (targetState > initialState) 1 else -1)
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .weight(1f)
+                    .horizontalCategorySwipe(
+                        currentIndex = selectedSection,
+                        itemCount = 2,
+                        onSelectIndex = { selectedSection = it }
+                    ),
                 label = "focusPodSectionTransition"
             ) { activeSection ->
                 Column(
@@ -656,5 +673,6 @@ fun FocusPodBottomSheet(
                 }
             }
         }
+          }
     }
 }

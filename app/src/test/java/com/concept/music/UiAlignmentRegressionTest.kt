@@ -1679,4 +1679,51 @@ class UiAlignmentRegressionTest {
         assertFalse("MainActivity 不应再挂载第二层 PureSplashIconView 开屏覆盖层", mainActivityCode.contains("PureSplashIconView("))
         assertTrue("MainActivity 应调用 setSplashScreenTheme 持久化启动页主题", mainActivityCode.contains("setSplashScreenTheme("))
     }
+
+    @Test
+    fun `设置页全面无边框美化与全局120fps弹性物理动效及方向性运动虚化验证`() {
+        // 1. 验证分层弹性弹簧物理参数（处于欠阻尼灵动区间 0.72f..0.86f，消除过阻尼迟滞感）
+        assertTrue(com.concept.music.ui.theme.ConceptMotion.SPATIAL_PAGE_DAMPING in 0.78f..0.88f)
+        assertTrue(com.concept.music.ui.theme.ConceptMotion.SPATIAL_SHEET_DAMPING in 0.76f..0.86f)
+        assertTrue(com.concept.music.ui.theme.ConceptMotion.COPLANAR_TAB_DAMPING in 0.76f..0.86f)
+        assertTrue(com.concept.music.ui.theme.ConceptMotion.CATEGORY_CONTENT_DAMPING in 0.72f..0.84f)
+        assertTrue(com.concept.music.ui.theme.ConceptMotion.FLOATING_POPUP_DAMPING in 0.70f..0.82f)
+
+        val projectRoot = java.io.File(".").canonicalFile.let { dir ->
+            if (java.io.File(dir, "app/src/main").exists()) dir else dir.parentFile
+        }
+
+        // 2. 验证设置页已彻底移除所有边框线组件 (FilterChip / OutlinedButton / AssistChip / .border)
+        val settingsCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/settings/SettingsScreen.kt").readText(Charsets.UTF_8)
+        assertFalse("设置页不应再使用带边框的 FilterChip", settingsCode.contains("FilterChip("))
+        assertFalse("设置页不应再使用带边框的 OutlinedButton", settingsCode.contains("OutlinedButton("))
+        assertFalse("设置页不应再使用带边框的 AssistChip", settingsCode.contains("AssistChip("))
+        assertFalse("设置页不应再使用 .border( 边框线修饰符", settingsCode.contains(".border("))
+        assertTrue("设置页应使用无边框色阶胶囊 ConceptBorderlessChoicePill", settingsCode.contains("ConceptBorderlessChoicePill("))
+        assertTrue("设置页应使用无边框色阶按钮 ConceptTonalActionButton", settingsCode.contains("ConceptTonalActionButton("))
+
+        // 3. 验证主页面同平面左右滑动虚化与分类标题下方内容方向虚化
+        val mainActivityCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/MainActivity.kt").readText(Charsets.UTF_8)
+        assertTrue("主页面切换应采用同平面 100% 满屏宽左右滑动与 coplanarTabSpring", mainActivityCode.contains("dir * fullWidth") && mainActivityCode.contains("coplanarTabSpring()"))
+        assertTrue("主页面切换应挂载 applyDirectionalMotionBlur 方向性运动虚化", mainActivityCode.contains("applyDirectionalMotionBlur("))
+
+        val themeCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/theme/Theme.kt").readText(Charsets.UTF_8)
+        assertTrue("分类标题下方内容切换应使用 categoryContentSpring 并支持 applyDirectionalMotionBlur", themeCode.contains("categoryContentSpring()") && themeCode.contains("applyDirectionalMotionBlur("))
+
+        // 4. 验证全局抽屉与悬浮窗统一使用零重组 ConceptAnimatedOverlaySheet 弹性架构
+        val sheetsToVerify = listOf(
+            "app/src/main/java/com/concept/music/ui/components/SongActionBottomSheet.kt",
+            "app/src/main/java/com/concept/music/ui/components/SongDetailSheet.kt",
+            "app/src/main/java/com/concept/music/ui/components/VipCenterBottomSheet.kt",
+            "app/src/main/java/com/concept/music/ui/components/FocusPodBottomSheet.kt",
+            "app/src/main/java/com/concept/music/ui/components/AddToPlaylistDialog.kt",
+            "app/src/main/java/com/concept/music/ui/components/CreatePlaylistDialog.kt",
+            "app/src/main/java/com/concept/music/ui/components/SongDownloadDialog.kt",
+            "app/src/main/java/com/concept/music/ui/components/LyricPosterDialog.kt"
+        )
+        sheetsToVerify.forEach { relPath ->
+            val code = java.io.File(projectRoot, relPath).readText(Charsets.UTF_8)
+            assertTrue("$relPath 应统一接入 ConceptAnimatedOverlaySheet 弹性动画容器", code.contains("ConceptAnimatedOverlaySheet("))
+        }
+    }
 }
