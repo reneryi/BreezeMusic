@@ -34,3 +34,6 @@ Thumbs.db
 *.diff
 *stream_cache*/
 *.patch
+
+# APK binaries
+*.apk
