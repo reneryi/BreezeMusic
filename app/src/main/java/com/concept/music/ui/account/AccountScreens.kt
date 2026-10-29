@@ -93,8 +93,13 @@ fun LoginScreen(viewModel: LibraryViewModel, onBack: () -> Unit) {
 }
 
 internal fun decodeQr(data: String?): Bitmap? = runCatching {
-    if (data == null || !data.startsWith("data:image/") || !data.contains(";base64,")) return null
-    val bytes = Base64.decode(data.substringAfter(','), Base64.DEFAULT)
+    if (data.isNullOrBlank()) return null
+    val base64Payload = if (data.contains(";base64,", ignoreCase = true) || data.contains(",")) {
+        data.substringAfter(',')
+    } else {
+        data.trim()
+    }
+    val bytes = Base64.decode(base64Payload, Base64.DEFAULT)
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
 }.getOrNull()
 

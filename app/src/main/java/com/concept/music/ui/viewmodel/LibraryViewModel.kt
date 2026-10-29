@@ -1025,6 +1025,7 @@ class LibraryViewModel(
             val qr = verification.execute(null, guard = ::ensureLoginVisible) { auth.createQr() }
             loginMutable.value = login.value.copy(qr = qr, qrStatus = "请使用酷狗音乐 App 扫码")
             qrJob = viewModelScope.launch {
+                var consecutivePollErrors = 0
                 while (isActive && loginVisible && login.value.qr?.key == qr.key) {
                     if (System.currentTimeMillis() >= qr.expiresAt) {
                         loginMutable.value = login.value.copy(qr = null, qrStatus = "二维码已过期，请重新生成")
@@ -1033,6 +1034,7 @@ class LibraryViewModel(
                     if (!foreground) { delay(300); continue }
                     try {
                         val result = auth.checkQr(qr.key)
+                        consecutivePollErrors = 0
                         when (result.data.number("status")) {
                             0 -> { loginMutable.value = login.value.copy(qr = null, qrStatus = "二维码已过期，请重新生成"); break }
                             1 -> loginMutable.value = login.value.copy(qrStatus = "等待扫码")
@@ -1040,7 +1042,9 @@ class LibraryViewModel(
                             4 -> {
                                 loginMutable.value = login.value.copy(busy = true, qrStatus = "授权成功，正在补全登录凭证")
                                 val initial = auth.qrSession(result.data)
-                                val refreshed = verification.execute(initial.session, guard = ::ensureLoginVisible) { auth.refresh(initial.session) }
+                                val refreshed = runCatching {
+                                    verification.execute(initial.session, guard = ::ensureLoginVisible) { auth.refresh(initial.session) }
+                                }.getOrDefault(initial)
                                 finishLogin(refreshed.copy(profile = if (refreshed.profile.nickname == "酷狗用户") initial.profile else refreshed.profile))
                                 loginMutable.value = login.value.copy(busy = false)
                                 break
@@ -1049,8 +1053,11 @@ class LibraryViewModel(
                         }
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) {
-                        loginMutable.value = login.value.copy(busy = false, qrStatus = "检查失败：${e.message}")
-                        break
+                        consecutivePollErrors++
+                        if (consecutivePollErrors >= 4) {
+                            loginMutable.value = login.value.copy(busy = false, qrStatus = "检查失败：${e.message}")
+                            break
+                        }
                     }
                     delay(2_000)
                 }

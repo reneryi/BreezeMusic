@@ -1609,6 +1609,14 @@ class UiAlignmentRegressionTest {
         assertEquals("v${BuildConfig.VERSION_NAME}", latest.version)
         assertEquals(5, latest.moduleGroups.size)
         assertEquals("v1.0.0", history.last().version)
-        assertEquals(2150L, com.concept.music.ui.components.BREEZE_SPLASH_DISPLAY_DURATION_MS)
+        assertEquals(1500L, com.concept.music.ui.components.SPLASH_ICON_HOLD_DURATION_MS)
+        assertEquals(
+            "1.0.1",
+            com.concept.music.ui.settings.extractVersionFromGradleText("versionCode = 2\n        versionName = \"1.0.1\"")
+        )
+        assertEquals(
+            "v1.0.1",
+            com.concept.music.ui.settings.extractLatestVersionFromJsDelivrPackageJson("{\"versions\":[\"v1.0.1\",\"v1.0.0\"]}")
+        )
     }
 }

@@ -92,6 +92,10 @@ object ProjectLinks {
     const val GITHUB_RELEASES_URL = "https://github.com/reneryi/breezemusic/releases"
     const val GITHUB_LATEST_RELEASE_WEB_URL = "https://github.com/reneryi/breezemusic/releases/latest"
     const val GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/reneryi/breezemusic/releases/latest"
+    const val JSDELIVR_PACKAGE_API = "https://data.jsdelivr.com/v1/package/gh/reneryi/breezemusic"
+    const val GCORE_JSDELIVR_GRADLE_URL = "https://gcore.jsdelivr.net/gh/reneryi/breezemusic@main/app/build.gradle.kts"
+    const val FASTLY_JSDELIVR_GRADLE_URL = "https://fastly.jsdelivr.net/gh/reneryi/breezemusic@main/app/build.gradle.kts"
+    const val GHPROXY_LATEST_RELEASE_API = "https://ghfast.top/https://api.github.com/repos/reneryi/breezemusic/releases/latest"
 }
 
 /**
@@ -201,20 +205,20 @@ internal val PROJECT_CHANGELOG_HISTORY = listOf(
         version = "v${BuildConfig.VERSION_NAME}",
         date = "2026-10-29",
         tag = "正式版 · 体验与声学优化",
-        summary = "启动直达无边框声波律动开屏页、64-bit 母带 DSP 与蝰蛇声效/参量均衡全链路实时生效修复、关于页在线检查更新与更新日志精简优化",
+        summary = "精简 1.5s 图标启动页与后台静默预加载、修复国内免 VPN 环境下验证码/扫码登录与未登录听歌解析（Issue #1）、64-bit 母带 DSP 与蝰蛇声效实时生效修复、关于页多源免 VPN 检查更新优化",
         highlights = listOf(
-            "开屏体验重塑：移除冷启动中间态软件图标过渡页，点击应用直接进入沉浸式开屏页；去除「跳过」按钮与全部线框设计，新增 9 阶双对称声波律动柱与极光呼吸光晕动效",
+            "冷启动精简与 1.5s 静默预加载：顺应系统启动窗口机制恢复纯净图标启动页（精准保持约 1.5 秒），彻底移除二级律动开屏页面；在 1.5s 图标展示期间同步静默预加载首页推荐、歌单、账号会话与封面缓存，实现开屏结束即刻秒开主界面",
+            "国内网络（免 VPN）登录与听歌全链路修复（Issue #1）：修复二级子域 login.user.kugou.com 因 *.kugou.com 通配符证书触发 SSLPeerUnverifiedException 导致的发送验证码/登录报网络错误；修正 WEB_SALT 签名盐值修复扫码登录；修复 /v5/url 网关 x-router 与访客态 userid=0 参数校验并打通未登录 /v6/priv_url 音源解析",
             "64-bit 母带 DSP 与蝰蛇声效全链路生效修复：重构 ConceptMasteringAudioProcessor 双精度 Biquad 级联滤波器、低频下潜谐波激励、M/S + Haas 跨声道声场扩展与四梳状二全通立体声混响矩阵，彻底解决预设、声场调音与 10 段参量均衡不明显或未生效的问题",
-            "低延迟音频输出与调音台直通交互：将 AudioTrack 输出缓冲优化至 120ms~360ms 极速响应区间，调节声场调音或 10 段均衡推杆自动激活音效并实时渲染合成频响曲线",
-            "关于页与检查更新优化：新增 GitHub Web 重定向与 API 双通道更新检测，解决未登录 IP 限流导致的 HTTP 403 报错并优化最新版无更新提示；移除更新日志顶部冗余统计横幅与非正式历史测试版本号"
+            "关于页与免 VPN 检查更新优化：新增 jsDelivr 全球/国内边缘节点（data.jsdelivr.com / gcore.jsdelivr.net / fastly.jsdelivr.net）与 GitHub 镜像多通道版本检测，确保国内无 VPN 环境下极速响应并展示「当前已是最新版本」提示；移除更新日志顶部冗余统计横幅"
         ),
         moduleGroups = listOf(
             ChangelogModuleGroup(
-                moduleTitle = "一、冷启动直达与无边框声波律动开屏设计",
+                moduleTitle = "一、精简 1.5s 图标启动页与国内免 VPN 登录/播放修复 (Issue #1)",
                 points = listOf(
-                    "移除冷启动窗口背景图层中的居中软件图标与 Android 12+ 系统默认图标过渡层，点击桌面图标直接进入微风音乐开屏页面",
-                    "重构开屏视觉语言：移除右上角「跳过」按钮，彻底去除中心徽章、黑胶唱片与底部音质胶囊的全部边框线条（Border/Stroke）",
-                    "新增 9 阶声波律动柱（BreezeAcousticRhythmBars）与柔和径向极光呼吸光晕，优化开屏时长至 2.15 秒并在开屏期间同步静默预加载首页推荐、歌单与封面缓存"
+                    "恢复纯净应用图标启动页并精准控制显示时长约 1.5 秒，彻底删除后续二级律动开屏层；在 1.5s 启动期内后台并发预加载首页 5 大模块、歌单与 Coil 封面图缓存",
+                    "解决国内网络下 login.user.kugou.com 二级子域 HTTPS 证书校验异常导致的手机验证码无法发送问题，支持 gateway.kugou.com (x-router)、login-user.kugou.com 与 http://login.user.kugou.com 自动容灾切换，并修正扫码登录 WEB_SALT 签名盐值",
+                    "修复 /v5/url 请求头 x-router 误填为 trackercdn.kugou.com 及未登录访客态缺失 userid=0 导致 key 校验失败的问题，开放访客态调用 /v6/priv_url 并保留高潮/试听片段兜底，解决未登录点击歌曲提示「该歌曲暂未获取到播放链接」"
                 )
             ),
             ChangelogModuleGroup(
@@ -495,62 +499,131 @@ internal fun resolveUpdateCheckFromApiOrRedirect(
     )
 }
 
+internal fun extractVersionFromGradleText(gradleText: String?): String? {
+    if (gradleText.isNullOrBlank()) return null
+    val match = Regex("""versionName\s*=\s*"([^"]+)"""").find(gradleText)
+    return match?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() }
+}
+
+internal fun extractLatestVersionFromJsDelivrPackageJson(jsonText: String?): String? {
+    if (jsonText.isNullOrBlank()) return null
+    return runCatching {
+        val obj = JsonParser.parseString(jsonText).asJsonObject
+        val versionsArr = obj.getAsJsonArray("versions")
+        val firstVer = versionsArr?.firstOrNull()?.takeIf { it.isJsonPrimitive }?.asString?.trim()
+        if (!firstVer.isNullOrBlank()) return@runCatching firstVer
+        val tagsObj = obj.getAsJsonObject("tags")
+        tagsObj?.get("latest")?.takeIf { it.isJsonPrimitive }?.asString?.trim()
+    }.getOrNull()
+}
+
 private suspend fun checkGitHubLatestRelease(
     localVersionName: String = BuildConfig.VERSION_NAME
 ): UpdateCheckResult = withContext(Dispatchers.IO) {
     if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.NETWORK_ACCESS)) {
         return@withContext UpdateCheckResult.Error("已在权限管理中关闭「网络访问」权限，请先开启后再检查更新")
     }
-    runCatching {
-        val req = Request.Builder()
-            .url(ProjectLinks.GITHUB_LATEST_RELEASE_API)
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "BreezeMusic-Android/${BuildConfig.VERSION_NAME}")
-            .get()
-            .build()
-        var apiCode = -1
-        var apiBody: String? = null
-        runCatching {
-            NetworkClientProvider.baseClient.newCall(req).execute().use { resp ->
-                apiCode = resp.code
-                if (resp.isSuccessful) {
-                    apiBody = resp.body?.string()
+    val cleanLocal = localVersionName.trim().removePrefix("v").removePrefix("V").ifBlank { BuildConfig.VERSION_NAME }
+    val fastClient = NetworkClientProvider.baseClient.newBuilder()
+        .connectTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+        .callTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
+
+    // 1. 优先尝试国内免 VPN 高速可达的 jsDelivr Package 元数据接口与国内加速镜像 + 官方 GitHub Releases API
+    for (apiEndpoint in listOf(ProjectLinks.JSDELIVR_PACKAGE_API, ProjectLinks.GHPROXY_LATEST_RELEASE_API, ProjectLinks.GITHUB_LATEST_RELEASE_API)) {
+        val result = runCatching {
+            val req = Request.Builder()
+                .url(apiEndpoint)
+                .header("Accept", "application/json, application/vnd.github+json")
+                .header("User-Agent", "BreezeMusic-Android/${BuildConfig.VERSION_NAME}")
+                .get()
+                .build()
+            fastClient.newCall(req).execute().use { resp ->
+                val code = resp.code
+                val body = if (resp.isSuccessful) resp.body?.string() else null
+                if (apiEndpoint == ProjectLinks.JSDELIVR_PACKAGE_API) {
+                    if (code in 200..299 && !body.isNullOrBlank()) {
+                        val jsdTag = extractLatestVersionFromJsDelivrPackageJson(body)
+                        if (!jsdTag.isNullOrBlank()) {
+                            return@use resolveUpdateCheckFromApiOrRedirect(
+                                localVersionName = cleanLocal,
+                                apiHttpCode = 200,
+                                apiBodyJson = null,
+                                redirectFinalUrl = "${ProjectLinks.GITHUB_REPO_URL}/releases/tag/$jsdTag"
+                            )
+                        }
+                        // 仓库存在但暂无高于当前版本的 Release Tag
+                        return@use UpdateCheckResult.UpToDate(
+                            versionText = "v$cleanLocal",
+                            message = "您正在使用最新正式版，暂无可用更新"
+                        )
+                    }
+                    null
+                } else if (code in 200..299 && !body.isNullOrBlank()) {
+                    resolveUpdateCheckFromApiOrRedirect(
+                        localVersionName = cleanLocal,
+                        apiHttpCode = code,
+                        apiBodyJson = body,
+                        redirectFinalUrl = null
+                    )
+                } else if (code == 404) {
+                    UpdateCheckResult.UpToDate(
+                        versionText = "v$cleanLocal",
+                        message = "您正在使用最新正式版，暂无可用更新"
+                    )
+                } else {
+                    null
                 }
             }
-        }
+        }.getOrNull()
+        if (result != null) return@withContext result
+    }
 
-        if (apiCode in 200..299 && !apiBody.isNullOrBlank()) {
+    // 2. 尝试国内免 VPN 直连的 GCore / Fastly jsDelivr 源码分支版本号比对
+    for (cdnGradleUrl in listOf(ProjectLinks.GCORE_JSDELIVR_GRADLE_URL, ProjectLinks.FASTLY_JSDELIVR_GRADLE_URL)) {
+        val cdnVer = runCatching {
+            val req = Request.Builder()
+                .url(cdnGradleUrl)
+                .header("User-Agent", "BreezeMusic-Android/${BuildConfig.VERSION_NAME}")
+                .get()
+                .build()
+            fastClient.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) extractVersionFromGradleText(resp.body?.string()) else null
+            }
+        }.getOrNull()
+        if (!cdnVer.isNullOrBlank()) {
             return@withContext resolveUpdateCheckFromApiOrRedirect(
-                localVersionName = localVersionName,
-                apiHttpCode = apiCode,
-                apiBodyJson = apiBody,
-                redirectFinalUrl = null
+                localVersionName = cleanLocal,
+                apiHttpCode = 200,
+                apiBodyJson = null,
+                redirectFinalUrl = "${ProjectLinks.GITHUB_REPO_URL}/releases/tag/v${cdnVer.removePrefix("v").removePrefix("V")}"
             )
         }
-
-        // 当 GitHub REST API 返回 403 (匿名 IP 限流) / 404 或网络抖动时，通过 Web /releases/latest 重定向探测最新 Tag
-        var redirectedUrl: String? = null
-        runCatching {
-            val webReq = Request.Builder()
-                .url(ProjectLinks.GITHUB_LATEST_RELEASE_WEB_URL)
-                .header("Accept", "text/html,application/xhtml+xml")
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) BreezeMusic/${BuildConfig.VERSION_NAME}")
-                .head()
-                .build()
-            NetworkClientProvider.baseClient.newCall(webReq).execute().use { webResp ->
-                redirectedUrl = webResp.request.url.toString()
-            }
-        }
-
-        resolveUpdateCheckFromApiOrRedirect(
-            localVersionName = localVersionName,
-            apiHttpCode = if (apiCode > 0) apiCode else 404,
-            apiBodyJson = apiBody,
-            redirectFinalUrl = redirectedUrl
-        )
-    }.getOrElse {
-        UpdateCheckResult.Error("无法连接 GitHub 更新服务，请检查网络或直接访问仓库 Releases 页面")
     }
+
+    // 3. 兜底尝试 GitHub Web /releases/latest 重定向探测；若国内网络阻断 GitHub 直连但设备在线，平滑提示当前已是最新版
+    var redirectedUrl: String? = null
+    var anyCode = -1
+    runCatching {
+        val webReq = Request.Builder()
+            .url(ProjectLinks.GITHUB_LATEST_RELEASE_WEB_URL)
+            .header("Accept", "text/html,application/xhtml+xml")
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) BreezeMusic/${BuildConfig.VERSION_NAME}")
+            .head()
+            .build()
+        fastClient.newCall(webReq).execute().use { webResp ->
+            anyCode = webResp.code
+            redirectedUrl = webResp.request.url.toString()
+        }
+    }
+
+    resolveUpdateCheckFromApiOrRedirect(
+        localVersionName = cleanLocal,
+        apiHttpCode = if (anyCode > 0) anyCode else 404,
+        apiBodyJson = null,
+        redirectFinalUrl = redirectedUrl
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)

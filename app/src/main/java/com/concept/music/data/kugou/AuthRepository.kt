@@ -140,25 +140,72 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
         return current.dfid.takeIf { it.isNotBlank() && it != "-" } ?: fallbackDfid
     }
 
+    /**
+     * 发送手机短信验证码 (对齐 MakcRe/KuGouMusicApi module/captcha_sent.js)
+     * 解决 https://login.user.kugou.com 二级子域名在 Android 下触发 SSLPeerUnverifiedException 的问题，
+     * 并自动在 http://login.user.kugou.com、https://gateway.kugou.com (x-router) 与 https://login-user.kugou.com 间容灾。
+     */
     suspend fun sendCode(mobile: String): ApiResponse {
         require(mobile.matches(Regex("1[3-9][0-9]{9}"))) { "请输入有效的中国大陆手机号" }
-        // The upstream captcha module deliberately uses the default dfid '-'.
-        return transport.call("/v7/send_mobile_code", host = "https://login.user.kugou.com", method = "POST",
-            body = json("businessid" to 5, "mobile" to mobile, "plat" to 3), device = store.device().copy(dfid = "-"))
+        val dev = store.device().copy(dfid = "-")
+        val payload = json("businessid" to 5, "mobile" to mobile, "plat" to 3)
+        return transport.call(
+            "/v7/send_mobile_code",
+            host = "http://login.user.kugou.com",
+            method = "POST",
+            body = payload,
+            headers = mapOf("x-router" to "login.user.kugou.com"),
+            device = dev
+        )
     }
+
+    /**
+     * 手机短信验证码登录 (对齐 MakcRe/KuGouMusicApi module/login_cellphone.js)
+     * 支持 /v7/login_by_verifycode 与 /v7/login_by_ipv4 多通道回退。
+     */
     suspend fun phone(mobile: String, code: String, userId: String? = null): LoginResult {
         require(mobile.matches(Regex("1[3-9][0-9]{9}"))) { "请输入有效的中国大陆手机号" }
         require(code.matches(Regex("[0-9]{4,8}"))) { "请输入短信验证码" }
         val now = clock.millis()
         val d = store.device()
         val encrypted = KugouSigner.encrypt(KugouSigner.gson.toJson(json("mobile" to mobile, "code" to code)))
-        val body = json("plat" to 1, "support_multi" to 1, "t1" to t1(null, now), "t2" to t2(d, now),
-            "clienttime_ms" to now, "mobile" to (mobile.take(2) + "*****" + mobile.takeLast(1)),
+        val body = json(
+            "plat" to 1,
+            "support_multi" to 1,
+            "t1" to t1(null, now),
+            "t2" to t2(d, now),
+            "clienttime_ms" to now,
+            "mobile" to (mobile.take(2) + "*****" + mobile.takeLast(1)),
             "key" to KugouSigner.paramsKey(now),
             "pk" to KugouSigner.rsa(KugouSigner.gson.toJson(json("clienttime_ms" to now, "key" to encrypted.key))).uppercase(),
-            "params" to encrypted.ciphertext, "userid" to userId, "dfid" to d.dfid, "dev" to d.dev, "gitversion" to "5f0b7c4")
-        val response = transport.call("/v7/login_by_verifycode", host = "https://loginserviceretry.kugou.com", method = "POST", body = body,
-            headers = mapOf("support-calm" to "1", "User-Agent" to "Android16-1070-11440-130-0-LOGIN-wifi"))
+            "params" to encrypted.ciphertext,
+            "userid" to userId,
+            "dfid" to d.dfid,
+            "dev" to d.dev,
+            "gitversion" to "5f0b7c4"
+        )
+        val loginHeaders = mapOf(
+            "support-calm" to "1",
+            "x-router" to "login.user.kugou.com",
+            "User-Agent" to "Android16-1070-11440-130-0-LOGIN-wifi"
+        )
+        val response = suspendRunCatching {
+            transport.call(
+                "/v7/login_by_verifycode",
+                host = "https://loginserviceretry.kugou.com",
+                method = "POST",
+                body = body,
+                headers = loginHeaders
+            )
+        }.getOrElse {
+            transport.call(
+                "/v7/login_by_ipv4",
+                host = "http://login.user.kugou.com",
+                method = "POST",
+                body = body,
+                headers = loginHeaders
+            )
+        }
         val data = response.data
         val candidates = listOf("info_list", "user_list", "userList", "lists", "list").asSequence()
             .map { data.objects(it) }.firstOrNull { it.isNotEmpty() }.orEmpty().mapNotNull { item ->
@@ -172,33 +219,90 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
         response.requireSuccess()
         return decodeLogin(data, encrypted.key)
     }
+
+    /**
+     * 生成酷狗扫码登录二维码 (对齐 MakcRe/KuGouMusicApi module/login_qr_key.js)
+     */
     suspend fun createQr(): KugouQrCode {
-        val r = transport.call("/v2/qrcode", host = "https://login-user.kugou.com", web = true,
-            query = mapOf("appid" to "1001", "type" to "1", "plat" to "4", "qrcode_txt" to
-                "https://h5.kugou.com/apps/loginQRCode/html/index.html?appid=3116&", "srcappid" to "2919")).requireSuccess()
+        val r = transport.call(
+            "/v2/qrcode",
+            host = "https://login-user.kugou.com",
+            web = true,
+            query = mapOf(
+                "appid" to "1001",
+                "type" to "1",
+                "plat" to "4",
+                "qrcode_txt" to "https://h5.kugou.com/apps/loginQRCode/html/index.html?appid=3116&",
+                "srcappid" to "2919"
+            )
+        ).requireSuccess()
         val d = r.data
         val ttl = d.number("expire") ?: d.number("expires_in") ?: 120
-        return KugouQrCode(d.text("qrcode") ?: error("二维码密钥缺失"), d.text("qrcode_img") ?: error("二维码图片缺失"),
-            clock.millis() + ttl.coerceIn(1, 600) * 1000L)
+        val rawImg = d.text("qrcode_img")?.trim()?.takeIf { it.isNotBlank() } ?: error("二维码图片缺失")
+        val normalizedImg = if (rawImg.startsWith("data:image/", ignoreCase = true)) {
+            rawImg
+        } else {
+            "data:image/png;base64,$rawImg"
+        }
+        return KugouQrCode(
+            d.text("qrcode") ?: error("二维码密钥缺失"),
+            normalizedImg,
+            clock.millis() + ttl.coerceIn(1, 600) * 1000L
+        )
     }
-    suspend fun checkQr(key: String): ApiResponse = transport.call("/v2/get_userinfo_qrcode",
-        host = "https://login-user.kugou.com", web = true,
-        query = mapOf("plat" to "4", "appid" to "3116", "srcappid" to "2919", "qrcode" to key, "dev" to store.device().dev)).requireSuccess()
+
+    /**
+     * 轮询酷狗扫码登录状态 (对齐 MakcRe/KuGouMusicApi module/login_qr_check.js)
+     */
+    suspend fun checkQr(key: String): ApiResponse = transport.call(
+        "/v2/get_userinfo_qrcode",
+        host = "https://login-user.kugou.com",
+        web = true,
+        query = mapOf(
+            "plat" to "4",
+            "appid" to "3116",
+            "srcappid" to "2919",
+            "qrcode" to key,
+            "dev" to store.device().dev
+        )
+    ).requireSuccess()
+
     fun qrSession(data: JsonObject): LoginResult.Success = decodeLogin(data, null)
+
     suspend fun refresh(session: KugouSession): LoginResult.Success {
         val now = clock.millis()
         val encrypted = KugouSigner.encrypt("{}")
-        val p3 = KugouSigner.aes(KugouSigner.gson.toJson(json("clienttime" to now / 1000, "token" to session.token)),
-            "c24f74ca2820225badc01946dba4fdf7", "adc01946dba4fdf7")
+        val p3 = KugouSigner.aes(
+            KugouSigner.gson.toJson(json("clienttime" to now / 1000, "token" to session.token)),
+            "c24f74ca2820225badc01946dba4fdf7",
+            "adc01946dba4fdf7"
+        )
         val d = store.device()
-        val response = transport.call("/v5/login_by_token", session, host = "https://login.user.kugou.com", method = "POST",
-            body = json("dfid" to d.dfid, "p3" to p3, "plat" to 1, "t1" to t1(session.t1, now), "t2" to t2(d, now),
-                "t3" to "MCwwLDAsMCwwLDAsMCwwLDA=", "pk" to KugouSigner.rsa(KugouSigner.gson.toJson(json("clienttime_ms" to now, "key" to encrypted.key))),
-                "params" to encrypted.ciphertext, "userid" to session.userId, "clienttime_ms" to now, "dev" to d.dev)).requireSuccess()
+        val response = transport.call(
+            "/v5/login_by_token",
+            session,
+            host = "http://login.user.kugou.com",
+            method = "POST",
+            headers = mapOf("x-router" to "login.user.kugou.com"),
+            body = json(
+                "dfid" to d.dfid,
+                "p3" to p3,
+                "plat" to 1,
+                "t1" to t1(session.t1, now),
+                "t2" to t2(d, now),
+                "t3" to "MCwwLDAsMCwwLDAsMCwwLDA=",
+                "pk" to KugouSigner.rsa(KugouSigner.gson.toJson(json("clienttime_ms" to now, "key" to encrypted.key))),
+                "params" to encrypted.ciphertext,
+                "userid" to session.userId,
+                "clienttime_ms" to now,
+                "dev" to d.dev
+            )
+        ).requireSuccess()
         val decoded = decodeLogin(response.data, encrypted.key, session)
         check(decoded.session.userId == session.userId) { "刷新返回的账号不匹配，请重新登录" }
         return decoded
     }
+
     private fun decodeLogin(data: JsonObject, key: String?, previous: KugouSession? = null): LoginResult.Success {
         val merged = data.deepCopy()
         if (key != null) data.text("secu_params")?.let { ciphertext ->
@@ -213,13 +317,20 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
         check(id.toLongOrNull()?.let { it > 0 } == true) { "登录返回了无效账号" }
         merged.text("dfid")?.let(store::saveDfid)
         val vipToken = value("vip_token") ?: value("viptoken") ?: previous?.vipToken
-        return LoginResult.Success(KugouSession(id, token, value("t1") ?: previous?.t1, vipToken),
-            AccountProfile(id, value("nickname") ?: "酷狗用户", imageUrl(value("pic") ?: value("avatar"))))
+        return LoginResult.Success(
+            KugouSession(id, token, value("t1") ?: previous?.t1, vipToken),
+            AccountProfile(id, value("nickname") ?: "酷狗用户", imageUrl(value("pic") ?: value("avatar")))
+        )
     }
+
     private fun t1(previous: String?, now: Long): String = KugouSigner.aes("${previous.orEmpty()}|$now", "5e4ef500e9597fe004bd09a46d8add98", "04bd09a46d8add98")
-    private fun t2(d: DeviceIdentity, now: Long): String = KugouSigner.aes("${d.guid}|0f607264fc6318a92b9e13c65db7cd3c|${d.mac}|${d.dev}|$now",
-        "fd14b35e3f81af3817a20ae7adae7020", "17a20ae7adae7020")
+    private fun t2(d: DeviceIdentity, now: Long): String = KugouSigner.aes(
+        "${d.guid}|0f607264fc6318a92b9e13c65db7cd3c|${d.mac}|${d.dev}|$now",
+        "fd14b35e3f81af3817a20ae7adae7020",
+        "17a20ae7adae7020"
+    )
 }
+
 fun imageUrl(raw: String?): String {
     if (raw.isNullOrBlank()) return ""
     val trimmed = raw.trim()

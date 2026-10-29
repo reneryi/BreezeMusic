@@ -1,19 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- 允许酷狗各音频流媒体 CDN 子域（如 fs.youthandroid2.kugou.com）及运营商动态边缘缓存 IP 的 HTTP 302 跳转 -->
+    <!-- 允许酷狗各音频流媒体 CDN 子域（如 fs.youthandroid2.kugou.com）、二级子域登录通道（login.user.kugou.com，因 *.kugou.com 通配符证书不匹配二级子域）及运营商动态边缘缓存 IP 的 HTTP 访问与 302 跳转 -->
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-    <!-- 显式禁止携带账号/Token 的核心业务与鉴权网关使用明文 HTTP，强制走 TLS -->
+    <!-- 核心一级网关强制走 TLS -->
     <domain-config cleartextTrafficPermitted="false">
         <domain includeSubdomains="true">gateway.kugou.com</domain>
         <domain includeSubdomains="true">gatewayretry.kugou.com</domain>
-        <domain includeSubdomains="true">login.user.kugou.com</domain>
         <domain includeSubdomains="true">userservice.kugou.com</domain>
         <domain includeSubdomains="true">vip.kugou.com</domain>
-        <domain includeSubdomains="true">tracker.kugou.com</domain>
     </domain-config>
     <!-- 仅在 Debug 构建中信任用户抓包证书 -->
     <debug-overrides>

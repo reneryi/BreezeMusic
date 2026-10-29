@@ -263,4 +263,59 @@ class KugouProtocolTest {
         assertEquals(500, allSongs.size)
         assertEquals(listOf(100, 200, 300, 400, 500), progressSizes)
     }
+
+    @Test fun webSignatureUsesUpstreamWebSaltAndTransportAvoidsTwoLevelSubdomainSslError() {
+        val webParams = mapOf("appid" to "1001", "plat" to "4", "srcappid" to "2919", "type" to "1")
+        val expectedRaw = "NVPh5oo715z5DiWAeQlHMDsWXXQV4hwtappid=1001plat=4srcappid=2919type=1NVPh5oo715z5DiWAeQlHMDsWXXQV4hwt"
+        assertEquals(KugouSigner.md5(expectedRaw), KugouSigner.signature(webParams, "", web = true))
+
+        assertEquals(
+            "http://login.user.kugou.com",
+            DirectKugouTransport.enforceHttpsForSensitiveHost("https://login.user.kugou.com", null, emptyMap())
+        )
+        val endpoints = DirectKugouTransport.buildCandidateEndpoints("https://login.user.kugou.com", emptyMap())
+        assertTrue(endpoints.any { it.first == "http://login.user.kugou.com" })
+        assertTrue(endpoints.any { it.first == "https://gateway.kugou.com" && it.second["x-router"] == "login.user.kugou.com" })
+    }
+
+    @Test fun guestModePlaybackResolvesViaTrackerWithUserIdZeroAndCorrectRouter() = kotlinx.coroutines.test.runTest {
+        val store = MemoryStore().apply { activeKey = null }
+        var capturedTrackerRouter: String? = null
+        var capturedUserId: String? = null
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+
+            override suspend fun callAdvanced(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?,
+                sign: Boolean, includeDefaultParams: Boolean
+            ): ApiResponse {
+                if (path == "/v5/url") {
+                    capturedTrackerRouter = headers["x-router"]
+                    capturedUserId = query["userid"]
+                    val mockV5 = "{\"status\":1,\"fileSize\":4200000,\"bitRate\":128,\"extName\":\"mp3\",\"url\":[\"https://fs.android.kugou.com/guest_track.mp3\"]}"
+                    return ApiResponse(com.google.gson.JsonParser.parseString(mockV5).asJsonObject)
+                }
+                return ApiResponse(JsonObject())
+            }
+        }
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        accounts.select(null)
+        val repo = MusicApiRepository(transport, accounts)
+        val song = com.concept.music.data.model.Song(
+            id = "guest_s1",
+            hash = "abcdef1234567890abcdef1234567890",
+            title = "颠 (OFF-KILTER)",
+            artist = "吴莫愁",
+            durationMs = 210_000L
+        )
+        val res = repo.resolvePlayback(song, com.concept.music.data.model.AudioQuality.STANDARD)
+        assertEquals("tracker.kugou.com", capturedTrackerRouter)
+        assertEquals("0", capturedUserId)
+        assertEquals("https://fs.android.kugou.com/guest_track.mp3", res.url)
+    }
 }

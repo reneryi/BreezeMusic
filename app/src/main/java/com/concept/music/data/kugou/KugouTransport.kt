@@ -70,11 +70,16 @@ class DirectKugouTransport(
             "bssdlbig.kugou.com",
             "bssdl.kugou.com",
             "trackercdn.kugou.com",
+            "tracker.kugou.com",
             "mobilecdnbj.kugou.com",
+            "login.user.kugou.com",
+            "loginserviceretry.kugou.com",
             "userinfo.user.kugou.com",
             "relation.user.kugou.com",
             "usercenter.kugou.com",
-            "update.user.kugou.com"
+            "update.user.kugou.com",
+            "wwwapi.kugou.com",
+            "m.kugou.com"
         )
 
         internal fun enforceHttpsForSensitiveHost(
@@ -83,10 +88,16 @@ class DirectKugouTransport(
             query: Map<String, String>,
             body: JsonObject? = null
         ): String {
-            if (!rawHost.startsWith("http://", ignoreCase = true)) return rawHost
             val hostName = runCatching { rawHost.toHttpUrl().host.lowercase() }.getOrDefault("")
             // MockWebServer in local unit tests uses localhost / 127.0.0.1 / machine hostname without dots
             if (hostName == "localhost" || hostName == "127.0.0.1" || hostName == "::1" || !hostName.contains('.')) return rawHost
+            // 二级子域 login.user.kugou.com 在酷狗服务端仅部署了 *.kugou.com 一级通配符证书，
+            // Android OkHostnameVerifier 遵循 RFC 6125 会对 https://login.user.kugou.com 抛出 SSLPeerUnverifiedException，
+            // 对齐上游 MakcRe/KuGouMusicApi 统一使用 http://login.user.kugou.com 或网关转发
+            if (hostName == "login.user.kugou.com" && rawHost.startsWith("https://", ignoreCase = true)) {
+                return "http://" + rawHost.substring(8)
+            }
+            if (!rawHost.startsWith("http://", ignoreCase = true)) return rawHost
             val hasSensitiveParam = session != null ||
                 "token" in query || "vip_token" in query || "mobile" in query ||
                 body?.has("mobile") == true || body?.has("token") == true || body?.has("p3") == true
@@ -98,6 +109,51 @@ class DirectKugouTransport(
                 rawHost
             }
         }
+
+        /**
+         * 针对国内移动/联通/电信/广电不同运营商网络下的 DNS 污染、二级子域 TLS 证书不匹配或网关偶发超时，
+         * 构建多通道自动容灾候选端点列表（本地 MockWebServer 单测地址保持单次请求不变）。
+         */
+        internal fun buildCandidateEndpoints(
+            rawHost: String,
+            baseHeaders: Map<String, String>
+        ): List<Pair<String, Map<String, String>>> {
+            val hostName = runCatching { rawHost.toHttpUrl().host.lowercase() }.getOrDefault("")
+            if (hostName.isBlank() || hostName == "localhost" || hostName == "127.0.0.1" || hostName == "::1" || !hostName.contains('.')) {
+                return listOf(rawHost to baseHeaders)
+            }
+            val loginRouterHeaders = LinkedHashMap(baseHeaders).apply {
+                put("x-router", "login.user.kugou.com")
+            }
+            return when (hostName) {
+                "login.user.kugou.com" -> listOf(
+                    "http://login.user.kugou.com" to baseHeaders,
+                    "https://gateway.kugou.com" to loginRouterHeaders,
+                    "https://login-user.kugou.com" to baseHeaders
+                )
+                "loginserviceretry.kugou.com" -> listOf(
+                    rawHost to baseHeaders,
+                    "https://gateway.kugou.com" to loginRouterHeaders,
+                    "https://login-user.kugou.com" to baseHeaders,
+                    "http://login.user.kugou.com" to baseHeaders
+                )
+                "login-user.kugou.com" -> listOf(
+                    rawHost to baseHeaders,
+                    "https://gateway.kugou.com" to loginRouterHeaders,
+                    "http://login.user.kugou.com" to baseHeaders
+                )
+                "gateway.kugou.com" -> listOf(
+                    rawHost to baseHeaders,
+                    "https://gatewayretry.kugou.com" to baseHeaders
+                )
+                "tracker.kugou.com" -> listOf(
+                    rawHost to baseHeaders,
+                    "http://tracker.kugou.com" to baseHeaders,
+                    "https://gateway.kugou.com" to LinkedHashMap(baseHeaders).apply { put("x-router", "tracker.kugou.com") }
+                )
+                else -> listOf(rawHost to baseHeaders)
+            }
+        }
     }
 
     override suspend fun call(path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
@@ -107,31 +163,29 @@ class DirectKugouTransport(
     override suspend fun callAdvanced(path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
         host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?,
         sign: Boolean, includeDefaultParams: Boolean): ApiResponse = withContext(Dispatchers.IO) {
-        val isIdempotentOrTracker = method.equals("GET", ignoreCase = true) ||
-            path.contains("priv_url") || path.contains("/url") || path.contains("privilege") ||
-            path.contains("search") || path.contains("recommend")
-        val maxAttempts = if (isIdempotentOrTracker) 2 else 1
+        val candidateEndpoints = buildCandidateEndpoints(host, headers)
         var lastError: IOException? = null
 
-        for (attempt in 1..maxAttempts) {
+        for ((index, endpoint) in candidateEndpoints.withIndex()) {
+            val (candidateHost, candidateHeaders) = endpoint
             try {
                 return@withContext executeSingleCall(
                     path = path,
                     session = session,
                     query = query,
                     body = body,
-                    host = host,
+                    host = candidateHost,
                     method = method,
                     web = web,
-                    headers = headers,
+                    headers = candidateHeaders,
                     device = device,
                     sign = sign,
                     includeDefaultParams = includeDefaultParams
                 )
             } catch (e: IOException) {
                 lastError = e
-                if (attempt < maxAttempts) {
-                    delay(220L * attempt)
+                if (index < candidateEndpoints.lastIndex) {
+                    delay(150L * (index + 1))
                 }
             }
         }
@@ -157,8 +211,27 @@ class DirectKugouTransport(
         val d = device ?: identity()
         val params = linkedMapOf<String, String>()
         if (includeDefaultParams) {
-            params.putAll(mapOf("dfid" to d.dfid, "mid" to d.mid, "uuid" to "-", "appid" to "3116",
-                "clientver" to "11440", "clienttime" to clock.instant().epochSecond.toString()))
+            if (web) {
+                params.putAll(mapOf(
+                    "dfid" to d.dfid,
+                    "mid" to d.mid,
+                    "uuid" to "-",
+                    "appid" to "3116",
+                    "srcappid" to "2919",
+                    "clientver" to "1000",
+                    "clienttime" to clock.instant().epochSecond.toString(),
+                    "platid" to "4"
+                ))
+            } else {
+                params.putAll(mapOf(
+                    "dfid" to d.dfid,
+                    "mid" to d.mid,
+                    "uuid" to "-",
+                    "appid" to "3116",
+                    "clientver" to "11440",
+                    "clienttime" to clock.instant().epochSecond.toString()
+                ))
+            }
             session?.let { params["token"] = it.token; params["userid"] = it.userId }
         }
         params.putAll(query)

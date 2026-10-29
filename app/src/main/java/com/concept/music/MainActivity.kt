@@ -95,11 +95,25 @@ private fun mainTabIndex(route: String): Int = when (route) {
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val onCreateRealtimeMs = android.os.SystemClock.elapsedRealtime()
+        val processStartRealtimeMs = runCatching { android.os.Process.getStartElapsedRealtime() }
+            .getOrDefault(onCreateRealtimeMs)
+        // 冷启动时从进程创建时刻起算图标页展示时长（约 1.5s），热重启时从 onCreate 起算
+        val splashStartRealtimeMs = if (onCreateRealtimeMs - processStartRealtimeMs in 0L..1200L) {
+            processStartRealtimeMs
+        } else {
+            onCreateRealtimeMs
+        }
+        val shouldHoldSplashIcon = savedInstanceState == null
+
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             runCatching {
                 splashScreen.setOnExitAnimationListener { splashScreenView ->
-                    runCatching { splashScreenView.iconView?.alpha = 0f }
-                    runCatching { splashScreenView.remove() }
+                    splashScreenView.animate()
+                        .alpha(0f)
+                        .setDuration(160L)
+                        .withEndAction { runCatching { splashScreenView.remove() } }
+                        .start()
                 }
             }
         }
@@ -110,27 +124,33 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
         )
 
+        if (shouldHoldSplashIcon) {
+            val decorView = window.decorView
+            val holdDurationMs = com.concept.music.ui.components.SPLASH_ICON_HOLD_DURATION_MS
+            val preDrawListener = object : android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    val elapsed = android.os.SystemClock.elapsedRealtime() - splashStartRealtimeMs
+                    return if (elapsed >= holdDurationMs) {
+                        if (decorView.viewTreeObserver.isAlive) {
+                            decorView.viewTreeObserver.removeOnPreDrawListener(this)
+                        }
+                        true
+                    } else {
+                        decorView.postInvalidateOnAnimation()
+                        false
+                    }
+                }
+            }
+            decorView.viewTreeObserver.addOnPreDrawListener(preDrawListener)
+            val remainingMs = (holdDurationMs - (android.os.SystemClock.elapsedRealtime() - splashStartRealtimeMs))
+                .coerceAtLeast(16L)
+            decorView.postDelayed({ decorView.postInvalidateOnAnimation() }, remainingMs)
+        }
+
+        // 启动即刻挂载 MainContent，在 1.5s 图标启动页展示期间同步静默预加载首页 5 大模块、歌单、账号会话与封面缓存
         setContent {
             ConceptMusicTheme {
-                var showSplashOverlay by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(true) }
-                // 首帧仅渲染极轻量的 BreezeSplashOverlay（<16ms 立即上屏，彻底消除系统启动窗口等待），
-                // 第 2 帧起在开屏画面下方静默挂载 MainContent 并并发预加载曲库、账号会话与封面图片缓存
-                var mountMainContentBehindSplash by remember { mutableStateOf(!showSplashOverlay) }
-                LaunchedEffect(Unit) {
-                    if (!mountMainContentBehindSplash) {
-                        androidx.compose.runtime.withFrameNanos { }
-                        mountMainContentBehindSplash = true
-                    }
-                }
-                Box(modifier = Modifier.fillMaxSize()) {
-                    if (mountMainContentBehindSplash) {
-                        MainContent()
-                    }
-                    com.concept.music.ui.components.BreezeSplashOverlay(
-                        visible = showSplashOverlay,
-                        onDismiss = { showSplashOverlay = false }
-                    )
-                }
+                MainContent()
             }
         }
     }

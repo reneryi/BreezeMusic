@@ -1900,13 +1900,12 @@ class MusicApiRepository(
         session: KugouSession?,
         preferredQuality: AudioQuality
     ): PlaybackResult {
-        if (session != null && session.token.isNotBlank()) {
-            val vipResult = suspendRunCatching { resolveVipPrivResult(song, session, preferredQuality) }.getOrNull()
-            if (vipResult != null && vipResult.url.isNotBlank()) {
-                return vipResult
-            }
+        // 对齐 MakcRe/KuGouMusicApi song_url_new.js：无论是否已登录均优先尝试 /v6/priv_url 概念版直连解析
+        val privResult = suspendRunCatching { resolveVipPrivResult(song, session, preferredQuality) }.getOrNull()
+        if (privResult != null && privResult.url.isNotBlank() && !privResult.isFreePart) {
+            return privResult
         }
-        return resolveFallbackResult(song, session, preferredQuality)
+        return resolveFallbackResult(song, session, preferredQuality, previewFallback = privResult)
     }
 
     suspend fun resolveUrl(
@@ -2030,7 +2029,7 @@ class MusicApiRepository(
 
     private suspend fun resolveVipPrivResult(
         song: Song,
-        session: KugouSession,
+        session: KugouSession?,
         preferredQuality: AudioQuality
     ): PlaybackResult? {
         val d = device()
@@ -2060,12 +2059,17 @@ class MusicApiRepository(
             candidateTiers.putIfAbsent(song.hash.trim().lowercase(), preferredQuality)
         }
 
-        val effectiveVipToken = session.vipToken?.takeIf { it.isNotBlank() } ?: session.token
+        val userId = session?.userId?.takeIf { it.isNotBlank() } ?: "0"
+        val token = session?.token.orEmpty()
+        val effectiveVipToken = session?.vipToken?.takeIf { it.isNotBlank() } ?: token
+        val vipLevel = if (token.isNotBlank()) 6 else 0
+        val privVipType = if (token.isNotBlank()) "6" else "0"
         val salt = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
+        var bestPreviewFallback: PlaybackResult? = null
 
         for ((targetHash, tierQuality) in candidateTiers) {
             val clientTimeMs = System.currentTimeMillis()
-            val keyRaw = "${targetHash.lowercase()}185672dd44712f60bb1736df5a377e823116${d.mid}${session.userId}"
+            val keyRaw = "${targetHash.lowercase()}185672dd44712f60bb1736df5a377e823116${d.mid}$userId"
             val trackerKey = KugouSigner.md5(keyRaw)
 
             val targetQualities = when (tierQuality) {
@@ -2100,7 +2104,7 @@ class MusicApiRepository(
                 addProperty("open_time", "")
                 addProperty("pid", "411")
                 addProperty("pidversion", "3001")
-                addProperty("priv_vip_type", "6")
+                addProperty("priv_vip_type", privVipType)
                 addProperty("viptoken", effectiveVipToken)
             }
 
@@ -2109,11 +2113,11 @@ class MusicApiRepository(
                 addProperty("behavior", "play")
                 add("qualities", qualitiesArr)
                 add("resource", resource)
-                addProperty("token", session.token)
+                addProperty("token", token)
                 add("tracker_param", trackerParam)
-                addProperty("userid", session.userId)
-                addProperty("vip", 6)
-                addProperty("vip_type", 6)
+                addProperty("userid", userId)
+                addProperty("vip", vipLevel)
+                addProperty("vip_type", vipLevel)
                 addProperty("vip_token", effectiveVipToken)
                 addProperty("key", trackerKey)
             }
@@ -2124,8 +2128,8 @@ class MusicApiRepository(
                 "mid" to d.mid,
                 "dfid" to effectiveDfid,
                 "clienttime" to (clientTimeMs / 1000).toString(),
-                "token" to session.token,
-                "userid" to session.userId
+                "token" to token,
+                "userid" to userId
             )
             val bodyStr = KugouSigner.gson.toJson(body)
             val sortedParams = query.toSortedMap().entries.joinToString("") { "${it.key}=${it.value}" }
@@ -2166,22 +2170,13 @@ class MusicApiRepository(
             }.getOrNull() ?: continue
 
             val data = response.data
-            val privStatus = data.number("priv_status") ?: -1
-            if (privStatus == 0) continue
-
-            val failProcess = data.arr("fail_process")
-            if (failProcess != null && failProcess.size() > 0) continue
-            if (data.obj("ext_info")?.number("is_free_part") == 1) continue
-
-            val fileSize = (data.number("file_size") ?: data.number("fileSize") ?: 0).toLong()
-            if (fileSize in 1 until 200 * 1024) continue
-
             val playUrl = extractPlayUrl(data) ?: continue
             val bitrate = (data.number("bitrate") ?: data.number("bitRate") ?: 0).toLong()
             val extName = data.text("extname") ?: data.text("extName")
             val respQualityStr = data.text("quality") ?: data.obj("ext_info")?.text("quality")
             val respDurSec = (data.number("timeLength") ?: data.number("timelength") ?: 0).toLong()
             val effectiveDurMs = song.durationMs.takeIf { it > 0L } ?: if (respDurSec in 1..10000) respDurSec * 1000L else respDurSec
+            val fileSize = (data.number("file_size") ?: data.number("fileSize") ?: 0).toLong()
 
             val expectedVipQuality = when {
                 tierQuality == AudioQuality.HI_RES && song.hashHiRes.isNotBlank() && targetHash.equals(song.hashHiRes, ignoreCase = true) -> AudioQuality.HI_RES
@@ -2201,16 +2196,41 @@ class MusicApiRepository(
             )
             val (climaxStart, climaxEnd) = extractClimaxRange(data)
 
+            val privStatus = data.number("priv_status") ?: -1
+            val failProcess = data.arr("fail_process")
+            val isFreePartStream = data.obj("ext_info")?.number("is_free_part") == 1 ||
+                data.number("is_free_part") == 1 ||
+                privStatus == 0 ||
+                (failProcess != null && failProcess.size() > 0) ||
+                (fileSize in 1 until 200 * 1024)
+
+            if (isFreePartStream) {
+                if (bestPreviewFallback == null) {
+                    bestPreviewFallback = PlaybackResult(
+                        url = playUrl,
+                        actualQuality = actualQuality,
+                        bitrateKbps = kbps,
+                        fileSizeByte = fileSize,
+                        climaxStartMs = climaxStart,
+                        climaxEndMs = climaxEnd,
+                        isFreePart = true,
+                        resolvedHash = targetHash.lowercase()
+                    )
+                }
+                continue
+            }
+
             return PlaybackResult(
                 url = playUrl,
                 actualQuality = actualQuality,
                 bitrateKbps = kbps,
                 fileSizeByte = fileSize,
                 climaxStartMs = climaxStart,
-                climaxEndMs = climaxEnd
+                climaxEndMs = climaxEnd,
+                resolvedHash = targetHash.lowercase()
             )
         }
-        return null
+        return bestPreviewFallback
     }
 
     private fun extractClimaxRange(data: JsonObject): Pair<Long, Long> {
@@ -2285,12 +2305,16 @@ class MusicApiRepository(
     private suspend fun resolveFallbackResult(
         song: Song,
         session: KugouSession?,
-        preferredQuality: AudioQuality
+        preferredQuality: AudioQuality,
+        previewFallback: PlaybackResult? = null
     ): PlaybackResult {
         val d = device()
         val effectiveDfid = d.dfid.takeIf { it.isNotBlank() && it != "-" }
             ?: KugouSigner.md5("kg_lite_${d.guid}_${d.mid}").take(24)
-        val userId = session?.userId ?: "0"
+        val userId = session?.userId?.takeIf { it.isNotBlank() } ?: "0"
+        val token = session?.token.orEmpty()
+        val vipToken = session?.vipToken?.takeIf { it.isNotBlank() } ?: token
+        val vipType = if (token.isNotBlank()) "6" else "0"
         val clientTime = System.currentTimeMillis() / 1000
         val salt = "LnT6xpN3khm36zse0QzvmgTZ3waWdRSA"
 
@@ -2340,6 +2364,7 @@ class MusicApiRepository(
             val keyRaw = "${hashLower}185672dd44712f60bb1736df5a377e823116${d.mid}$userId"
             val key = KugouSigner.md5(keyRaw)
 
+            // 对齐 MakcRe/KuGouMusicApi module/song_url.js：始终携带 userid/token/vip_type/vip_token，确保未登录访客态 key 校验通过
             val query = linkedMapOf(
                 "album_id" to (song.albumId.ifBlank { "0" }),
                 "area_code" to "1",
@@ -2360,19 +2385,27 @@ class MusicApiRepository(
                 "mid" to d.mid,
                 "dfid" to effectiveDfid,
                 "clienttime" to clientTime.toString(),
+                "userid" to userId,
+                "token" to token,
+                "vip_type" to vipType,
+                "vip_token" to vipToken,
                 "key" to key
             )
-            if (session != null && session.token.isNotBlank()) {
-                query["token"] = session.token
-                query["userid"] = session.userId
-                query["vipType"] = "6"
-                query["vipToken"] = session.vipToken?.takeIf { it.isNotBlank() } ?: session.token
+            if (token.isNotBlank()) {
+                query["vipType"] = vipType
+                query["vipToken"] = vipToken
             }
 
             val sortedParams = query.toSortedMap().entries.joinToString("") { "${it.key}=${it.value}" }
             query["signature"] = KugouSigner.md5("$salt$sortedParams$salt")
 
-            val reqHeaders = mapOf(
+            val trackerHeaders = mapOf(
+                "x-router" to "tracker.kugou.com",
+                "dfid" to effectiveDfid,
+                "mid" to d.mid,
+                "clienttime" to clientTime.toString()
+            )
+            val cdnHeaders = mapOf(
                 "x-router" to "trackercdn.kugou.com",
                 "dfid" to effectiveDfid,
                 "mid" to d.mid,
@@ -2384,7 +2417,17 @@ class MusicApiRepository(
                     path = "/v5/url",
                     session = session,
                     query = query,
-                    headers = reqHeaders,
+                    headers = trackerHeaders,
+                    sign = false,
+                    includeDefaultParams = false
+                )
+            }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: suspendRunCatching {
+                transport.callAdvanced(
+                    path = "/v5/url",
+                    host = "https://tracker.kugou.com",
+                    session = session,
+                    query = query,
+                    headers = trackerHeaders,
                     sign = false,
                     includeDefaultParams = false
                 )
@@ -2394,7 +2437,7 @@ class MusicApiRepository(
                     host = "http://trackercdn.kugou.com",
                     session = session,
                     query = query,
-                    headers = reqHeaders,
+                    headers = cdnHeaders,
                     sign = false,
                     includeDefaultParams = false
                 )
@@ -2416,12 +2459,16 @@ class MusicApiRepository(
                     }
                     val (q, kbps) = deduceQuality(url, bRate, fSize, effectiveDurMs, ext, reqTier, cachedSpecs)
                     val (cStart, cEnd) = extractClimaxRange(it.data)
-                    return PlaybackResult(url, q, kbps, fSize, cStart, cEnd)
+                    return PlaybackResult(url, q, kbps, fSize, cStart, cEnd, resolvedHash = hashLower)
                 }
             }
         }
 
-        // 5. 若整轨因版权或数字专辑需要购买限制，平滑降级至试听流 (IsFreePart=1)
+        if (previewFallback != null && previewFallback.url.isNotBlank()) {
+            return previewFallback
+        }
+
+        // 5. 若整轨因版权或数字专辑需要购买限制，平滑降级至试听流 (is_free_part=1 & IsFreePart=1)
         val defaultHash = song.hash128.ifBlank { song.hash }.lowercase()
         val freeKeyRaw = "${defaultHash}185672dd44712f60bb1736df5a377e823116${d.mid}$userId"
         val freePartQuery = linkedMapOf(
@@ -2444,17 +2491,18 @@ class MusicApiRepository(
             "mid" to d.mid,
             "dfid" to effectiveDfid,
             "clienttime" to clientTime.toString(),
+            "userid" to userId,
+            "token" to token,
+            "vip_type" to vipType,
+            "vip_token" to vipToken,
             "key" to KugouSigner.md5(freeKeyRaw),
+            "is_free_part" to "1",
             "IsFreePart" to "1"
         )
-        if (session != null) {
-            freePartQuery["token"] = session.token
-            freePartQuery["userid"] = session.userId
-        }
         val freeSorted = freePartQuery.toSortedMap().entries.joinToString("") { "${it.key}=${it.value}" }
         freePartQuery["signature"] = KugouSigner.md5("$salt$freeSorted$salt")
         val freeHeaders = mapOf(
-            "x-router" to "trackercdn.kugou.com",
+            "x-router" to "tracker.kugou.com",
             "dfid" to effectiveDfid,
             "mid" to d.mid,
             "clienttime" to clientTime.toString()
@@ -2468,26 +2516,54 @@ class MusicApiRepository(
                 sign = false,
                 includeDefaultParams = false
             )
-        }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: runCatching {
+        }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: suspendRunCatching {
             transport.callAdvanced(
-                path = "/i/v2/",
-                host = "http://trackercdn.kugou.com",
+                path = "/v5/url",
+                host = "https://tracker.kugou.com",
                 session = session,
                 query = freePartQuery,
                 headers = freeHeaders,
                 sign = false,
                 includeDefaultParams = false
             )
+        }.getOrNull()?.takeIf { extractPlayUrl(it.data) != null } ?: suspendRunCatching {
+            transport.callAdvanced(
+                path = "/i/v2/",
+                host = "http://trackercdn.kugou.com",
+                session = session,
+                query = freePartQuery,
+                headers = mapOf("x-router" to "trackercdn.kugou.com", "dfid" to effectiveDfid, "mid" to d.mid, "clienttime" to clientTime.toString()),
+                sign = false,
+                includeDefaultParams = false
+            )
+        }.getOrNull() ?: suspendRunCatching {
+            transport.callAdvanced(
+                path = "/yy/index.php",
+                host = "https://wwwapi.kugou.com",
+                session = session,
+                query = mapOf(
+                    "r" to "play/getdata",
+                    "hash" to defaultHash,
+                    "album_id" to (song.albumId.ifBlank { "0" }),
+                    "album_audio_id" to song.albumAudioId.toString(),
+                    "mid" to d.mid,
+                    "dfid" to effectiveDfid,
+                    "platid" to "4"
+                ),
+                sign = false,
+                includeDefaultParams = false
+            )
         }.getOrNull()
 
         freeResp?.let {
-            val freeUrl = extractPlayUrl(it.data)
+            val dataObj = it.data.obj("data") ?: it.data
+            val freeUrl = extractPlayUrl(dataObj) ?: extractPlayUrl(it.data)
             if (!freeUrl.isNullOrBlank()) {
-                val fSize = (it.data.number("fileSize") ?: it.data.number("file_size") ?: 0).toLong()
-                val bRate = (it.data.number("bitRate") ?: it.data.number("bitrate") ?: 0).toLong()
-                val ext = it.data.text("extName") ?: it.data.text("extname")
+                val fSize = (dataObj.number("fileSize") ?: dataObj.number("file_size") ?: dataObj.number("filesize") ?: 0).toLong()
+                val bRate = (dataObj.number("bitRate") ?: dataObj.number("bitrate") ?: 0).toLong()
+                val ext = dataObj.text("extName") ?: dataObj.text("extname") ?: "mp3"
                 val (q, kbps) = deduceQuality(freeUrl, bRate, fSize, song.durationMs, ext, AudioQuality.STANDARD, cachedSpecs)
-                val (cStart, cEnd) = extractClimaxRange(it.data)
+                val (cStart, cEnd) = extractClimaxRange(dataObj)
                 return PlaybackResult(freeUrl, q, kbps, fSize, cStart, cEnd, isFreePart = true, resolvedHash = defaultHash)
             }
         }
