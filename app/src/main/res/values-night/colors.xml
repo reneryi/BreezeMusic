@@ -11,6 +11,8 @@
     <color name="concept_dark">#FF121418</color>
     <!-- 深色幽邃微蓝底色：统一应用深色窗口底色 -->
     <color name="concept_window_bg">#FF0A0E17</color>
+    <color name="concept_window_bg_light">#FFF2F6FC</color>
+    <color name="concept_window_bg_dark">#FF0A0E17</color>
     <color name="concept_primary">#FF2B8CFF</color>
     <color name="concept_splash_surface">#FF081224</color>
     <color name="concept_splash_text">#FFEEF3FA</color>

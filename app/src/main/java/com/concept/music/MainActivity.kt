@@ -95,30 +95,49 @@ private fun mainTabIndex(route: String): Int = when (route) {
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 读取 App 内部独立主题设置（完全独立于手机系统深浅模式）
+        val isAppDark = com.concept.music.ui.theme.ThemeManager.isDarkTheme(this)
+        setTheme(if (isAppDark) R.style.Theme_ConceptMusic_Dark else R.style.Theme_ConceptMusic_Light)
+
         // 针对 ColorOS / HyperOS / OriginOS / OneUI 及原生 Android 12+：
-        // 启动图标层完成渲染并首帧就绪后执行 160ms 平滑淡出，无缝过渡至应用主界面
+        // 极速移除系统层跟随系统的 Starting Window，无缝切入独立于系统、与 App 主题完全统一的启动层
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             runCatching {
                 splashScreen.setOnExitAnimationListener { splashScreenView ->
-                    splashScreenView.animate()
-                        .alpha(0f)
-                        .setDuration(160L)
-                        .withEndAction { runCatching { splashScreenView.remove() } }
-                        .start()
+                    runCatching { splashScreenView.iconView?.alpha = 0f }
+                    runCatching { splashScreenView.remove() }
                 }
             }
         }
         super.onCreate(savedInstanceState)
-        runCatching { window.setBackgroundDrawableResource(R.color.concept_window_bg) }
+        val windowBgRes = if (isAppDark) R.color.concept_window_bg_dark else R.color.concept_window_bg_light
+        runCatching { window.setBackgroundDrawableResource(windowBgRes) }
         requestHighRefreshRateDisplayMode()
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
-        )
+        if (isAppDark) {
+            enableEdgeToEdge(
+                statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+                navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+            )
+        } else {
+            enableEdgeToEdge(
+                statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+                navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+            )
+        }
 
         setContent {
             ConceptMusicTheme {
-                MainContent()
+                val isDark = com.concept.music.ui.theme.isConceptDarkTheme()
+                var showSplash by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(true) }
+
+                androidx.compose.foundation.layout.Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
+                    MainContent()
+                    com.concept.music.ui.components.PureSplashIconView(
+                        visible = showSplash,
+                        isDark = isDark,
+                        onDismiss = { showSplash = false }
+                    )
+                }
             }
         }
     }

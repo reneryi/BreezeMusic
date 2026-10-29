@@ -63,6 +63,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
     implementation("androidx.webkit:webkit:1.11.0")
     implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("androidx.appcompat:appcompat:1.7.0")
 
     // Jetpack Compose & Material 3
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))

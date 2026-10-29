@@ -138,18 +138,42 @@ object ThemeManager {
     private val _dynamicColor = MutableStateFlow(false)
     val dynamicColor = _dynamicColor.asStateFlow()
 
+    fun applyNightMode(mode: AppThemeMode) {
+        val nightMode = when (mode) {
+            AppThemeMode.DARK_ABYSS_BLUE -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+            AppThemeMode.LIGHT_WATERCOLOR -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
+            AppThemeMode.SYSTEM -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+        }
+        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(nightMode)
+    }
+
+    fun isDarkTheme(context: Context): Boolean {
+        init(context)
+        return when (_themeMode.value) {
+            AppThemeMode.DARK_ABYSS_BLUE -> true
+            AppThemeMode.LIGHT_WATERCOLOR -> false
+            AppThemeMode.SYSTEM -> {
+                val nightFlags = context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
+                nightFlags == android.content.res.Configuration.UI_MODE_NIGHT_YES
+            }
+        }
+    }
+
     fun init(context: Context) {
         if (prefs != null) return
         val p = context.applicationContext.getSharedPreferences("concept_theme_prefs", Context.MODE_PRIVATE)
         prefs = p
         val savedMode = p.getString("theme_mode", AppThemeMode.DARK_ABYSS_BLUE.name) ?: AppThemeMode.DARK_ABYSS_BLUE.name
-        _themeMode.value = runCatching { AppThemeMode.valueOf(savedMode) }.getOrDefault(AppThemeMode.DARK_ABYSS_BLUE)
+        val resolvedMode = runCatching { AppThemeMode.valueOf(savedMode) }.getOrDefault(AppThemeMode.DARK_ABYSS_BLUE)
+        _themeMode.value = resolvedMode
         _dynamicColor.value = p.getBoolean("dynamic_color", false)
+        applyNightMode(resolvedMode)
     }
 
     fun setThemeMode(mode: AppThemeMode) {
         _themeMode.value = mode
         prefs?.edit()?.putString("theme_mode", mode.name)?.apply()
+        applyNightMode(mode)
     }
 
     fun setThemeMode(context: Context, mode: AppThemeMode) {
