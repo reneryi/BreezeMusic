@@ -78,7 +78,7 @@ fun resolveAppVersionInfo(context: Context?): AppVersionInfo {
         }
     }
     return AppVersionInfo(
-        rawVersionName = BuildConfig.VERSION_NAME.trim().removePrefix("v").removePrefix("V").ifBlank { "1.0.1" },
+        rawVersionName = BuildConfig.VERSION_NAME.trim().removePrefix("v").removePrefix("V").ifBlank { "1.0.2" },
         versionCode = BuildConfig.VERSION_CODE.toLong().coerceAtLeast(1L)
     )
 }
