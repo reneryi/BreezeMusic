@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- 默认主题，兼顾原生启动 -->
+    <!-- 默认启动主题：统一为水彩浸润浅色启动窗口，彻底消除暗黑模式手机上的黑屏跳变 -->
     <style name="Theme.ConceptMusic" parent="android:Theme.Material.NoActionBar">
+        <item name="android:isLightTheme">true</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
         <item name="android:windowBackground">@drawable/bg_splash_window</item>
-        <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/concept_window_bg</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/concept_window_bg_light</item>
         <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/ic_splash_icon_light</item>
         <item name="android:windowSplashScreenAnimationDuration" tools:targetApi="31">0</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
@@ -12,8 +14,10 @@
         <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
     </style>
 
-    <!-- 强制浅色水彩浸润主题：完全独立于手机系统深浅模式 -->
+    <!-- 强制浅色水彩浸润主题 -->
     <style name="Theme.ConceptMusic.Light" parent="Theme.ConceptMusic">
+        <item name="android:isLightTheme">true</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
         <item name="android:windowBackground">@drawable/bg_splash_window_light</item>
         <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/concept_window_bg_light</item>
         <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/ic_splash_icon_light</item>
@@ -22,8 +26,10 @@
         <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
     </style>
 
-    <!-- 强制深色幽邃微蓝主题：完全独立于手机系统深浅模式 -->
+    <!-- 强制深色幽邃微蓝主题 -->
     <style name="Theme.ConceptMusic.Dark" parent="Theme.ConceptMusic">
+        <item name="android:isLightTheme">false</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
         <item name="android:windowBackground">@drawable/bg_splash_window_dark</item>
         <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/concept_window_bg_dark</item>
         <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/ic_launcher_concept</item>
