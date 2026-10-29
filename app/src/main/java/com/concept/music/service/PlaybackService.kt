@@ -345,7 +345,7 @@ internal class BiquadStereoFilter {
 }
 
 /**
- * 概念版发烧级 64-bit 实时 PCM 母带音频处理器 (ConceptMasteringAudioProcessor v1.0.1)：
+ * 概念版发烧级 64-bit 实时 PCM 母带音频处理器 (ConceptMasteringAudioProcessor v1.1.0)：
  * 直接在 Media3 音频解码管线内对 16-bit / 24-bit / 32-bit / Float PCM 实施全套数字信号处理，
  * 彻底解决 Android 系统硬件 AudioEffect 在无损 FLAC 与不同机型上效果微弱或失效的问题：
  * 1. 10 段双精度 Biquad 参量均衡器 (31Hz ~ 16kHz 独立双二阶滤波器级联)

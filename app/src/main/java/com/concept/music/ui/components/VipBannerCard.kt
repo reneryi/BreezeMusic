@@ -43,10 +43,10 @@ fun VipBannerCard(
     val isClaimedToday = todayRecord?.received == true
 
     val statusText = when {
-        !loggedIn -> "登录立领 1 日 VIP"
-        isClaimedToday -> "今日 VIP 已激活"
-        state.busy -> "权益同步中..."
-        else -> "每日免费领 1 日 VIP"
+        !loggedIn -> "去登录"
+        isClaimedToday -> "今日已领"
+        state.busy -> "同步中"
+        else -> "免费领取"
     }
 
     val bgBrush = if (isDark) {
@@ -109,11 +109,12 @@ fun VipBannerCard(
                             )
                         )
                         Text(
-                            text = "每日免费领 VIP · 畅享无损音质",
+                            text = "每日签到 · 畅享无损",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 color = subColor,
                                 fontSize = 11.5.sp
-                            )
+                            ),
+                            maxLines = 1
                         )
                     }
                 }

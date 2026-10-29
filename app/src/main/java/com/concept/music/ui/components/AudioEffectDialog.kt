@@ -78,7 +78,7 @@ private enum class SoundEffectMainTab(
 }
 
 /**
- * 蝰蛇音效与调音台 (ViperSoundEffectScreen v1.0.1)：
+ * 蝰蛇音效与调音台 (ViperSoundEffectScreen v1.1.0)：
  * - 对接 64-bit ConceptMasteringAudioProcessor 实时 PCM 母带引擎；
  * - 预设切换、声场调音与 10 段参量均衡推杆全链路实时联动生效；
  * - 调节任意声场或均衡推杆时自动激活音效引擎，无需预先手动开启总开关。

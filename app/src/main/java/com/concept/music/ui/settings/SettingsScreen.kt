@@ -205,52 +205,55 @@ internal val PROJECT_CHANGELOG_HISTORY = listOf(
     ChangelogVersionItem(
         version = "v${BuildConfig.VERSION_NAME}",
         date = "2026-10-29",
-        tag = "正式版 · 体验与声学优化",
-        summary = "极速图标启动直达与后台静默预加载、修复国内免 VPN 环境下验证码/扫码登录与未登录听歌解析（Issue #1）、64-bit 母带 DSP 与蝰蛇声效实时生效修复、关于页多源免 VPN 检查更新优化",
+        tag = "正式版 · 视觉动效与性能大版本",
+        summary = "单层 96dp 极速启动页与双套深浅主题独立持久化、设置中心全面无边框美化与分级收折、全局 120fps 欠阻尼弹性动效与方向性运动虚化、全链路低功耗/熄屏零唤醒与 120fps 列表上下滑动满帧率优化、64-bit 母带 DSP 与免 VPN 登录解析稳固",
         highlights = listOf(
-            "极速冷启动与静默预加载：顺应 ColorOS / Android 系统启动窗口机制恢复纯净图标启动页并徹底移除二级律动开屏页；零人为驻留等待、下沉非核心组件初始化与播放器服务绑定至首帧之后，将图标页停留时长压缩至极限",
-            "国内网络（免 VPN）登录与听歌全链路修复（Issue #1）：修复二级子域 login.user.kugou.com 因 *.kugou.com 通配符证书触发 SSLPeerUnverifiedException 导致的发送验证码/登录报网络错误；修正 WEB_SALT 签名盐值修复扫码登录；修复 /v5/url 网关 x-router 与访客态 userid=0 参数校验并打通未登录 /v6/priv_url 音源解析",
-            "64-bit 母带 DSP 与蝰蛇声效全链路生效修复：重构 ConceptMasteringAudioProcessor 双精度 Biquad 级联滤波器、低频下潜谐波激励、M/S + Haas 跨声道声场扩展与四梳状二全通立体声混响矩阵，彻底解决预设、声场调音与 10 段参量均衡不明显或未生效的问题",
-            "关于页与免 VPN 检查更新优化：新增 jsDelivr 全球/国内边缘节点（data.jsdelivr.com / gcore.jsdelivr.net / fastly.jsdelivr.net）与 GitHub 镜像多通道版本检测，确保国内无 VPN 环境下极速响应并展示「当前已是最新版本」提示；移除更新日志顶部冗余统计横幅"
+            "单层 96dp 黄金比例启动页与双套深浅主题独立持久化：统一系统级 Starting Window 为 96dp 圆角图标并移除二级开屏层，通过 SplashScreen.setSplashScreenTheme 与 UiModeManager.setApplicationNightMode 双重持久化「幽邃微蓝（深色）」与「水彩浸润（浅色）」两套启动页，彻底不受手机系统暗色模式干扰，首帧即刻直达主页",
+            "全局 120fps 欠阻尼弹性物理动效与方向性运动虚化：打造 ConceptMotion 五维分层弹簧体系，底部「发现 ↔ 我的」升级为同平面 100% 满屏左右滑动并叠加 GPU RenderEffect 水平运动虚化；全项目 8 大底部抽屉与弹窗统一接入零重组 ConceptAnimatedOverlaySheet 弹性架构；分类标题下方内容流支持同平面弹性切换与左右虚化",
+            "设置中心全面去边框化美化与信息层级减负：彻底移除设置页全部生硬 1dp 边框线组件（FilterChip / OutlinedButton / AssistChip），升级为无边框色阶胶囊 ConceptBorderlessChoicePill 与色阶按钮 ConceptTonalActionButton；精简一级菜单副标题、支持权限与缓存卡片按需展开收折，并精简「我的」页 VIP 权益中心卡片文案",
+            "全链路低功耗、后台熄屏零唤醒与 120fps 上下滑动满帧率：暂停态彻底退出进度轮询（0 唤醒/秒），后台播放自适应节流至 200ms/400ms/1000ms；锁屏熄屏瞬间停止后台桌面歌词 Ticker 与重绘，消除 NativeDesktopLyricView.onDraw 每帧对象分配与冗余 WindowManager 跨进程 IPC；「我的」页顶栏 100% 移入绘制期闭包（滑动 0 重组/0 重排），构建全局缩略图降维管线并补齐 LazyColumn contentType",
+            "64-bit 母带 DSP 短路加速与国内免 VPN 全链路稳固：ConceptMasteringAudioProcessor 对 0dB 平直频段执行整组短路跳过以降低 Hi-Res 后台解码功耗；支持国内网络免 VPN 验证码/扫码多通道容灾登录、未登录访客态音源解析与 jsDelivr 多源免 VPN 在线更新检查"
         ),
         moduleGroups = listOf(
             ChangelogModuleGroup(
-                moduleTitle = "一、极速图标启动优化与国内免 VPN 登录/播放修复 (Issue #1)",
+                moduleTitle = "一、单层 96dp 极速启动页与双套深浅主题独立持久化",
                 points = listOf(
-                    "恢复纯净应用图标启动页并彻底删除二级律动开屏层，设置 0ms 退出动画与首帧后异步绑定 PlaybackService，大幅缩短 ColorOS 及各系统启动图标页停留时长",
-                    "解决国内网络下 login.user.kugou.com 二级子域 HTTPS 证书校验异常导致的手机验证码无法发送问题，支持 gateway.kugou.com (x-router)、login-user.kugou.com 与 http://login.user.kugou.com 自动容灾切换，并统一扫码登录 dfid='-' 默认设备参数与 1001/1014 双通道回退",
-                    "修复 /v5/url 请求头 x-router 误填为 trackercdn.kugou.com 及未登录访客态缺失 userid=0 导致 key 校验失败的问题，开放访客态调用 /v6/priv_url 并保留高潮/试听片段兜底，解决未登录点击歌曲提示「该歌曲暂未获取到播放链接」"
+                    "将系统级 Starting Window 图标统一重构为 208dp Canvas 内嵌 96dp 黄金比例圆角图标（ic_splash_window_icon_light / dark），彻底移除冗余的第二层 Compose 开屏页，消除大图标跳小图标的割裂感与 850ms+240ms 阻塞等待",
+                    "针对 ColorOS / HyperOS / OriginOS / OneUI 及原生 Android 12+，结合 Activity.splashScreen.setSplashScreenTheme 与 UiModeManager.setApplicationNightMode 双重持久化启动页主题，确保幽邃微蓝（深色）与水彩浸润（浅色）启动页与 App 内部主题 100% 同步，不受系统暗色模式影响",
+                    "下沉非核心组件初始化与 PlaybackService 绑定至首帧渲染之后，配合主界面首屏封面静默预热，实现点击桌面图标即刻丝滑进入主页面"
                 )
             ),
             ChangelogModuleGroup(
-                moduleTitle = "二、64-bit 母带级 DSP 引擎与蝰蛇声效全链路生效修复",
+                moduleTitle = "二、全局 120fps 欠阻尼弹性物理动效与方向性运动虚化",
                 points = listOf(
-                    "修复预设频段参数单位换算偏差（由原先 0.2~1.9dB 微弱偏移校准至 ±8.6dB 真实母带级毫贝尔量纲），使 3D 丽音、超重低音、纯净人声、HiFi 现场、黑胶唱片等全部预设听感立竿见影",
-                    "重构 ConceptMasteringAudioProcessor：采用 64-bit IEEE 754 双精度 Biquad 级联滤波网络，直接在 Media3 PCM 管线内完成 10 段参量均衡、低频架式滤波、截止频率谐振峰、人声去闷/临场度提亮与电子管偶次谐波激励",
-                    "内置四梳状 + 二全通 Schroeder 立体声混响矩阵，完整驱动小房间、中房间、大房间、中厅、大厅与板式混响 6 种声学空间模式"
+                    "基于播放队列抽屉丝滑范式提炼 ConceptMotion 五维物理弹簧体系（coplanarTabSpring / spatialPageSpring / spatialSheetSpring / categoryContentSpring / floatingPopupSpring，阻尼比 ζ = 0.75~0.82）",
+                    "底部「发现 ↔ 我的」主页面切换重构为与底栏滑块同向的 100% 同平面左右弹性滑动，并在 Android 12+ 绘制期实时施加 RenderEffect 水平方向性运动虚化（applyDirectionalMotionBlur）",
+                    "全项目 8 大底部抽屉与弹窗（歌曲菜单、技术参数、VIP 中心、专注舱、加入歌单、新建歌单、单曲下载、2K 歌词海报）全面接入零重组 ConceptAnimatedOverlaySheet 架构，通过 graphicsLayer 闭包实现满帧率弹性入场、跟手下拉阻尼与平滑退出",
+                    "二级独立页面卡片进出升级为带微妙景深缩放的弹性推入与底层 -12% 视差联动；同平面分类标题下方内容流（新歌速递、排行榜、我的资产、歌手详情、搜索页）支持顺向弹性滑移与左右运动虚化；播放页倍速变调与睡眠定时悬浮面板接入三轴弹性展开"
                 )
             ),
             ChangelogModuleGroup(
-                moduleTitle = "三、声场调音台与 10 段参量均衡器实时联动增强",
+                moduleTitle = "三、设置中心全面无边框美化、布局减负与细节打磨",
                 points = listOf(
-                    "修复未预先选择预设时拖动「声场调音」滑杆或切换混响模式因 currentPreset 仍为 OFF 而被 DSP 旁路忽略的问题，任意参数调节均自动激活音效管线",
-                    "开放声场调音与参量均衡全部滑杆与混响/截止频率胶囊直接交互，并新增 360° 环绕旋转速率实时调节滑杆",
-                    "升级参量均衡频响曲线画布（EqFrequencyResponseCurveCanvas），实时叠加展示 10 段推杆与低频/人声/温暖度复合频响包络"
+                    "彻底清除设置中心全部生硬的 1dp 边框线组件（FilterChip、OutlinedButton、AssistChip 与 Modifier.border），全新设计无边框色阶选择胶囊 ConceptBorderlessChoicePill（柔和色阶填充 + 选中呼吸圆点 + 弹性按压回弹）与无边框色阶操作按钮 ConceptTonalActionButton",
+                    "重构设置一级菜单与二级子页信息层级：一级菜单副标题精简为一行微摘要 + 右侧亮色胶囊；权限管理卡片默认仅展示核心标题与开关，点击「查看权限详情」按需展开技术说明；存储与缓存页将四维明细与清理操作整合进单张卡片",
+                    "精简「我的」页 VIP 权益中心横幅卡片文案（「每日签到 · 畅享无损」配短状态词「免费领取 / 今日已领 / 去登录」），消除左右文案重复，视觉层次更清爽直观"
                 )
             ),
             ChangelogModuleGroup(
-                moduleTitle = "四、音频输出缓冲低延迟调优与动态响度校准",
+                moduleTitle = "四、全链路低功耗、后台熄屏零唤醒与 120fps 列表上下滑动满帧率",
                 points = listOf(
-                    "优化 ExoPlayer DefaultAudioTrackBufferSizeProvider 硬件缓冲区间（由最高 2500ms 降至 120ms~360ms），消除音效切换与推杆拖动时的长缓冲延迟",
-                    "修复开启音效时动态音量归一化（volNorm）反向压低增益的问题，确保动态响度增强、前置增益（Preamp）与小音量等响度补偿精准释放"
+                    "MusicPlayerViewModel 引入前后台生命周期感知（onAppForegroundChanged）：暂停且无解析任务时彻底退出主线程轮询（0 次/秒唤醒）；退至后台播放时将进度轮询从 120ms 自适应放宽至 200ms/400ms/1000ms，主线程后台唤醒降低 88%~100%",
+                    "PlaybackService 监听 ACTION_SCREEN_OFF / ACTION_SCREEN_ON 并结合 PowerManager.isInteractive，手机锁屏熄屏瞬间立即暂停后台桌面歌词 160ms Ticker；SystemLyricBridge 预缓存 joinedWordsText 与行布局规划，消除 NativeDesktopLyricView.onDraw 每帧内存分配及冗余 WindowManager.updateViewLayout 跨进程 IPC",
+                    "NowPlayingSheet 硬件方向传感器（OrientationEventListener）与黑胶旋转、圆角流光着色器、内嵌/全屏逐字歌词等 120Hz 帧循环均按前台状态（rememberIsLifecycleStarted）与视图可见性精准休眠；LyricData 新增 hasInterludeCandidateAt O(1) 间奏预判，消除 95% 以上非间奏时段的 120Hz 空转",
+                    "LibraryScreen 沉浸式顶栏滚动因子 scrollFractionState 100% 移入 drawBehind 与 graphicsLayer 绘制期闭包读取，上下滑动全程 0 次整屏重组与 0 次 Layout 重排；构建 normalizeKugouThumbUrl 与 rememberOptimizedAsyncImageModel 全局缩略图降维管线（自动将 /400/、/1000/ 等大图降维至 150/240 并禁用列表 crossfade），升级长歌单渐进加载批次（首屏 60 首 + 步长 100 首）与评论页快速滑屏 180ms 防抖，全量补齐 LazyColumn contentType"
                 )
             ),
             ChangelogModuleGroup(
-                moduleTitle = "五、关于页、在线更新检查防限流与更新日志精简",
+                moduleTitle = "五、64-bit 母带 DSP 短路加速与国内免 VPN 全链路稳固",
                 points = listOf(
-                    "升级 GitHub 版本检查机制：结合 Releases Web 重定向与 REST API 双路检测，彻底解决 GitHub API 匿名请求限流导致的 HTTP 403 报错",
-                    "全新设计最新版无更新状态卡片（「当前已是最新版本 · 您正在使用最新正式版，暂无可用更新」），统一去除关于页版本胶囊边框线并修复副标题截断",
-                    "精简更新日志二级页面：移除顶部多余的「按版本号分类归档」统计横条，清理非正式预览记录，真实呈现 v1.0.0 与 v1.0.1 正式版演进"
+                    "ConceptMasteringAudioProcessor 预统计非 Bypass 的有效均衡器频段与子模块状态（hasActiveEqBands 等），在 44.1kHz~96kHz PCM 采样热循环中对 0dB 平直频段直接整组短路跳过，显著降低后台 Hi-Res 播放 CPU 占用与发热",
+                    "完整保留 64-bit 双精度 Biquad 10 段参量均衡、声场调音、Schroeder 立体声混响与 120ms~360ms 低延迟硬件缓冲，以及国内免 VPN 验证码/扫码多通道容灾登录、未登录访客态音源解析与 jsDelivr 多源免 VPN 更新检查"
                 )
             )
         )
@@ -4458,7 +4461,7 @@ private fun AboutAppSectionContent(
             icon = Icons.Rounded.AutoAwesome
         ) {
             Text(
-                text = "BreezeMusic（微风音乐）是基于 Kotlin、Jetpack Compose 与 Media3 打造的第三方「酷狗概念版」原生客户端。项目参考开源方案 MakcRe/KuGouMusicApi 实现端侧直连与每日 VIP 畅听闭环，无任何中间服务器；集成了 Hi-Res 无损音源解析、64-bit 母带 DSP 音效、KRC 逐字流光与桌面歌词、封面色相锁定动态取色及多应用混音/硬件线控能力，致力于提供纯粹、流畅的个人听歌体验。",
+                text = "BreezeMusic（微风音乐）是基于 Kotlin、Jetpack Compose 与 Media3 打造的第三方「酷狗概念版」原生客户端。项目参考开源方案 MakcRe/KuGouMusicApi 实现端侧直连与每日 VIP 畅听闭环，无任何中间服务器；集成了 Hi-Res 无损音源解析、64-bit 母带 DSP 音效、KRC 逐字流光与穿透桌面歌词、120fps 欠阻尼弹性物理动效与方向性运动虚化、全链路低功耗后台守护及多应用混音/硬件线控能力，致力于提供纯粹、丝滑的个人听歌体验。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontSize = 12.5.sp,
@@ -4475,6 +4478,8 @@ private fun AboutAppSectionContent(
                     "端侧零后端直连",
                     "Hi-Res 无损与母带 DSP",
                     "KRC 逐字与桌面歌词",
+                    "120fps 弹性物理动效",
+                    "全链路低功耗架构",
                     "M3 封面动态取色",
                     "混音同播与耳机线控"
                 ).forEach { tag ->

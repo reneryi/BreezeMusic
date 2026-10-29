@@ -1604,7 +1604,7 @@ class UiAlignmentRegressionTest {
         assertEquals("v2.1.0 正式版 · Build 12", customVer.fullBadgeText)
 
         val history = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY
-        assertEquals("更新日志仅保留真实发布的 v1.0.1 与 v1.0.0 版本", 2, history.size)
+        assertEquals("更新日志保留 v1.1.0 与 v1.0.0 正式版记录", 2, history.size)
         val latest = history.first()
         assertEquals("v${BuildConfig.VERSION_NAME}", latest.version)
         assertEquals(5, latest.moduleGroups.size)
@@ -1797,5 +1797,11 @@ class UiAlignmentRegressionTest {
 
         val commentsCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/comment/CommentsScreen.kt").readText(Charsets.UTF_8)
         assertTrue("CommentsScreen 应在快速滚屏期间防抖延迟加载楼中楼回复", commentsCode.contains("listState.isScrollInProgress"))
+
+        val vipCardCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/VipBannerCard.kt").readText(Charsets.UTF_8)
+        assertTrue("我的页 VIP 权益中心卡片应使用精简无重复的小字文案", vipCardCode.contains("每日签到 · 畅享无损") && vipCardCode.contains("免费领取"))
+
+        val gradleCode = java.io.File(projectRoot, "app/build.gradle.kts").readText(Charsets.UTF_8)
+        assertEquals("1.1.0", com.concept.music.ui.settings.extractVersionFromGradleText(gradleCode))
     }
 }
