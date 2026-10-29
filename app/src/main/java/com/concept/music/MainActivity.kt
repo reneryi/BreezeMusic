@@ -96,12 +96,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // 针对 ColorOS / HyperOS / OriginOS / OneUI 及原生 Android 12+：
-        // 首帧一旦就绪立即移除系统 SplashScreen 起始图标层（0ms 退出动画），将图标页停留时间压缩至物理极限
+        // 启动图标层完成渲染并首帧就绪后执行 160ms 平滑淡出，无缝过渡至应用主界面
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             runCatching {
                 splashScreen.setOnExitAnimationListener { splashScreenView ->
-                    runCatching { splashScreenView.iconView?.alpha = 0f }
-                    runCatching { splashScreenView.remove() }
+                    splashScreenView.animate()
+                        .alpha(0f)
+                        .setDuration(160L)
+                        .withEndAction { runCatching { splashScreenView.remove() } }
+                        .start()
                 }
             }
         }
@@ -115,27 +118,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ConceptMusicTheme {
-                val isDark = com.concept.music.ui.theme.isConceptDarkTheme()
-                var showSplashOverlay by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(true) }
-                var mountMainContentBehindSplash by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(!showSplashOverlay) }
-
-                androidx.compose.runtime.LaunchedEffect(Unit) {
-                    if (!mountMainContentBehindSplash) {
-                        androidx.compose.runtime.withFrameNanos { }
-                        mountMainContentBehindSplash = true
-                    }
-                }
-
-                androidx.compose.foundation.layout.Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
-                    if (mountMainContentBehindSplash) {
-                        MainContent()
-                    }
-                    com.concept.music.ui.components.BreezeSplashOverlay(
-                        visible = showSplashOverlay,
-                        isDark = isDark,
-                        onDismiss = { showSplashOverlay = false }
-                    )
-                }
+                MainContent()
             }
         }
     }

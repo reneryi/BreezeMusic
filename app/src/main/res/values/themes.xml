@@ -3,7 +3,7 @@
     <style name="Theme.ConceptMusic" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@drawable/bg_splash_window</item>
         <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/concept_window_bg</item>
-        <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/ic_launcher_concept</item>
+        <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/ic_splash_icon_light</item>
         <item name="android:windowSplashScreenAnimationDuration" tools:targetApi="31">0</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>

@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 纯净深海极夜底色，消除冷启动瞬间白屏 -->
+    <!-- 水彩浸润清透浅色底色，统一浅色窗口底色 -->
     <item android:drawable="@color/concept_window_bg" />
 
-    <!-- 中心展示微风音乐品牌图标 -->
+    <!-- 中心展示微风音乐水彩浅色品牌图标 -->
     <item
         android:width="128dp"
         android:height="128dp"
         android:gravity="center"
-        android:drawable="@drawable/ic_launcher_concept" />
+        android:drawable="@drawable/ic_splash_icon_light" />
 </layer-list>
