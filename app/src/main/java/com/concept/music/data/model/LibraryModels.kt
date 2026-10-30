@@ -212,7 +212,8 @@ data class FollowedArtist(
     val name: String,
     val avatarUrl: String,
     val songCount: Int = 0,
-    val fansCount: Long = 0L
+    val fansCount: Long = 0L,
+    val targetUserId: String = ""
 )
 
 @Immutable

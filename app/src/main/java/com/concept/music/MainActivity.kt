@@ -23,6 +23,12 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -36,6 +42,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -245,6 +252,8 @@ fun MainContent(
     var showCreatePlaylistFromGlobal by remember { mutableStateOf(false) }
     var detailSheetSong by remember { mutableStateOf<Song?>(null) }
     var songToDownload by remember { mutableStateOf<Song?>(null) }
+    var multiArtistPickerSong by remember { mutableStateOf<Song?>(null) }
+    var isHomeSubSheetOpen by remember { mutableStateOf(false) }
     val mainScope = rememberCoroutineScope()
 
     val openSubRouteFromContext: (String) -> Unit = { targetRoute ->
@@ -304,16 +313,12 @@ fun MainContent(
         showNowPlaying = true
     }
 
-    val navigateToSongArtist: (Song) -> Unit = { targetSong ->
-        val directId = targetSong.artistId.trim()
-        if (directId.isNotBlank() && directId != "0") {
-            openSubRouteFromContext("artist_detail/$directId")
+    val navigateToSingleArtist: (String, String?) -> Unit = { artistName, preResolvedId ->
+        val cleanId = preResolvedId?.trim().orEmpty()
+        if (cleanId.isNotBlank() && cleanId != "0") {
+            openSubRouteFromContext("artist_detail/$cleanId")
         } else {
-            val cleanArtist = targetSong.artist
-                .split("、", "/", "&", "feat.", "Feat.", ",")
-                .firstOrNull()
-                ?.trim()
-                .orEmpty()
+            val cleanArtist = artistName.trim()
             if (cleanArtist.isBlank()) {
                 Toast.makeText(context, "未获取到歌手信息", Toast.LENGTH_SHORT).show()
             } else {
@@ -333,6 +338,16 @@ fun MainContent(
                     }
                 }
             }
+        }
+    }
+
+    val navigateToSongArtist: (Song) -> Unit = { targetSong ->
+        val artistNames = com.concept.music.ui.components.parseSongArtistNames(targetSong.artist)
+        if (artistNames.size >= 2) {
+            multiArtistPickerSong = targetSong
+        } else {
+            val singleName = artistNames.firstOrNull() ?: targetSong.artist.trim()
+            navigateToSingleArtist(singleName, targetSong.artistId)
         }
     }
 
@@ -438,8 +453,6 @@ fun MainContent(
         currentRoute != "viper_effect"
     val showBottomNavBar = navMode == com.concept.music.ui.theme.ConceptNavigationMode.BOTTOM_BAR &&
         showFloatingMiniBar && !isSubDetail && !showNowPlaying && !showViperEffectOverlay
-    val showNavigationRail = navMode == com.concept.music.ui.theme.ConceptNavigationMode.NAVIGATION_RAIL &&
-        showFloatingMiniBar && !isSubDetail && !showNowPlaying && !showViperEffectOverlay
 
     // 监测底部「发现 ↔ 我的」同平面主页面切换，驱动 120Hz 绘制期水平方向动态虚化 (RenderEffect Motion Blur)
     val activeMainTab = mainTabIndex(currentRoute)
@@ -463,7 +476,9 @@ fun MainContent(
             .background(MaterialTheme.colorScheme.background)
     ) {
         Scaffold(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(if (isHomeSubSheetOpen) 40f else 0f),
             contentWindowInsets = WindowInsets(0, 0, 0, 0)
         ) { innerPadding ->
             androidx.compose.foundation.layout.Row(
@@ -471,34 +486,6 @@ fun MainContent(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                AnimatedVisibility(
-                    visible = showNavigationRail,
-                    enter = slideInHorizontally(initialOffsetX = { -it }, animationSpec = ConceptMotion.spatialPageSpring()) + fadeIn(tween(220)),
-                    exit = slideOutHorizontally(targetOffsetX = { -it }, animationSpec = ConceptMotion.spatialPageSpring()) + fadeOut(tween(180))
-                ) {
-                    com.concept.music.ui.navigation.ConceptNavigationRail(
-                        currentRoute = currentRoute,
-                        onNavigate = { route ->
-                            if (route != currentRoute) {
-                                navController.navigate(route) {
-                                    popUpTo(navController.graph.startDestinationId) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            }
-                        },
-                        onOpenSearch = {
-                            searchViewModel.resetTabToDefault()
-                            navController.navigate("search") { launchSingleTop = true }
-                        },
-                        onOpenSettings = {
-                            navController.navigate("settings") { launchSingleTop = true }
-                        }
-                    )
-                }
-
                 NavHost(
                     navController = navController,
                     startDestination = Screen.Discover.route,
@@ -667,6 +654,7 @@ fun MainContent(
                                     actionSheetRemoveCallback = null
                                 },
                                 isOverlayOpen = showCommentsScreen || showNowPlaying || showViperEffectOverlay || isSubDetail,
+                                onSubSheetOpenChanged = { isHomeSubSheetOpen = it },
                                 modifier = Modifier
                                     .weight(0.53f)
                                     .fillMaxSize()
@@ -741,7 +729,8 @@ fun MainContent(
                                 actionSheetSong = song
                                 actionSheetRemoveCallback = null
                             },
-                            isOverlayOpen = showCommentsScreen || showNowPlaying || showViperEffectOverlay || isSubDetail
+                            isOverlayOpen = showCommentsScreen || showNowPlaying || showViperEffectOverlay || isSubDetail,
+                            onSubSheetOpenChanged = { isHomeSubSheetOpen = it }
                         )
                     }
                 }
@@ -983,18 +972,32 @@ fun MainContent(
             }
         }
 
-        // 底部「发现 / 我的」主导航栏（平板横屏双栏平铺或侧边导航栏模式下自动隐藏底栏）
+        // 「发现 / 我的」主导航栏：平板竖屏/分屏悬浮于左侧垂直居中 (Alignment.CenterStart)，手机端贴底展示 (Alignment.BottomCenter)
         AnimatedVisibility(
-            visible = showBottomNavBar,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            enter = slideInVertically(
-                initialOffsetY = { it },
-                animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
-            ) + fadeIn(animationSpec = tween(durationMillis = 320, easing = ConceptMotion.GentleSpatialEnterEasing)),
-            exit = slideOutVertically(
-                targetOffsetY = { it },
-                animationSpec = tween(durationMillis = 300, easing = ConceptMotion.GentleSpatialExitEasing)
-            ) + fadeOut(animationSpec = tween(durationMillis = 240, easing = ConceptMotion.GentleSpatialExitEasing))
+            visible = showBottomNavBar && !isHomeSubSheetOpen,
+            modifier = Modifier.align(if (adaptiveInfo.isLargeScreenDevice) Alignment.CenterStart else Alignment.BottomCenter),
+            enter = if (adaptiveInfo.isLargeScreenDevice) {
+                slideInHorizontally(
+                    initialOffsetX = { -it },
+                    animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
+                ) + fadeIn(animationSpec = tween(durationMillis = 320, easing = ConceptMotion.GentleSpatialEnterEasing))
+            } else {
+                slideInVertically(
+                    initialOffsetY = { it },
+                    animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
+                ) + fadeIn(animationSpec = tween(durationMillis = 320, easing = ConceptMotion.GentleSpatialEnterEasing))
+            },
+            exit = if (adaptiveInfo.isLargeScreenDevice) {
+                slideOutHorizontally(
+                    targetOffsetX = { -it },
+                    animationSpec = tween(durationMillis = 300, easing = ConceptMotion.GentleSpatialExitEasing)
+                ) + fadeOut(animationSpec = tween(durationMillis = 240, easing = ConceptMotion.GentleSpatialExitEasing))
+            } else {
+                slideOutVertically(
+                    targetOffsetY = { it },
+                    animationSpec = tween(durationMillis = 300, easing = ConceptMotion.GentleSpatialExitEasing)
+                ) + fadeOut(animationSpec = tween(durationMillis = 240, easing = ConceptMotion.GentleSpatialExitEasing))
+            }
         ) {
             BottomNavBar(
                 currentRoute = currentRoute,
@@ -1012,10 +1015,13 @@ fun MainContent(
             )
         }
 
-        // 固定底部锚点 10.dp 并通过 `graphicsLayer { translationY = ... }` 在绘制期柔和避让底部导航栏（当平板隐藏底栏时直接贴底居中）
-        val navBarAvoidOffsetPx = with(density) { -56.dp.toPx() }
+        // 固定底部锚点 10.dp：平板端由于悬浮导航栏已移至左侧垂直居中，底部悬浮播放条无需再向上避让底栏，直接贴底居中展示
+        val navBarAvoidOffsetPx = with(density) { (-56.dp).toPx() }
+        val shouldAvoidBottomNav = !adaptiveInfo.isLargeScreenDevice &&
+            !isSubDetail &&
+            navMode == com.concept.music.ui.theme.ConceptNavigationMode.BOTTOM_BAR
         val miniBarOffsetYState = animateFloatAsState(
-            targetValue = if (isSubDetail || navMode != com.concept.music.ui.theme.ConceptNavigationMode.BOTTOM_BAR) 0f else navBarAvoidOffsetPx,
+            targetValue = if (shouldAvoidBottomNav) navBarAvoidOffsetPx else 0f,
             animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing),
             label = "miniBarOffsetY"
         )
@@ -1288,6 +1294,23 @@ fun MainContent(
                     showNowPlaying = false
                     navController.navigate("settings") { launchSingleTop = true }
                 }
+            )
+        }
+
+        if (multiArtistPickerSong != null) {
+            val pickerSong = multiArtistPickerSong!!
+            val artistNames = remember(pickerSong.artist) {
+                com.concept.music.ui.components.parseSongArtistNames(pickerSong.artist)
+            }
+            com.concept.music.ui.components.ArtistSelectionFloatingDialog(
+                song = pickerSong,
+                artistNames = artistNames,
+                isPlayerStyle = false,
+                onSelectArtist = { chosenName, resolvedId ->
+                    multiArtistPickerSong = null
+                    navigateToSingleArtist(chosenName, resolvedId)
+                },
+                onDismiss = { multiArtistPickerSong = null }
             )
         }
 

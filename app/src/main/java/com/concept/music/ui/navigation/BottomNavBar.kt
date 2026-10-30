@@ -1,9 +1,7 @@
 package com.concept.music.ui.navigation
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -19,7 +17,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -37,19 +34,21 @@ import androidx.compose.ui.unit.sp
 import com.concept.music.ui.theme.ConceptCyanAccent
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.LocalConceptAdaptiveInfo
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.softClickable
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.sin
 
 /**
  * 现代流体双态底部导航栏（自适应「幽邃微蓝」深色与「水彩浸润」浅色主题）：
- * 1. 左右切换流体滑块动画：点击切换页面时，底部胶囊指示器呈现带水滴拉伸弹性的左右丝滑位移；
- * 2. 圆润饱满双态自定义图标（两套 UI）：
- *    - 「发现」：未选中态为轻盈圆润星球罗盘线框，选中激活态变形为饱满流光黑胶音律星球（带律动星芒与旋转指针）；
- *    - 「我的」：未选中态为柔和圆润简约人形轮廓，选中激活态变形为头戴饱满圆润大耳机的心流音乐人像（带跃动音符心徽）；
- * 3. 柔和弹性点击反馈：使用 softClickable 彻底消除生硬方形闪烁框。
+ * 1. 平板竖屏或分屏窗口（`isLargeScreenDevice == true`）：
+ *    去掉左侧边栏，采用与悬浮播放控制条（`MiniPlayerBar`）完全同源的「底部居中悬浮胶囊（Floating Capsule）」设计，
+ *    限制合适宽度并带柔和立体阴影悬浮于屏幕底部中央；
+ * 2. 手机端（`isLargeScreenDevice == false`）：
+ *    保持贴底全宽流体导航栏；
+ * 3. 左右切换流体滑块动画：点击切换页面时，胶囊指示器呈现带水滴拉伸弹性的左右丝滑位移；
+ * 4. 圆润饱满双态自定义图标（「发现」星轨罗盘 + 「我的」耳机人像）。
  */
 @Composable
 fun BottomNavBar(
@@ -58,8 +57,8 @@ fun BottomNavBar(
     modifier: Modifier = Modifier
 ) {
     val isDark = LocalIsDarkTheme.current
-    val barBg = if (isDark) Color(0xF50B111E) else Color(0xF7F2F7FF)
-    val topBorderColor = if (isDark) Color.White.copy(alpha = 0.07f) else ConceptPrimary.copy(alpha = 0.10f)
+    val adaptiveInfo = LocalConceptAdaptiveInfo.current
+    val isFloatingCapsule = adaptiveInfo.isLargeScreenDevice
 
     val selectedIndex = if (currentRoute == Screen.Library.route) 1 else 0
     val slideProgress by animateFloatAsState(
@@ -68,153 +67,369 @@ fun BottomNavBar(
         label = "bottomNavSlideProgress"
     )
 
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = barBg,
-        tonalElevation = if (isDark) 2.dp else 4.dp
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
+    if (isFloatingCapsule) {
+        // 平板竖屏或分屏窗口：将「发现 / 我的」悬浮胶囊导航栏放置于屏幕左侧垂直居中（仅保留发现与我的，无多余按钮）
+        val capsuleShape = RoundedCornerShape(32.dp)
+        val capsuleBgColor = if (isDark) Color(0xFF141E30) else Color(0xFFF7FAFF)
+        val capsuleBrush = if (isDark) {
+            Brush.verticalGradient(
+                listOf(
+                    Color(0xF2162236),
+                    Color(0xF2131C2D),
+                    Color(0xF2172338)
+                )
+            )
+        } else {
+            Brush.verticalGradient(
+                listOf(
+                    Color(0xFAFFFFFF),
+                    Color(0xF8F4F9FF),
+                    Color(0xFAFFFFFF)
+                )
+            )
+        }
+        val capsuleBorderColor = if (isDark) {
+            Color.White.copy(alpha = 0.09f)
+        } else {
+            ConceptPrimary.copy(alpha = 0.14f)
+        }
+
+        Box(
+            modifier = modifier
+                .wrapContentSize()
+                .statusBarsPadding()
                 .navigationBarsPadding()
+                .padding(start = 12.dp, top = 16.dp, bottom = 16.dp),
+            contentAlignment = Alignment.CenterStart
         ) {
-            Box(
+            Surface(
+                shape = capsuleShape,
+                color = capsuleBgColor,
+                shadowElevation = if (isDark) 14.dp else 7.dp,
+                modifier = Modifier
+                    .width(64.dp)
+                    .height(152.dp)
+                    .border(width = 0.8.dp, color = capsuleBorderColor, shape = capsuleShape)
+            ) {
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(capsuleBrush)
+                        .padding(vertical = 8.dp, horizontal = 6.dp),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    VerticalFloatingNavInteractiveContent(
+                        maxHeight = maxHeight,
+                        selectedIndex = selectedIndex,
+                        slideProgress = slideProgress,
+                        isDark = isDark,
+                        pillBaseHeight = 62.dp,
+                        onNavigate = onNavigate
+                    )
+                }
+            }
+        }
+    } else {
+        val barBg = if (isDark) Color(0xF50B111E) else Color(0xF7F2F7FF)
+        val topBorderColor = if (isDark) Color.White.copy(alpha = 0.07f) else ConceptPrimary.copy(alpha = 0.10f)
+
+        Surface(
+            modifier = modifier.fillMaxWidth(),
+            color = barBg,
+            tonalElevation = if (isDark) 2.dp else 4.dp
+        ) {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(0.8.dp)
-                    .background(topBorderColor)
+                    .navigationBarsPadding()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(0.8.dp)
+                        .background(topBorderColor)
+                )
+
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(58.dp)
+                        .padding(horizontal = 28.dp),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    BottomNavInteractiveContent(
+                        maxWidth = maxWidth,
+                        selectedIndex = selectedIndex,
+                        slideProgress = slideProgress,
+                        isDark = isDark,
+                        pillBaseWidth = 108.dp,
+                        onNavigate = onNavigate
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun VerticalFloatingNavInteractiveContent(
+    maxHeight: androidx.compose.ui.unit.Dp,
+    selectedIndex: Int,
+    slideProgress: Float,
+    isDark: Boolean,
+    pillBaseHeight: androidx.compose.ui.unit.Dp,
+    onNavigate: (String) -> Unit
+) {
+    val tabCount = bottomNavScreens.size.coerceAtLeast(1)
+    val tabSlotHeight = maxHeight / tabCount
+    val midStretch = sin(slideProgress.coerceIn(0f, 1f) * PI.toFloat())
+    val dynamicPillHeight = pillBaseHeight + (10.dp * midStretch)
+    val currentSlotCenterY = tabSlotHeight * (slideProgress + 0.5f)
+    val pillOffsetY = (currentSlotCenterY - dynamicPillHeight / 2).coerceAtLeast(0.dp)
+
+    val pillBrush = if (isDark) {
+        Brush.verticalGradient(
+            listOf(
+                ConceptPrimary.copy(alpha = 0.24f),
+                ConceptCyanAccent.copy(alpha = 0.18f)
+            )
+        )
+    } else {
+        Brush.verticalGradient(
+            listOf(
+                ConceptPrimary.copy(alpha = 0.16f),
+                ConceptCyanAccent.copy(alpha = 0.12f)
+            )
+        )
+    }
+    val pillBorderColor = if (isDark) {
+        ConceptPrimary.copy(alpha = 0.35f)
+    } else {
+        ConceptPrimary.copy(alpha = 0.24f)
+    }
+
+    Canvas(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        val pillW = size.width
+        val pillH = dynamicPillHeight.toPx().coerceAtMost(size.height)
+        val leftX = 0f
+        val topY = pillOffsetY.toPx().coerceIn(0f, (size.height - pillH).coerceAtLeast(0f))
+        val radius = CornerRadius(pillW / 2f, pillW / 2f)
+        drawRoundRect(
+            brush = pillBrush,
+            topLeft = Offset(leftX, topY),
+            size = Size(pillW, pillH),
+            cornerRadius = radius
+        )
+        drawRoundRect(
+            color = pillBorderColor,
+            topLeft = Offset(leftX, topY),
+            size = Size(pillW, pillH),
+            cornerRadius = radius,
+            style = Stroke(width = 1.dp.toPx())
+        )
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        bottomNavScreens.forEachIndexed { index, screen ->
+            val isSelected = selectedIndex == index
+            val morphProgress by animateFloatAsState(
+                targetValue = if (isSelected) 1f else 0f,
+                animationSpec = ConceptMotion.expressiveSpring(),
+                label = "verticalIconMorph_$index"
+            )
+            val textColor by animateColorAsState(
+                targetValue = if (isSelected) {
+                    ConceptPrimary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
+                },
+                animationSpec = tween(220),
+                label = "verticalNavTextColor_$index"
             )
 
-            BoxWithConstraints(
+            Box(
                 modifier = Modifier
+                    .weight(1f)
                     .fillMaxWidth()
-                    .height(58.dp)
-                    .padding(horizontal = 28.dp),
-                contentAlignment = Alignment.CenterStart
+                    .softClickable(
+                        pressScale = 0.92f,
+                        pressAlpha = 0.80f,
+                        onClick = { onNavigate(screen.route) }
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                val tabCount = bottomNavScreens.size.coerceAtLeast(1)
-                val tabSlotWidth = maxWidth / tabCount
-                val pillBaseWidth = 108.dp
-                // 左右滑动途中产生轻微流体水滴横向拉伸感
-                val midStretch = sin(slideProgress.coerceIn(0f, 1f) * PI.toFloat())
-                val dynamicPillWidth = pillBaseWidth + (18.dp * midStretch)
-                val currentSlotCenter = tabSlotWidth * (slideProgress + 0.5f)
-                val pillOffsetX = (currentSlotCenter - dynamicPillWidth / 2).coerceAtLeast(0.dp)
-
-                val pillBrush = if (isDark) {
-                    Brush.horizontalGradient(
-                        listOf(
-                            ConceptPrimary.copy(alpha = 0.24f),
-                            ConceptCyanAccent.copy(alpha = 0.18f)
-                        )
-                    )
-                } else {
-                    Brush.horizontalGradient(
-                        listOf(
-                            ConceptPrimary.copy(alpha = 0.16f),
-                            ConceptCyanAccent.copy(alpha = 0.12f)
-                        )
-                    )
-                }
-                val pillBorderColor = if (isDark) {
-                    ConceptPrimary.copy(alpha = 0.35f)
-                } else {
-                    ConceptPrimary.copy(alpha = 0.24f)
-                }
-
-                // 底层左右滑动流体胶囊指示器（采用 Canvas 渲染阶段直绘，彻底消除 120Hz 滑动时的 Layout 重排抖动）
-                Canvas(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    val pillW = dynamicPillWidth.toPx()
-                    val pillH = 40.dp.toPx()
-                    val leftX = pillOffsetX.toPx().coerceIn(0f, (size.width - pillW).coerceAtLeast(0f))
-                    val topY = (size.height - pillH) / 2f
-                    val radius = CornerRadius(pillH / 2f, pillH / 2f)
-                    drawRoundRect(
-                        brush = pillBrush,
-                        topLeft = Offset(leftX, topY),
-                        size = Size(pillW, pillH),
-                        cornerRadius = radius
-                    )
-                    drawRoundRect(
-                        color = pillBorderColor,
-                        topLeft = Offset(leftX, topY),
-                        size = Size(pillW, pillH),
-                        cornerRadius = radius,
-                        style = Stroke(width = 1.dp.toPx())
-                    )
-                }
-
-                // 顶层双态图标与标签交互行
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    bottomNavScreens.forEachIndexed { index, screen ->
-                        val isSelected = selectedIndex == index
-                        val morphProgress by animateFloatAsState(
-                            targetValue = if (isSelected) 1f else 0f,
-                            animationSpec = ConceptMotion.expressiveSpring(),
-                            label = "iconMorph_$index"
-                        )
-                        val textColor by animateColorAsState(
-                            targetValue = if (isSelected) {
-                                ConceptPrimary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
-                            },
-                            animationSpec = tween(220),
-                            label = "navTextColor_$index"
-                        )
-
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .softClickable(
-                                    pressScale = 0.92f,
-                                    pressAlpha = 0.80f,
-                                    onClick = { onNavigate(screen.route) }
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center,
-                                modifier = Modifier
-                                    .graphicsLayer {
-                                        val s = 1f + 0.10f * morphProgress
-                                        scaleX = s
-                                        scaleY = s
-                                        translationY = -2.dp.toPx() * morphProgress
-                                    }
-                            ) {
-                                if (screen.route == Screen.Discover.route) {
-                                    DiscoverDualStateIcon(
-                                        progress = morphProgress,
-                                        isDark = isDark,
-                                        modifier = Modifier.size(26.dp)
-                                    )
-                                } else {
-                                    LibraryDualStateIcon(
-                                        progress = morphProgress,
-                                        isDark = isDark,
-                                        modifier = Modifier.size(26.dp)
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.width(7.dp))
-
-                                Text(
-                                    text = screen.title,
-                                    color = textColor,
-                                    fontSize = if (isSelected) 13.5.sp else 13.sp,
-                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold
-                                )
-                            }
-                        }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.graphicsLayer {
+                        val s = 1f + 0.08f * morphProgress
+                        scaleX = s
+                        scaleY = s
                     }
+                ) {
+                    if (screen.route == Screen.Discover.route) {
+                        DiscoverDualStateIcon(
+                            progress = morphProgress,
+                            isDark = isDark,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    } else {
+                        LibraryDualStateIcon(
+                            progress = morphProgress,
+                            isDark = isDark,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(3.dp))
+
+                    Text(
+                        text = screen.title,
+                        color = textColor,
+                        fontSize = if (isSelected) 12.sp else 11.5.sp,
+                        fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BottomNavInteractiveContent(
+    maxWidth: androidx.compose.ui.unit.Dp,
+    selectedIndex: Int,
+    slideProgress: Float,
+    isDark: Boolean,
+    pillBaseWidth: androidx.compose.ui.unit.Dp,
+    onNavigate: (String) -> Unit
+) {
+    val tabCount = bottomNavScreens.size.coerceAtLeast(1)
+    val tabSlotWidth = maxWidth / tabCount
+    // 左右滑动途中产生轻微流体水滴横向拉伸感
+    val midStretch = sin(slideProgress.coerceIn(0f, 1f) * PI.toFloat())
+    val dynamicPillWidth = pillBaseWidth + (18.dp * midStretch)
+    val currentSlotCenter = tabSlotWidth * (slideProgress + 0.5f)
+    val pillOffsetX = (currentSlotCenter - dynamicPillWidth / 2).coerceAtLeast(0.dp)
+
+    val pillBrush = if (isDark) {
+        Brush.horizontalGradient(
+            listOf(
+                ConceptPrimary.copy(alpha = 0.24f),
+                ConceptCyanAccent.copy(alpha = 0.18f)
+            )
+        )
+    } else {
+        Brush.horizontalGradient(
+            listOf(
+                ConceptPrimary.copy(alpha = 0.16f),
+                ConceptCyanAccent.copy(alpha = 0.12f)
+            )
+        )
+    }
+    val pillBorderColor = if (isDark) {
+        ConceptPrimary.copy(alpha = 0.35f)
+    } else {
+        ConceptPrimary.copy(alpha = 0.24f)
+    }
+
+    // 底层左右滑动流体胶囊指示器（采用 Canvas 渲染阶段直绘，彻底消除 120Hz 滑动时的 Layout 重排抖动）
+    Canvas(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        val pillW = dynamicPillWidth.toPx().coerceAtMost(size.width)
+        val pillH = 40.dp.toPx()
+        val leftX = pillOffsetX.toPx().coerceIn(0f, (size.width - pillW).coerceAtLeast(0f))
+        val topY = (size.height - pillH) / 2f
+        val radius = CornerRadius(pillH / 2f, pillH / 2f)
+        drawRoundRect(
+            brush = pillBrush,
+            topLeft = Offset(leftX, topY),
+            size = Size(pillW, pillH),
+            cornerRadius = radius
+        )
+        drawRoundRect(
+            color = pillBorderColor,
+            topLeft = Offset(leftX, topY),
+            size = Size(pillW, pillH),
+            cornerRadius = radius,
+            style = Stroke(width = 1.dp.toPx())
+        )
+    }
+
+    // 顶层双态图标与标签交互行
+    Row(
+        modifier = Modifier.fillMaxSize(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        bottomNavScreens.forEachIndexed { index, screen ->
+            val isSelected = selectedIndex == index
+            val morphProgress by animateFloatAsState(
+                targetValue = if (isSelected) 1f else 0f,
+                animationSpec = ConceptMotion.expressiveSpring(),
+                label = "iconMorph_$index"
+            )
+            val textColor by animateColorAsState(
+                targetValue = if (isSelected) {
+                    ConceptPrimary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
+                },
+                animationSpec = tween(220),
+                label = "navTextColor_$index"
+            )
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .softClickable(
+                        pressScale = 0.92f,
+                        pressAlpha = 0.80f,
+                        onClick = { onNavigate(screen.route) }
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .graphicsLayer {
+                            val s = 1f + 0.10f * morphProgress
+                            scaleX = s
+                            scaleY = s
+                            translationY = -2.dp.toPx() * morphProgress
+                        }
+                ) {
+                    if (screen.route == Screen.Discover.route) {
+                        DiscoverDualStateIcon(
+                            progress = morphProgress,
+                            isDark = isDark,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    } else {
+                        LibraryDualStateIcon(
+                            progress = morphProgress,
+                            isDark = isDark,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(7.dp))
+
+                    Text(
+                        text = screen.title,
+                        color = textColor,
+                        fontSize = if (isSelected) 13.5.sp else 13.sp,
+                        fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold
+                    )
                 }
             }
         }
@@ -418,181 +633,6 @@ private fun LibraryDualStateIcon(
                 size = Size(bodyWidth, bodyHeight),
                 cornerRadius = CornerRadius(bodyHeight / 2f, bodyHeight / 2f),
                 style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-            )
-        }
-    }
-}
-
-/**
- * 平板竖屏与分屏窗口（Medium 宽度）专属「侧边导航栏 (ConceptNavigationRail)」：
- * - 基于 Google 官方 WindowSizeClass 自适应规范，当窗口处于平板竖屏或左右分屏时替代底部导航栏；
- * - 复用圆润饱满双态「发现」与「我的」矢量动效图标，顶部与底部内置快捷搜索与设置入口。
- */
-@Composable
-fun ConceptNavigationRail(
-    currentRoute: String,
-    onNavigate: (String) -> Unit,
-    onOpenSearch: () -> Unit = {},
-    onOpenSettings: () -> Unit = {},
-    modifier: Modifier = Modifier
-) {
-    val isDark = LocalIsDarkTheme.current
-    val railBg = if (isDark) Color(0xF50B111E) else Color(0xF7F2F7FF)
-    val borderColor = if (isDark) Color.White.copy(alpha = 0.07f) else ConceptPrimary.copy(alpha = 0.10f)
-    val selectedIndex = if (currentRoute == Screen.Library.route) 1 else 0
-
-    Surface(
-        modifier = modifier
-            .width(84.dp)
-            .fillMaxHeight(),
-        color = railBg,
-        tonalElevation = if (isDark) 2.dp else 4.dp
-    ) {
-        Row(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .padding(vertical = 18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                // 顶部品牌徽章与快捷搜索
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = ConceptPrimary.copy(alpha = if (isDark) 0.18f else 0.12f),
-                        modifier = Modifier
-                            .size(44.dp)
-                            .softClickable(onClick = onOpenSearch)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Canvas(modifier = Modifier.size(20.dp)) {
-                                val r = size.minDimension * 0.34f
-                                val c = Offset(size.width * 0.44f, size.height * 0.44f)
-                                drawCircle(
-                                    color = ConceptPrimary,
-                                    radius = r,
-                                    center = c,
-                                    style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round)
-                                )
-                                drawLine(
-                                    color = ConceptCyanAccent,
-                                    start = Offset(c.x + r * 0.72f, c.y + r * 0.72f),
-                                    end = Offset(size.width * 0.84f, size.height * 0.84f),
-                                    strokeWidth = 2.4.dp.toPx(),
-                                    cap = StrokeCap.Round
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // 中央核心双态导航项（优先「发现」，其次「我的」）
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(18.dp)
-                ) {
-                    bottomNavScreens.forEachIndexed { index, screen ->
-                        val isSelected = selectedIndex == index
-                        val morphProgress by animateFloatAsState(
-                            targetValue = if (isSelected) 1f else 0f,
-                            animationSpec = ConceptMotion.expressiveSpring(),
-                            label = "railIconMorph_$index"
-                        )
-                        val textColor by animateColorAsState(
-                            targetValue = if (isSelected) {
-                                ConceptPrimary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
-                            },
-                            animationSpec = tween(220),
-                            label = "railTextColor_$index"
-                        )
-                        val pillBrush = Brush.verticalGradient(
-                            listOf(
-                                ConceptPrimary.copy(alpha = if (isDark) 0.24f * morphProgress else 0.16f * morphProgress),
-                                ConceptCyanAccent.copy(alpha = if (isDark) 0.18f * morphProgress else 0.12f * morphProgress)
-                            )
-                        )
-
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .width(68.dp)
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(pillBrush)
-                                .softClickable(
-                                    pressScale = 0.92f,
-                                    pressAlpha = 0.80f,
-                                    onClick = { onNavigate(screen.route) }
-                                )
-                                .padding(vertical = 12.dp, horizontal = 6.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier.graphicsLayer {
-                                    val s = 1f + 0.10f * morphProgress
-                                    scaleX = s
-                                    scaleY = s
-                                },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (screen.route == Screen.Discover.route) {
-                                    DiscoverDualStateIcon(
-                                        progress = morphProgress,
-                                        isDark = isDark,
-                                        modifier = Modifier.size(26.dp)
-                                    )
-                                } else {
-                                    LibraryDualStateIcon(
-                                        progress = morphProgress,
-                                        isDark = isDark,
-                                        modifier = Modifier.size(26.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(5.dp))
-                            Text(
-                                text = screen.title,
-                                color = textColor,
-                                fontSize = 12.sp,
-                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold
-                            )
-                        }
-                    }
-                }
-
-                // 底部快捷设置入口
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-                    modifier = Modifier
-                        .size(40.dp)
-                        .softClickable(onClick = onOpenSettings)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        val gearColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        Canvas(modifier = Modifier.size(18.dp)) {
-                            val c = Offset(size.width / 2f, size.height / 2f)
-                            val rOuter = size.minDimension * 0.36f
-                            val rInner = size.minDimension * 0.16f
-                            drawCircle(gearColor, radius = rOuter, center = c, style = Stroke(width = 1.9.dp.toPx()))
-                            drawCircle(ConceptPrimary, radius = rInner, center = c)
-                        }
-                    }
-                }
-            }
-
-            Box(
-                modifier = Modifier
-                    .width(0.8.dp)
-                    .fillMaxHeight()
-                    .background(borderColor)
             )
         }
     }

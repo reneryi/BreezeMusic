@@ -600,7 +600,8 @@ class UiAlignmentRegressionTest {
 
         val treeResult = com.concept.music.ui.comment.buildFloorClusterTree(
             rootComment = root,
-            rawReplies = listOf(lv1, lv2, lv3, lv4, lv5)
+            rawReplies = listOf(lv1, lv2, lv3, lv4, lv5),
+            maxInlineLevel = 4
         )
         assertEquals(5, treeResult.totalReplyCountInTree)
         // 4 cluster comment rows (lv1..lv4) + 1 ViewDeepDialogueBadgeRow for lv5
@@ -1129,7 +1130,7 @@ class UiAlignmentRegressionTest {
         assertTrue(issueTemplate.contains("### 复现步骤 (Steps to Reproduce)"))
         assertTrue(issueTemplate.contains("BreezeMusic v1.0.0 (Build 1)"))
 
-        assertEquals(5, com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.size)
+        assertEquals(6, com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.size)
         val latestRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.first()
         val initialRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.last()
         assertEquals("v${BuildConfig.VERSION_NAME}", latestRelease.version)
@@ -1604,7 +1605,7 @@ class UiAlignmentRegressionTest {
         assertEquals("v2.1.0 正式版 · Build 12", customVer.fullBadgeText)
 
         val history = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY
-        assertEquals("更新日志完整记录全部 5 个发布版本 (v1.0.0 ~ v1.2.0)", 5, history.size)
+        assertEquals("更新日志完整记录全部 6 个发布版本 (v1.0.0 ~ v1.3.0)", 6, history.size)
         val latest = history.first()
         assertEquals("v${BuildConfig.VERSION_NAME}", latest.version)
         assertTrue(latest.moduleGroups.size >= 4)
@@ -1802,14 +1803,14 @@ class UiAlignmentRegressionTest {
         assertTrue("我的页 VIP 权益中心卡片应使用精简无重复的小字文案", vipCardCode.contains("每日签到 · 畅享无损") && vipCardCode.contains("免费领取"))
 
         val gradleCode = java.io.File(projectRoot, "app/build.gradle.kts").readText(Charsets.UTF_8)
-        assertEquals("1.2.0", com.concept.music.ui.settings.extractVersionFromGradleText(gradleCode))
+        assertEquals("1.3.0", com.concept.music.ui.settings.extractVersionFromGradleText(gradleCode))
     }
 
     @Test
     fun `v1_2_0全版本更新日志与KRC歌词HTML实体反转义及高清封面分类验证`() {
         // 1. 验证更新日志完整记录每次发布的版本：v1.2.0, v1.1.0, v1.0.2, v1.0.1, v1.0.0
         val versions = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.map { it.version }
-        assertEquals(listOf("v1.2.0", "v1.1.0", "v1.0.2", "v1.0.1", "v1.0.0"), versions)
+        assertEquals(listOf("v${BuildConfig.VERSION_NAME}", "v1.2.0", "v1.1.0", "v1.0.2", "v1.0.1", "v1.0.0"), versions)
 
         // 2. 验证 KRC / LRC 歌词 HTML 实体（如 &apos;）自动反转义（解决图三 Vibe 英文歌词显示 &apos; 问题）
         val rawKrcLine = "[1000,3000]<0,500,0>And <500,800,0>it&apos;s <1300,700,0>goin&apos; <2000,1000,0>home"
@@ -1849,8 +1850,8 @@ class UiAlignmentRegressionTest {
         val tabletPortraitOrSplit = com.concept.music.ui.theme.computeAdaptiveLayoutInfo(widthDp = 720, heightDp = 1024, smallestWidthDp = 720, isTabletFlavor = true)
         assertTrue(tabletPortraitOrSplit.isLargeScreenDevice)
         assertEquals(com.concept.music.ui.theme.ConceptWidthSizeClass.MEDIUM, tabletPortraitOrSplit.widthSizeClass)
-        assertEquals(com.concept.music.ui.theme.ConceptNavigationMode.NAVIGATION_RAIL, tabletPortraitOrSplit.navigationMode)
-        assertTrue(tabletPortraitOrSplit.useMasterDetailSettings)
+        assertEquals(com.concept.music.ui.theme.ConceptNavigationMode.BOTTOM_BAR, tabletPortraitOrSplit.navigationMode)
+        assertFalse("平板竖屏下设置页采用单栏宽卡片，横屏下才启用左右分栏", tabletPortraitOrSplit.useMasterDetailSettings)
         assertTrue(tabletPortraitOrSplit.useTwoColumnSongOrCardGrid)
         assertEquals(460f, tabletPortraitOrSplit.miniPlayerMaxWidth.value, 0.1f)
 
@@ -1890,5 +1891,71 @@ class UiAlignmentRegressionTest {
         assertTrue("v1.1.0 应能从 Releases 列表或自定义前缀 Tag 中检出 v1.2.0 更新", checkRes is com.concept.music.ui.settings.UpdateCheckResult.HasUpdate)
         val hasUpdate = checkRes as com.concept.music.ui.settings.UpdateCheckResult.HasUpdate
         assertEquals("v1.2.0", hasUpdate.latestVersion)
+
+        // 6. 验证评论树在平板模式下支持展示到 7 级评论，第 8 级收纳为「查看对话」入口
+        val rootCmt = com.concept.music.data.model.SongComment(id = "root", userId = "u0", userName = "楼主", userAvatar = "", content = "原评", timeFormatted = "刚刚")
+        val chainReplies = (1..8).map { lv ->
+            com.concept.music.data.model.SongComment(
+                id = "r$lv",
+                userId = "u$lv",
+                userName = "用户$lv",
+                userAvatar = "",
+                content = "第${lv}级回复",
+                timeFormatted = "刚刚",
+                parentId = if (lv == 1) "root" else "r${lv - 1}",
+                replyTargetCommentId = if (lv == 1) "root" else "r${lv - 1}",
+                replyUserName = if (lv == 1) "楼主" else "用户${lv - 1}"
+            )
+        }
+        val phoneTree = com.concept.music.ui.comment.buildFloorClusterTree(rootCmt, chainReplies, maxInlineLevel = 4)
+        val tabletTree = com.concept.music.ui.comment.buildFloorClusterTree(rootCmt, chainReplies, maxInlineLevel = 7)
+        assertEquals("手机端内联显示 1~4 级 + 1 个查看对话入口 = 5 项", 5, phoneTree.visualItems.size)
+        assertEquals("平板端内联显示 1~7 级 + 1 个查看对话入口 = 8 项", 8, tabletTree.visualItems.size)
+    }
+
+    @Test
+    fun `v1_3_0多歌手拆分与歌手取关PKCS1加密及平板专项优化验证`() {
+        // 1. 验证多歌手名称拆分逻辑（支持 、 / & ， , feat. ft. 等分隔符）
+        val multi1 = com.concept.music.ui.components.parseSongArtistNames("周杰伦、费玉清")
+        assertEquals(listOf("周杰伦", "费玉清"), multi1)
+
+        val multi2 = com.concept.music.ui.components.parseSongArtistNames("Lady Gaga & Bruno Mars / Rosé feat. APT")
+        assertEquals(listOf("Lady Gaga", "Bruno Mars", "Rosé", "APT"), multi2)
+
+        val single = com.concept.music.ui.components.parseSongArtistNames("陈奕迅")
+        assertEquals(listOf("陈奕迅"), single)
+
+        // 2. 验证关注/取关歌手使用的 rsaPkcs1 (RSA/ECB/PKCS1Padding) 可正常生成 256 十六进制字符密文
+        val pPayload = KugouSigner.gson.toJson(mapOf("clienttime" to 1730000000L, "key" to "0123456789abcdef"))
+        val pkcs1Hex = KugouSigner.rsaPkcs1(pPayload, lite = true).uppercase()
+        assertEquals(256, pkcs1Hex.length)
+        assertTrue(pkcs1Hex.all { it in '0'..'9' || it in 'A'..'F' })
+
+        // 3. 验证关键源码包含 v1.3.0 全部优化点
+        val projectRoot = java.io.File(".").canonicalFile.let { dir ->
+            if (java.io.File(dir, "app/src/main").exists()) dir else dir.parentFile
+        }
+        val navCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/navigation/BottomNavBar.kt").readText(Charsets.UTF_8)
+        assertTrue("平板端悬浮导航栏应使用垂直胶囊 VerticalFloatingNavInteractiveContent", navCode.contains("VerticalFloatingNavInteractiveContent"))
+
+        val mainCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/MainActivity.kt").readText(Charsets.UTF_8)
+        assertTrue("平板竖屏悬浮导航栏应置于左侧居中 Alignment.CenterStart", mainCode.contains("Alignment.CenterStart"))
+        assertTrue("MainActivity 应挂载多歌手选择弹窗 ArtistSelectionFloatingDialog", mainCode.contains("ArtistSelectionFloatingDialog"))
+
+        val homeCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/home/HomeScreen.kt").readText(Charsets.UTF_8)
+        assertTrue("平板端电台预览应支持两行 chunked(2) 显示", homeCode.contains("val fmColumns = remember(fmChannels) { fmChannels.chunked(2) }"))
+        assertTrue("随心听抽屉应迁移为 ConceptAnimatedOverlaySheet 以免遮挡更多菜单", !homeCode.contains("val pfmSheetState = rememberModalBottomSheetState"))
+
+        val libCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/library/LibraryScreen.kt").readText(Charsets.UTF_8)
+        assertTrue("我的页歌单列表视图不应被 !isTabletStandalonePortrait 写死拦截", libCode.contains("} else if (!isGridView) {"))
+
+        val audioCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/AudioEffectDialog.kt").readText(Charsets.UTF_8)
+        assertTrue("音效页顶栏应复刻心流舱滑动胶囊动画 viperTabSlidingPill", audioCode.contains("viperTabSlidingPill"))
+
+        val npCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/NowPlayingSheet.kt").readText(Charsets.UTF_8)
+        assertTrue("平板竖屏点击横屏播放应启用 90 度全屏画布旋转 isForcedRotatedTabletLandscape", npCode.contains("isForcedRotatedTabletLandscape"))
+
+        val repoCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/data/kugou/MusicRepository.kt").readText(Charsets.UTF_8)
+        assertTrue("unfollowArtist 应使用 KugouSigner.rsaPkcs1 对齐 MakcRe/KuGouMusicApi", repoCode.contains("KugouSigner.rsaPkcs1("))
     }
 }

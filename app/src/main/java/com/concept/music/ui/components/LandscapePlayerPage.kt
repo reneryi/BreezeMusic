@@ -164,7 +164,7 @@ internal fun LandscapePlayerPage(
 ) {
     val context = LocalContext.current
     val adaptiveInfo = LocalConceptAdaptiveInfo.current
-    val isTabletLandscape = adaptiveInfo.isTabletLandscapePlayer
+    val isTabletLandscape = adaptiveInfo.isLargeScreenDevice
     var showBgPickerMenu by remember { mutableStateOf(false) }
 
     val readableAccentPrimary = remember(accentPrimary) { accentPrimary.readableOnDarkSurface(0.46f) }
@@ -211,31 +211,32 @@ internal fun LandscapePlayerPage(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // =========================================================================
-            // 左区 (weight 0.46f)：大尺寸主角封面 + 一体化控播坞（平板下自适应放大并消除中部断层）
+            // 左区 (weight 0.46f)：大尺寸主角封面 + 底部沉降式统一控播舞台
             // =========================================================================
+            val favBurstScale by animateFloatAsState(
+                targetValue = if (isFavorite) 1.14f else 1.0f,
+                animationSpec = ConceptMotion.expressiveSpring(),
+                label = "landCoverFavScale"
+            )
             Column(
                 modifier = Modifier
-                    .weight(if (isTabletLandscape) 0.46f else 0.45f)
+                    .weight(if (isTabletLandscape) 0.47f else 0.45f)
                     .fillMaxHeight()
-                    .padding(end = if (isTabletLandscape) 24.dp else 16.dp),
+                    .padding(
+                        start = if (isTabletLandscape) 12.dp else 0.dp,
+                        end = if (isTabletLandscape) 22.dp else 16.dp,
+                        top = if (isTabletLandscape) 24.dp else 0.dp,
+                        bottom = if (isTabletLandscape) 6.dp else 0.dp
+                    ),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = if (isTabletLandscape) Arrangement.Center else Arrangement.SpaceBetween
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Box(
                     modifier = Modifier
-                        .then(
-                            if (isTabletLandscape) {
-                                Modifier
-                                    .weight(1f, fill = false)
-                                    .fillMaxWidth()
-                                    .padding(bottom = 18.dp)
-                            } else {
-                                Modifier
-                                    .weight(1f)
-                                    .fillMaxWidth()
-                                    .padding(top = 4.dp, bottom = 2.dp)
-                            }
-                        )
+                        .weight(1f)
+                        .widthIn(max = if (isTabletLandscape) 460.dp else 360.dp)
+                        .fillMaxWidth()
+                        .padding(top = 2.dp, bottom = 4.dp)
                         .pointerInput(song.id) {
                             detectTapGestures(
                                 onDoubleTap = { onToggleFavorite() },
@@ -246,101 +247,29 @@ internal fun LandscapePlayerPage(
                 ) {
                     BoxWithConstraints(
                         contentAlignment = Alignment.Center,
-                        modifier = if (isTabletLandscape) Modifier.wrapContentSize() else Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         val coverSide = if (isTabletLandscape) {
-                            minOf(
-                                (adaptiveInfo.widthDp * 0.30f).dp,
-                                (adaptiveInfo.heightDp * 0.48f).dp
-                            ).coerceIn(216.dp, 328.dp)
+                            minOf(maxWidth * 0.76f, maxHeight * 0.92f).coerceIn(160.dp, 304.dp)
                         } else {
                             minOf(maxWidth * 0.74f, maxHeight * 0.88f).coerceIn(152.dp, 238.dp)
                         }
-                        val cornerRadiusDp = if (isTabletLandscape) 32.dp else 26.dp
+                        val vinylScale = minOf(
+                            (maxWidth * 0.80f) / 312.dp,
+                            (maxHeight * 0.95f) / 296.dp
+                        ).coerceIn(0.52f, 1.12f)
+                        val cornerRadiusDp = if (isTabletLandscape) 30.dp else 26.dp
 
                         if (isTabletLandscape && coverStyle == CoverStyle.VINYL) {
-                            // 平板横屏合并播放页下支持展示旋转黑胶唱盘样式
-                            Box(
-                                modifier = Modifier
-                                    .size(coverSide)
-                                    .shadow(
-                                        elevation = 28.dp,
-                                        shape = CircleShape,
-                                        spotColor = accentPrimary.copy(alpha = 0.55f)
-                                    )
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF10131C))
-                                    .graphicsLayer { rotationZ = rotationProvider() },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Canvas(modifier = Modifier.fillMaxSize()) {
-                                    val r = size.minDimension / 2f
-                                    val c = Offset(size.width / 2f, size.height / 2f)
-                                    drawCircle(
-                                        brush = Brush.radialGradient(
-                                            colors = listOf(Color(0xFF222733), Color(0xFF101218), Color(0xFF08090D)),
-                                            center = c,
-                                            radius = r
-                                        ),
-                                        radius = r,
-                                        center = c
-                                    )
-                                    val innerR = r * 0.64f
-                                    val outerR = r * 0.95f
-                                    val step = (outerR - innerR) / 12f
-                                    for (i in 0..11) {
-                                        drawCircle(
-                                            color = Color.White.copy(alpha = if (i % 3 == 0) 0.09f else 0.035f),
-                                            radius = innerR + i * step,
-                                            center = c,
-                                            style = Stroke(width = 0.8.dp.toPx())
-                                        )
-                                    }
-                                    drawCircle(
-                                        color = VipGold.copy(alpha = 0.55f),
-                                        radius = r * 0.625f,
-                                        center = c,
-                                        style = Stroke(width = 1.8.dp.toPx())
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .size(coverSide * 0.61f)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFF181C26)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (song.coverUrl.isNotBlank()) {
-                                        AsyncImage(
-                                            model = song.coverUrl,
-                                            contentDescription = song.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Rounded.MusicNote,
-                                            contentDescription = null,
-                                            tint = Color.White.copy(alpha = 0.4f),
-                                            modifier = Modifier.size(48.dp)
-                                        )
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .size(24.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xAA0A0D14)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(8.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(0xFF07090E))
-                                        )
-                                    }
-                                }
-                            }
+                            // 平板横屏合并播放页直接复用手机版带精密液压平衡唱臂的 MasterVinylTurntableView，
+                            // 并传入基于当前可用宽高动态计算的等比 scale，确保黑胶在任何屏幕/分屏/旋转窗口下 100% 保持正圆不压扁！
+                            MasterVinylTurntableView(
+                                coverUrl = song.coverUrl,
+                                isPlaying = isPlaying,
+                                accentColor = accentPrimary,
+                                rotationProvider = rotationProvider,
+                                scale = vinylScale
+                            )
                         } else {
                             Box(
                                 modifier = Modifier
@@ -405,6 +334,63 @@ internal fun LandscapePlayerPage(
                                             )
                                         }
                                     }
+                                }
+                            }
+                        }
+
+                        // 平板横屏：右侧竖向三按钮（收藏 / 添加到歌单 / 歌词海报）锚定在封面舞台右下角（与手机版封面页位置关系一致，且不挤占封面纵向高度）
+                        if (isTabletLandscape) {
+                            Column(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(bottom = 2.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .clip(CircleShape)
+                                        .graphicsLayer {
+                                            scaleX = favBurstScale
+                                            scaleY = favBurstScale
+                                        }
+                                        .softClickable(pressScale = 0.82f, onClick = onToggleFavorite),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    PlumpHeartCanvasIcon(
+                                        isFavorite = isFavorite,
+                                        color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.88f),
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .clip(CircleShape)
+                                        .softClickable(pressScale = 0.84f, onClick = onAddToPlaylist),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    PlumpPlaylistAddCanvasIcon(
+                                        color = Color.White.copy(alpha = 0.88f),
+                                        accentColor = readableAccentPrimary,
+                                        iconSize = 25.dp
+                                    )
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .size(42.dp)
+                                        .clip(CircleShape)
+                                        .softClickable(pressScale = 0.84f, onClick = onOpenLyricPoster),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    PlumpPosterSparkleCanvasIcon(
+                                        color = Color.White.copy(alpha = 0.86f),
+                                        accentColor = readableAccentPrimary,
+                                        iconSize = 23.dp
+                                    )
                                 }
                             }
                         }
@@ -1079,10 +1065,16 @@ private fun LandscapeActiveKaraokeWords(
 
 /**
  * 横屏左下方一体化控播坞：
- * 1. 采用「上歌名 + 下歌手」双层错落结构，各自享有完整的横向空间并配备无限循环跑马灯（`iterations = Int.MAX_VALUE`）；
- *    - 彻底解决图三歌手名过长（如 `Famba、Emily Bonabon、Frank Pierce`）时抢占无权重空间导致短歌名（`Vibe`）宽度为 0 完全消失的问题；
- *    - 彻底解决图二歌名滚动几次后停止在截断状态（`Need Som`）的问题；
- * 2. 在平板横屏下（`isTabletLandscape`），额外整合封面页的非重复快捷动作栏（音质档位、加入歌单、歌词海报、桌面歌词、蝰蛇音效、评论与更多菜单）。
+ * 1. 手机端与平板端全面优化：
+ *    - 平板端（`isTabletLandscape = true`）：
+ *      ① 按钮 UI 100% 统一为手机版重绘 Canvas 图标（`PlumpHeartCanvasIcon`、`PlumpPlaylistAddCanvasIcon`、`PlumpPosterSparkleCanvasIcon`、
+ *         `PlumpDesktopLyricCanvasIcon`、`PlumpAudioWaveCanvasIcon`、`RedesignedCommentCountButton`、`PlumpMoreDotsCanvasIcon`、
+ *         `AnimatedPlayModeButton`、`RedrawnSkipButton`、`AnimatedPlayPauseCenterButton`、`RedrawnQueueButton`）；
+ *      ② 左侧展示歌名、歌手与音质胶囊，右侧将「收藏、添加到歌单、歌词海报」三个按钮竖向排列（与手机版封面页右下角完全一致）；
+ *      ③ 进度条上方功能栏（桌面歌词、蝰蛇音效、带计数评论、更多）与下方五大播放控件整体下移至底部黄金操控区并放大尺寸；
+ *      ④ 歌曲当前时长与总时长放置到进度条首尾两端；
+ *    - 手机端（`isTabletLandscape = false`）：
+ *      保持「上歌名 + 下歌手」双层独立无限跑马灯，并将歌曲时长放置到进度条首尾两端。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1169,33 +1161,27 @@ private fun LandscapeBottomControlDock(
         label = "landFavScale"
     )
     val readableAccentPrimary = remember(accentPrimary) { accentPrimary.readableOnDarkSurface(0.45f) }
+    val readableAccentSecondary = remember(accentSecondary) { accentSecondary.readableOnDarkSurface(0.48f) }
 
-    Column(
-        modifier = Modifier
-            .widthIn(max = if (isTabletLandscape) 420.dp else 332.dp)
-            .fillMaxWidth(0.95f),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // 1. 歌曲名与歌手双层错落名片头（左：上歌名 + 下歌手独立无限跑马灯；右：时间指示 + 红心收藏）
-        Row(
+    if (isTabletLandscape) {
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .widthIn(max = 460.dp)
+                .fillMaxWidth(0.96f),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // 1. 顶部歌曲信息区（大号歌名 + 歌手与音质胶囊同行对齐；右侧三按钮已锚定于上方封面舞台右下角，不占用底部纵向高度）
             Column(
                 modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                // 第一层：歌名独占整行，任何长度歌手名均不会挤压歌名宽度；超长歌名无限循环平滑滚动
                 Text(
                     text = song.title.ifBlank { "未知歌曲" },
                     color = Color.White,
-                    fontSize = if (isTabletLandscape) 17.sp else 14.5.sp,
-                    lineHeight = if (isTabletLandscape) 21.sp else 18.sp,
+                    fontSize = 20.sp,
+                    lineHeight = 25.sp,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 1,
                     modifier = Modifier
@@ -1208,40 +1194,261 @@ private fun LandscapeBottomControlDock(
                         )
                 )
 
-                // 第二层：歌手名（平板下附带音质切换胶囊），超长多位合作歌手名同样平滑滚动不截断
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (isTabletLandscape && currentQualityLabel.isNotBlank()) {
+                    Text(
+                        text = song.artist.ifBlank { "未知歌手" },
+                        color = Color.White.copy(alpha = 0.74f),
+                        fontSize = 14.sp,
+                        lineHeight = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .weight(1f, fill = false)
+                            .basicMarquee(
+                                iterations = Int.MAX_VALUE,
+                                delayMillis = 1800,
+                                initialDelayMillis = 1400,
+                                velocity = 22.dp
+                            )
+                    )
+
+                    if (currentQualityLabel.isNotBlank()) {
+                        Spacer(modifier = Modifier.width(8.dp))
                         val isGoldQuality = currentQualityLabel.contains("Hi-Res", ignoreCase = true) ||
                             currentQualityLabel.contains("母带", ignoreCase = true)
                         Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = if (isGoldQuality) VipGold.copy(alpha = 0.20f) else accentPrimary.copy(alpha = 0.20f),
-                            modifier = Modifier
-                                .padding(end = 6.dp)
-                                .softCardClickable(shape = RoundedCornerShape(6.dp), onClick = onQualityClick)
+                            shape = RoundedCornerShape(7.dp),
+                            color = if (isGoldQuality) VipGold.copy(alpha = 0.22f) else accentPrimary.copy(alpha = 0.22f),
+                            modifier = Modifier.softCardClickable(shape = RoundedCornerShape(7.dp), onClick = onQualityClick)
                         ) {
                             Text(
                                 text = currentQualityLabel,
                                 color = if (isGoldQuality) VipGold else readableAccentPrimary,
-                                fontSize = 9.5.sp,
+                                fontSize = 10.5.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 maxLines = 1,
-                                modifier = Modifier.padding(horizontal = 5.5.dp, vertical = 1.5.dp)
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
                             )
                         }
                     }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 2. 进度条上方功能栏（统一采用手机版重绘 Canvas 图标：桌面歌词、蝰蛇音效、带计数评论、更多）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PlayerActionIconButton(onClick = onToggleDesktopLyric) {
+                    Box(contentAlignment = Alignment.Center) {
+                        PlumpDesktopLyricCanvasIcon(
+                            enabled = desktopLyricEnabled,
+                            color = if (desktopLyricEnabled) readableAccentPrimary else Color.White.copy(alpha = 0.88f),
+                            accentColor = readableAccentSecondary,
+                            iconSize = 25.dp
+                        )
+                        if (desktopLyricEnabled) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 4.dp, y = (-2).dp)
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(readableAccentSecondary)
+                            )
+                        }
+                    }
+                }
+
+                PlayerActionIconButton(onClick = onOpenAudioEffect) {
+                    Box(contentAlignment = Alignment.Center) {
+                        PlumpAudioWaveCanvasIcon(
+                            color = if (viperEnabled) readableAccentPrimary else Color.White.copy(alpha = 0.88f),
+                            accentColor = if (viperEnabled) readableAccentSecondary else readableAccentPrimary,
+                            iconSize = 25.dp
+                        )
+                        if (viperEnabled) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 4.dp, y = (-2).dp)
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(readableAccentSecondary)
+                            )
+                        }
+                    }
+                }
+
+                RedesignedCommentCountButton(
+                    commentCount = commentCount,
+                    accentColor = readableAccentPrimary,
+                    onClick = onOpenComments
+                )
+
+                PlayerActionIconButton(onClick = onOpenMoreSheet) {
+                    PlumpMoreDotsCanvasIcon(
+                        color = Color.White.copy(alpha = 0.88f),
+                        iconSize = 25.dp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // 3. 彗星拖尾进度条 + 歌曲时长置于进度条首尾两端
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = formatPlayerDuration(displayCurrentMs),
+                    color = if (isInteractingWithBar) readableAccentPrimary else Color.White.copy(alpha = 0.62f),
+                    fontSize = 12.sp,
+                    fontWeight = if (isInteractingWithBar) FontWeight.Bold else FontWeight.Medium,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum")
+                )
+
+                Box(modifier = Modifier.weight(1f)) {
+                    CometTailProgressBar(
+                        fraction = targetFraction,
+                        isPlaying = isPlaying,
+                        isInteracting = isInteractingWithBar,
+                        currentTimeText = formatPlayerDuration(displayCurrentMs),
+                        totalTimeText = formatPlayerDuration(durationMs),
+                        climaxStartFrac = if (durationMs > 0L && climaxEndMs > climaxStartMs) {
+                            (climaxStartMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                        } else 0f,
+                        climaxEndFrac = if (durationMs > 0L && climaxEndMs > climaxStartMs) {
+                            (climaxEndMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                        } else 0f,
+                        highlightClimaxRange = highlightClimaxRange,
+                        accentPrimary = accentPrimary,
+                        accentSecondary = accentSecondary,
+                        compact = false,
+                        onDragStart = {
+                            isInteractingWithBar = true
+                            dragFraction = it
+                        },
+                        onDrag = { dragFraction = it },
+                        onDragEnd = {
+                            val targetMs = (dragFraction * latestDurationMs).toLong().coerceIn(0L, latestDurationMs.coerceAtLeast(0L))
+                            settledSeekTargetMs = targetMs
+                            settledSeekTimestampMs = android.os.SystemClock.elapsedRealtime()
+                            livePosMs = targetMs
+                            latestOnSeekTo(targetMs)
+                            isInteractingWithBar = false
+                        },
+                        onDragCancel = {
+                            isInteractingWithBar = false
+                        }
+                    )
+                }
+
+                Text(
+                    text = formatPlayerDuration(durationMs),
+                    color = Color.White.copy(alpha = 0.62f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum")
+                )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // 4. 下方五大播放控件（100% 统一为手机版大尺寸重绘按钮）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                AnimatedPlayModeButton(
+                    playMode = playMode,
+                    accentColor = readableAccentPrimary,
+                    onClick = onCyclePlayMode
+                )
+
+                RedrawnSkipButton(
+                    isNext = false,
+                    onClick = onPrevious
+                )
+
+                AnimatedPlayPauseCenterButton(
+                    isPlaying = isPlaying,
+                    accentPrimary = accentPrimary,
+                    accentSecondary = accentSecondary,
+                    onClick = onTogglePlay
+                )
+
+                RedrawnSkipButton(
+                    isNext = true,
+                    onClick = onNext
+                )
+
+                RedrawnQueueButton(
+                    accentColor = readableAccentPrimary,
+                    onClick = onOpenQueue
+                )
+            }
+        }
+    } else {
+        // 手机横屏模式：保持紧凑双层歌名/歌手无限跑马灯 + 歌曲时长置于进度条首尾
+        Column(
+            modifier = Modifier
+                .widthIn(max = 336.dp)
+                .fillMaxWidth(0.95f),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = song.title.ifBlank { "未知歌曲" },
+                        color = Color.White,
+                        fontSize = 14.5.sp,
+                        lineHeight = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(
+                                iterations = Int.MAX_VALUE,
+                                delayMillis = 1500,
+                                initialDelayMillis = 1200,
+                                velocity = 26.dp
+                            )
+                    )
+
                     Text(
                         text = song.artist.ifBlank { "未知歌手" },
                         color = Color.White.copy(alpha = 0.66f),
-                        fontSize = if (isTabletLandscape) 13.sp else 11.5.sp,
-                        lineHeight = if (isTabletLandscape) 16.sp else 14.sp,
+                        fontSize = 11.5.sp,
+                        lineHeight = 14.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .basicMarquee(
                                 iterations = Int.MAX_VALUE,
                                 delayMillis = 1800,
@@ -1250,22 +1457,10 @@ private fun LandscapeBottomControlDock(
                             )
                     )
                 }
-            }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "${formatPlayerDuration(displayCurrentMs)} / ${formatPlayerDuration(durationMs)}",
-                    color = if (isInteractingWithBar) readableAccentPrimary else Color.White.copy(alpha = 0.56f),
-                    fontSize = if (isTabletLandscape) 11.5.sp else 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum")
-                )
                 Box(
                     modifier = Modifier
-                        .size(if (isTabletLandscape) 32.dp else 28.dp)
+                        .size(28.dp)
                         .graphicsLayer {
                             val s = favScaleState.value
                             scaleX = s
@@ -1277,170 +1472,91 @@ private fun LandscapeBottomControlDock(
                     PlumpHeartCanvasIcon(
                         isFavorite = isFavorite,
                         color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.85f),
-                        modifier = Modifier.size(if (isTabletLandscape) 20.dp else 17.5.dp)
+                        modifier = Modifier.size(17.5.dp)
                     )
                 }
             }
-        }
 
-        // 平板横屏合并播放页专属：无重复辅助功能栏（加入歌单、歌词海报、桌面歌词、蝰蛇音效、歌曲评论、更多设置）
-        if (isTabletLandscape) {
-            Spacer(modifier = Modifier.height(6.dp))
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 2.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                IconButton(
-                    onClick = onAddToPlaylist,
-                    modifier = Modifier.size(34.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.PlaylistAdd,
-                        contentDescription = "添加到歌单",
-                        tint = Color.White.copy(alpha = 0.84f),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+                Text(
+                    text = formatPlayerDuration(displayCurrentMs),
+                    color = if (isInteractingWithBar) readableAccentPrimary else Color.White.copy(alpha = 0.56f),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum")
+                )
 
-                IconButton(
-                    onClick = onOpenLyricPoster,
-                    modifier = Modifier.size(34.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.AutoAwesome,
-                        contentDescription = "歌词海报",
-                        tint = Color.White.copy(alpha = 0.84f),
-                        modifier = Modifier.size(19.dp)
-                    )
-                }
-
-                IconButton(
-                    onClick = onToggleDesktopLyric,
-                    modifier = Modifier.size(34.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Lyrics,
-                        contentDescription = "桌面歌词",
-                        tint = if (desktopLyricEnabled) readableAccentPrimary else Color.White.copy(alpha = 0.84f),
-                        modifier = Modifier.size(19.dp)
-                    )
-                }
-
-                IconButton(
-                    onClick = onOpenAudioEffect,
-                    modifier = Modifier.size(34.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.GraphicEq,
-                        contentDescription = "蝰蛇音效",
-                        tint = if (viperEnabled) readableAccentPrimary else Color.White.copy(alpha = 0.84f),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .height(34.dp)
-                        .widthIn(min = 42.dp)
-                        .softClickable(onClick = onOpenComments),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.ChatBubbleOutline,
-                            contentDescription = "评论",
-                            tint = Color.White.copy(alpha = 0.84f),
-                            modifier = Modifier.size(18.dp)
-                        )
-                        val countStr = formatPlayerCommentCount(commentCount)
-                        if (countStr.isNotEmpty()) {
-                            Text(
-                                text = countStr,
-                                color = readableAccentPrimary,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
+                Box(modifier = Modifier.weight(1f)) {
+                    CometTailProgressBar(
+                        fraction = targetFraction,
+                        isPlaying = isPlaying,
+                        isInteracting = isInteractingWithBar,
+                        currentTimeText = formatPlayerDuration(displayCurrentMs),
+                        totalTimeText = formatPlayerDuration(durationMs),
+                        climaxStartFrac = if (durationMs > 0L && climaxEndMs > climaxStartMs) {
+                            (climaxStartMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                        } else 0f,
+                        climaxEndFrac = if (durationMs > 0L && climaxEndMs > climaxStartMs) {
+                            (climaxEndMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                        } else 0f,
+                        highlightClimaxRange = highlightClimaxRange,
+                        accentPrimary = accentPrimary,
+                        accentSecondary = accentSecondary,
+                        compact = true,
+                        onDragStart = {
+                            isInteractingWithBar = true
+                            dragFraction = it
+                        },
+                        onDrag = { dragFraction = it },
+                        onDragEnd = {
+                            val targetMs = (dragFraction * latestDurationMs).toLong().coerceIn(0L, latestDurationMs.coerceAtLeast(0L))
+                            settledSeekTargetMs = targetMs
+                            settledSeekTimestampMs = android.os.SystemClock.elapsedRealtime()
+                            livePosMs = targetMs
+                            latestOnSeekTo(targetMs)
+                            isInteractingWithBar = false
+                        },
+                        onDragCancel = {
+                            isInteractingWithBar = false
                         }
-                    }
-                }
-
-                IconButton(
-                    onClick = onOpenMoreSheet,
-                    modifier = Modifier.size(34.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.MoreHoriz,
-                        contentDescription = "更多功能",
-                        tint = Color.White.copy(alpha = 0.84f),
-                        modifier = Modifier.size(21.dp)
                     )
                 }
+
+                Text(
+                    text = formatPlayerDuration(durationMs),
+                    color = Color.White.copy(alpha = 0.56f),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum")
+                )
             }
+
+            LandscapeCompactControlRow(
+                playMode = playMode,
+                isPlaying = isPlaying,
+                accentPrimary = accentPrimary,
+                accentSecondary = accentSecondary,
+                onCyclePlayMode = onCyclePlayMode,
+                onPrevious = onPrevious,
+                onTogglePlay = onTogglePlay,
+                onNext = onNext,
+                onOpenQueue = onOpenQueue
+            )
         }
-
-        CometTailProgressBar(
-            fraction = targetFraction,
-            isPlaying = isPlaying,
-            isInteracting = isInteractingWithBar,
-            currentTimeText = formatPlayerDuration(displayCurrentMs),
-            totalTimeText = formatPlayerDuration(durationMs),
-            climaxStartFrac = if (durationMs > 0L && climaxEndMs > climaxStartMs) {
-                (climaxStartMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-            } else 0f,
-            climaxEndFrac = if (durationMs > 0L && climaxEndMs > climaxStartMs) {
-                (climaxEndMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-            } else 0f,
-            highlightClimaxRange = highlightClimaxRange,
-            accentPrimary = accentPrimary,
-            accentSecondary = accentSecondary,
-            compact = !isTabletLandscape,
-            onDragStart = {
-                isInteractingWithBar = true
-                dragFraction = it
-            },
-            onDrag = { dragFraction = it },
-            onDragEnd = {
-                val targetMs = (dragFraction * latestDurationMs).toLong().coerceIn(0L, latestDurationMs.coerceAtLeast(0L))
-                settledSeekTargetMs = targetMs
-                settledSeekTimestampMs = android.os.SystemClock.elapsedRealtime()
-                livePosMs = targetMs
-                latestOnSeekTo(targetMs)
-                isInteractingWithBar = false
-            },
-            onDragCancel = {
-                isInteractingWithBar = false
-            }
-        )
-
-        LandscapeCompactControlRow(
-            playMode = playMode,
-            isPlaying = isPlaying,
-            isTabletLandscape = isTabletLandscape,
-            accentPrimary = accentPrimary,
-            accentSecondary = accentSecondary,
-            onCyclePlayMode = onCyclePlayMode,
-            onPrevious = onPrevious,
-            onTogglePlay = onTogglePlay,
-            onNext = onNext,
-            onOpenQueue = onOpenQueue
-        )
     }
 }
 
 /**
- * 横屏专属紧凑低重心播放控制栏（沿用封面页五大核心控制控件与连续几何插值播放/暂停形变）
+ * 手机横屏专属紧凑低重心播放控制栏
  */
 @Composable
 private fun LandscapeCompactControlRow(
     playMode: PlayMode,
     isPlaying: Boolean,
-    isTabletLandscape: Boolean = false,
     accentPrimary: Color,
     accentSecondary: Color,
     onCyclePlayMode: () -> Unit,
@@ -1458,20 +1574,17 @@ private fun LandscapeCompactControlRow(
         animationSpec = ConceptMotion.expressiveSpring(),
         label = "landPlayMorph"
     )
-    val rowHeight = if (isTabletLandscape) 48.dp else 38.dp
-    val centerBtnSize = if (isTabletLandscape) 46.dp else 38.dp
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(rowHeight),
+            .height(38.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 1. 播放模式
         Box(
             modifier = Modifier
-                .size(if (isTabletLandscape) 38.dp else 34.dp)
+                .size(34.dp)
                 .softClickable(pressScale = 0.84f, onClick = onCyclePlayMode),
             contentAlignment = Alignment.Center
         ) {
@@ -1483,7 +1596,7 @@ private fun LandscapeCompactControlRow(
                 },
                 label = "landPlayModeMorph"
             ) { mode ->
-                Canvas(modifier = Modifier.size(if (isTabletLandscape) 21.dp else 19.dp)) {
+                Canvas(modifier = Modifier.size(19.dp)) {
                     val w = size.width
                     val h = size.height
                     val stroke = 2.0.dp.toPx()
@@ -1525,10 +1638,9 @@ private fun LandscapeCompactControlRow(
             }
         }
 
-        // 2. 上一首
         Box(
             modifier = Modifier
-                .size(if (isTabletLandscape) 40.dp else 36.dp)
+                .size(36.dp)
                 .graphicsLayer { translationX = prevNudge.value }
                 .softClickable(
                     pressScale = 0.84f,
@@ -1542,7 +1654,7 @@ private fun LandscapeCompactControlRow(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.size(if (isTabletLandscape) 23.dp else 21.dp)) {
+            Canvas(modifier = Modifier.size(21.dp)) {
                 val w = size.width
                 val h = size.height
                 val barW = w * 0.145f
@@ -1561,10 +1673,9 @@ private fun LandscapeCompactControlRow(
             }
         }
 
-        // 3. 中心播放/暂停按钮（连续几何插值形变）
         Box(
             modifier = Modifier
-                .size(centerBtnSize)
+                .size(38.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.linearGradient(
@@ -1578,7 +1689,7 @@ private fun LandscapeCompactControlRow(
                 .softClickable(pressScale = 0.86f, onClick = onTogglePlay),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.size(if (isTabletLandscape) 20.dp else 17.dp)) {
+            Canvas(modifier = Modifier.size(17.dp)) {
                 drawContinuousPlayPauseMorph(
                     morphProgress = morphProgressState.value,
                     color = Color.White
@@ -1586,10 +1697,9 @@ private fun LandscapeCompactControlRow(
             }
         }
 
-        // 4. 下一首
         Box(
             modifier = Modifier
-                .size(if (isTabletLandscape) 40.dp else 36.dp)
+                .size(36.dp)
                 .graphicsLayer { translationX = nextNudge.value }
                 .softClickable(
                     pressScale = 0.84f,
@@ -1603,7 +1713,7 @@ private fun LandscapeCompactControlRow(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.size(if (isTabletLandscape) 23.dp else 21.dp)) {
+            Canvas(modifier = Modifier.size(21.dp)) {
                 val w = size.width
                 val h = size.height
                 val barW = w * 0.145f
@@ -1620,29 +1730,28 @@ private fun LandscapeCompactControlRow(
             }
         }
 
-        // 5. 播放队列
         Box(
             modifier = Modifier
-                .size(if (isTabletLandscape) 38.dp else 34.dp)
+                .size(34.dp)
                 .softClickable(pressScale = 0.84f, onClick = onOpenQueue),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.size(if (isTabletLandscape) 21.dp else 19.dp)) {
+            Canvas(modifier = Modifier.size(19.dp)) {
                 val w = size.width
                 val h = size.height
                 val stroke = 2.0.dp.toPx()
-                val tint = Color.White.copy(alpha = 0.84f)
-                drawLine(tint, Offset(w * 0.14f, h * 0.26f), Offset(w * 0.78f, h * 0.26f), stroke, StrokeCap.Round)
-                drawLine(tint, Offset(w * 0.14f, h * 0.50f), Offset(w * 0.62f, h * 0.50f), stroke, StrokeCap.Round)
-                drawLine(tint, Offset(w * 0.14f, h * 0.74f), Offset(w * 0.48f, h * 0.74f), stroke, StrokeCap.Round)
-                val noteCenter = Offset(w * 0.72f, h * 0.74f)
-                drawCircle(readableAccentPrimary, radius = 2.8.dp.toPx(), center = noteCenter)
-                drawLine(readableAccentPrimary, Offset(noteCenter.x + 2.0.dp.toPx(), noteCenter.y), Offset(noteCenter.x + 2.0.dp.toPx(), h * 0.40f), stroke * 0.9f, StrokeCap.Round)
-                drawLine(readableAccentPrimary, Offset(noteCenter.x + 2.0.dp.toPx(), h * 0.40f), Offset(w * 0.88f, h * 0.47f), stroke * 0.9f, StrokeCap.Round)
+                val c = Color.White.copy(alpha = 0.84f)
+                drawLine(c, Offset(w * 0.15f, h * 0.25f), Offset(w * 0.85f, h * 0.25f), stroke, StrokeCap.Round)
+                drawLine(c, Offset(w * 0.15f, h * 0.52f), Offset(w * 0.58f, h * 0.52f), stroke, StrokeCap.Round)
+                drawLine(c, Offset(w * 0.15f, h * 0.78f), Offset(w * 0.58f, h * 0.78f), stroke, StrokeCap.Round)
+                drawCircle(readableAccentPrimary, radius = 2.3.dp.toPx(), center = Offset(w * 0.75f, h * 0.76f))
+                drawLine(readableAccentPrimary, Offset(w * 0.82f, h * 0.76f), Offset(w * 0.82f, h * 0.48f), stroke * 0.9f, StrokeCap.Round)
+                drawLine(readableAccentPrimary, Offset(w * 0.82f, h * 0.48f), Offset(w * 0.92f, h * 0.54f), stroke * 0.9f, StrokeCap.Round)
             }
         }
     }
 }
+
 
 /**
  * 自研横屏右上角「流光棱镜背景切换」无框矢量图标

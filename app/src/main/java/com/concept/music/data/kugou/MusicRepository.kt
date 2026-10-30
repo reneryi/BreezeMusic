@@ -269,8 +269,11 @@ class MusicApiRepository(
         return result
     }
 
-    // 本地已关注歌手增量缓存（防止关注后因云端延迟未立即出现在列表中）
+    // 本地已关注歌手增量缓存与 singerid <-> target_userid 双向映射（防止关注/取关后因云端延迟或 ID 类型差异导致状态不同步）
     private val localFollowedArtistsMap = ConcurrentHashMap<String, FollowedArtist>()
+    private val artistSingerToUserMap = ConcurrentHashMap<String, String>()
+    private val artistUserToSingerMap = ConcurrentHashMap<String, String>()
+    private val locallyUnfollowedArtistIds = ConcurrentHashMap.newKeySet<String>()
 
     internal fun putPlaybackCacheForTest(key: String, result: PlaybackResult) {
         playbackResultCache[key] = result
@@ -281,6 +284,9 @@ class MusicApiRepository(
         clearPlaybackCache()
         privilegeLiteObjCache.clear()
         localFollowedArtistsMap.clear()
+        artistSingerToUserMap.clear()
+        artistUserToSingerMap.clear()
+        locallyUnfollowedArtistIds.clear()
         userTasteSeedsCache.clear()
         seenPersonalFmHashes.clear()
     }
@@ -6193,8 +6199,25 @@ class MusicApiRepository(
             }.map { it.await() }
         }
 
-        enriched.forEach { if (it.id.isNotBlank()) localFollowedArtistsMap[it.id] = it }
-        return (localFollowedArtistsMap.values + enriched).distinctBy { it.id.ifBlank { it.name } }
+        val filteredEnriched = enriched.filterNot { item ->
+            locallyUnfollowedArtistIds.contains(item.id) ||
+                (item.targetUserId.isNotBlank() && locallyUnfollowedArtistIds.contains(item.targetUserId))
+        }
+        filteredEnriched.forEach { item ->
+            if (item.id.isNotBlank()) {
+                localFollowedArtistsMap[item.id] = item
+                if (item.targetUserId.isNotBlank()) {
+                    artistSingerToUserMap[item.id] = item.targetUserId
+                    artistUserToSingerMap[item.targetUserId] = item.id
+                }
+            }
+        }
+        return (localFollowedArtistsMap.values + filteredEnriched)
+            .filterNot { item ->
+                locallyUnfollowedArtistIds.contains(item.id) ||
+                    (item.targetUserId.isNotBlank() && locallyUnfollowedArtistIds.contains(item.targetUserId))
+            }
+            .distinctBy { it.id.ifBlank { it.name } }
     }
 
     private fun parseFollowedArtistsFromJson(root: JsonObject): List<FollowedArtist> {
@@ -6216,7 +6239,12 @@ class MusicApiRepository(
                 ?: o.text("r_nick") ?: o.text("name")
                 ?: ext?.text("singername") ?: "").trim()
 
-            // 在 /v4/follow_list 中，若 merge=2 同时返回普通用户与歌手，优先保留有 singerid 或名称有效的条目
+            // 在 /v4/follow_list 中，同时记录 singerid 与 target_userid 双向映射，确保取关时无论传入哪种 ID 都能精确命中
+            if (singerId.isNotBlank() && fallbackUserId.isNotBlank()) {
+                artistSingerToUserMap[singerId] = fallbackUserId
+                artistUserToSingerMap[fallbackUserId] = singerId
+            }
+
             val effectiveId = singerId.ifBlank { fallbackUserId }
             if (effectiveId.isBlank() && rawName.isBlank()) return@mapNotNull null
             val dedupKey = effectiveId.ifBlank { rawName }
@@ -6235,21 +6263,38 @@ class MusicApiRepository(
                 name = rawName.ifBlank { "关注歌手" },
                 avatarUrl = imageUrl(avatarRaw),
                 songCount = songCount,
-                fansCount = fans
+                fansCount = fans,
+                targetUserId = fallbackUserId
             )
         }
     }
 
-    // 关注歌手 (严格对齐 MakcRe/KuGouMusicApi module/artist_follow.js: /followservice/v3/follow_singer + /v4/follow 双通道)
+    /**
+     * 关注歌手 (严格对齐 MakcRe/KuGouMusicApi module/artist_follow.js & util/crypto.js):
+     * 关键修复：
+     * 1. module/artist_follow.js 使用的是 rsaEncrypt2({ clienttime, key: encrypt.key }).toUpperCase()，
+     *    在 util/crypto.js 中 rsaEncrypt2 为 RSAES-PKCS1-V1_5 (即 KugouSigner.rsaPkcs1)，而非无填充的 KugouSigner.rsa！
+     * 2. 同时兼容 singerid 为 Number 与 String 的 AES 载荷，并同步清除本地取关屏蔽集。
+     */
     suspend fun followArtist(artistId: String): Boolean = auth { ctx ->
-        val targetId = artistId.toLongOrNull() ?: return@auth false
+        val cleanId = artistId.trim()
+        val mappedSingerId = artistUserToSingerMap[cleanId] ?: cleanId
+        val mappedUserId = artistSingerToUserMap[cleanId] ?: cleanId
+        locallyUnfollowedArtistIds.remove(cleanId)
+        locallyUnfollowedArtistIds.remove(mappedSingerId)
+        locallyUnfollowedArtistIds.remove(mappedUserId)
+
+        val targetId = mappedSingerId.toLongOrNull() ?: cleanId.toLongOrNull() ?: return@auth false
         val session = ctx.session
         val clientTime = System.currentTimeMillis() / 1000
 
-        // 通道 1: /followservice/v3/follow_singer (module/artist_follow.js)
-        val v3Ok = runCatching {
+        // 通道 1: /followservice/v3/follow_singer (对齐 MakcRe/KuGouMusicApi module/artist_follow.js: rsaEncrypt2 -> rsaPkcs1)
+        val v3Pkcs1Ok = runCatching {
             val enc = KugouSigner.encrypt(KugouSigner.gson.toJson(mapOf("singerid" to targetId, "token" to session.token)))
-            val pRsa = KugouSigner.rsa(KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "key" to enc.key))).uppercase()
+            val pRsa = KugouSigner.rsaPkcs1(
+                KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "key" to enc.key)),
+                lite = true
+            ).uppercase()
             val resp = transport.callAdvanced(
                 path = "/followservice/v3/follow_singer",
                 method = "POST",
@@ -6269,46 +6314,17 @@ class MusicApiRepository(
             resp.status == 1 || resp.code == 0
         }.getOrDefault(false)
 
-        // 通道 2: relationuser.kugou.com /v4/follow
-        val v4Ok = runCatching {
-            val pJson = KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "token" to session.token))
-            val pEncrypted = KugouSigner.rsa(pJson).uppercase()
-            val response = transport.callAdvanced(
-                path = "/v4/follow",
-                method = "POST",
-                session = session,
-                query = mapOf("plat" to "1"),
-                body = json(
-                    "userid" to (session.userId.toLongOrNull() ?: 0L),
-                    "target_userid" to targetId,
-                    "singerid" to targetId,
-                    "type" to 1,
-                    "id_type" to 1,
-                    "source" to 13,
-                    "p" to pEncrypted
-                ),
-                headers = mapOf("x-router" to "relationuser.kugou.com"),
-                sign = true,
-                includeDefaultParams = true
-            )
-            response.status == 1 || response.code == 0
-        }.getOrDefault(false)
+        if (v3Pkcs1Ok) return@auth true
 
-        v3Ok || v4Ok
-    }
-
-    // 取消关注歌手 (双通道)
-    suspend fun unfollowArtist(artistId: String): Boolean = auth { ctx ->
-        localFollowedArtistsMap.remove(artistId)
-        val targetId = artistId.toLongOrNull() ?: return@auth false
-        val session = ctx.session
-        val clientTime = System.currentTimeMillis() / 1000
-
-        val v3Ok = runCatching {
-            val enc = KugouSigner.encrypt(KugouSigner.gson.toJson(mapOf("singerid" to targetId, "token" to session.token)))
-            val pRsa = KugouSigner.rsa(KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "key" to enc.key))).uppercase()
+        // 通道 2: 兼容标准版公钥或字符串型 singerid 的 /followservice/v3/follow_singer
+        val v3FallbackOk = runCatching {
+            val enc = KugouSigner.encrypt(KugouSigner.gson.toJson(mapOf("singerid" to targetId.toString(), "token" to session.token)))
+            val pRsa = KugouSigner.rsaPkcs1(
+                KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "key" to enc.key)),
+                lite = false
+            ).uppercase()
             val resp = transport.callAdvanced(
-                path = "/followservice/v3/unfollow_singer",
+                path = "/followservice/v3/follow_singer",
                 method = "POST",
                 session = session,
                 query = mapOf("clienttime" to clientTime.toString()),
@@ -6326,17 +6342,21 @@ class MusicApiRepository(
             resp.status == 1 || resp.code == 0
         }.getOrDefault(false)
 
+        if (v3FallbackOk) return@auth true
+
+        // 通道 3: relationuser.kugou.com /v4/follow
         val v4Ok = runCatching {
             val pJson = KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "token" to session.token))
-            val pEncrypted = KugouSigner.rsa(pJson).uppercase()
+            val pEncrypted = KugouSigner.rsaPkcs1(pJson, lite = true).uppercase()
+            val targetUserLong = mappedUserId.toLongOrNull() ?: targetId
             val response = transport.callAdvanced(
-                path = "/v4/unfollow",
+                path = "/v4/follow",
                 method = "POST",
                 session = session,
                 query = mapOf("plat" to "1"),
                 body = json(
                     "userid" to (session.userId.toLongOrNull() ?: 0L),
-                    "target_userid" to targetId,
+                    "target_userid" to targetUserLong,
                     "singerid" to targetId,
                     "type" to 1,
                     "id_type" to 1,
@@ -6350,7 +6370,147 @@ class MusicApiRepository(
             response.status == 1 || response.code == 0
         }.getOrDefault(false)
 
-        v3Ok || v4Ok
+        v4Ok
+    }
+
+    /**
+     * 取消关注歌手 (严格对齐 MakcRe/KuGouMusicApi module/artist_unfollow.js & util/crypto.js):
+     * 关键修复：
+     * 1. module/artist_unfollow.js 使用的是 rsaEncrypt2({ clienttime, key: encrypt.key }).toUpperCase()，
+     *    即 PKCS#1 v1.5 填充的 RSA 加密 (KugouSigner.rsaPkcs1)，此前误用裸模幂 KugouSigner.rsa 导致服务端解密 key 失败返回错误！
+     * 2. 同时支持通过 singerid 与 /v4/follow_list 返回的 target_userid 双 ID 取关，并维护本地取关屏蔽集。
+     */
+    suspend fun unfollowArtist(artistId: String, fallbackTargetUserId: String = ""): Boolean = auth { ctx ->
+        val cleanId = artistId.trim()
+        val mappedSingerId = artistUserToSingerMap[cleanId] ?: cleanId
+        val mappedUserId = fallbackTargetUserId.trim().ifBlank {
+            artistSingerToUserMap[cleanId]
+                ?: localFollowedArtistsMap[cleanId]?.targetUserId.orEmpty()
+        }
+
+        localFollowedArtistsMap.remove(cleanId)
+        localFollowedArtistsMap.remove(mappedSingerId)
+        if (mappedUserId.isNotBlank()) {
+            localFollowedArtistsMap.remove(mappedUserId)
+        }
+        locallyUnfollowedArtistIds.add(cleanId)
+        if (mappedSingerId.isNotBlank()) locallyUnfollowedArtistIds.add(mappedSingerId)
+        if (mappedUserId.isNotBlank()) locallyUnfollowedArtistIds.add(mappedUserId)
+
+        val candidateSingerIds = listOf(mappedSingerId, cleanId, mappedUserId)
+            .mapNotNull { it.trim().toLongOrNull() }
+            .filter { it > 0L }
+            .distinct()
+        if (candidateSingerIds.isEmpty()) return@auth true
+
+        val session = ctx.session
+        val clientTime = System.currentTimeMillis() / 1000
+        var anySuccess = false
+
+        // 通道 1: 严格对齐 module/artist_unfollow.js (/followservice/v3/unfollow_singer + rsaPkcs1)
+        for (sid in candidateSingerIds) {
+            val okNum = runCatching {
+                val enc = KugouSigner.encrypt(KugouSigner.gson.toJson(mapOf("singerid" to sid, "token" to session.token)))
+                val pRsa = KugouSigner.rsaPkcs1(
+                    KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "key" to enc.key)),
+                    lite = true
+                ).uppercase()
+                val resp = transport.callAdvanced(
+                    path = "/followservice/v3/unfollow_singer",
+                    method = "POST",
+                    session = session,
+                    query = mapOf("clienttime" to clientTime.toString()),
+                    body = json(
+                        "plat" to 0,
+                        "userid" to (session.userId.toLongOrNull() ?: 0L),
+                        "singerid" to sid,
+                        "source" to 7,
+                        "p" to pRsa,
+                        "params" to enc.ciphertext
+                    ),
+                    sign = true,
+                    includeDefaultParams = true
+                )
+                resp.status == 1 || resp.code == 0
+            }.getOrDefault(false)
+
+            if (okNum) {
+                anySuccess = true
+                break
+            }
+
+            // 兼容 singerid 作为字符串传入 AES 载荷或标准版 RSA 公钥
+            val okStr = runCatching {
+                val enc = KugouSigner.encrypt(KugouSigner.gson.toJson(mapOf("singerid" to sid.toString(), "token" to session.token)))
+                val pRsa = KugouSigner.rsaPkcs1(
+                    KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "key" to enc.key)),
+                    lite = true
+                ).uppercase()
+                val resp = transport.callAdvanced(
+                    path = "/followservice/v3/unfollow_singer",
+                    method = "POST",
+                    session = session,
+                    query = mapOf("clienttime" to clientTime.toString()),
+                    body = json(
+                        "plat" to 0,
+                        "userid" to (session.userId.toLongOrNull() ?: 0L),
+                        "singerid" to sid,
+                        "source" to 7,
+                        "p" to pRsa,
+                        "params" to enc.ciphertext
+                    ),
+                    sign = true,
+                    includeDefaultParams = true
+                )
+                resp.status == 1 || resp.code == 0
+            }.getOrDefault(false)
+
+            if (okStr) {
+                anySuccess = true
+                break
+            }
+        }
+
+        // 通道 2: relationuser.kugou.com /v4/unfollow (同时尝试 rsaPkcs1 与 rsa，并覆盖 target_userid / singerid)
+        if (!anySuccess) {
+            val primarySid = candidateSingerIds.first()
+            val primaryUid = mappedUserId.toLongOrNull() ?: primarySid
+            for (usePkcs1 in listOf(true, false)) {
+                val v4Ok = runCatching {
+                    val pJson = KugouSigner.gson.toJson(mapOf("clienttime" to clientTime, "token" to session.token))
+                    val pEncrypted = if (usePkcs1) {
+                        KugouSigner.rsaPkcs1(pJson, lite = true).uppercase()
+                    } else {
+                        KugouSigner.rsa(pJson).uppercase()
+                    }
+                    val response = transport.callAdvanced(
+                        path = "/v4/unfollow",
+                        method = "POST",
+                        session = session,
+                        query = mapOf("plat" to "1"),
+                        body = json(
+                            "userid" to (session.userId.toLongOrNull() ?: 0L),
+                            "target_userid" to primaryUid,
+                            "singerid" to primarySid,
+                            "type" to 1,
+                            "id_type" to if (primaryUid != primarySid) 0 else 1,
+                            "source" to 13,
+                            "p" to pEncrypted
+                        ),
+                        headers = mapOf("x-router" to "relationuser.kugou.com"),
+                        sign = true,
+                        includeDefaultParams = true
+                    )
+                    response.status == 1 || response.code == 0
+                }.getOrDefault(false)
+                if (v4Ok) {
+                    anySuccess = true
+                    break
+                }
+            }
+        }
+
+        anySuccess
     }
 
     // 外部歌单文本批量匹配导入

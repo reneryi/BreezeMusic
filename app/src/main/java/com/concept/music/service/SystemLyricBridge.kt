@@ -926,7 +926,13 @@ object SystemLyricBridge {
                 val wm = (ctx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager) ?: return@runCatching
                 windowManager = wm
                 val dm = ctx.resources.displayMetrics
-                val screenW = dm.widthPixels.coerceAtLeast(720)
+                val rawScreenW = dm.widthPixels.coerceAtLeast(720)
+                // 平板版桌面歌词不再横向占满整屏，缩短为屏幕一半长度 (50%) 并水平居中
+                val screenW = if (com.concept.music.BuildConfig.IS_TABLET_FLAVOR) {
+                    (rawScreenW * 0.5f).roundToInt().coerceAtLeast(360)
+                } else {
+                    rawScreenW
+                }
                 val screenH = dm.heightPixels.coerceAtLeast(1280)
 
                 val windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -969,7 +975,12 @@ object SystemLyricBridge {
                     onVerticalDragDelta = { dy, isFinished ->
                         val curLp = overlayParams ?: return@NativeDesktopLyricView
                         val liveDm = ctx.resources.displayMetrics
-                        val liveW = liveDm.widthPixels.coerceAtLeast(720)
+                        val rawLiveW = liveDm.widthPixels.coerceAtLeast(720)
+                        val liveW = if (com.concept.music.BuildConfig.IS_TABLET_FLAVOR) {
+                            (rawLiveW * 0.5f).roundToInt().coerceAtLeast(360)
+                        } else {
+                            rawLiveW
+                        }
                         val liveH = liveDm.heightPixels.coerceAtLeast(720)
                         curLp.width = liveW
                         curLp.x = 0
@@ -1007,7 +1018,12 @@ object SystemLyricBridge {
         val wm = windowManager ?: return
         val view = overlayView ?: return
         val lp = overlayParams ?: return
-        val screenW = ctx.resources.displayMetrics.widthPixels.coerceAtLeast(720)
+        val rawScreenW = ctx.resources.displayMetrics.widthPixels.coerceAtLeast(720)
+        val screenW = if (com.concept.music.BuildConfig.IS_TABLET_FLAVOR) {
+            (rawScreenW * 0.5f).roundToInt().coerceAtLeast(360)
+        } else {
+            rawScreenW
+        }
         lp.width = screenW
         lp.x = 0
         runCatching { wm.updateViewLayout(view, lp) }
@@ -1190,8 +1206,13 @@ private class NativeDesktopLyricView(
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val st = SystemLyricBridge.state.value
-        val screenW = resources.displayMetrics.widthPixels.coerceAtLeast((320 * d).roundToInt())
-        val w = MeasureSpec.getSize(widthMeasureSpec).takeIf { it > 0 } ?: screenW
+        val rawScreenW = resources.displayMetrics.widthPixels.coerceAtLeast((320 * d).roundToInt())
+        val defaultW = if (com.concept.music.BuildConfig.IS_TABLET_FLAVOR) {
+            (rawScreenW * 0.5f).roundToInt().coerceAtLeast((280 * d).roundToInt())
+        } else {
+            rawScreenW
+        }
+        val w = MeasureSpec.getSize(widthMeasureSpec).takeIf { it > 0 } ?: defaultW
         val lyricZoneH = fixedThreeLineZoneHeightPx(st.desktopFontSize)
         val extraSettingsH = if (st.floatingCapsuleLocked) 0f else (settingsPanelFullHeightPx * settingsExpandProgress)
         val totalH = (topHudHeightPx + lyricZoneH + extraSettingsH + 10f * d).roundToInt()

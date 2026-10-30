@@ -21,8 +21,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -66,6 +66,8 @@ import com.concept.music.ui.components.FloatingScrollToTopButton
 import com.concept.music.ui.components.rememberProgressiveSongList
 import com.concept.music.ui.components.smoothFastScrollToItem
 import com.concept.music.ui.components.SongItemRow
+import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
+import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptAmberAccent
 import com.concept.music.ui.theme.ConceptCoralAccent
 import com.concept.music.ui.theme.ConceptCyanAccent
@@ -124,6 +126,7 @@ fun HomeScreen(
     onTogglePlayPause: () -> Unit = {},
     onSongMoreClick: (Song) -> Unit = {},
     isOverlayOpen: Boolean = false,
+    onSubSheetOpenChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val dailySongs by viewModel.dailyRecommendSongs.collectAsState()
@@ -169,13 +172,21 @@ fun HomeScreen(
     var showRankGridSheet by remember { mutableStateOf(false) }
     var selectedRankCategory by remember { mutableStateOf("全部") }
 
-    // 当打开歌曲评论页、全屏播放页或二级页面时，立即关闭首页内的 ModalBottomSheet 抽屉，避免 DialogWindow 遮挡评论页面
+    // 当打开歌曲评论页、全屏播放页或二级页面时，立即关闭首页内的子抽屉
     LaunchedEffect(isOverlayOpen) {
         if (isOverlayOpen) {
             showPersonalFmSheet = false
             quickFmStation = null
             showRankGridSheet = false
         }
+    }
+
+    val anyHomeSubSheetOpen = (showPersonalFmSheet || quickFmStation != null || showRankGridSheet) && !isOverlayOpen
+    LaunchedEffect(anyHomeSubSheetOpen) {
+        onSubSheetOpenChanged(anyHomeSubSheetOpen)
+    }
+    DisposableEffect(Unit) {
+        onDispose { onSubSheetOpenChanged(false) }
     }
 
     // 严格隔离随心听与每日推荐数据源，绝不在随心听未加载完成时盗用每日推荐第一首歌曲的封面
@@ -575,27 +586,66 @@ fun HomeScreen(
                             }
                         }
 
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(18.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            itemsIndexed(fmChannels, key = { idx, it -> "fm_ch_${it.id}_$idx" }, contentType = { _, _ -> "fm_channel_card" }) { idx, channel ->
-                                val fallbackCover = coverPool.getOrNull((idx + 2) % coverPool.size.coerceAtLeast(1)).orEmpty()
-                                FmChannelCardView(
-                                    channel = channel,
-                                    fallbackCoverUrl = fallbackCover,
-                                    index = idx,
-                                    onCardClick = { openFmStationQuickSheet(channel) },
-                                    onPlayFmChannel = {
-                                        coroutineScope.launch {
-                                            Toast.makeText(context, "正在调频至【${channel.name}】精选 20 首曲目...", Toast.LENGTH_SHORT).show()
-                                            val songs = viewModel.getFmChannelSongs(channel.id, forceNextBatch = true)
-                                            if (songs.isNotEmpty()) {
-                                                onSongClick(songs.first(), songs)
-                                            }
+                        if (homeAdaptive.isLargeScreenDevice) {
+                            // 平板端专属优化：电台预览改为两行横向网格滚动显示，并增大封面尺寸
+                            val fmColumns = remember(fmChannels) { fmChannels.chunked(2) }
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                itemsIndexed(
+                                    items = fmColumns,
+                                    key = { colIdx, col -> "fm_col_${col.first().id}_$colIdx" },
+                                    contentType = { _, _ -> "fm_channel_col" }
+                                ) { colIdx, colItems ->
+                                    Column(
+                                        verticalArrangement = Arrangement.spacedBy(18.dp)
+                                    ) {
+                                        colItems.forEachIndexed { rowIdx, channel ->
+                                            val flatIdx = colIdx * 2 + rowIdx
+                                            val fallbackCover = coverPool.getOrNull((flatIdx + 2) % coverPool.size.coerceAtLeast(1)).orEmpty()
+                                            FmChannelCardView(
+                                                channel = channel,
+                                                fallbackCoverUrl = fallbackCover,
+                                                index = flatIdx,
+                                                onCardClick = { openFmStationQuickSheet(channel) },
+                                                onPlayFmChannel = {
+                                                    coroutineScope.launch {
+                                                        Toast.makeText(context, "正在调频至【${channel.name}】精选 20 首曲目...", Toast.LENGTH_SHORT).show()
+                                                        val songs = viewModel.getFmChannelSongs(channel.id, forceNextBatch = true)
+                                                        if (songs.isNotEmpty()) {
+                                                            onSongClick(songs.first(), songs)
+                                                        }
+                                                    }
+                                                }
+                                            )
                                         }
                                     }
-                                )
+                                }
+                            }
+                        } else {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                itemsIndexed(fmChannels, key = { idx, it -> "fm_ch_${it.id}_$idx" }, contentType = { _, _ -> "fm_channel_card" }) { idx, channel ->
+                                    val fallbackCover = coverPool.getOrNull((idx + 2) % coverPool.size.coerceAtLeast(1)).orEmpty()
+                                    FmChannelCardView(
+                                        channel = channel,
+                                        fallbackCoverUrl = fallbackCover,
+                                        index = idx,
+                                        onCardClick = { openFmStationQuickSheet(channel) },
+                                        onPlayFmChannel = {
+                                            coroutineScope.launch {
+                                                Toast.makeText(context, "正在调频至【${channel.name}】精选 20 首曲目...", Toast.LENGTH_SHORT).show()
+                                                val songs = viewModel.getFmChannelSongs(channel.id, forceNextBatch = true)
+                                                if (songs.isNotEmpty()) {
+                                                    onSongClick(songs.first(), songs)
+                                                }
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -629,7 +679,8 @@ fun HomeScreen(
     }
 
     if (showPersonalFmSheet && !isOverlayOpen) {
-        val pfmSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val pfmAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+        val useCenteredFmPanel = pfmAdaptive.isLargeScreenDevice && pfmAdaptive.isLandscapeWindow
         val mintAccent = if (isDark) Color(0xFF26DEBF) else ConceptMintAccent
         val sheetBgColor = if (isDark) Color(0xFF0E1D22) else Color(0xFFF2FCF9)
         val headerBannerBrush = if (isDark) {
@@ -638,20 +689,57 @@ fun HomeScreen(
             Brush.linearGradient(listOf(Color(0xFFDDFBF3), Color(0xFFEAF6FF), Color(0xFFF2FCF9)))
         }
         var pfmSheetSpin by remember { mutableIntStateOf(0) }
+        val pfmShape = if (useCenteredFmPanel) RoundedCornerShape(26.dp) else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
 
-        ModalBottomSheet(
-            onDismissRequest = { showPersonalFmSheet = false },
-            sheetState = pfmSheetState,
-            containerColor = sheetBgColor,
-            windowInsets = WindowInsets(0, 0, 0, 0),
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        // 采用应用主窗口内 ConceptAnimatedOverlaySheet (zIndex = 80f)，彻底解决 ModalBottomSheet 独立系统 DialogWindow 遮挡上层 SongActionBottomSheet (zIndex = 88f) 的层级问题
+        ConceptAnimatedOverlaySheet(
+            onDismiss = { showPersonalFmSheet = false },
+            isLandscape = useCenteredFmPanel,
+            zIndex = 80f
         ) {
+            Surface(
+                shape = pfmShape,
+                color = sheetBgColor,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shadowElevation = 24.dp,
+                modifier = (if (useCenteredFmPanel) {
+                    Modifier
+                        .padding(horizontal = 20.dp, vertical = 16.dp)
+                        .widthIn(max = 560.dp)
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                } else {
+                    Modifier
+                        .widthIn(max = 600.dp)
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                }).clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+            ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp)
                     .navigationBarsPadding()
             ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .sheetVerticalDragGesture()
+                        .padding(top = 8.dp, bottom = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .width(40.dp)
+                            .height(4.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)
+                    ) {}
+                }
                 Surface(
                     shape = RoundedCornerShape(22.dp),
                     color = Color.Transparent,
@@ -827,25 +915,63 @@ fun HomeScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
             }
+            }
         }
     }
 
     if (quickFmStation != null && !isOverlayOpen) {
         val station = quickFmStation!!
-        val qfmSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { quickFmStation = null },
-            sheetState = qfmSheetState,
-            containerColor = conceptSheetContainerColor(),
-            windowInsets = WindowInsets(0, 0, 0, 0),
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        val qfmAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+        val useCenteredQfmPanel = qfmAdaptive.isLargeScreenDevice && qfmAdaptive.isLandscapeWindow
+        val qfmShape = if (useCenteredQfmPanel) RoundedCornerShape(26.dp) else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        ConceptAnimatedOverlaySheet(
+            onDismiss = { quickFmStation = null },
+            isLandscape = useCenteredQfmPanel,
+            zIndex = 80f
         ) {
+            Surface(
+                shape = qfmShape,
+                color = conceptSheetContainerColor(),
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shadowElevation = 24.dp,
+                modifier = (if (useCenteredQfmPanel) {
+                    Modifier
+                        .padding(horizontal = 20.dp, vertical = 16.dp)
+                        .widthIn(max = 560.dp)
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                } else {
+                    Modifier
+                        .widthIn(max = 600.dp)
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                }).clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+            ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
                     .navigationBarsPadding()
             ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .sheetVerticalDragGesture()
+                        .padding(top = 6.dp, bottom = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        modifier = Modifier
+                            .width(40.dp)
+                            .height(4.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)
+                    ) {}
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -1039,6 +1165,7 @@ fun HomeScreen(
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
+            }
             }
         }
     }
@@ -1838,7 +1965,6 @@ fun NewSongExpressScreen(
             val latestFullSongs by rememberUpdatedState(songs)
             val curPlayingId = currentSong?.id
             val curPlayingHash = currentSong?.hash.orEmpty()
-            val nsAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
             val showNewSongScrollTop by remember(songs.size) {
                 derivedStateOf {
                     newSongListState.firstVisibleItemIndex > 1 ||
@@ -1850,6 +1976,7 @@ fun NewSongExpressScreen(
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
+            val nsAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
             LazyColumn(
                 state = newSongListState,
                 modifier = Modifier
@@ -1964,7 +2091,7 @@ fun NewSongExpressScreen(
                     }
                 }
 
-                // 3. 开放式时间轴日期分组（扁平化 LazyColumn 逐行虚拟化复用，彻底消除单 item 包裹数十首歌造成的滑动卡顿）
+                // 3. 开放式时间轴日期分组（搭载 spatialPageSpring 连续高度折叠/展开物理弹簧动画 + expressiveSpring 箭头旋转）
                 dateGroups.forEach { group ->
                     val pubDate = group.date
                     val isCollapsed = collapsedDates[pubDate] == true
@@ -1972,7 +2099,7 @@ fun NewSongExpressScreen(
                     item(key = "header_$pubDate", contentType = "date_header") {
                         val arrowRotation by animateFloatAsState(
                             targetValue = if (isCollapsed) -90f else 0f,
-                            animationSpec = tween(durationMillis = 240),
+                            animationSpec = ConceptMotion.expressiveSpring(),
                             label = "dateCollapseArrow_$pubDate"
                         )
 
@@ -2004,15 +2131,22 @@ fun NewSongExpressScreen(
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.ExtraBold
                                     )
-
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = if (isCollapsed) "展开" else "收起",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                        fontSize = 11.5.sp
-                                    )
+                                    AnimatedContent(
+                                        targetState = isCollapsed,
+                                        transitionSpec = {
+                                            fadeIn(tween(180)) togetherWith fadeOut(tween(140))
+                                        },
+                                        label = "collapseLabel_$pubDate"
+                                    ) { collapsedState ->
+                                        Text(
+                                            text = if (collapsedState) "展开 (${group.indexedSongs.size})" else "收起",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                            fontSize = 11.5.sp
+                                        )
+                                    }
                                     Spacer(modifier = Modifier.width(2.dp))
                                     Icon(
                                         imageVector = Icons.Rounded.ExpandMore,
@@ -2031,23 +2165,51 @@ fun NewSongExpressScreen(
                         }
                     }
 
-                    if (!isCollapsed) {
-                        if (nsAdaptive.useTwoColumnSongOrCardGrid) {
-                            val pairs = group.indexedSongs.chunked(2)
-                            items(
-                                items = pairs,
-                                key = { pair -> "ns_pair_${pubDate}_${pair.first().rawSong.id}_${pair.first().orderIndex}" },
-                                contentType = { "song_pair_row" }
-                            ) { pair ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    pair.forEach { item ->
+                    item(key = "ns_group_songs_$pubDate", contentType = "date_song_group") {
+                        AnimatedVisibility(
+                            visible = !isCollapsed,
+                            enter = expandVertically(
+                                animationSpec = ConceptMotion.spatialPageSpring(),
+                                expandFrom = Alignment.Top
+                            ) + fadeIn(
+                                animationSpec = tween(durationMillis = 220, easing = ConceptMotion.EmphasizedDecelerate)
+                            ),
+                            exit = shrinkVertically(
+                                animationSpec = ConceptMotion.spatialPageSpring(),
+                                shrinkTowards = Alignment.Top
+                            ) + fadeOut(
+                                animationSpec = tween(durationMillis = 180, easing = ConceptMotion.EmphasizedAccelerate)
+                            )
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                if (nsAdaptive.useTwoColumnSongOrCardGrid) {
+                                    val pairs = remember(group.indexedSongs) { group.indexedSongs.chunked(2) }
+                                    pairs.forEach { pair ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            pair.forEach { item ->
+                                                val rawSong = item.rawSong
+                                                Box(modifier = Modifier.weight(1f)) {
+                                                    SongItemRow(
+                                                        song = item.displaySong,
+                                                        orderIndex = item.orderIndex,
+                                                        isPlaying = curPlayingId != null && (curPlayingId == rawSong.id || (curPlayingHash.isNotEmpty() && curPlayingHash.equals(rawSong.hash, ignoreCase = true))),
+                                                        onClick = { onSongClick(rawSong, latestFullSongs) },
+                                                        onMoreClick = { onSongMoreClick(rawSong) }
+                                                    )
+                                                }
+                                            }
+                                            if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                                        }
+                                    }
+                                } else {
+                                    group.indexedSongs.forEach { item ->
                                         val rawSong = item.rawSong
-                                        Box(modifier = Modifier.weight(1f)) {
+                                        Box(modifier = Modifier.padding(horizontal = 12.dp)) {
                                             SongItemRow(
                                                 song = item.displaySong,
                                                 orderIndex = item.orderIndex,
@@ -2057,24 +2219,6 @@ fun NewSongExpressScreen(
                                             )
                                         }
                                     }
-                                    if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
-                                }
-                            }
-                        } else {
-                            items(
-                                items = group.indexedSongs,
-                                key = { item -> "ns_row_${pubDate}_${item.rawSong.id}_${item.orderIndex}" },
-                                contentType = { "song_row" }
-                            ) { item ->
-                                val rawSong = item.rawSong
-                                Box(modifier = Modifier.padding(horizontal = 12.dp)) {
-                                    SongItemRow(
-                                        song = item.displaySong,
-                                        orderIndex = item.orderIndex,
-                                        isPlaying = curPlayingId != null && (curPlayingId == rawSong.id || (curPlayingHash.isNotEmpty() && curPlayingHash.equals(rawSong.hash, ignoreCase = true))),
-                                        onClick = { onSongClick(rawSong, latestFullSongs) },
-                                        onMoreClick = { onSongMoreClick(rawSong) }
-                                    )
                                 }
                             }
                         }
@@ -2133,16 +2277,19 @@ private fun FmChannelCardView(
         }
     }
 
+    val fmCardAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+    val coverSize = if (fmCardAdaptive.isLargeScreenDevice) 168.dp else 148.dp
+
     Column(
         modifier = Modifier
-            .width(148.dp)
+            .width(coverSize)
             .softCardClickable(clip = false, onClick = onCardClick)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(148.dp)
-                .clip(RoundedCornerShape(22.dp))
+                .height(coverSize)
+                .clip(RoundedCornerShape(if (fmCardAdaptive.isLargeScreenDevice) 24.dp else 22.dp))
                 .background(fallbackBrush)
         ) {
             val fmCoverModel = rememberOptimizedAsyncImageModel(rawUrl = effectiveCover, sizePx = 240, targetCdnSize = "240")

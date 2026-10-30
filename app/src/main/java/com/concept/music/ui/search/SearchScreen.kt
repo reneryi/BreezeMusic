@@ -400,19 +400,52 @@ fun SearchScreen(
                                             }
                                         }
                                         Box(modifier = Modifier.fillMaxSize()) {
-                                            LazyColumn(state = songListState, modifier = Modifier.fillMaxSize()) {
-                                                itemsIndexed(
-                                                    items = displayedSearchSongs,
-                                                    key = { idx, s -> "search_song_${s.id}_$idx" },
-                                                    contentType = { _, _ -> "song_row" }
-                                                ) { index, song ->
-                                                    SongItemRow(
-                                                        song = song,
-                                                        orderIndex = index + 1,
-                                                        isPlaying = curSearchPlayingId != null && (curSearchPlayingId == song.id || (curSearchPlayingHash.isNotEmpty() && curSearchPlayingHash.equals(song.hash, ignoreCase = true))),
-                                                        onClick = { onSongClick(song, latestSongResults) },
-                                                        onMoreClick = { onSongMoreClick(song) }
-                                                    )
+                                            LazyColumn(
+                                                state = songListState,
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentPadding = PaddingValues(bottom = 112.dp)
+                                            ) {
+                                                if (adaptiveInfo.useTwoColumnSongOrCardGrid) {
+                                                    val songPairs = displayedSearchSongs.mapIndexed { idx, s -> idx to s }.chunked(2)
+                                                    itemsIndexed(
+                                                        items = songPairs,
+                                                        key = { pIdx, pair -> "search_song_pair_${pair.first().second.id}_$pIdx" },
+                                                        contentType = { _, _ -> "song_pair_row" }
+                                                    ) { _, pair ->
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .padding(horizontal = 12.dp),
+                                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                                        ) {
+                                                            pair.forEach { (index, song) ->
+                                                                Box(modifier = Modifier.weight(1f)) {
+                                                                    SongItemRow(
+                                                                        song = song,
+                                                                        orderIndex = index + 1,
+                                                                        isPlaying = curSearchPlayingId != null && (curSearchPlayingId == song.id || (curSearchPlayingHash.isNotEmpty() && curSearchPlayingHash.equals(song.hash, ignoreCase = true))),
+                                                                        onClick = { onSongClick(song, latestSongResults) },
+                                                                        onMoreClick = { onSongMoreClick(song) }
+                                                                    )
+                                                                }
+                                                            }
+                                                            if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                                                        }
+                                                    }
+                                                } else {
+                                                    itemsIndexed(
+                                                        items = displayedSearchSongs,
+                                                        key = { idx, s -> "search_song_${s.id}_$idx" },
+                                                        contentType = { _, _ -> "song_row" }
+                                                    ) { index, song ->
+                                                        SongItemRow(
+                                                            song = song,
+                                                            orderIndex = index + 1,
+                                                            isPlaying = curSearchPlayingId != null && (curSearchPlayingId == song.id || (curSearchPlayingHash.isNotEmpty() && curSearchPlayingHash.equals(song.hash, ignoreCase = true))),
+                                                            onClick = { onSongClick(song, latestSongResults) },
+                                                            onMoreClick = { onSongMoreClick(song) }
+                                                        )
+                                                    }
                                                 }
                                                 if (loadingMore) {
                                                     item {

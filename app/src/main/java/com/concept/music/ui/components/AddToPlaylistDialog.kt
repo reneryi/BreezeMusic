@@ -60,15 +60,19 @@ fun AddToPlaylistDialog(
         scrimAlpha = 0.54f,
         zIndex = 92f
     ) {
+        val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+        val maxDialogWidth = if (adaptiveInfo.isLargeScreenDevice) 328.dp else 368.dp
         Surface(
-            shape = RoundedCornerShape(26.dp),
+            shape = RoundedCornerShape(24.dp),
             color = conceptSheetContainerColor(),
             contentColor = MaterialTheme.colorScheme.onSurface,
             shadowElevation = 24.dp,
+            // 关键：widthIn(max = ...) 必须置于 fillMaxWidth(...) 之前，否则 fillMaxWidth 会先把 minWidth 撑满父容器导致 widthIn 失效！
             modifier = modifier
-                .fillMaxWidth(0.92f)
-                .widthIn(max = 440.dp)
-                .fillMaxHeight(0.72f)
+                .padding(horizontal = 20.dp, vertical = 16.dp)
+                .widthIn(max = maxDialogWidth)
+                .fillMaxWidth(0.88f)
+                .wrapContentHeight()
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -77,8 +81,9 @@ fun AddToPlaylistDialog(
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(vertical = 16.dp)
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+                    .padding(vertical = 12.dp)
             ) {
                 // 顶栏
                 Row(
@@ -174,18 +179,18 @@ fun AddToPlaylistDialog(
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = ConceptPrimary.copy(alpha = 0.16f),
-                        modifier = Modifier.size(44.dp)
+                        modifier = Modifier.size(42.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Rounded.Add,
                                 contentDescription = "新建歌单",
                                 tint = ConceptPrimary,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.width(14.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
                     Text(
                         text = "新建歌单",
                         style = MaterialTheme.typography.bodyLarge.copy(
@@ -200,12 +205,12 @@ fun AddToPlaylistDialog(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 )
 
-                // 歌单列表
+                // 歌单列表（紧凑自适应高度，不再使用 weight(1f) 撑大弹窗空白区）
                 if (customPlaylists.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f),
+                            .padding(vertical = 28.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -219,7 +224,7 @@ fun AddToPlaylistDialog(
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
+                            .heightIn(max = if (adaptiveInfo.isLargeScreenDevice) 220.dp else 260.dp)
                     ) {
                         itemsIndexed(customPlaylists, key = { idx, pl -> "add_pl_${pl.id}_${pl.listId}_$idx" }) { _, pl ->
                             Row(
@@ -229,12 +234,12 @@ fun AddToPlaylistDialog(
                                         selectedPendingPlaylist = pl
                                         requestDismiss()
                                     }
-                                    .padding(horizontal = 20.dp, vertical = 10.dp),
+                                    .padding(horizontal = 20.dp, vertical = 9.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(44.dp)
+                                        .size(42.dp)
                                         .clip(RoundedCornerShape(10.dp))
                                         .background(MaterialTheme.colorScheme.surfaceVariant),
                                     contentAlignment = Alignment.Center
@@ -251,12 +256,12 @@ fun AddToPlaylistDialog(
                                             imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
                                             contentDescription = null,
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(22.dp)
+                                            modifier = Modifier.size(20.dp)
                                         )
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.width(14.dp))
+                                Spacer(modifier = Modifier.width(12.dp))
 
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(

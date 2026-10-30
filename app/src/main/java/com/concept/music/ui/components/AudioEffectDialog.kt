@@ -51,6 +51,7 @@ import com.concept.music.service.ViperEffectCategory
 import com.concept.music.ui.theme.*
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun AudioEffectDialog(
@@ -168,55 +169,87 @@ fun ViperSoundEffectScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        // 3. 三大声学分区导航栏
+                        // 3. 三大声学分区导航栏（复刻心流舱 FocusPodBottomSheet 灵动弹性滑动胶囊指示器 + 微缩放动效）
+                        val pillFraction by animateFloatAsState(
+                            targetValue = selectedMainTab.toFloat(),
+                            animationSpec = ConceptMotion.expressiveSpring(),
+                            label = "viperTabSlidingPill"
+                        )
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = conceptElevatedSurfaceColor(),
                             contentColor = primaryText,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Row(
+                            BoxWithConstraints(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    .padding(4.dp)
                             ) {
-                                SoundEffectMainTab.entries.forEach { tab ->
-                                    val selected = selectedMainTab == tab.index
-                                    val tabBg by animateColorAsState(
-                                        targetValue = if (selected) ConceptPrimary else Color.Transparent,
-                                        animationSpec = tween(180),
-                                        label = "soundMainTabBg_${tab.index}"
-                                    )
-                                    val tabTextColor by animateColorAsState(
-                                        targetValue = if (selected) Color.White else subText,
-                                        animationSpec = tween(180),
-                                        label = "soundMainTabTxt_${tab.index}"
-                                    )
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.Center,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(tabBg)
-                                            .softClickable { selectedMainTab = tab.index }
-                                            .padding(vertical = 9.dp, horizontal = 6.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = tab.icon,
-                                            contentDescription = null,
-                                            tint = tabTextColor,
-                                            modifier = Modifier.size(16.dp)
+                                val tabCount = SoundEffectMainTab.entries.size.coerceAtLeast(1)
+                                val tabGap = 6.dp
+                                val singleTabWidth = (maxWidth - tabGap * (tabCount - 1)) / tabCount
+                                val fractionalPart = abs(pillFraction - pillFraction.roundToInt().toFloat())
+                                val stretchScaleX = 1f + 0.08f * kotlin.math.sin(fractionalPart * Math.PI.toFloat())
+
+                                // 灵动滑动胶囊底座（与心流舱同源 ExpressiveMicroSpring）
+                                Box(
+                                    modifier = Modifier
+                                        .width(singleTabWidth)
+                                        .height(38.dp)
+                                        .graphicsLayer {
+                                            translationX = pillFraction * (singleTabWidth.toPx() + tabGap.toPx())
+                                            scaleX = stretchScaleX
+                                        }
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(ConceptPrimary)
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(tabGap)
+                                ) {
+                                    SoundEffectMainTab.entries.forEach { tab ->
+                                        val selected = selectedMainTab == tab.index
+                                        val tabTextColor by animateColorAsState(
+                                            targetValue = if (selected) Color.White else subText,
+                                            animationSpec = tween(200),
+                                            label = "soundMainTabTxt_${tab.index}"
                                         )
-                                        Spacer(modifier = Modifier.width(5.dp))
-                                        Text(
-                                            text = tab.title,
-                                            color = tabTextColor,
-                                            fontSize = 13.sp,
-                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                            maxLines = 1
+                                        val tabScale by animateFloatAsState(
+                                            targetValue = if (selected) 1.04f else 1f,
+                                            animationSpec = ConceptMotion.expressiveSpring(),
+                                            label = "soundMainTabScale_${tab.index}"
                                         )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(38.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .softClickable { selectedMainTab = tab.index }
+                                                .graphicsLayer {
+                                                    scaleX = tabScale
+                                                    scaleY = tabScale
+                                                }
+                                                .padding(horizontal = 6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = tab.icon,
+                                                contentDescription = null,
+                                                tint = tabTextColor,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Text(
+                                                text = tab.title,
+                                                color = tabTextColor,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                                maxLines = 1
+                                            )
+                                        }
                                     }
                                 }
                             }

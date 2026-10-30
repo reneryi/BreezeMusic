@@ -210,10 +210,10 @@ fun FloatingLyricOverlay(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.TopCenter
         ) {
-            // 横向自适应占满屏幕宽度（仅留 10.dp 安全边距），锁定 X=0，仅支持垂直上下拖动
+            // 手机版横向占满屏幕宽度，平板版缩短为屏幕一半长度 (50%) 并水平居中
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxWidth(if (com.concept.music.BuildConfig.IS_TABLET_FLAVOR) 0.5f else 1f)
                     .padding(horizontal = 10.dp)
                     .graphicsLayer {
                         translationY = dragY

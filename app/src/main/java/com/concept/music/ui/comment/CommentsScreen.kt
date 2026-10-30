@@ -168,7 +168,8 @@ private fun normalizeForQuoteMatch(text: String): String {
  */
 internal fun buildFloorClusterTree(
     rootComment: SongComment,
-    rawReplies: List<SongComment>
+    rawReplies: List<SongComment>,
+    maxInlineLevel: Int = if (com.concept.music.BuildConfig.IS_TABLET_FLAVOR) 7 else 4
 ): FloorClusterTreeBuildResult {
     if (rawReplies.isEmpty()) {
         return FloorClusterTreeBuildResult(emptyList(), 0)
@@ -383,8 +384,8 @@ internal fun buildFloorClusterTree(
 
         val nextParentTrunks = activeParentTrunks + (!isLastSibling)
 
-        if (level < 4) {
-            // 1~3 级评论的子评论正常延伸出下一级子分支线（最多显示到 4 级）
+        if (level < maxInlineLevel) {
+            // 手机端最多内联展示 4 级，平板端大屏最多内联展示 7 级，超出上限的深层回复再收纳为「查看对话」独立页入口
             node.children.forEachIndexed { childIdx, childNode ->
                 traverseCluster(
                     node = childNode,
@@ -397,7 +398,7 @@ internal fun buildFloorClusterTree(
                 )
             }
         } else {
-            // 已到达第 4 级评论，若还有第 5 级及更深层回复，不再缩进第 5 条分支线，而是显示「查看对话」入口标识
+            // 已到达当前设备内联层级上限（手机 4 级 / 平板 7 级），更深层回复不再继续缩进，显示「查看对话」入口标识
             val deepDescendants = mutableListOf<Pair<SongComment, Int>>()
             node.children.forEach { child ->
                 collectAllDescendantsWithLevel(child, level + 1, deepDescendants)
@@ -406,7 +407,7 @@ internal fun buildFloorClusterTree(
                 visualItems.add(
                     FloorTreeVisualItem.ViewDeepDialogueBadgeRow(
                         key = "tree_deep_dialogue_${node.comment.id}",
-                        level = 4,
+                        level = maxInlineLevel,
                         hiddenDeepReplyCount = deepDescendants.size,
                         activeParentTrunks = nextParentTrunks,
                         conversationChain = conversationChain
@@ -1610,7 +1611,8 @@ private fun MultiLevelClusterReplyNode(
     onPreviewImage: (String) -> Unit
 ) {
     val reply = item.comment
-    val level = item.level.coerceIn(1, 4)
+    val maxInlineLevel = if (com.concept.music.BuildConfig.IS_TABLET_FLAVOR) 7 else 4
+    val level = item.level.coerceIn(1, maxInlineLevel)
     val primaryText = MaterialTheme.colorScheme.onSurface
     val subText = MaterialTheme.colorScheme.onSurfaceVariant
     val elevatedColor = conceptElevatedSurfaceColor()
@@ -1618,14 +1620,17 @@ private fun MultiLevelClusterReplyNode(
 
     val levelColors = remember {
         listOf(
-            ConceptPrimary,         // 一级主分支：主题青蓝
-            Color(0xFF38BDF8),      // 二级子集群：天青蓝
-            Color(0xFFA78BFA),      // 三级子集群：星云紫
-            Color(0xFFFBBF24)       // 四级深层分支：流光金
+            ConceptPrimary,         // 1级主分支：主题青蓝
+            Color(0xFF38BDF8),      // 2级子集群：天青蓝
+            Color(0xFFA78BFA),      // 3级子集群：星云紫
+            Color(0xFFFBBF24),      // 4级分支：流光金
+            Color(0xFF34D399),      // 5级分支：极光翡翠
+            Color(0xFFF472B6),      // 6级分支：珊瑚粉霞
+            Color(0xFFFB923C)       // 7级深层分支：琥珀暖橙
         )
     }
     val branchAccent = levelColors[(level - 1).coerceIn(0, levelColors.lastIndex)]
-    val stepIndentDp = 20.dp
+    val stepIndentDp = if (maxInlineLevel > 4) 16.dp else 20.dp
     val canvasWidth = 30.dp + stepIndentDp * (level - 1)
 
     Row(
@@ -1714,7 +1719,7 @@ private fun MultiLevelClusterReplyNode(
             )
 
             // 4. 若当前节点下方挂载了子集群分支（level + 1），从当前分支点下方引出子集群起始竖线连接到底部
-            if (item.hasChildBranchBelow && level < 4) {
+            if (item.hasChildBranchBelow && level < maxInlineLevel) {
                 val childTrunkX = baseStartX + level * stepPx
                 val childColor = levelColors[level.coerceIn(0, levelColors.lastIndex)].copy(alpha = 0.40f)
                 drawLine(
@@ -1863,7 +1868,7 @@ private fun MultiLevelClusterReplyNode(
                 }
 
                 // 四级评论若有对话上下文，支持一键「查看对话」
-                if (level == 4 && onOpenConversation != null && !item.hasChildBranchBelow) {
+                if (level == maxInlineLevel && onOpenConversation != null && !item.hasChildBranchBelow) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -1901,15 +1906,19 @@ private fun MultiLevelDeepDialogueEntryNode(
     item: FloorTreeVisualItem.ViewDeepDialogueBadgeRow,
     onClick: () -> Unit
 ) {
-    val level = item.level.coerceIn(1, 4)
-    val stepIndentDp = 20.dp
+    val maxInlineLevel = if (com.concept.music.BuildConfig.IS_TABLET_FLAVOR) 7 else 4
+    val level = item.level.coerceIn(1, maxInlineLevel)
+    val stepIndentDp = if (maxInlineLevel > 4) 16.dp else 20.dp
     val canvasWidth = 30.dp + stepIndentDp * (level - 1)
     val levelColors = remember {
         listOf(
             ConceptPrimary,
             Color(0xFF38BDF8),
             Color(0xFFA78BFA),
-            Color(0xFFFBBF24)
+            Color(0xFFFBBF24),
+            Color(0xFF34D399),
+            Color(0xFFF472B6),
+            Color(0xFFFB923C)
         )
     }
     val badgeAccent = Color(0xFFFBBF24)

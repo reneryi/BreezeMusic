@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/Version-v1.2.0-00E5FF?style=flat-square" alt="Version" />
+<img src="https://img.shields.io/badge/Version-v1.3.0-00E5FF?style=flat-square" alt="Version" />
 <img src="https://img.shields.io/badge/Platform-Android%208.0%2B%20(API%2026--34)-3898FF?style=flat-square" alt="Platform" />
 <img src="https://img.shields.io/badge/Language-Kotlin%201.9-7F52FF?style=flat-square" alt="Kotlin" />
 <img src="https://img.shields.io/badge/UI-Jetpack%20Compose%20%2B%20120fps%20Spring%20Motion-00E5FF?style=flat-square" alt="Compose" />
@@ -93,7 +93,7 @@
 ```
 BreezeMusic/
 ├── app/
-│   ├── build.gradle.kts                         # 模块级 Gradle 构建配置 (versionName = "1.2.0", versionCode = 5)
+│   ├── build.gradle.kts                         # 模块级 Gradle 构建配置 (versionName = "1.3.0", versionCode = 6)
 │   ├── proguard-rules.pro                       # Release 混淆与 R8 压缩保留规则
 │   └── src/
 │       ├── main/

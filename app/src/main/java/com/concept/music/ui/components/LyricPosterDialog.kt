@@ -19,6 +19,7 @@ import android.widget.Toast
 import androidx.compose.foundation.Canvas as ComposeCanvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -282,24 +283,64 @@ fun LyricPosterDialog(
         runCatching { LocalDate.now().toString().replace("-", ".") }.getOrDefault("2026.10.27")
     }
 
+    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+    val isTabletPoster = adaptiveInfo.isLargeScreenDevice
+    val isTabletLandscapePoster = isTabletPoster && adaptiveInfo.isLandscapeWindow
+
     ConceptAnimatedOverlaySheet(
         onDismiss = onDismiss,
         isLandscape = true,
-        scrimAlpha = 0.72f,
+        scrimAlpha = if (isTabletPoster) 0.62f else 0.72f,
+        contentAlignment = Alignment.Center,
         zIndex = 96f
     ) {
         val closeStudio = requestDismiss
-        Box(
-            modifier = Modifier
+        val windowModifier = if (isTabletLandscapePoster) {
+            Modifier
+                .padding(horizontal = 24.dp, vertical = 18.dp)
+                .widthIn(max = 820.dp)
+                .fillMaxWidth(0.86f)
+                .heightIn(max = 560.dp)
+                .fillMaxHeight(0.84f)
+                .clip(RoundedCornerShape(28.dp))
+                .background(Color(0xFA090E18))
+                .border(0.8.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(28.dp))
+                .clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+        } else if (isTabletPoster) {
+            Modifier
+                .padding(horizontal = 24.dp, vertical = 24.dp)
+                .widthIn(max = 530.dp)
+                .fillMaxWidth(0.88f)
+                .heightIn(max = 720.dp)
+                .fillMaxHeight(0.82f)
+                .clip(RoundedCornerShape(28.dp))
+                .background(Color(0xFA090E18))
+                .border(0.8.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(28.dp))
+                .clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+        } else {
+            Modifier
                 .fillMaxSize()
                 .background(Color(0xF5070A10))
                 .statusBarsPadding()
                 .navigationBarsPadding()
-        ) {
+        }
+
+        Box(modifier = windowModifier) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .padding(
+                        horizontal = if (isTabletPoster) 22.dp else 16.dp,
+                        vertical = if (isTabletPoster) 16.dp else 8.dp
+                    )
             ) {
                 // 1. 顶部工作台标题栏（左标题自适应留白 + 右侧紧凑等高双胶囊操作按钮）
                 val actionButtonsEnabled = selectedLines.isNotEmpty() && !saving
@@ -501,24 +542,10 @@ fun LyricPosterDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(if (isTabletPoster) 14.dp else 8.dp))
 
-                // 2. 实时海报高定卡片预览区（五款截然不同的构图）
-                PosterLivePreviewCard(
-                    song = effectiveSong,
-                    selectedLines = selectedLines,
-                    template = template,
-                    includeTranslation = includeTranslation,
-                    centerAlign = centerAlign,
-                    showWaveform = showWaveformCode,
-                    dateStr = dateStr,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(0.55f)
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
+                val renderControlsAndLyricsPane: @Composable (Modifier) -> Unit = { paneMod ->
+                    Column(modifier = paneMod) {
                 // 3. 五大风格差异化模板选择器
                 Row(
                     modifier = Modifier
@@ -617,7 +644,7 @@ fun LyricPosterDialog(
                     color = Color.White.copy(alpha = 0.05f),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(0.45f)
+                        .weight(1f)
                 ) {
                     if (lines.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -685,6 +712,90 @@ fun LyricPosterDialog(
                             }
                         }
                     }
+                }
+                    }
+                }
+
+                if (isTabletLandscapePoster) {
+                    // 平板横屏居中窗口：左侧 4:3 黄金比例实时海报画布 + 右侧模板与歌词勾选工作台
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(0.53f)
+                                .fillMaxHeight(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            PosterLivePreviewCard(
+                                song = effectiveSong,
+                                selectedLines = selectedLines,
+                                template = template,
+                                includeTranslation = includeTranslation,
+                                centerAlign = centerAlign,
+                                showWaveform = showWaveformCode,
+                                dateStr = dateStr,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(4f / 3f, matchHeightConstraintsFirst = false)
+                            )
+                        }
+                        renderControlsAndLyricsPane(
+                            Modifier
+                                .weight(0.47f)
+                                .fillMaxHeight()
+                        )
+                    }
+                } else if (isTabletPoster) {
+                    // 平板竖屏居中窗口：上方 4:3 海报画布 + 下方模板与歌词勾选工作台
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        PosterLivePreviewCard(
+                            song = effectiveSong,
+                            selectedLines = selectedLines,
+                            template = template,
+                            includeTranslation = includeTranslation,
+                            centerAlign = centerAlign,
+                            showWaveform = showWaveformCode,
+                            dateStr = dateStr,
+                            modifier = Modifier
+                                .fillMaxWidth(0.92f)
+                                .aspectRatio(4f / 3f)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    renderControlsAndLyricsPane(
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    )
+                } else {
+                    PosterLivePreviewCard(
+                        song = effectiveSong,
+                        selectedLines = selectedLines,
+                        template = template,
+                        includeTranslation = includeTranslation,
+                        centerAlign = centerAlign,
+                        showWaveform = showWaveformCode,
+                        dateStr = dateStr,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(0.55f)
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    renderControlsAndLyricsPane(
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(0.45f)
+                    )
                 }
             }
         }

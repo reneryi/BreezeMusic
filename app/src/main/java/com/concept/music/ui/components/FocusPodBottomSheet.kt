@@ -97,25 +97,42 @@ fun FocusPodBottomSheet(
     val timerTitleColor = if (isDark) Color.White else Color(0xFF181532)
     val timerSubColor = if (isDark) Color.White.copy(alpha = 0.72f) else Color(0xFF564F7A)
 
+    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+    val inLibraryPageCardMode = adaptiveInfo.isLargeScreenDevice
+
     ConceptAnimatedOverlaySheet(
         onDismiss = onDismiss,
-        isLandscape = false,
+        isLandscape = inLibraryPageCardMode,
+        contentAlignment = if (inLibraryPageCardMode) Alignment.Center else Alignment.BottomCenter,
         zIndex = 88f
     ) {
         val dismissWithAnimation = requestDismiss
         Surface(
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            shape = if (inLibraryPageCardMode) RoundedCornerShape(26.dp) else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             color = sheetBgColor,
             contentColor = primaryText,
             shadowElevation = 24.dp,
-            modifier = Modifier.fillMaxWidth()
+            modifier = if (inLibraryPageCardMode) {
+                Modifier
+                    .padding(start = 14.dp, end = 14.dp, top = 56.dp, bottom = 78.dp)
+                    .widthIn(max = 500.dp)
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+                    .heightIn(max = 600.dp)
+            } else {
+                Modifier.fillMaxWidth()
+            }
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.86f)
-                    .padding(horizontal = 20.dp)
-                    .navigationBarsPadding()
+                    .then(
+                        if (inLibraryPageCardMode) {
+                            Modifier.wrapContentHeight().padding(horizontal = 18.dp, vertical = 10.dp)
+                        } else {
+                            Modifier.fillMaxHeight(0.86f).padding(horizontal = 20.dp).navigationBarsPadding()
+                        }
+                    )
             ) {
                 Box(
                     modifier = Modifier

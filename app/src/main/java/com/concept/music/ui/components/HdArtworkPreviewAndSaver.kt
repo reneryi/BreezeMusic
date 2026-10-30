@@ -131,7 +131,9 @@ object HdArtworkSaver {
         // 若歌曲本身封面为空，尝试通过 MusicRepository 补齐封面 URL
         var effectiveUrl = rawUrl.trim()
         if (effectiveUrl.isBlank() && songForFallback != null) {
-            effectiveUrl = songForFallback.coverUrl
+            effectiveUrl = runCatching {
+                songForFallback.coverUrl
+            }.getOrDefault("")
         }
         if (effectiveUrl.isBlank()) {
             return@withContext ArtworkSaveResult.Failure("暂无可用的${category.label}地址")
@@ -278,7 +280,11 @@ fun HdArtworkPreviewDialog(
 
     LaunchedEffect(artworkUrl, songForFallback?.id) {
         if (resolvedCoverUrl.isBlank() && songForFallback != null) {
-            val fetched = songForFallback.coverUrl
+            val fetched = withContext(Dispatchers.IO) {
+                runCatching {
+                    songForFallback.coverUrl
+                }.getOrDefault("")
+            }
             if (fetched.isNotBlank()) {
                 resolvedCoverUrl = HdArtworkSaver.resolveBestPreviewUrl(fetched)
             }

@@ -231,6 +231,50 @@ data class ChangelogVersionItem(
 internal val PROJECT_CHANGELOG_HISTORY = listOf(
     ChangelogVersionItem(
         version = "v${BuildConfig.VERSION_NAME}",
+        date = "2026-10-31",
+        tag = "正式版 · 平板竖屏/横屏深度打磨与双端体验升级",
+        summary = "平板端悬浮导航栏移至左侧垂直居中、电台预览双行大图排版、修复我的页歌单列表/网格切换与平板竖屏点击横屏播放 90° 全屏翻转；双端新增多歌手选择悬浮窗（播放页动态取色毛玻璃适配）、音效页复刻心流舱灵动滑动标题切换动画、新歌速递日期分组物理弹簧丝滑收折、修复随心听抽屉内更多弹窗层级遮挡及关注歌手取关 PKCS#1 加密报错",
+        highlights = listOf(
+            "平板端导航与排版专项精修（严格隔离平板版与手机版）：将平板竖屏/分屏下的「发现 / 我的」悬浮胶囊导航栏移至屏幕左侧垂直居中（Alignment.CenterStart），底部悬浮播放条直接贴底居中展示，彻底消除底部双胶囊堆叠；平板发现页「精选场景电台」改为两行横向网格预览并将封面尺寸增大至 168dp；修复平板「我的」页自建/收藏歌单列表视图切换无效的问题",
+            "平板竖屏点击「横屏播放」全屏翻转修复：针对 Android 16 (API 36, sw>=600dp) 忽略方向锁并产生上下黑边兼容小窗（Letterboxing）的机制，重构平板竖屏点击「横屏播放」按钮为 90° 全屏画布翻转（宽高约束互换 + 陀螺仪正反横向握持自适应），点击后立即如手机般横向铺满整块屏幕（与平板横屏图四状态 100% 一致）",
+            "多歌手（>=2位）智能选择悬浮窗：当单曲包含 2 位及以上合作歌手时，在歌曲列表「更多 -> 查看歌手」与播放页「更多 -> 歌手主页」点击后弹出悬浮选择窗口，异步加载各位歌手高清头像与单曲数，支持任选一位直达其歌手主页；播放页内弹窗深度适配封面动态取色（rememberCoverColorRoles）流光毛玻璃风格",
+            "音效页灵动标题栏动画与新歌速递丝滑收折：在「蝰蛇音效与调音台」顶部三栏切换（蝰蛇声效 / 声场调音 / 参量均衡）复刻心流舱（FocusPodBottomSheet）同源的 ExpressiveMicroSpring 滑动胶囊指示器、水滴微拉伸与文字微缩放动效；将「新歌速递」页面日期分组的展开/收起升级为 spatialPageSpring 连续高度折叠动画与箭头弹性旋转",
+            "随心听抽屉层级修复与关注歌手取关协议修复：将首页「猜你喜欢 · 随心听」与「场景电台快捷抽屉」由独立系统 DialogWindow 的 ModalBottomSheet 迁移至主窗口 ConceptAnimatedOverlaySheet (zIndex = 80f)，确保点击歌曲「更多」按钮时操作菜单 (zIndex = 88f) 始终浮于随心听抽屉之上；严格对齐 MakcRe/KuGouMusicApi (module/artist_unfollow.js & util/crypto.js)，将取关/关注接口的 RSA 加密由无填充模幂修正为 RSAES-PKCS1-V1_5 (KugouSigner.rsaPkcs1)，并打通 singerid 与 target_userid 双向映射，彻底解决关注歌手无法取关报错问题"
+        ),
+        moduleGroups = listOf(
+            ChangelogModuleGroup(
+                moduleTitle = "一、平板版专项交互与布局打磨（BuildConfig.IS_TABLET_FLAVOR 严格隔离）",
+                points = listOf(
+                    "左侧垂直居中悬浮胶囊导航栏：平板竖屏与分屏模式下，「发现 / 我的」采用垂直悬浮胶囊置于屏幕左侧居中，内置垂直流体拉伸滑块；底部 MiniPlayerBar 无需再向上偏移避让底栏，视觉更加通透舒展",
+                    "精选场景电台两行大图预览：平板发现页电台预览模块升级为 2 行横向网格滚动（chunked(2)），并将电台封面由 148dp 增大至 168dp",
+                    "歌单视图切换与横屏播放全屏翻转：移除 LibraryScreen 对平板竖屏列表视图的硬编码拦截，恢复列表/网格自由切换；平板竖屏点击「横屏播放」通过 90° 全屏画布翻转消除 Android 16 上下黑边小窗，将平板横过来即可获得与原生横屏完全一致的左封面+右歌词合并舞台"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "二、多歌手选择悬浮窗与随心听抽屉 Z 轴层级修复",
+                points = listOf(
+                    "新增 parseSongArtistNames 与 ArtistSelectionFloatingDialog：自动识别 、 / & ， , feat. ft. 等多歌手分隔符，当歌手数 >= 2 时弹出悬浮选择窗并异步补全每位歌手头像；列表端采用主题色阶卡片，播放页端采用随封面动态着色的流光玻璃拟态面板",
+                    "修复随心听抽屉内点击「更多」被遮挡问题：将「猜你喜欢 · 随心听」与「电台快捷漫游」抽屉统一迁移至应用主窗口 ConceptAnimatedOverlaySheet (zIndex = 80f)，使 SongActionBottomSheet (zIndex = 88f) 与 AddToPlaylistDialog (zIndex = 92f) 自然呈现在随心听抽屉上方"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "三、音效页灵动标题切换动画与新歌速递丝滑收折",
+                points = listOf(
+                    "音效页顶栏复刻心流舱切换动画：ViperSoundEffectScreen 三大分区导航栏接入 ConceptMotion.expressiveSpring() 滑动胶囊底座 + 跨栏水滴拉伸形变 + 图标文字弹性微缩放",
+                    "新歌速递日期分组丝滑展开/收起：NewSongExpressScreen 日期分组接入 AnimatedVisibility (expandVertically / shrinkVertically + spatialPageSpring + fadeIn/fadeOut) 与箭头 expressiveSpring 旋转，消除生硬跳变"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "四、关注歌手取关失败修复（对齐 MakcRe/KuGouMusicApi）",
+                points = listOf(
+                    "修复 /followservice/v3/unfollow_singer 与 /followservice/v3/follow_singer 的密钥加密方式：对齐 MakcRe/KuGouMusicApi 的 rsaEncrypt2 (RSA/ECB/PKCS1Padding，即 KugouSigner.rsaPkcs1)，修复此前使用裸 RSA 导致服务端解密 AES key 失败的问题",
+                    "完善 /v4/follow_list 中 singerid 与 target_userid 的双向映射及本地取关缓存同步，确保在歌手详情页与我的关注列表中均可一键稳定取关"
+                )
+            )
+        )
+    ),
+    ChangelogVersionItem(
+        version = "v1.2.0",
         date = "2026-10-30",
         tag = "正式版 · 平板与大屏自适应、高清封面保存与横屏体验升级",
         summary = "基于 WindowSizeClass 与 Android 16 规范构建全场景平板/分屏自适应架构（主界面双栏平铺与侧边导航栏、设置页左右分栏、独立详情页与搜索页多栏自适应、MiniPlayer 居中限宽、平板横屏封面与歌词合并舞台）、新增歌曲/专辑/歌单封面与歌手头像高清原图预览保存（同步存储读写权限）、重构横屏播放页双层独立跑马灯与歌词设置弹窗防截断 UI、支持手机与平板双安装包独立签名区分",
@@ -2077,17 +2121,17 @@ fun SettingsScreen(
             }
 
             if (isMasterDetail) {
-                // 平板 / 大屏左右并排分栏（Master-Detail）：左栏常驻一级菜单，右栏实时展示当前所选分类详情
+                // 平板横屏左右并排分栏（Master-Detail）：加宽左栏一级菜单宽度，确保卡片标题单行完整显示不折行
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
-                        .padding(horizontal = 20.dp),
+                        .padding(horizontal = 22.dp),
                     horizontalArrangement = Arrangement.spacedBy(22.dp)
                 ) {
                     renderMasterMenuList(
                         Modifier
-                            .width(if (adaptiveInfo.isExpandedWindow) 336.dp else 276.dp)
+                            .width(if (adaptiveInfo.widthDp >= 960) 372.dp else 336.dp)
                             .fillMaxHeight(),
                         effectiveMasterDetailCategory
                     )
@@ -2180,22 +2224,31 @@ fun SettingsScreen(
                     },
                     label = "SettingsSubPageTransition"
                 ) { (category, isChangelogPage, isDownloadHistoryPage) ->
-                    if (category == null) {
-                        renderMasterMenuList(
-                            Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 16.dp),
-                            null
-                        )
-                    } else {
-                        renderDetailCategoryPane(
-                            Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 16.dp),
-                            category,
-                            isChangelogPage,
-                            isDownloadHistoryPage
-                        )
+                    val sidePad = if (adaptiveInfo.isLargeScreenDevice) 24.dp else 16.dp
+                    val maxCardW = if (adaptiveInfo.isLargeScreenDevice) 820.dp else androidx.compose.ui.unit.Dp.Unspecified
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.TopCenter
+                    ) {
+                        if (category == null) {
+                            renderMasterMenuList(
+                                Modifier
+                                    .then(if (maxCardW != androidx.compose.ui.unit.Dp.Unspecified) Modifier.widthIn(max = maxCardW) else Modifier)
+                                    .fillMaxSize()
+                                    .padding(horizontal = sidePad),
+                                null
+                            )
+                        } else {
+                            renderDetailCategoryPane(
+                                Modifier
+                                    .then(if (maxCardW != androidx.compose.ui.unit.Dp.Unspecified) Modifier.widthIn(max = maxCardW) else Modifier)
+                                    .fillMaxSize()
+                                    .padding(horizontal = sidePad),
+                                category,
+                                isChangelogPage,
+                                isDownloadHistoryPage
+                            )
+                        }
                     }
                 }
             }
@@ -5230,9 +5283,12 @@ private fun SettingsMenuEntryCard(
                     text = category.title,
                     style = MaterialTheme.typography.titleSmall.copy(
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 15.2.sp
+                        fontSize = 15.5.sp
                     ),
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(3.dp))
                 Text(
@@ -5254,13 +5310,14 @@ private fun SettingsMenuEntryCard(
                         text = statusText,
                         style = MaterialTheme.typography.labelSmall,
                         color = accentColor,
-                        fontSize = 11.5.sp,
+                        fontSize = 11.2.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
+                        softWrap = false,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
-                            .widthIn(max = 128.dp)
-                            .padding(horizontal = 9.dp, vertical = 4.5.dp)
+                            .widthIn(max = 108.dp)
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
                 Spacer(modifier = Modifier.width(6.dp))

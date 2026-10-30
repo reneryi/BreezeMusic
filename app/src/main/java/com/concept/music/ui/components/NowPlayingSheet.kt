@@ -372,6 +372,8 @@ fun NowPlayingSheet(
     var showMoreControlSheet by remember { mutableStateOf(false) }
     var showDownloadDialog by remember { mutableStateOf(false) }
     var showCoverPreviewDialog by remember { mutableStateOf(false) }
+    var showArtistPickerDialog by remember { mutableStateOf(false) }
+    var tabletForcedRotationDeg by remember { mutableFloatStateOf(90f) }
     val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
     val isLargeScreen = adaptiveInfo.isLargeScreenDevice
     val latestIsLargeScreen by rememberUpdatedState(isLargeScreen)
@@ -383,7 +385,14 @@ fun NowPlayingSheet(
         if (!showLyricView) {
             isLandscapeMode = true
             enteredLandscapeViaSensor = fromSensor
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            if (!isLargeScreen) {
+                // 手机端：请求传感器横屏方向
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } else {
+                // 平板端：Android 16 (API 36, sw>=600dp) 对 requestedOrientation=LANDSCAPE 会触发上下黑边兼容小窗 (Letterboxing)，
+                // 因此平板端保持 UNSPECIFIED 满屏窗口，当处于竖屏窗口时直接将全屏播放页画布旋转 90° 横向铺满全屏（图四状态），让用户像手机一样将平板横过来使用！
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
         }
     }
     val exitLandscape: () -> Unit = {
@@ -475,14 +484,38 @@ fun NowPlayingSheet(
         }
     }
 
-    // 严格校验当前窗口已处于真实横屏状态（ORIENTATION_LANDSCAPE 且 width > height）后才渲染 LandscapePlayerPage，
-    // 彻底杜绝在竖屏窗口内挤压渲染横屏播放页的现象！
     val isWindowActuallyLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE &&
         configuration.screenWidthDp > configuration.screenHeightDp
+    // 平板竖屏点击「横屏播放」按钮时：将全屏画布旋转 90° 横向铺满整个屏幕（完全复刻图四状态，无任何上下黑边），把平板横过来即可沉浸使用
+    val isForcedRotatedTabletLandscape = isLargeScreen && !showLyricView && isLandscapeMode && !isWindowActuallyLandscape
     val effectiveLandscape = if (adaptiveInfo.isTabletLandscapePlayer) {
-        isWindowActuallyLandscape
+        true
+    } else if (isLargeScreen) {
+        !showLyricView && (isWindowActuallyLandscape || isLandscapeMode)
     } else {
-        !showLyricView && isWindowActuallyLandscape && (isLandscapeMode || !isLargeScreen)
+        !showLyricView && isWindowActuallyLandscape && isLandscapeMode
+    }
+
+    // 平板强制横屏旋转状态下：跟随重力感应自动适配正反横向握持（90° / -90°）
+    DisposableEffect(context, isForcedRotatedTabletLandscape) {
+        if (!isForcedRotatedTabletLandscape) {
+            return@DisposableEffect onDispose {}
+        }
+        val listener = object : OrientationEventListener(context) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                when (orientation) {
+                    in 65..115 -> tabletForcedRotationDeg = -90f
+                    in 245..295 -> tabletForcedRotationDeg = 90f
+                }
+            }
+        }
+        if (listener.canDetectOrientation()) {
+            listener.enable()
+        }
+        onDispose {
+            listener.disable()
+        }
     }
 
     // 横屏模式下隐藏手机顶部状态栏与底部导航栏，实现纯粹全屏幕沉浸显示
@@ -512,6 +545,7 @@ fun NowPlayingSheet(
     // 系统返回键：优先关闭已打开的子面板（队列/歌词设置），若正处于横屏播放页则退回竖屏，若处于歌词页则退回封面，否则收起播放页
     BackHandler {
         when {
+            showArtistPickerDialog -> showArtistPickerDialog = false
             showCoverPreviewDialog -> showCoverPreviewDialog = false
             showQueueSheet -> showQueueSheet = false
             showLyricSettingsDialog -> showLyricSettingsDialog = false
@@ -662,11 +696,64 @@ fun NowPlayingSheet(
         }
     }
 
+    val effectiveConfiguration = remember(configuration, isForcedRotatedTabletLandscape) {
+        if (isForcedRotatedTabletLandscape) {
+            Configuration(configuration).apply {
+                orientation = Configuration.ORIENTATION_LANDSCAPE
+                screenWidthDp = maxOf(configuration.screenWidthDp, configuration.screenHeightDp)
+                screenHeightDp = minOf(configuration.screenWidthDp, configuration.screenHeightDp)
+            }
+        } else {
+            configuration
+        }
+    }
+    val effectiveAdaptiveInfo = remember(adaptiveInfo, configuration.screenWidthDp, configuration.screenHeightDp, isForcedRotatedTabletLandscape) {
+        if (isForcedRotatedTabletLandscape) {
+            com.concept.music.ui.theme.computeAdaptiveLayoutInfo(
+                widthDp = maxOf(configuration.screenWidthDp, configuration.screenHeightDp),
+                heightDp = minOf(configuration.screenWidthDp, configuration.screenHeightDp),
+                isTabletFlavor = true
+            )
+        } else {
+            adaptiveInfo
+        }
+    }
+
+    CompositionLocalProvider(
+        LocalConfiguration provides effectiveConfiguration,
+        com.concept.music.ui.theme.LocalConceptAdaptiveInfo provides effectiveAdaptiveInfo
+    ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .then(
+                if (isForcedRotatedTabletLandscape) {
+                    Modifier.layout { measurable, constraints ->
+                        val w = constraints.maxWidth
+                        val h = constraints.maxHeight
+                        val placeable = measurable.measure(
+                            Constraints(
+                                minWidth = h,
+                                maxWidth = h,
+                                minHeight = w,
+                                maxHeight = w
+                            )
+                        )
+                        layout(w, h) {
+                            placeable.placeWithLayer(
+                                x = (w - h) / 2,
+                                y = (h - w) / 2
+                            ) {
+                                rotationZ = tabletForcedRotationDeg
+                            }
+                        }
+                    }
+                } else {
+                    Modifier
+                }
+            )
             .graphicsLayer {
-                translationY = verticalDragAnim.value.coerceAtLeast(0f)
+                translationY = if (isForcedRotatedTabletLandscape) 0f else verticalDragAnim.value.coerceAtLeast(0f)
             }
             .background(Color(0xFF080C14))
             .clickable(
@@ -775,13 +862,15 @@ fun NowPlayingSheet(
                 ) {
                 Column(
                     modifier = Modifier
-                        .then(
-                            if (adaptiveInfo.isWideWindow) Modifier.widthIn(max = 560.dp) else Modifier
-                        )
                         .fillMaxSize()
                         .statusBarsPadding()
                         .navigationBarsPadding()
-                        .padding(start = 22.dp, end = 22.dp, top = 0.dp, bottom = 10.dp),
+                        .padding(
+                            start = if (isLargeScreen) 38.dp else 22.dp,
+                            end = if (isLargeScreen) 38.dp else 22.dp,
+                            top = if (isLargeScreen) 8.dp else 0.dp,
+                            bottom = if (isLargeScreen) 18.dp else 10.dp
+                        ),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                 Box(
@@ -1038,7 +1127,12 @@ fun NowPlayingSheet(
             },
             onOpenArtist = {
                 showMoreControlSheet = false
-                onOpenArtist(song)
+                val artistNames = parseSongArtistNames(song.artist)
+                if (artistNames.size >= 2) {
+                    showArtistPickerDialog = true
+                } else {
+                    onOpenArtist(song)
+                }
             },
             onOpenAlbum = {
                 showMoreControlSheet = false
@@ -1172,6 +1266,23 @@ fun NowPlayingSheet(
                 onDismiss = { showCoverPreviewDialog = false }
             )
         }
+
+        // 播放页内多歌手（>=2位）选择悬浮窗：适配播放页封面动态流光配色
+        if (showArtistPickerDialog) {
+            val artistNames = remember(song.artist) { parseSongArtistNames(song.artist) }
+            ArtistSelectionFloatingDialog(
+                song = song,
+                artistNames = artistNames,
+                isPlayerStyle = true,
+                accentColor = activeAccentColor,
+                onSelectArtist = { chosenName, resolvedId ->
+                    showArtistPickerDialog = false
+                    onOpenArtist(song.copy(artist = chosenName, artistId = resolvedId.orEmpty()))
+                },
+                onDismiss = { showArtistPickerDialog = false }
+            )
+        }
+    }
     }
 }
 
@@ -1487,30 +1598,31 @@ private fun RedesignedTopHeaderBar(
         }
     }
     val isGoldQuality = qualityLabel.startsWith("Hi-Res", ignoreCase = true)
+    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .offset(y = (-6).dp),
+            .offset(y = if (isLargeScreen) (-2).dp else (-6).dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(32.dp),
+                .height(if (isLargeScreen) 42.dp else 32.dp),
             contentAlignment = Alignment.Center
         ) {
             IconButton(
                 onClick = onBackOrDismiss,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .size(36.dp)
+                    .size(if (isLargeScreen) 44.dp else 36.dp)
             ) {
                 Icon(
                     imageVector = Icons.Rounded.KeyboardArrowDown,
                     contentDescription = "返回",
                     tint = Color.White.copy(alpha = 0.90f),
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(if (isLargeScreen) 34.dp else 28.dp)
                 )
             }
 
@@ -1527,14 +1639,14 @@ private fun RedesignedTopHeaderBar(
                 label = "headerSongTitleTransition",
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 44.dp)
+                    .padding(horizontal = if (isLargeScreen) 56.dp else 44.dp)
             ) { displayTitle ->
                 Text(
                     text = displayTitle,
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.ExtraBold,
                         color = Color.White,
-                        fontSize = 20.sp,
+                        fontSize = if (isLargeScreen) 24.sp else 20.sp,
                         letterSpacing = 0.2.sp
                     ),
                     maxLines = 1,
@@ -1544,6 +1656,10 @@ private fun RedesignedTopHeaderBar(
                         .basicMarquee()
                 )
             }
+        }
+
+        if (isLargeScreen) {
+            Spacer(modifier = Modifier.height(2.dp))
         }
 
         AnimatedContent(
@@ -1557,8 +1673,8 @@ private fun RedesignedTopHeaderBar(
             Text(
                 text = displayArtist,
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    color = Color.White.copy(alpha = 0.68f),
-                    fontSize = 13.sp,
+                    color = Color.White.copy(alpha = 0.72f),
+                    fontSize = if (isLargeScreen) 15.5.sp else 13.sp,
                     fontWeight = FontWeight.Medium
                 ),
                 maxLines = 1,
@@ -1574,17 +1690,20 @@ private fun RedesignedTopHeaderBar(
             exit = fadeOut(tween(150))
         ) {
             Row(
-                modifier = Modifier.padding(top = 2.dp),
+                modifier = Modifier.padding(top = if (isLargeScreen) 5.dp else 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(if (isLargeScreen) 10.dp else 8.dp),
                     color = Color.White.copy(alpha = 0.07f)
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(
+                            horizontal = if (isLargeScreen) 10.dp else 7.dp,
+                            vertical = if (isLargeScreen) 3.5.dp else 2.dp
+                        )
                     ) {
                         Icon(
                             imageVector = if (outputRouteLabel.contains("蓝牙") || outputRouteLabel.contains("耳机")) {
@@ -1593,37 +1712,40 @@ private fun RedesignedTopHeaderBar(
                                 Icons.Rounded.SpeakerGroup
                             },
                             contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.62f),
-                            modifier = Modifier.size(11.dp)
+                            tint = Color.White.copy(alpha = 0.66f),
+                            modifier = Modifier.size(if (isLargeScreen) 13.5.dp else 11.dp)
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = outputRouteLabel,
-                            color = Color.White.copy(alpha = 0.68f),
-                            fontSize = 10.sp,
+                            color = Color.White.copy(alpha = 0.72f),
+                            fontSize = if (isLargeScreen) 12.sp else 10.sp,
                             fontWeight = FontWeight.Medium
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(8.dp))
 
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(if (isLargeScreen) 10.dp else 8.dp),
                     color = if (isGoldQuality) VipGold.copy(alpha = 0.18f) else ConceptPrimary.copy(alpha = 0.16f),
                     modifier = Modifier.softCardClickable(
-                        shape = RoundedCornerShape(8.dp),
+                        shape = RoundedCornerShape(if (isLargeScreen) 10.dp else 8.dp),
                         onClick = onQualityClick
                     )
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(
+                            horizontal = if (isLargeScreen) 10.dp else 7.dp,
+                            vertical = if (isLargeScreen) 3.5.dp else 2.dp
+                        )
                     ) {
                         Text(
                             text = qualityLabel,
                             color = if (isGoldQuality) VipGold else ConceptPrimary,
-                            fontSize = 10.sp,
+                            fontSize = if (isLargeScreen) 12.sp else 10.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
                         Spacer(modifier = Modifier.width(2.dp))
@@ -1631,7 +1753,7 @@ private fun RedesignedTopHeaderBar(
                             imageVector = Icons.Rounded.KeyboardArrowDown,
                             contentDescription = "切换音质",
                             tint = if (isGoldQuality) VipGold else ConceptPrimary,
-                            modifier = Modifier.size(11.dp)
+                            modifier = Modifier.size(if (isLargeScreen) 13.5.dp else 11.dp)
                         )
                     }
                 }
@@ -1812,26 +1934,41 @@ private fun CoverPlayerPageContent(
                 }
             }
 
-            Box(
-                modifier = Modifier.graphicsLayer {
-                    val dx = coverDragX.value
-                    translationX = dx
-                    rotationZ = (dx / 38f).coerceIn(-6.5f, 6.5f)
-                    rotationY = (-dx / 28f).coerceIn(-9f, 9f)
-                    val s = (1f - (abs(dx) / 2400f)).coerceIn(0.94f, 1f)
-                    scaleX = s
-                    scaleY = s
-                    cameraDistance = 14f * density
-                },
+            val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        val dx = coverDragX.value
+                        translationX = dx
+                        rotationZ = (dx / 38f).coerceIn(-6.5f, 6.5f)
+                        rotationY = (-dx / 28f).coerceIn(-9f, 9f)
+                        val s = (1f - (abs(dx) / 2400f)).coerceIn(0.94f, 1f)
+                        scaleX = s
+                        scaleY = s
+                        cameraDistance = 14f * density
+                    },
                 contentAlignment = Alignment.Center
             ) {
+                val vinylScale = if (isLargeScreen) {
+                    minOf((maxWidth * 0.78f) / 312.dp, (maxHeight * 0.88f) / 296.dp).coerceIn(1.0f, 1.42f)
+                } else {
+                    1.0f
+                }
+                val squareCoverSize = if (isLargeScreen) {
+                    minOf(maxWidth * 0.72f, maxHeight * 0.84f).coerceIn(276.dp, 392.dp)
+                } else {
+                    276.dp
+                }
+
                 when (coverStyle) {
                     CoverStyle.VINYL -> {
                         MasterVinylTurntableView(
                             coverUrl = song.coverUrl,
                             isPlaying = isPlaying,
                             accentColor = accentPrimary,
-                            rotationProvider = rotationProvider
+                            rotationProvider = rotationProvider,
+                            scale = vinylScale
                         )
                     }
                     CoverStyle.SQUARE -> {
@@ -1840,7 +1977,9 @@ private fun CoverPlayerPageContent(
                             isPlaying = isPlaying,
                             accentColor = accentPrimary,
                             secondaryAccentColor = accentSecondary,
-                            motionState = roundedCoverMotionState
+                            motionState = roundedCoverMotionState,
+                            coverSize = squareCoverSize,
+                            cornerRadius = if (isLargeScreen) 38.dp else 30.dp
                         )
                     }
                 }
@@ -1854,22 +1993,23 @@ private fun CoverPlayerPageContent(
                         imageVector = Icons.Rounded.Favorite,
                         contentDescription = null,
                         tint = Color(0xFFFF4D6D).copy(alpha = 0.92f),
-                        modifier = Modifier.size(88.dp)
+                        modifier = Modifier.size(if (isLargeScreen) 108.dp else 88.dp)
                     )
                 }
             }
 
             // 右侧三按钮恒定锚定在封面舞台右下角（第1：收藏，第2：添加到歌单，第3：歌词海报），紧邻下方固定三行预览歌词区
+            val sideBtnBoxSize = if (isLargeScreen) 48.dp else 38.dp
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(bottom = 4.dp),
+                    .padding(bottom = if (isLargeScreen) 8.dp else 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(if (isLargeScreen) 12.dp else 8.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(sideBtnBoxSize)
                         .clip(CircleShape)
                         .graphicsLayer {
                             scaleX = favScale
@@ -1884,7 +2024,7 @@ private fun CoverPlayerPageContent(
                     PlumpHeartCanvasIcon(
                         isFavorite = isFavorite,
                         color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.88f),
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(if (isLargeScreen) 28.dp else 22.dp)
                     )
                 }
 
@@ -1892,7 +2032,7 @@ private fun CoverPlayerPageContent(
 
                 Box(
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(sideBtnBoxSize)
                         .clip(CircleShape)
                         .softClickable(
                             pressScale = 0.84f,
@@ -1902,13 +2042,14 @@ private fun CoverPlayerPageContent(
                 ) {
                     PlumpPlaylistAddCanvasIcon(
                         color = Color.White.copy(alpha = 0.88f),
-                        accentColor = readableAccentPrimary
+                        accentColor = readableAccentPrimary,
+                        iconSize = if (isLargeScreen) 30.dp else 24.dp
                     )
                 }
 
                 Box(
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(sideBtnBoxSize)
                         .clip(CircleShape)
                         .softClickable(
                             pressScale = 0.84f,
@@ -1918,7 +2059,8 @@ private fun CoverPlayerPageContent(
                 ) {
                     PlumpPosterSparkleCanvasIcon(
                         color = Color.White.copy(alpha = 0.86f),
-                        accentColor = readableAccentPrimary
+                        accentColor = readableAccentPrimary,
+                        iconSize = if (isLargeScreen) 27.dp else 22.dp
                     )
                 }
             }
@@ -2066,16 +2208,17 @@ private fun CoverPlayerPageContent(
 }
 
 @Composable
-private fun RedesignedCommentCountButton(
+internal fun RedesignedCommentCountButton(
     commentCount: Int,
     accentColor: Color,
     onClick: () -> Unit
 ) {
     val countText = formatPlayerCommentCount(commentCount)
+    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
     Box(
         modifier = Modifier
-            .height(44.dp)
-            .widthIn(min = 52.dp)
+            .height(if (isLargeScreen) 54.dp else 44.dp)
+            .widthIn(min = if (isLargeScreen) 64.dp else 52.dp)
             .softClickable(
                 pressScale = 0.86f,
                 pressAlpha = 0.78f,
@@ -2087,13 +2230,13 @@ private fun RedesignedCommentCountButton(
         // 气泡主图标偏左下放置，为右上角数字角标留出独立无遮挡空间
         Canvas(
             modifier = Modifier
-                .size(23.dp)
+                .size(if (isLargeScreen) 28.dp else 23.dp)
                 .align(if (countText.isNotEmpty()) Alignment.CenterStart else Alignment.Center)
                 .offset(y = if (countText.isNotEmpty()) 2.dp else 0.dp)
         ) {
             val w = size.width
             val h = size.height
-            val stroke = 2.1.dp.toPx()
+            val stroke = (if (isLargeScreen) 2.4.dp else 2.1.dp).toPx()
             val c = Color.White.copy(alpha = 0.90f)
             val bubblePath = Path().apply {
                 moveTo(w * 0.20f, h * 0.22f)
@@ -2115,28 +2258,29 @@ private fun RedesignedCommentCountButton(
                 color = c,
                 style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
             )
-            drawCircle(accentColor, radius = 1.5.dp.toPx(), center = Offset(w * 0.36f, h * 0.49f))
-            drawCircle(c, radius = 1.5.dp.toPx(), center = Offset(w * 0.50f, h * 0.49f))
-            drawCircle(c, radius = 1.5.dp.toPx(), center = Offset(w * 0.64f, h * 0.49f))
+            val dotR = (if (isLargeScreen) 1.8.dp else 1.5.dp).toPx()
+            drawCircle(accentColor, radius = dotR, center = Offset(w * 0.36f, h * 0.49f))
+            drawCircle(c, radius = dotR, center = Offset(w * 0.50f, h * 0.49f))
+            drawCircle(c, radius = dotR, center = Offset(w * 0.64f, h * 0.49f))
         }
 
         // 右上角悬浮无遮挡角标（不遮盖评论气泡主体，也不被父容器裁切）
         if (countText.isNotEmpty()) {
             Surface(
-                shape = RoundedCornerShape(7.dp),
+                shape = RoundedCornerShape(if (isLargeScreen) 8.dp else 7.dp),
                 color = accentColor.copy(alpha = 0.24f),
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(start = 17.dp, top = 2.dp)
+                    .padding(start = if (isLargeScreen) 21.dp else 17.dp, top = 2.dp)
             ) {
                 Text(
                     text = countText,
                     color = Color.White,
-                    fontSize = 9.sp,
-                    lineHeight = 10.sp,
+                    fontSize = if (isLargeScreen) 10.5.sp else 9.sp,
+                    lineHeight = if (isLargeScreen) 12.sp else 10.sp,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 4.5.dp, vertical = 1.5.dp)
+                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
                 )
             }
         }
@@ -2144,14 +2288,15 @@ private fun RedesignedCommentCountButton(
 }
 
 @Composable
-private fun PlumpLandscapeModeCanvasIcon(
+internal fun PlumpLandscapeModeCanvasIcon(
     color: Color,
-    accentColor: Color
+    accentColor: Color,
+    iconSize: androidx.compose.ui.unit.Dp = if (com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice) 29.dp else 24.dp
 ) {
-    Canvas(modifier = Modifier.size(24.dp)) {
+    Canvas(modifier = Modifier.size(iconSize)) {
         val w = size.width
         val h = size.height
-        val stroke = 2.2.dp.toPx()
+        val stroke = 2.2.dp.toPx() * (w / 24.dp.toPx()).coerceIn(0.85f, 1.35f)
         drawRoundRect(
             color = color,
             topLeft = Offset(w * 0.10f, h * 0.24f),
@@ -2170,13 +2315,14 @@ private fun PlumpLandscapeModeCanvasIcon(
 }
 
 @Composable
-private fun PlayerActionIconButton(
+internal fun PlayerActionIconButton(
     onClick: () -> Unit,
     content: @Composable BoxScope.() -> Unit
 ) {
+    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
     Box(
         modifier = Modifier
-            .size(44.dp)
+            .size(if (isLargeScreen) 54.dp else 44.dp)
             .clip(CircleShape)
             .softClickable(
                 pressScale = 0.85f,
@@ -2189,17 +2335,17 @@ private fun PlayerActionIconButton(
 }
 
 @Composable
-private fun MasterVinylTurntableView(
+internal fun MasterVinylTurntableView(
     coverUrl: String,
     isPlaying: Boolean,
     accentColor: Color,
-    rotationProvider: () -> Float
+    rotationProvider: () -> Float,
+    scale: Float = 1f
 ) {
+    val s = scale.coerceIn(0.50f, 1.60f)
     // 液压阻尼唱臂动画（Hydraulic Damped Tonearm）：
     // - 0f 为暂停态：唱臂垂直优雅停靠在右侧唱臂托架上，完全脱离黑胶盘面；
     // - 24f 为播放态：唱臂顺时针平稳旋入黑胶黄金声轨区；
-    // - 播放落针保持 640ms 液压曲线不变；暂停归位采用 1260ms 柔和缓出-阻尼归位曲线，
-    //   先微抬唱针脱离声槽，随后优雅缓慢旋回右侧托架，与黑胶 1480ms 惯性停转呼吸同频。
     val HydraulicTonearmPlayEasing = remember { CubicBezierEasing(0.22f, 0.88f, 0.24f, 1.0f) }
     val HydraulicTonearmPauseEasing = remember { CubicBezierEasing(0.42f, 0.04f, 0.22f, 1.0f) }
     val armAngle by animateFloatAsState(
@@ -2223,16 +2369,16 @@ private fun MasterVinylTurntableView(
     )
 
     Box(
-        modifier = Modifier.size(width = 312.dp, height = 296.dp),
+        modifier = Modifier.size(width = (312f * s).dp, height = (296f * s).dp),
         contentAlignment = Alignment.Center
     ) {
-        // 黑胶主盘体略微左偏 (-8.dp)，为右侧精密液压唱臂与驻停托架留出黄金机械空间
+        // 黑胶主盘体略微左偏 (-8.dp * s)，为右侧精密液压唱臂与驻停托架留出黄金机械空间
         Box(
             modifier = Modifier
-                .offset(x = (-8).dp)
-                .size(278.dp)
+                .offset(x = (-8f * s).dp)
+                .size((278f * s).dp)
                 .shadow(
-                    elevation = 28.dp,
+                    elevation = (28f * s).dp,
                     shape = CircleShape,
                     spotColor = accentColor.copy(alpha = 0.55f)
                 )
@@ -2249,8 +2395,8 @@ private fun MasterVinylTurntableView(
 
         Box(
             modifier = Modifier
-                .offset(x = (-8).dp)
-                .size(266.dp)
+                .offset(x = (-8f * s).dp)
+                .size((266f * s).dp)
                 .clip(CircleShape)
                 .graphicsLayer { rotationZ = rotationProvider() },
             contentAlignment = Alignment.Center
@@ -2303,7 +2449,7 @@ private fun MasterVinylTurntableView(
                         color = Color.White.copy(alpha = alpha),
                         radius = r,
                         center = center,
-                        style = Stroke(width = if (i % 4 == 0) 1.1.dp.toPx() else 0.6.dp.toPx())
+                        style = Stroke(width = (if (i % 4 == 0) 1.1f * s else 0.6f * s).dp.toPx())
                     )
                 }
 
@@ -2317,13 +2463,13 @@ private fun MasterVinylTurntableView(
                     ),
                     radius = radius * 0.625f,
                     center = center,
-                    style = Stroke(width = 2.dp.toPx())
+                    style = Stroke(width = (2f * s).dp.toPx())
                 )
             }
 
             Box(
                 modifier = Modifier
-                    .size(164.dp)
+                    .size((164f * s).dp)
                     .clip(CircleShape)
                     .background(Color(0xFF181C26)),
                 contentAlignment = Alignment.Center
@@ -2349,7 +2495,7 @@ private fun MasterVinylTurntableView(
                                 imageVector = Icons.Rounded.MusicNote,
                                 contentDescription = null,
                                 tint = Color.White.copy(alpha = 0.4f),
-                                modifier = Modifier.size(54.dp)
+                                modifier = Modifier.size((54f * s).dp)
                             )
                         }
                     }
@@ -2357,14 +2503,14 @@ private fun MasterVinylTurntableView(
 
                 Box(
                     modifier = Modifier
-                        .size(28.dp)
+                        .size((28f * s).dp)
                         .clip(CircleShape)
                         .background(Color(0xAA0A0D14)),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(10.dp)
+                            .size((10f * s).dp)
                             .clip(CircleShape)
                             .background(Color(0xFF07090E))
                     )
@@ -2372,18 +2518,20 @@ private fun MasterVinylTurntableView(
             }
         }
 
-        // 右上精密液压平衡唱臂组件（覆盖全高画布，确保暂停旋出盘面停靠在右侧托架时完全舒展无裁切）
+        // 右上精密液压平衡唱臂组件（按比例 s 同步缩放全套机械几何坐标）
         Canvas(
             modifier = Modifier.fillMaxSize()
         ) {
             if (size.minDimension <= 2f) return@Canvas
-            val pivot = Offset(size.width - 24.dp.toPx(), 34.dp.toPx())
+            fun Float.sdp(): Float = (this * s).dp.toPx()
+
+            val pivot = Offset(size.width - 24f.sdp(), 34f.sdp())
 
             // 1. 右侧唱臂驻停托架 (Tonearm Rest Cradle)：暂停时唱臂正好稳稳落在此托架中
-            val cradleCenter = Offset(pivot.x - 2.dp.toPx(), pivot.y + 72.dp.toPx())
+            val cradleCenter = Offset(pivot.x - 2f.sdp(), pivot.y + 72f.sdp())
             drawCircle(
                 color = Color(0xFF121722).copy(alpha = 0.85f),
-                radius = 7.5.dp.toPx(),
+                radius = 7.5f.sdp(),
                 center = cradleCenter
             )
             drawArc(
@@ -2391,83 +2539,78 @@ private fun MasterVinylTurntableView(
                 startAngle = 15f,
                 sweepAngle = 150f,
                 useCenter = false,
-                topLeft = Offset(cradleCenter.x - 5.5.dp.toPx(), cradleCenter.y - 5.5.dp.toPx()),
-                size = Size(11.dp.toPx(), 11.dp.toPx()),
-                style = Stroke(width = 1.8.dp.toPx(), cap = StrokeCap.Round)
+                topLeft = Offset(cradleCenter.x - 5.5f.sdp(), cradleCenter.y - 5.5f.sdp()),
+                size = Size(11f.sdp(), 11f.sdp()),
+                style = Stroke(width = 1.8f.sdp(), cap = StrokeCap.Round)
             )
 
             // 2. 唱臂金属轴承底座 (Gimbal Pivot Base)
             drawCircle(
                 color = Color(0xFF080B12).copy(alpha = 0.72f),
-                radius = 21.dp.toPx(),
+                radius = 21f.sdp(),
                 center = pivot
             )
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(Color(0xFF3E4759), Color(0xFF1A202C)),
                     center = pivot,
-                    radius = 18.dp.toPx()
+                    radius = 18f.sdp()
                 ),
-                radius = 17.dp.toPx(),
+                radius = 17f.sdp(),
                 center = pivot
             )
             drawCircle(
                 color = Color.White.copy(alpha = 0.24f),
-                radius = 17.dp.toPx(),
+                radius = 17f.sdp(),
                 center = pivot,
-                style = Stroke(width = 1.dp.toPx())
+                style = Stroke(width = 1f.sdp())
             )
 
             // 3. 液压旋转唱臂主体（0° 为垂直停靠在右侧托架，+24° 为旋入唱片声轨）
             rotate(degrees = armAngle, pivot = pivot) {
-                // 顶部精密配重锤 (Counterweight)
-                val weightStart = Offset(pivot.x + 1.dp.toPx(), pivot.y - 12.dp.toPx())
-                val weightEnd = Offset(pivot.x + 2.dp.toPx(), pivot.y - 23.dp.toPx())
+                val weightEnd = Offset(pivot.x + 2f.sdp(), pivot.y - 23f.sdp())
                 drawLine(
                     color = Color(0xFF78849B),
                     start = pivot,
                     end = weightEnd,
-                    strokeWidth = 5.5.dp.toPx(),
+                    strokeWidth = 5.5f.sdp(),
                     cap = StrokeCap.Round
                 )
                 drawRoundRect(
                     brush = Brush.horizontalGradient(
                         listOf(Color(0xFF222836), Color(0xFF475569), Color(0xFF1E2430))
                     ),
-                    topLeft = Offset(pivot.x - 6.dp.toPx(), weightEnd.y),
-                    size = Size(14.dp.toPx(), 11.dp.toPx()),
-                    cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
+                    topLeft = Offset(pivot.x - 6f.sdp(), weightEnd.y),
+                    size = Size(14f.sdp(), 11f.sdp()),
+                    cornerRadius = CornerRadius(3f.sdp(), 3f.sdp())
                 )
 
-                // S 型流线金属臂管（在 0° 停靠态下沿右侧垂直舒展，绝不侵入唱片）
-                val armEnd = Offset(pivot.x - 4.dp.toPx(), pivot.y + 104.dp.toPx())
+                val armEnd = Offset(pivot.x - 4f.sdp(), pivot.y + 104f.sdp())
                 val sCurvePath = Path().apply {
                     moveTo(pivot.x, pivot.y)
                     cubicTo(
-                        pivot.x + 5.dp.toPx(), pivot.y + 34.dp.toPx(),
-                        pivot.x - 8.dp.toPx(), pivot.y + 68.dp.toPx(),
+                        pivot.x + 5f.sdp(), pivot.y + 34f.sdp(),
+                        pivot.x - 8f.sdp(), pivot.y + 68f.sdp(),
                         armEnd.x, armEnd.y
                     )
                 }
 
-                // 动态高度投影：暂停抬臂时阴影向右下轻微偏离并柔化，落针时收紧
-                val shadowDx = (-2.dp - 2.5.dp * stylusLift).toPx()
-                val shadowDy = (4.dp + 3.5.dp * stylusLift).toPx()
+                val shadowDx = (-2f - 2.5f * stylusLift).sdp()
+                val shadowDy = (4f + 3.5f * stylusLift).sdp()
                 val shadowPath = Path().apply {
                     moveTo(pivot.x + shadowDx * 0.3f, pivot.y + shadowDy * 0.3f)
                     cubicTo(
-                        pivot.x + 5.dp.toPx() + shadowDx, pivot.y + 34.dp.toPx() + shadowDy,
-                        pivot.x - 8.dp.toPx() + shadowDx, pivot.y + 68.dp.toPx() + shadowDy,
+                        pivot.x + 5f.sdp() + shadowDx, pivot.y + 34f.sdp() + shadowDy,
+                        pivot.x - 8f.sdp() + shadowDx, pivot.y + 68f.sdp() + shadowDy,
                         armEnd.x + shadowDx, armEnd.y + shadowDy
                     )
                 }
                 drawPath(
                     path = shadowPath,
                     color = Color.Black.copy(alpha = 0.42f - 0.14f * stylusLift),
-                    style = Stroke(width = (5.8.dp + 1.5.dp * stylusLift).toPx(), cap = StrokeCap.Round)
+                    style = Stroke(width = (5.8f + 1.5f * stylusLift).sdp(), cap = StrokeCap.Round)
                 )
 
-                // 钛银高光臂管本体
                 drawPath(
                     path = sCurvePath,
                     brush = Brush.linearGradient(
@@ -2479,29 +2622,27 @@ private fun MasterVinylTurntableView(
                         start = pivot,
                         end = armEnd
                     ),
-                    style = Stroke(width = 3.8.dp.toPx(), cap = StrokeCap.Round)
+                    style = Stroke(width = 3.8f.sdp(), cap = StrokeCap.Round)
                 )
 
-                // 唱头壳 (Headshell) 与金线唱针
-                val headTip = Offset(armEnd.x - 8.dp.toPx(), armEnd.y + 16.dp.toPx())
+                val headTip = Offset(armEnd.x - 8f.sdp(), armEnd.y + 16f.sdp())
                 drawLine(
                     color = Color(0xFF1E293B),
                     start = armEnd,
                     end = headTip,
-                    strokeWidth = 7.8.dp.toPx(),
+                    strokeWidth = 7.8f.sdp(),
                     cap = StrokeCap.Round
                 )
                 drawLine(
                     color = VipGold,
-                    start = Offset(armEnd.x - 1.5.dp.toPx(), armEnd.y + 3.dp.toPx()),
-                    end = Offset(headTip.x + 1.5.dp.toPx(), headTip.y - 2.5.dp.toPx()),
-                    strokeWidth = 2.2.dp.toPx(),
+                    start = Offset(armEnd.x - 1.5f.sdp(), armEnd.y + 3f.sdp()),
+                    end = Offset(headTip.x + 1.5f.sdp(), headTip.y - 2.5f.sdp()),
+                    strokeWidth = 2.2f.sdp(),
                     cap = StrokeCap.Round
                 )
-                // 唱针宝石指示灯（落针播放时点亮灵动流光，抬针移开时柔和熄灭）
                 drawCircle(
                     color = lerp(ConceptCyanAccent, Color.White.copy(alpha = 0.45f), stylusLift),
-                    radius = (2.6.dp - 0.4.dp * stylusLift).toPx(),
+                    radius = (2.6f - 0.4f * stylusLift).sdp(),
                     center = headTip
                 )
             }
@@ -2511,7 +2652,7 @@ private fun MasterVinylTurntableView(
                 brush = Brush.linearGradient(
                     listOf(Color(0xFFF1F5F9), Color(0xFF64748B))
                 ),
-                radius = 7.2.dp.toPx(),
+                radius = 7.2f.sdp(),
                 center = pivot
             )
         }
@@ -2928,7 +3069,9 @@ private fun StaticRoundedSquareCoverView(
     isPlaying: Boolean,
     accentColor: Color,
     secondaryAccentColor: Color = ConceptCyanAccent,
-    motionState: RoundedCoverMotionState? = null
+    motionState: RoundedCoverMotionState? = null,
+    coverSize: androidx.compose.ui.unit.Dp = 276.dp,
+    cornerRadius: androidx.compose.ui.unit.Dp = 30.dp
 ) {
     val resolvedMotionState = motionState ?: rememberRoundedCoverMotionState(
         isPlaying = isPlaying,
@@ -2941,7 +3084,7 @@ private fun StaticRoundedSquareCoverView(
 
     Box(
         modifier = Modifier
-            .size(276.dp)
+            .size(coverSize)
             .graphicsLayer {
                 scaleX = coverScale
                 scaleY = coverScale
@@ -2949,7 +3092,7 @@ private fun StaticRoundedSquareCoverView(
             }
             .drawBehind {
                 drawRoundedCoverEdgeDispersionHalo(
-                    cornerPx = 30.dp.toPx(),
+                    cornerPx = cornerRadius.toPx(),
                     accentPrimary = accentColor,
                     accentSecondary = secondaryAccentColor,
                     dispersionPhase = dispersionPhase,
@@ -2958,12 +3101,12 @@ private fun StaticRoundedSquareCoverView(
                     playTransition = playTransition
                 )
             }
-            .clip(RoundedCornerShape(30.dp))
+            .clip(RoundedCornerShape(cornerRadius))
             .background(Color(0xFF151A26))
             .drawWithContent {
                 drawContent()
                 drawRoundedCoverPrismaticRim(
-                    cornerPx = 30.dp.toPx(),
+                    cornerPx = cornerRadius.toPx(),
                     accentPrimary = accentColor,
                     accentSecondary = secondaryAccentColor,
                     dispersionPhase = dispersionPhase,
@@ -3060,7 +3203,10 @@ private fun FullWidthLyricPreviewSection(
         lyricData.lines.getOrNull(currentLyricIndex + 1)?.text.orEmpty()
     }
 
-    val singleLinePx = with(density) { 26.5.sp.toPx() }.coerceAtLeast(1f)
+    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
+    val mainFontSp = if (isLargeScreen) 23.5.sp else 19.5.sp
+    val mainLineHeightSp = if (isLargeScreen) 32.sp else 26.5.sp
+    val singleLinePx = with(density) { mainLineHeightSp.toPx() }.coerceAtLeast(1f)
     val threeLineViewportPx = singleLinePx * 3.05f
     var measuredMainHeightPx by remember(currentLyricIndex, mainText) { mutableIntStateOf(0) }
     val wordTopYMap = remember(currentLyricIndex, mainText) { mutableStateMapOf<Int, Float>() }
@@ -3118,7 +3264,7 @@ private fun FullWidthLyricPreviewSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(92.dp)
+            .height(if (isLargeScreen) 114.dp else 92.dp)
             .clip(RoundedCornerShape(14.dp))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -3139,8 +3285,8 @@ private fun FullWidthLyricPreviewSection(
                 text = phoneticText,
                 style = MaterialTheme.typography.labelSmall.copy(
                     color = activePrimaryColor.copy(alpha = 0.88f),
-                    fontSize = 12.5.sp,
-                    lineHeight = 16.sp,
+                    fontSize = if (isLargeScreen) 15.sp else 12.5.sp,
+                    lineHeight = if (isLargeScreen) 19.sp else 16.sp,
                     fontWeight = FontWeight.SemiBold
                 ),
                 maxLines = 1,
@@ -3225,8 +3371,8 @@ private fun FullWidthLyricPreviewSection(
                             text = annotatedWord,
                             style = MaterialTheme.typography.headlineSmall.copy(
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 19.5.sp,
-                                lineHeight = 26.5.sp,
+                                fontSize = mainFontSp,
+                                lineHeight = mainLineHeightSp,
                                 shadow = if (isLongNote) {
                                     Shadow(
                                         color = activePrimaryColor.copy(alpha = (0.82f * wave * shimmer).coerceIn(0f, 1f)),
@@ -3254,8 +3400,8 @@ private fun FullWidthLyricPreviewSection(
                     style = MaterialTheme.typography.bodyLarge.copy(
                         color = if (currentLineObj != null) activePrimaryColor else Color.White,
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 19.5.sp,
-                        lineHeight = 26.5.sp
+                        fontSize = mainFontSp,
+                        lineHeight = mainLineHeightSp
                     ),
                     maxLines = Int.MAX_VALUE,
                     overflow = TextOverflow.Clip,
@@ -3288,9 +3434,9 @@ private fun FullWidthLyricPreviewSection(
                     Text(
                         text = subText.ifBlank { "♪ • • •" },
                         style = MaterialTheme.typography.bodySmall.copy(
-                            color = Color.White.copy(alpha = 0.64f),
-                            fontSize = 15.sp,
-                            lineHeight = 21.sp,
+                            color = Color.White.copy(alpha = 0.68f),
+                            fontSize = if (isLargeScreen) 18.sp else 15.sp,
+                            lineHeight = if (isLargeScreen) 24.sp else 21.sp,
                             fontWeight = FontWeight.Medium
                         ),
                         maxLines = 1,
@@ -3424,6 +3570,7 @@ private fun PlayerControlsSection(
         )
 
         val readableControlAccent = remember(accentPrimary) { accentPrimary.readableOnDarkSurface(0.45f) }
+        val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
 
         Row(
             modifier = Modifier
@@ -3435,22 +3582,22 @@ private fun PlayerControlsSection(
             Text(
                 text = formatDuration(displayCurrentMs),
                 style = MaterialTheme.typography.bodySmall.copy(
-                    color = if (isInteractingWithBar) readableControlAccent else Color.White.copy(alpha = 0.56f),
-                    fontSize = 11.5.sp,
+                    color = if (isInteractingWithBar) readableControlAccent else Color.White.copy(alpha = 0.60f),
+                    fontSize = if (isLargeScreen) 13.5.sp else 11.5.sp,
                     fontWeight = if (isInteractingWithBar) FontWeight.Bold else FontWeight.Medium
                 )
             )
             Text(
                 text = formatDuration(durationMs),
                 style = MaterialTheme.typography.bodySmall.copy(
-                    color = Color.White.copy(alpha = 0.56f),
-                    fontSize = 11.5.sp,
+                    color = Color.White.copy(alpha = 0.60f),
+                    fontSize = if (isLargeScreen) 13.5.sp else 11.5.sp,
                     fontWeight = FontWeight.Medium
                 )
             )
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(if (isLargeScreen) 14.dp else 10.dp))
 
         Row(
             modifier = Modifier
@@ -3988,14 +4135,15 @@ internal fun PlumpHeartCanvasIcon(
 }
 
 @Composable
-private fun PlumpPosterSparkleCanvasIcon(
+internal fun PlumpPosterSparkleCanvasIcon(
     color: Color,
-    accentColor: Color
+    accentColor: Color,
+    iconSize: androidx.compose.ui.unit.Dp = 22.dp
 ) {
-    Canvas(modifier = Modifier.size(22.dp)) {
+    Canvas(modifier = Modifier.size(iconSize)) {
         val w = size.width
         val h = size.height
-        val stroke = 2.2.dp.toPx()
+        val stroke = 2.2.dp.toPx() * (w / 22.dp.toPx()).coerceIn(0.85f, 1.35f)
         drawRoundRect(
             color = color,
             topLeft = Offset(w * 0.12f, h * 0.12f),
@@ -4010,14 +4158,15 @@ private fun PlumpPosterSparkleCanvasIcon(
 }
 
 @Composable
-private fun PlumpPlaylistAddCanvasIcon(
+internal fun PlumpPlaylistAddCanvasIcon(
     color: Color,
-    accentColor: Color
+    accentColor: Color,
+    iconSize: androidx.compose.ui.unit.Dp = 24.dp
 ) {
-    Canvas(modifier = Modifier.size(24.dp)) {
+    Canvas(modifier = Modifier.size(iconSize)) {
         val w = size.width
         val h = size.height
-        val stroke = 2.5.dp.toPx()
+        val stroke = 2.5.dp.toPx() * (w / 24.dp.toPx()).coerceIn(0.85f, 1.35f)
         drawLine(color, Offset(w * 0.14f, h * 0.26f), Offset(w * 0.78f, h * 0.26f), stroke, StrokeCap.Round)
         drawLine(color, Offset(w * 0.14f, h * 0.50f), Offset(w * 0.56f, h * 0.50f), stroke, StrokeCap.Round)
         drawLine(color, Offset(w * 0.14f, h * 0.74f), Offset(w * 0.46f, h * 0.74f), stroke, StrokeCap.Round)
@@ -4027,11 +4176,12 @@ private fun PlumpPlaylistAddCanvasIcon(
 }
 
 @Composable
-private fun PlumpAudioWaveCanvasIcon(
+internal fun PlumpAudioWaveCanvasIcon(
     color: Color,
-    accentColor: Color
+    accentColor: Color,
+    iconSize: androidx.compose.ui.unit.Dp = if (com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice) 29.dp else 24.dp
 ) {
-    Canvas(modifier = Modifier.size(24.dp)) {
+    Canvas(modifier = Modifier.size(iconSize)) {
         val w = size.width
         val h = size.height
         val pillW = w * 0.13f
@@ -4051,15 +4201,16 @@ private fun PlumpAudioWaveCanvasIcon(
 }
 
 @Composable
-private fun PlumpDesktopLyricCanvasIcon(
+internal fun PlumpDesktopLyricCanvasIcon(
     enabled: Boolean,
     color: Color,
-    accentColor: Color
+    accentColor: Color,
+    iconSize: androidx.compose.ui.unit.Dp = if (com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice) 29.dp else 24.dp
 ) {
-    Canvas(modifier = Modifier.size(24.dp)) {
+    Canvas(modifier = Modifier.size(iconSize)) {
         val w = size.width
         val h = size.height
-        val stroke = 2.3.dp.toPx()
+        val stroke = 2.3.dp.toPx() * (w / 24.dp.toPx()).coerceIn(0.85f, 1.35f)
         if (enabled) {
             drawRoundRect(
                 color = color.copy(alpha = 0.20f),
@@ -4081,10 +4232,11 @@ private fun PlumpDesktopLyricCanvasIcon(
 }
 
 @Composable
-private fun PlumpMoreDotsCanvasIcon(
-    color: Color
+internal fun PlumpMoreDotsCanvasIcon(
+    color: Color,
+    iconSize: androidx.compose.ui.unit.Dp = if (com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice) 29.dp else 24.dp
 ) {
-    Canvas(modifier = Modifier.size(24.dp)) {
+    Canvas(modifier = Modifier.size(iconSize)) {
         val w = size.width
         val h = size.height
         val r = w * 0.088f
@@ -4112,10 +4264,11 @@ internal fun AnimatedPlayModeButton(
         ),
         label = "playModeSpin"
     )
+    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
 
     Box(
         modifier = Modifier
-            .size(46.dp)
+            .size(if (isLargeScreen) 56.dp else 46.dp)
             .clip(CircleShape)
             .softClickable(
                 pressScale = 0.84f,
@@ -4138,14 +4291,14 @@ internal fun AnimatedPlayModeButton(
         ) { mode ->
             Canvas(
                 modifier = Modifier
-                    .size(25.dp)
+                    .size(if (isLargeScreen) 30.dp else 25.dp)
                     .graphicsLayer {
                         rotationZ = if (mode == PlayMode.REPEAT_ALL) spinDeg % 360f else 0f
                     }
             ) {
                 val w = size.width
                 val h = size.height
-                val stroke = 2.4.dp.toPx()
+                val stroke = (if (isLargeScreen) 2.7.dp else 2.4.dp).toPx()
                 val tint = Color.White.copy(alpha = 0.90f)
 
                 when (mode) {
@@ -4252,10 +4405,11 @@ internal fun RedrawnSkipButton(
 ) {
     val scope = rememberCoroutineScope()
     val nudgeX = remember { Animatable(0f) }
+    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
 
     Box(
         modifier = Modifier
-            .size(52.dp)
+            .size(if (isLargeScreen) 62.dp else 52.dp)
             .clip(CircleShape)
             .graphicsLayer {
                 translationX = nudgeX.value
@@ -4273,7 +4427,7 @@ internal fun RedrawnSkipButton(
             ),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(30.dp)) {
+        Canvas(modifier = Modifier.size(if (isLargeScreen) 36.dp else 30.dp)) {
             val w = size.width
             val h = size.height
             val barW = w * 0.145f
@@ -4315,9 +4469,6 @@ internal fun RedrawnSkipButton(
 
 /**
  * 重绘控件 3：核心播放/暂停流体按钮 (AnimatedPlayPauseCenterButton)
- * - 采用封面动态取色 (`accentPrimary` -> `accentSecondary`) 渲染按钮背景与呼吸光环；
- * - 彻底修复原 `rotationZ = -28f` 导致播放图标朝下歪斜的 Bug；
- * - 采用圆润饱满的胖三角与胖胶囊暂停柱。
  */
 @Composable
 internal fun AnimatedPlayPauseCenterButton(
@@ -4331,6 +4482,7 @@ internal fun AnimatedPlayPauseCenterButton(
         animationSpec = ConceptMotion.expressiveSpring(),
         label = "playPauseMorph"
     )
+    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
 
     val auraScale: Float = if (isPlaying) {
         val infiniteTransition = rememberInfiniteTransition(label = "playButtonAura")
@@ -4349,13 +4501,13 @@ internal fun AnimatedPlayPauseCenterButton(
     }
 
     Box(
-        modifier = Modifier.size(76.dp),
+        modifier = Modifier.size(if (isLargeScreen) 88.dp else 76.dp),
         contentAlignment = Alignment.Center
     ) {
         // 动态封面色彩呼吸光环
         Box(
             modifier = Modifier
-                .size(74.dp)
+                .size(if (isLargeScreen) 86.dp else 74.dp)
                 .graphicsLayer {
                     scaleX = auraScale
                     scaleY = auraScale
@@ -4374,7 +4526,7 @@ internal fun AnimatedPlayPauseCenterButton(
             color = Color.Transparent,
             shadowElevation = 14.dp,
             modifier = Modifier
-                .size(66.dp)
+                .size(if (isLargeScreen) 76.dp else 66.dp)
                 .clip(CircleShape)
                 .background(
                     Brush.linearGradient(
@@ -4394,7 +4546,7 @@ internal fun AnimatedPlayPauseCenterButton(
                 val safeMorph = morphProgress.coerceIn(0f, 1f)
                 Canvas(
                     modifier = Modifier
-                        .size(28.dp)
+                        .size(if (isLargeScreen) 33.dp else 28.dp)
                         .graphicsLayer {
                             val bounce = (1f - 0.08f * sin(safeMorph * PI.toFloat())).coerceIn(0.88f, 1.10f)
                             scaleX = bounce
@@ -4420,9 +4572,10 @@ internal fun RedrawnQueueButton(
     accentColor: Color = ConceptCyanAccent,
     onClick: () -> Unit
 ) {
+    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
     Box(
         modifier = Modifier
-            .size(46.dp)
+            .size(if (isLargeScreen) 56.dp else 46.dp)
             .clip(CircleShape)
             .softClickable(
                 pressScale = 0.84f,
@@ -4430,10 +4583,10 @@ internal fun RedrawnQueueButton(
             ),
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.size(25.dp)) {
+        Canvas(modifier = Modifier.size(if (isLargeScreen) 30.dp else 25.dp)) {
             val w = size.width
             val h = size.height
-            val stroke = 2.5.dp.toPx()
+            val stroke = (if (isLargeScreen) 2.8.dp else 2.5.dp).toPx()
             val tint = Color.White.copy(alpha = 0.90f)
 
             drawLine(tint, Offset(w * 0.14f, h * 0.26f), Offset(w * 0.78f, h * 0.26f), stroke, StrokeCap.Round)
@@ -4441,7 +4594,7 @@ internal fun RedrawnQueueButton(
             drawLine(tint, Offset(w * 0.14f, h * 0.74f), Offset(w * 0.48f, h * 0.74f), stroke, StrokeCap.Round)
 
             val noteCenter = Offset(w * 0.72f, h * 0.74f)
-            drawCircle(accentColor, radius = 3.4.dp.toPx(), center = noteCenter)
+            drawCircle(accentColor, radius = (if (isLargeScreen) 4.0.dp else 3.4.dp).toPx(), center = noteCenter)
             drawLine(
                 color = accentColor,
                 start = Offset(noteCenter.x + 2.5.dp.toPx(), noteCenter.y),
@@ -4616,7 +4769,10 @@ private fun RedesignedDedicatedLyricPage(
                 }
                 val supportsHardwareBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
-                // 平衡左右内边距，使居中对齐严格处于视觉正中心
+                val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
+                val effectiveLyricPageFontSize = if (isLargeScreen) (lyricFontSize + 2f).coerceAtMost(36f) else lyricFontSize
+
+                // 平衡左右内边距，使歌词显示位置保持不变，同时在大屏下让左右两侧空白点击可返回封面页
                 val startPad = when (lyricAlignment) {
                     LyricAlignment.CENTER -> 28.dp
                     LyricAlignment.RIGHT -> 16.dp
@@ -4624,14 +4780,21 @@ private fun RedesignedDedicatedLyricPage(
                 }
                 val endPad = when (lyricAlignment) {
                     LyricAlignment.CENTER -> 28.dp
-                    LyricAlignment.RIGHT -> 54.dp
-                    LyricAlignment.LEFT -> 50.dp
+                    LyricAlignment.RIGHT -> if (isLargeScreen) 28.dp else 54.dp
+                    LyricAlignment.LEFT -> if (isLargeScreen) 28.dp else 50.dp
                 }
 
+                // 在平板端将歌词列表约束在中央原位置（widthIn(max = 560.dp)），使左右两侧空白区域完全暴露给外层 Box，点击左右空白即可返回封面页；
+                // 同时在列表内部点击非歌词文字空白处也支持返回封面页
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
+                        .align(Alignment.Center)
+                        .then(if (isLargeScreen) Modifier.widthIn(max = 560.dp) else Modifier)
                         .fillMaxSize()
+                        .pointerInput(onReturnToCover) {
+                            detectTapGestures(onTap = { onReturnToCover() })
+                        }
                         .padding(start = startPad, end = endPad),
                     contentPadding = PaddingValues(vertical = 170.dp),
                     horizontalAlignment = horizontalAlignment
@@ -4656,10 +4819,6 @@ private fun RedesignedDedicatedLyricPage(
                             label = "lyricLineScale"
                         )
 
-                        // 连续光学景深模糊过渡：
-                        // 移除滚动期间强行归零的 `!listState.isScrollInProgress` 条件，
-                        // 并通过与歌词滚动同周期的 420ms LyricSmoothScrollEasing 连续插值，
-                        // 使正在唱完的上一句从清晰 (0dp) 自然渐变至模糊，即将唱到的下一句从模糊自然渐变至清晰 (0dp)。
                         val targetDepthBlurVal = if (lyricBlurEnabled && !isUserScrubbing && !isCurrent) {
                             when (distance) {
                                 1 -> 0.72f * lyricBlurIntensity
@@ -4737,7 +4896,7 @@ private fun RedesignedDedicatedLyricPage(
                                         initialPositionMs = currentPositionMs,
                                         isPlaying = isPlaying,
                                         lyricPositionProvider = lyricPositionProvider,
-                                        lyricFontSize = lyricFontSize,
+                                        lyricFontSize = effectiveLyricPageFontSize,
                                         accentPrimary = activePrimaryColor,
                                         accentSecondary = activeSecondaryColor,
                                         horizontalAlignment = horizontalAlignment,
@@ -4747,7 +4906,7 @@ private fun RedesignedDedicatedLyricPage(
 
                                 val phoneticText = line.phonetic
                                 if (showPhonetic && showPhoneticButton && !phoneticText.isNullOrBlank()) {
-                                    val phoneticFontSize = (lyricFontSize * lyricTranslationScale * 0.86f).coerceAtLeast(11.5f)
+                                    val phoneticFontSize = (effectiveLyricPageFontSize * lyricTranslationScale * 0.86f).coerceAtLeast(11.5f)
                                     Text(
                                         text = phoneticText,
                                         style = MaterialTheme.typography.labelSmall.copy(
@@ -4769,7 +4928,7 @@ private fun RedesignedDedicatedLyricPage(
                                         initialPositionMs = currentPositionMs,
                                         isPlaying = isPlaying,
                                         lyricPositionProvider = lyricPositionProvider,
-                                        lyricFontSize = lyricFontSize,
+                                        lyricFontSize = effectiveLyricPageFontSize,
                                         flowArrangement = flowArrangement,
                                         activePrimaryColor = activePrimaryColor,
                                         activeSecondaryColor = activeSecondaryColor
@@ -4777,7 +4936,7 @@ private fun RedesignedDedicatedLyricPage(
                                 } else {
                                     val textColor = if (isCurrent) activePrimaryColor else Color.White.copy(alpha = distanceAlpha)
                                     val textWeight = if (isCurrent || isScrubTarget) FontWeight.ExtraBold else FontWeight.SemiBold
-                                    val lineSize = lyricFontSize.sp
+                                    val lineSize = effectiveLyricPageFontSize.sp
 
                                     val fallbackBlurShadow = if (!supportsHardwareBlur && depthBlurVal >= 0.15f) {
                                         Shadow(
@@ -4793,7 +4952,7 @@ private fun RedesignedDedicatedLyricPage(
                                             fontWeight = textWeight,
                                             color = if (fallbackBlurShadow != null) Color.Transparent else textColor,
                                             fontSize = lineSize,
-                                            lineHeight = (lyricFontSize + 9f).sp,
+                                            lineHeight = (effectiveLyricPageFontSize + 9f).sp,
                                             textAlign = textAlign,
                                             shadow = fallbackBlurShadow
                                         ),
@@ -4803,7 +4962,7 @@ private fun RedesignedDedicatedLyricPage(
 
                                 val trans = line.translation
                                 if (showTranslation && showTranslationButton && !trans.isNullOrBlank()) {
-                                    val transFontSize = (lyricFontSize * lyricTranslationScale).coerceAtLeast(13f)
+                                    val transFontSize = (effectiveLyricPageFontSize * lyricTranslationScale).coerceAtLeast(13f)
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = trans,
@@ -4829,7 +4988,7 @@ private fun RedesignedDedicatedLyricPage(
                                         initialPositionMs = currentPositionMs,
                                         isPlaying = isPlaying,
                                         lyricPositionProvider = lyricPositionProvider,
-                                        lyricFontSize = lyricFontSize,
+                                        lyricFontSize = effectiveLyricPageFontSize,
                                         accentPrimary = activePrimaryColor,
                                         accentSecondary = activeSecondaryColor,
                                         horizontalAlignment = horizontalAlignment,
@@ -4841,14 +5000,14 @@ private fun RedesignedDedicatedLyricPage(
                     }
                 }
 
-                // 手动滑动歌词时的「双翼渐隐中空导引线 (Split-Wing Hollow Timeline)」：
-                // 左右对称全宽对齐，中央歌词区域 100% 留空不遮挡文字，仅在两侧翼展示渐隐光束与时间/播放胶囊
+                // 手动滑动歌词时的「双翼渐隐中空导引线 (Split-Wing Hollow Timeline)」
                 androidx.compose.animation.AnimatedVisibility(
                     visible = isUserScrubbing && scrubLineIndex in lyricData.lines.indices,
                     enter = fadeIn(tween(160)),
                     exit = fadeOut(tween(160)),
                     modifier = Modifier
                         .align(Alignment.Center)
+                        .then(if (isLargeScreen) Modifier.widthIn(max = 580.dp) else Modifier)
                         .fillMaxWidth()
                 ) {
                     val targetTimeMs = lyricData.lines.getOrNull(scrubLineIndex)?.startTimeMs ?: 0L
@@ -4857,7 +5016,6 @@ private fun RedesignedDedicatedLyricPage(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        // 左翼：磨砂时间胶囊 + 向内渐隐短光束
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Surface(
                                 shape = RoundedCornerShape(9.dp),
@@ -4887,10 +5045,8 @@ private fun RedesignedDedicatedLyricPage(
                             )
                         }
 
-                        // 中央完全留空，绝不穿过或遮挡任何歌词文字
                         Spacer(modifier = Modifier.weight(1f))
 
-                        // 右翼：向内渐隐短光束 + 灵动跳转播放胶囊
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 modifier = Modifier
@@ -4938,122 +5094,208 @@ private fun RedesignedDedicatedLyricPage(
                 }
             }
 
-            // 屏幕右侧偏下黄金拇指区无边框圆润按钮组（去除边框线，柔和磨砂底色）
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(bottom = 18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // 1. 收藏按钮（无边框 + 圆润红心）
-                LyricRightDockGlassButton(
-                    active = isFavorite,
-                    activeColor = Color(0xFFFF4D6D),
-                    onClick = onToggleFavorite
-                ) {
-                    PlumpHeartCanvasIcon(
-                        isFavorite = isFavorite,
-                        color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.88f),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-
-                // 2. 外语翻译显示按钮（仅非中文/非粤语的外语歌曲展示，默认关闭）
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = showTranslationButton,
-                    enter = scaleIn() + fadeIn(),
-                    exit = scaleOut() + fadeOut()
+            // 手机端：保持屏幕右侧偏下黄金拇指区竖向按钮组；平板端：统一整合进下方居中紧凑控播栏，避免按钮散落与遮挡右侧空白点击返回区
+            val isLargeScreenDock = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
+            if (!isLargeScreenDock) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     LyricRightDockGlassButton(
-                        active = showTranslation,
-                        activeColor = activePrimaryColor,
-                        onClick = onToggleTranslation
+                        active = isFavorite,
+                        activeColor = Color(0xFFFF4D6D),
+                        onClick = onToggleFavorite
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "译",
-                                color = if (showTranslation) Color.White else Color.White.copy(alpha = 0.76f),
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            if (showTranslation) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .offset(y = 8.dp)
-                                        .size(width = 10.dp, height = 2.5.dp)
-                                        .clip(CircleShape)
-                                        .background(activePrimaryColor)
+                        PlumpHeartCanvasIcon(
+                            isFavorite = isFavorite,
+                            color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.88f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showTranslationButton,
+                        enter = scaleIn() + fadeIn(),
+                        exit = scaleOut() + fadeOut()
+                    ) {
+                        LyricRightDockGlassButton(
+                            active = showTranslation,
+                            activeColor = activePrimaryColor,
+                            onClick = onToggleTranslation
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "译",
+                                    color = if (showTranslation) Color.White else Color.White.copy(alpha = 0.76f),
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.ExtraBold
                                 )
+                                if (showTranslation) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .offset(y = 8.dp)
+                                            .size(width = 10.dp, height = 2.5.dp)
+                                            .clip(CircleShape)
+                                            .background(activePrimaryColor)
+                                    )
+                                }
                             }
                         }
                     }
-                }
 
-                // 3. 音译注音按钮（对含有罗马音/粤拼/韩语音译的歌曲精准展示，默认关闭）
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = showPhoneticButton,
-                    enter = scaleIn() + fadeIn(),
-                    exit = scaleOut() + fadeOut()
-                ) {
-                    LyricRightDockGlassButton(
-                        active = showPhonetic,
-                        activeColor = activePrimaryColor,
-                        onClick = onTogglePhonetic
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showPhoneticButton,
+                        enter = scaleIn() + fadeIn(),
+                        exit = scaleOut() + fadeOut()
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "音",
-                                color = if (showPhonetic) Color.White else Color.White.copy(alpha = 0.76f),
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            if (showPhonetic) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .offset(y = 8.dp)
-                                        .size(width = 10.dp, height = 2.5.dp)
-                                        .clip(CircleShape)
-                                        .background(activePrimaryColor)
+                        LyricRightDockGlassButton(
+                            active = showPhonetic,
+                            activeColor = activePrimaryColor,
+                            onClick = onTogglePhonetic
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    text = "音",
+                                    color = if (showPhonetic) Color.White else Color.White.copy(alpha = 0.76f),
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.ExtraBold
                                 )
+                                if (showPhonetic) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomCenter)
+                                            .offset(y = 8.dp)
+                                            .size(width = 10.dp, height = 2.5.dp)
+                                            .clip(CircleShape)
+                                            .background(activePrimaryColor)
+                                    )
+                                }
                             }
                         }
                     }
-                }
 
-                // 3. 歌词设置按钮（无边框 + 圆润饱满双轨滑块图标）
-                LyricRightDockGlassButton(
-                    active = false,
-                    activeColor = activePrimaryColor,
-                    onClick = onOpenLyricSettings
-                ) {
-                    Canvas(modifier = Modifier.size(19.dp)) {
-                        val w = size.width
-                        val h = size.height
-                        val stroke = 2.2.dp.toPx()
-                        val c = Color.White.copy(alpha = 0.90f)
-                        drawLine(c, Offset(w * 0.14f, h * 0.32f), Offset(w * 0.86f, h * 0.32f), stroke, StrokeCap.Round)
-                        drawCircle(activePrimaryColor, radius = 3.0.dp.toPx(), center = Offset(w * 0.65f, h * 0.32f))
+                    LyricRightDockGlassButton(
+                        active = false,
+                        activeColor = activePrimaryColor,
+                        onClick = onOpenLyricSettings
+                    ) {
+                        Canvas(modifier = Modifier.size(19.dp)) {
+                            val w = size.width
+                            val h = size.height
+                            val stroke = 2.2.dp.toPx()
+                            val c = Color.White.copy(alpha = 0.90f)
+                            drawLine(c, Offset(w * 0.14f, h * 0.32f), Offset(w * 0.86f, h * 0.32f), stroke, StrokeCap.Round)
+                            drawCircle(activePrimaryColor, radius = 3.0.dp.toPx(), center = Offset(w * 0.65f, h * 0.32f))
 
-                        drawLine(c, Offset(w * 0.14f, h * 0.68f), Offset(w * 0.86f, h * 0.68f), stroke, StrokeCap.Round)
-                        drawCircle(c, radius = 3.0.dp.toPx(), center = Offset(w * 0.35f, h * 0.68f))
+                            drawLine(c, Offset(w * 0.14f, h * 0.68f), Offset(w * 0.86f, h * 0.68f), stroke, StrokeCap.Round)
+                            drawCircle(c, radius = 3.0.dp.toPx(), center = Offset(w * 0.35f, h * 0.68f))
+                        }
                     }
                 }
             }
         }
 
-        // 歌词页专属底部极简控播栏：无边框圆润播放/暂停按钮 + 极光细丝进度条
-        LyricPageMinimalBottomBar(
-            currentPositionMs = rawPositionMs,
-            positionProvider = rawPositionProvider,
-            durationMs = durationMs,
-            isPlaying = isPlaying,
-            accentColor = activePrimaryColor,
-            onTogglePlay = onTogglePlay,
-            onSeekTo = onSeekTo
-        )
+        // 歌词页专属底部极简控播栏：平板端将播放键、进度条与右侧工具按钮紧凑居中编组，彻底告别分散感
+        val isLargeScreenBottom = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                modifier = Modifier
+                    .then(if (isLargeScreenBottom) Modifier.widthIn(max = 580.dp) else Modifier)
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
+                    LyricPageMinimalBottomBar(
+                        currentPositionMs = rawPositionMs,
+                        positionProvider = rawPositionProvider,
+                        durationMs = durationMs,
+                        isPlaying = isPlaying,
+                        accentColor = activePrimaryColor,
+                        onTogglePlay = onTogglePlay,
+                        onSeekTo = onSeekTo
+                    )
+                }
+
+                if (isLargeScreenBottom) {
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (showTranslationButton) {
+                            LyricRightDockGlassButton(
+                                active = showTranslation,
+                                activeColor = activePrimaryColor,
+                                buttonSize = 46.dp,
+                                onClick = onToggleTranslation
+                            ) {
+                                Text(
+                                    text = "译",
+                                    color = if (showTranslation) Color.White else Color.White.copy(alpha = 0.78f),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+
+                        if (showPhoneticButton) {
+                            LyricRightDockGlassButton(
+                                active = showPhonetic,
+                                activeColor = activePrimaryColor,
+                                buttonSize = 46.dp,
+                                onClick = onTogglePhonetic
+                            ) {
+                                Text(
+                                    text = "音",
+                                    color = if (showPhonetic) Color.White else Color.White.copy(alpha = 0.78f),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+
+                        LyricRightDockGlassButton(
+                            active = isFavorite,
+                            activeColor = Color(0xFFFF4D6D),
+                            buttonSize = 46.dp,
+                            onClick = onToggleFavorite
+                        ) {
+                            PlumpHeartCanvasIcon(
+                                isFavorite = isFavorite,
+                                color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.88f),
+                                modifier = Modifier.size(23.dp)
+                            )
+                        }
+
+                        LyricRightDockGlassButton(
+                            active = false,
+                            activeColor = activePrimaryColor,
+                            buttonSize = 46.dp,
+                            onClick = onOpenLyricSettings
+                        ) {
+                            Canvas(modifier = Modifier.size(22.dp)) {
+                                val w = size.width
+                                val h = size.height
+                                val stroke = 2.4.dp.toPx()
+                                val c = Color.White.copy(alpha = 0.90f)
+                                drawLine(c, Offset(w * 0.14f, h * 0.32f), Offset(w * 0.86f, h * 0.32f), stroke, StrokeCap.Round)
+                                drawCircle(activePrimaryColor, radius = 3.3.dp.toPx(), center = Offset(w * 0.65f, h * 0.32f))
+
+                                drawLine(c, Offset(w * 0.14f, h * 0.68f), Offset(w * 0.86f, h * 0.68f), stroke, StrokeCap.Round)
+                                drawCircle(c, radius = 3.3.dp.toPx(), center = Offset(w * 0.35f, h * 0.68f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -5331,6 +5573,7 @@ internal fun LyricFloatingBreathingDots(
 private fun LyricRightDockGlassButton(
     active: Boolean,
     activeColor: Color,
+    buttonSize: androidx.compose.ui.unit.Dp = 42.dp,
     onClick: () -> Unit,
     content: @Composable BoxScope.() -> Unit
 ) {
@@ -5340,11 +5583,11 @@ private fun LyricRightDockGlassButton(
         label = "lyricDockGlassBg"
     )
     Surface(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(if (buttonSize >= 46.dp) 18.dp else 16.dp),
         color = bgColor,
         contentColor = Color.White,
         modifier = Modifier
-            .size(42.dp)
+            .size(buttonSize)
             .softClickable(
                 pressScale = 0.86f,
                 onClick = onClick
@@ -5484,6 +5727,7 @@ private fun LyricPageMinimalBottomBar(
         label = "lyricBarPlayPauseMorph"
     )
 
+    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -5496,7 +5740,7 @@ private fun LyricPageMinimalBottomBar(
             color = accentColor.copy(alpha = 0.26f),
             contentColor = Color.White,
             modifier = Modifier
-                .size(46.dp)
+                .size(if (isLargeScreen) 52.dp else 46.dp)
                 .softClickable(
                     pressScale = 0.86f,
                     onClick = onTogglePlay
@@ -5506,7 +5750,7 @@ private fun LyricPageMinimalBottomBar(
                 val safeMorph = morphProgress.coerceIn(0f, 1f)
                 Canvas(
                     modifier = Modifier
-                        .size(20.dp)
+                        .size(if (isLargeScreen) 23.dp else 20.dp)
                         .graphicsLayer {
                             val bounce = (1f - 0.08f * sin(safeMorph * PI.toFloat())).coerceIn(0.88f, 1.10f)
                             scaleX = bounce

@@ -123,6 +123,8 @@ internal fun LyricSettingsDialog(
 ) {
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isTablet = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
+    val useCenteredFloatingPanel = isLandscape || isTablet
 
     val baseSheetBg = conceptSheetContainerColor()
     val textPrimary = MaterialTheme.colorScheme.onSurface
@@ -136,7 +138,7 @@ internal fun LyricSettingsDialog(
     val panelBottomColor = baseSheetBg.copy(alpha = 0.98f)
     val glassCardBg = textPrimary.copy(alpha = 0.055f).compositeOver(baseSheetBg.copy(alpha = 0.90f))
     val glassPillBg = textPrimary.copy(alpha = 0.08f)
-    val panelShape = if (isLandscape) {
+    val panelShape = if (useCenteredFloatingPanel) {
         RoundedCornerShape(28.dp)
     } else {
         RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
@@ -144,7 +146,7 @@ internal fun LyricSettingsDialog(
 
     ConceptAnimatedOverlaySheet(
         onDismiss = onDismiss,
-        isLandscape = isLandscape,
+        isLandscape = useCenteredFloatingPanel,
         dismissDragThresholdPx = 110f
     ) {
         // 现代玻璃拟态主窗口（入退场弹簧与遮罩渐隐由 ConceptAnimatedOverlaySheet 统一在 Draw 阶段驱动，无外框描边）
@@ -153,10 +155,18 @@ internal fun LyricSettingsDialog(
                 .then(
                     if (isLandscape) {
                         Modifier
-                            .padding(horizontal = 20.dp, vertical = 10.dp)
-                            .widthIn(max = 760.dp)
-                            .fillMaxWidth(0.94f)
-                            .heightIn(max = 460.dp)
+                            .padding(horizontal = 20.dp, vertical = 12.dp)
+                            .widthIn(max = if (isTablet) 820.dp else 760.dp)
+                            .fillMaxWidth(if (isTablet) 0.88f else 0.94f)
+                            .wrapContentHeight()
+                            .heightIn(max = if (isTablet) 600.dp else 460.dp)
+                    } else if (isTablet) {
+                        Modifier
+                            .padding(horizontal = 24.dp, vertical = 18.dp)
+                            .widthIn(max = 600.dp)
+                            .fillMaxWidth(0.88f)
+                            .wrapContentHeight()
+                            .heightIn(max = 720.dp)
                     } else {
                         Modifier
                             .widthIn(max = 560.dp)
@@ -181,17 +191,17 @@ internal fun LyricSettingsDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(
-                            start = if (isLandscape) 22.dp else 18.dp,
-                            end = if (isLandscape) 22.dp else 18.dp,
-                            top = if (isLandscape) 14.dp else 8.dp,
-                            bottom = if (isLandscape) 16.dp else 12.dp
+                            start = if (isTablet) 26.dp else if (isLandscape) 22.dp else 18.dp,
+                            end = if (isTablet) 26.dp else if (isLandscape) 22.dp else 18.dp,
+                            top = if (isTablet) 20.dp else if (isLandscape) 14.dp else 8.dp,
+                            bottom = if (isTablet) 22.dp else if (isLandscape) 16.dp else 12.dp
                         )
-                        .then(if (!isLandscape) Modifier.navigationBarsPadding() else Modifier)
+                        .then(if (!useCenteredFloatingPanel) Modifier.navigationBarsPadding() else Modifier)
                         .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(if (isTablet) 16.dp else 12.dp)
                 ) {
-                    // 顶部一体化手势指示横条（支持跟手平滑下滑关闭与松手弹性回弹）
-                    if (!isLandscape) {
+                    // 顶部一体化手势指示横条（仅手机底部抽屉形态展示）
+                    if (!useCenteredFloatingPanel) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -217,12 +227,12 @@ internal fun LyricSettingsDialog(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(if (isTablet) 12.dp else 10.dp)
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .size(if (isTablet) 38.dp else 32.dp)
+                                    .clip(RoundedCornerShape(if (isTablet) 12.dp else 10.dp))
                                     .background(roles.secondaryContainer),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -230,7 +240,7 @@ internal fun LyricSettingsDialog(
                                     imageVector = Icons.Rounded.Tune,
                                     contentDescription = null,
                                     tint = roles.onSecondaryContainer,
-                                    modifier = Modifier.size(17.dp)
+                                    modifier = Modifier.size(if (isTablet) 20.dp else 17.dp)
                                 )
                             }
                             Column {
@@ -239,26 +249,26 @@ internal fun LyricSettingsDialog(
                                     style = MaterialTheme.typography.titleMedium.copy(
                                         fontWeight = FontWeight.ExtraBold,
                                         color = textPrimary,
-                                        fontSize = 17.sp
+                                        fontSize = if (isTablet) 19.5.sp else 17.sp
                                     )
                                 )
                                 Text(
                                     text = "实时预览流光色彩、字号与排版景深",
                                     color = textSecondary.copy(alpha = 0.72f),
-                                    fontSize = 11.sp
+                                    fontSize = if (isTablet) 12.5.sp else 11.sp
                                 )
                             }
                         }
 
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(if (isTablet) 10.dp else 8.dp)
                         ) {
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(if (isTablet) 14.dp else 12.dp),
                                 color = roles.secondaryContainer,
                                 contentColor = roles.onSecondaryContainer,
-                                modifier = Modifier.softCardClickable(shape = RoundedCornerShape(12.dp)) {
+                                modifier = Modifier.softCardClickable(shape = RoundedCornerShape(if (isTablet) 14.dp else 12.dp)) {
                                     onSetFontSize(24f)
                                     onSetTranslationScale(0.84f)
                                     onSetLineSpacing(14f)
@@ -271,19 +281,22 @@ internal fun LyricSettingsDialog(
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
+                                    modifier = Modifier.padding(
+                                        horizontal = if (isTablet) 14.dp else 11.dp,
+                                        vertical = if (isTablet) 8.dp else 6.dp
+                                    )
                                 ) {
                                     Icon(
                                         Icons.Rounded.RestartAlt,
                                         contentDescription = null,
                                         tint = roles.onSecondaryContainer,
-                                        modifier = Modifier.size(14.dp)
+                                        modifier = Modifier.size(if (isTablet) 16.dp else 14.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Spacer(modifier = Modifier.width(5.dp))
                                     Text(
                                         "恢复默认",
                                         color = roles.onSecondaryContainer,
-                                        fontSize = 11.5.sp,
+                                        fontSize = if (isTablet) 13.sp else 11.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1
                                     )
@@ -294,7 +307,7 @@ internal fun LyricSettingsDialog(
                                 shape = CircleShape,
                                 color = glassPillBg,
                                 modifier = Modifier
-                                    .size(30.dp)
+                                    .size(if (isTablet) 36.dp else 30.dp)
                                     .softClickable(onClick = requestDismiss)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
@@ -302,7 +315,7 @@ internal fun LyricSettingsDialog(
                                         imageVector = Icons.Rounded.Close,
                                         contentDescription = "关闭",
                                         tint = textSecondary,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(if (isTablet) 19.dp else 16.dp)
                                     )
                                 }
                             }
@@ -310,15 +323,15 @@ internal fun LyricSettingsDialog(
                     }
 
                     if (isLandscape) {
-                        // 横屏模式：宽幅双栏现代玻璃布局，不拥挤、不折行
+                        // 横屏模式：宽幅双栏现代玻璃布局，左栏与右栏等高均衡排布，彻底消除底部留白
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(if (isTablet) 16.dp else 14.dp),
                             verticalAlignment = Alignment.Top
                         ) {
                             Column(
-                                modifier = Modifier.weight(1.02f),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                modifier = Modifier.weight(1.03f),
+                                verticalArrangement = Arrangement.spacedBy(if (isTablet) 14.dp else 10.dp)
                             ) {
                                 LyricThemeAndAlignCompactCard(
                                     highlightTheme = highlightTheme,
@@ -345,8 +358,8 @@ internal fun LyricSettingsDialog(
                                 )
                             }
                             Column(
-                                modifier = Modifier.weight(0.98f),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                modifier = Modifier.weight(0.97f),
+                                verticalArrangement = Arrangement.spacedBy(if (isTablet) 14.dp else 10.dp)
                             ) {
                                 LyricSlidersCompactCard(
                                     fontSize = fontSize,
@@ -432,22 +445,24 @@ private fun LyricThemeAndAlignCompactCard(
 ) {
     val roles = rememberCoverColorRoles(dynamicAccentColor)
     val goldRoles = rememberCoverColorRoles(VipGold)
+    val isTablet = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(if (isTablet) 20.dp else 18.dp),
         color = cardBg,
         contentColor = textPrimary,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.padding(
+                horizontal = if (isTablet) 18.dp else 13.dp,
+                vertical = if (isTablet) 16.dp else 11.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(if (isTablet) 15.dp else 10.dp)
         ) {
-            // 1. 流光配色胶囊矩阵（无描边，色阶容器分离）
+            // 1. 流光配色胶囊矩阵（等分自适应宽度，平板端放大字号与内边距）
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(if (isTablet) 8.dp else 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 LyricHighlightTheme.entries.forEach { theme ->
@@ -458,30 +473,36 @@ private fun LyricThemeAndAlignCompactCard(
                         Color(theme.primaryHex)
                     }
                     val swatchRoles = rememberCoverColorRoles(swatchColor)
+                    val chipShape = RoundedCornerShape(if (isTablet) 13.dp else 11.dp)
                     Surface(
-                        shape = RoundedCornerShape(11.dp),
+                        shape = chipShape,
                         color = if (selected) swatchRoles.primaryContainer else sheetBg,
                         contentColor = textPrimary,
                         modifier = Modifier
-                            .softCardClickable(shape = RoundedCornerShape(11.dp)) {
+                            .weight(1f)
+                            .softCardClickable(shape = chipShape) {
                                 onSetHighlightTheme(theme)
                             }
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.5.dp)
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(
+                                horizontal = if (isTablet) 8.dp else 6.dp,
+                                vertical = if (isTablet) 10.dp else 7.5.dp
+                            )
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(8.dp)
+                                    .size(if (isTablet) 9.5.dp else 8.dp)
                                     .clip(CircleShape)
                                     .background(if (selected) swatchRoles.primary else swatchColor)
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(if (isTablet) 7.dp else 6.dp))
                             Text(
                                 text = theme.label,
                                 color = if (selected) swatchRoles.onPrimaryContainer else textPrimary,
-                                fontSize = 11.5.sp,
+                                fontSize = if (isTablet) 13.sp else 11.5.sp,
                                 fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
                                 maxLines = 1,
                                 softWrap = false
@@ -500,37 +521,41 @@ private fun LyricThemeAndAlignCompactCard(
                 Text(
                     text = "歌词对齐",
                     color = textPrimary,
-                    fontSize = 12.sp,
+                    fontSize = if (isTablet) 14.sp else 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     softWrap = false
                 )
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(if (isTablet) 12.dp else 10.dp))
                         .background(sheetBg)
-                        .padding(2.dp),
+                        .padding(if (isTablet) 3.dp else 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    horizontalArrangement = Arrangement.spacedBy(if (isTablet) 4.dp else 3.dp)
                 ) {
                     LyricAlignment.entries.forEach { item ->
                         val selected = alignment == item
+                        val segShape = RoundedCornerShape(if (isTablet) 10.dp else 8.dp)
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
+                            shape = segShape,
                             color = if (selected) roles.primaryContainer else Color.Transparent,
                             modifier = Modifier
-                                .softCardClickable(shape = RoundedCornerShape(8.dp)) {
+                                .softCardClickable(shape = segShape) {
                                     onSetAlignment(item)
                                 }
                         ) {
                             Text(
                                 text = item.label,
                                 color = if (selected) roles.onPrimaryContainer else textSecondary,
-                                fontSize = 11.sp,
+                                fontSize = if (isTablet) 13.sp else 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 softWrap = false,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                                modifier = Modifier.padding(
+                                    horizontal = if (isTablet) 16.dp else 12.dp,
+                                    vertical = if (isTablet) 7.dp else 5.dp
+                                )
                             )
                         }
                     }
@@ -546,64 +571,74 @@ private fun LyricThemeAndAlignCompactCard(
                 Text(
                     text = "时长校准",
                     color = textPrimary,
-                    fontSize = 12.sp,
+                    fontSize = if (isTablet) 14.sp else 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     softWrap = false
                 )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(if (isTablet) 8.dp else 6.dp)
                 ) {
+                    val btnShape = RoundedCornerShape(if (isTablet) 11.dp else 9.dp)
                     Surface(
-                        shape = RoundedCornerShape(9.dp),
+                        shape = btnShape,
                         color = sheetBg,
-                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(9.dp)) {
+                        modifier = Modifier.softCardClickable(shape = btnShape) {
                             onSetOffsetMs(offsetMs - 200L)
                         }
                     ) {
                         Text(
                             text = "-0.2s",
                             color = textPrimary,
-                            fontSize = 11.sp,
+                            fontSize = if (isTablet) 13.sp else 11.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             softWrap = false,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.5.dp)
+                            modifier = Modifier.padding(
+                                horizontal = if (isTablet) 14.dp else 10.dp,
+                                vertical = if (isTablet) 7.5.dp else 5.5.dp
+                            )
                         )
                     }
                     Surface(
-                        shape = RoundedCornerShape(9.dp),
+                        shape = btnShape,
                         color = if (offsetMs != 0L) goldRoles.primaryContainer else roles.secondaryContainer,
-                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(9.dp)) {
+                        modifier = Modifier.softCardClickable(shape = btnShape) {
                             onSetOffsetMs(0L)
                         }
                     ) {
                         Text(
                             text = if (offsetMs == 0L) "校准 0.0s" else String.format(Locale.getDefault(), "%+.1fs", offsetMs / 1000f),
                             color = if (offsetMs != 0L) goldRoles.onPrimaryContainer else roles.onSecondaryContainer,
-                            fontSize = 11.sp,
+                            fontSize = if (isTablet) 13.sp else 11.sp,
                             fontWeight = FontWeight.ExtraBold,
                             maxLines = 1,
                             softWrap = false,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.5.dp)
+                            modifier = Modifier.padding(
+                                horizontal = if (isTablet) 14.dp else 10.dp,
+                                vertical = if (isTablet) 7.5.dp else 5.5.dp
+                            )
                         )
                     }
                     Surface(
-                        shape = RoundedCornerShape(9.dp),
+                        shape = btnShape,
                         color = sheetBg,
-                        modifier = Modifier.softCardClickable(shape = RoundedCornerShape(9.dp)) {
+                        modifier = Modifier.softCardClickable(shape = btnShape) {
                             onSetOffsetMs(offsetMs + 200L)
                         }
                     ) {
                         Text(
                             text = "+0.2s",
                             color = textPrimary,
-                            fontSize = 11.sp,
+                            fontSize = if (isTablet) 13.sp else 11.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             softWrap = false,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.5.dp)
+                            modifier = Modifier.padding(
+                                horizontal = if (isTablet) 14.dp else 10.dp,
+                                vertical = if (isTablet) 7.5.dp else 5.5.dp
+                            )
                         )
                     }
                 }
@@ -629,15 +664,19 @@ private fun LyricSlidersCompactCard(
     onSetBackgroundDim: (Float) -> Unit,
     onSetBlurIntensity: (Float) -> Unit
 ) {
+    val isTablet = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(if (isTablet) 20.dp else 18.dp),
         color = cardBg,
         contentColor = textPrimary,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp)
+            modifier = Modifier.padding(
+                horizontal = if (isTablet) 18.dp else 13.dp,
+                vertical = if (isTablet) 15.dp else 10.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(if (isTablet) 7.dp else 3.dp)
         ) {
             CompactInlineSliderRow(
                 label = "主词字号",
@@ -707,20 +746,21 @@ private fun CompactInlineSliderRow(
     onValueChange: (Float) -> Unit
 ) {
     val roles = rememberCoverColorRoles(accentColor)
+    val isTablet = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(34.dp),
+            .height(if (isTablet) 46.dp else 34.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = label,
             color = textPrimary,
-            fontSize = 12.sp,
+            fontSize = if (isTablet) 13.8.sp else 12.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             softWrap = false,
-            modifier = Modifier.width(56.dp)
+            modifier = Modifier.width(if (isTablet) 68.dp else 56.dp)
         )
         Slider(
             value = value,
@@ -734,20 +774,20 @@ private fun CompactInlineSliderRow(
             ),
             modifier = Modifier
                 .weight(1f)
-                .padding(horizontal = 4.dp)
+                .padding(horizontal = if (isTablet) 6.dp else 4.dp)
         )
         Box(
             modifier = Modifier
-                .width(46.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .width(if (isTablet) 54.dp else 46.dp)
+                .clip(RoundedCornerShape(if (isTablet) 8.dp else 6.dp))
                 .background(roles.secondaryContainer)
-                .padding(vertical = 2.dp),
+                .padding(vertical = if (isTablet) 4.dp else 2.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text = valueText,
                 color = roles.onSecondaryContainer,
-                fontSize = 11.sp,
+                fontSize = if (isTablet) 12.5.sp else 11.sp,
                 fontWeight = FontWeight.ExtraBold,
                 maxLines = 1,
                 softWrap = false
@@ -767,9 +807,10 @@ private fun LyricTogglesGridCard(
     onSetBlurEnabled: (Boolean) -> Unit,
     onSetKeepScreenOn: (Boolean) -> Unit
 ) {
+    val isTablet = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(if (isTablet) 12.dp else 8.dp)
     ) {
         CompactTogglePillTile(
             icon = Icons.Rounded.BlurOn,
@@ -812,56 +853,64 @@ private fun CompactTogglePillTile(
     modifier: Modifier = Modifier
 ) {
     val roles = rememberCoverColorRoles(accentColor)
+    val isTablet = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
+    val tileShape = RoundedCornerShape(if (isTablet) 18.dp else 15.dp)
     Surface(
-        shape = RoundedCornerShape(15.dp),
+        shape = tileShape,
         color = if (checked) roles.primaryContainer else cardBg,
         modifier = modifier
-            .softCardClickable(shape = RoundedCornerShape(15.dp), onClick = onToggle)
+            .softCardClickable(shape = tileShape, onClick = onToggle)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 9.dp),
+                .padding(
+                    horizontal = if (isTablet) 14.dp else 10.dp,
+                    vertical = if (isTablet) 14.dp else 9.dp
+                ),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(if (isTablet) 12.dp else 10.dp),
                 color = if (checked) roles.primary.copy(alpha = 0.22f) else textPrimary.copy(alpha = 0.07f),
-                modifier = Modifier.size(30.dp)
+                modifier = Modifier.size(if (isTablet) 38.dp else 30.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
                         imageVector = icon,
                         contentDescription = title,
                         tint = if (checked) roles.onPrimaryContainer else textSecondary,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(if (isTablet) 20.dp else 16.dp)
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(if (isTablet) 10.dp else 8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
                     color = if (checked) roles.onPrimaryContainer else textPrimary,
-                    fontSize = 11.5.sp,
+                    fontSize = if (isTablet) 13.8.sp else 11.5.sp,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (isTablet) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                }
                 Text(
                     text = subtitle,
                     color = if (checked) roles.onPrimaryContainerSubtle else textSecondary,
-                    fontSize = 10.sp,
+                    fontSize = if (isTablet) 11.8.sp else 10.sp,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Spacer(modifier = Modifier.width(4.dp))
+            Spacer(modifier = Modifier.width(6.dp))
             Box(
                 modifier = Modifier
-                    .size(7.dp)
+                    .size(if (isTablet) 9.dp else 7.dp)
                     .clip(CircleShape)
                     .background(if (checked) roles.primary else textSecondary.copy(alpha = 0.25f))
             )
@@ -1067,13 +1116,21 @@ fun QueueBottomSheet(
             modifier = Modifier
                 .then(
                     if (isLandscape) {
+                        val isTablet = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
                         Modifier
                             .padding(horizontal = 24.dp, vertical = 14.dp)
-                            .widthIn(max = 720.dp)
-                            .fillMaxWidth(0.92f)
-                            .heightIn(max = 420.dp)
+                            .widthIn(max = if (isTablet) 760.dp else 720.dp)
+                            .fillMaxWidth(if (isTablet) 0.86f else 0.92f)
+                            .heightIn(max = if (isTablet) 600.dp else 420.dp)
                     } else {
-                        Modifier.fillMaxWidth()
+                        val isTablet = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
+                        if (isTablet) {
+                            Modifier
+                                .widthIn(max = 640.dp)
+                                .fillMaxWidth()
+                        } else {
+                            Modifier.fillMaxWidth()
+                        }
                     }
                 )
                 .shadow(elevation = 28.dp, shape = panelShape)
@@ -1406,9 +1463,17 @@ fun QueueBottomSheet(
                                         if (seen.add(base)) base else "${base}_dup_$idx"
                                     }
                                 }
+                                val isTabletQueue = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
                                 LazyColumn(
                                     state = listState,
-                                    modifier = Modifier.heightIn(max = if (isLandscape) 260.dp else 420.dp)
+                                    modifier = Modifier.heightIn(
+                                        max = when {
+                                            isTabletQueue && isLandscape -> 440.dp
+                                            isTabletQueue -> 540.dp
+                                            isLandscape -> 260.dp
+                                            else -> 420.dp
+                                        }
+                                    )
                                 ) {
                                     itemsIndexed(
                                         items = displayQueue,
@@ -2225,8 +2290,12 @@ internal fun PlayerMoreControlSheet(
                     .padding(horizontal = 24.dp, vertical = 14.dp)
                     .widthIn(max = 540.dp)
                     .fillMaxWidth()
+                    .wrapContentHeight()
             } else {
-                Modifier.fillMaxWidth()
+                Modifier
+                    .widthIn(max = 540.dp)
+                    .fillMaxWidth()
+                    .wrapContentHeight()
             }).clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -2379,15 +2448,16 @@ internal fun PlayerMoreControlSheet(
                                         }
                                     }
                                     Spacer(modifier = Modifier.width(8.dp))
+                                    val moreArtistList = remember(song.artist) { parseSongArtistNames(song.artist) }
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "歌手主页",
+                                            text = if (moreArtistList.size >= 2) "歌手主页 (${moreArtistList.size}位)" else "歌手主页",
                                             color = roles.primary,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = song.artist.ifBlank { "未知歌手" },
+                                            text = if (moreArtistList.size >= 2) moreArtistList.joinToString(" / ") else song.artist.ifBlank { "未知歌手" },
                                             color = textPrimary,
                                             fontSize = 12.5.sp,
                                             fontWeight = FontWeight.ExtraBold,
@@ -3242,4 +3312,299 @@ private fun formatDialogDuration(ms: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
+}
+
+/**
+ * 拆分单曲中的多位合作歌手名称（支持 、 / & ， , feat. ft. 等常见分隔符）
+ */
+fun parseSongArtistNames(rawArtist: String): List<String> {
+    if (rawArtist.isBlank()) return emptyList()
+    return rawArtist
+        .split(Regex("\\s*(?:、|/|&|，|,|\\b(?:[fF]eat|[fF]t)\\b\\.?)\\s*"))
+        .map { it.trim() }
+        .filter { it.isNotBlank() && it != "未知歌手" }
+        .distinct()
+}
+
+/**
+ * 多歌手（>=2位）选择悬浮窗：
+ * - 当在歌曲列表更多菜单点击「查看歌手」时：`isPlayerStyle = false`，采用应用主题卡片色彩体系；
+ * - 当在播放页更多菜单点击「歌手主页」时：`isPlayerStyle = true`，采用与播放页封面动态取色（`rememberCoverColorRoles(accentColor)`）完全融合的流光毛玻璃悬浮窗风格；
+ * - 异步静默补全各位歌手的真实头像与作品数量，支持一键选择前往对应歌手主页。
+ */
+@Composable
+fun ArtistSelectionFloatingDialog(
+    song: Song,
+    artistNames: List<String>,
+    isPlayerStyle: Boolean = false,
+    accentColor: Color = ConceptPrimary,
+    onSelectArtist: (artistName: String, resolvedArtistId: String?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val baseSheetBg = conceptSheetContainerColor()
+    val textPrimary = MaterialTheme.colorScheme.onSurface
+    val textSecondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val roles = rememberCoverColorRoles(if (isPlayerStyle) accentColor else ConceptPrimary)
+
+    val panelTopColor = if (isPlayerStyle) {
+        roles.primaryContainer.copy(alpha = 0.58f).compositeOver(baseSheetBg.copy(alpha = 0.96f))
+    } else {
+        baseSheetBg.copy(alpha = 0.98f)
+    }
+    val panelMidColor = if (isPlayerStyle) {
+        roles.primaryContainer.copy(alpha = 0.24f).compositeOver(baseSheetBg.copy(alpha = 0.97f))
+    } else {
+        baseSheetBg.copy(alpha = 0.98f)
+    }
+    val panelBottomColor = baseSheetBg.copy(alpha = 0.99f)
+    val itemCardBg = if (isPlayerStyle) {
+        textPrimary.copy(alpha = 0.065f).compositeOver(baseSheetBg.copy(alpha = 0.90f))
+    } else {
+        conceptElevatedSurfaceColor()
+    }
+    val activeHighlight = if (isPlayerStyle) roles.primary else ConceptPrimary
+
+    // 异步静默查询每位歌手的头像与 ID，提升视觉精致度与跳转速度
+    val resolvedArtistsMap = remember(song.id, artistNames) {
+        mutableStateMapOf<String, com.concept.music.data.model.ArtistItem>()
+    }
+    LaunchedEffect(song.id, artistNames) {
+        artistNames.forEach { name ->
+            launch(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val matched = com.concept.music.data.vip.VipManager.music
+                        .searchArtists(name, page = 1, pageSize = 4)
+                        .firstOrNull { it.id.isNotBlank() && it.id != "0" }
+                    if (matched != null) {
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            resolvedArtistsMap[name] = matched
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    var pendingSelection by remember { mutableStateOf<Pair<String, String?>?>(null) }
+    val panelShape = RoundedCornerShape(26.dp)
+
+    ConceptAnimatedOverlaySheet(
+        onDismiss = {
+            val chosen = pendingSelection
+            pendingSelection = null
+            if (chosen != null) {
+                onSelectArtist(chosen.first, chosen.second)
+            } else {
+                onDismiss()
+            }
+        },
+        isLandscape = true,
+        scrimAlpha = 0.54f,
+        zIndex = 95f
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(horizontal = 24.dp, vertical = 18.dp)
+                .widthIn(max = 380.dp)
+                .fillMaxWidth(0.90f)
+                .wrapContentHeight()
+                .heightIn(max = 480.dp)
+                .shadow(elevation = 28.dp, shape = panelShape)
+                .clip(panelShape)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(panelTopColor, panelMidColor, panelBottomColor)
+                    )
+                )
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+        ) {
+            CompositionLocalProvider(LocalContentColor provides textPrimary) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // 顶部标题栏
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(RoundedCornerShape(11.dp))
+                                    .background(if (isPlayerStyle) roles.secondaryContainer else ConceptPrimary.copy(alpha = 0.14f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.PersonSearch,
+                                    contentDescription = null,
+                                    tint = if (isPlayerStyle) roles.onSecondaryContainer else ConceptPrimary,
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "选择要查看的歌手",
+                                    style = MaterialTheme.typography.titleMedium.copy(
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = textPrimary,
+                                        fontSize = 16.5.sp
+                                    )
+                                )
+                                Text(
+                                    text = "《${song.title}》共 ${artistNames.size} 位创作者",
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        color = textSecondary,
+                                        fontSize = 11.5.sp
+                                    ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = requestDismiss,
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "关闭",
+                                tint = textSecondary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    // 歌手卡片列表
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 340.dp),
+                        verticalArrangement = Arrangement.spacedBy(9.dp)
+                    ) {
+                        itemsIndexed(
+                            items = artistNames,
+                            key = { idx, name -> "artist_pick_${idx}_$name" }
+                        ) { index, artistName ->
+                            val resolved = resolvedArtistsMap[artistName]
+                            val avatarUrl = resolved?.avatarUrl.orEmpty()
+                            val directFirstId = if (index == 0) song.artistId.trim().takeIf { it.isNotBlank() && it != "0" } else null
+                            val resolvedId = resolved?.id?.takeIf { it.isNotBlank() && it != "0" } ?: directFirstId
+
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = itemCardBg,
+                                contentColor = textPrimary,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .softCardClickable(
+                                        shape = RoundedCornerShape(16.dp),
+                                        onClick = {
+                                            pendingSelection = artistName to resolvedId
+                                            requestDismiss()
+                                        }
+                                    )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 11.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                if (isPlayerStyle) roles.secondaryContainer else activeHighlight.copy(alpha = 0.14f)
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (avatarUrl.isNotBlank()) {
+                                            AsyncImage(
+                                                model = avatarUrl,
+                                                contentDescription = artistName,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            Text(
+                                                text = artistName.take(1).uppercase(),
+                                                color = if (isPlayerStyle) roles.onSecondaryContainer else activeHighlight,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 16.sp
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.width(13.dp))
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = artistName,
+                                            style = MaterialTheme.typography.bodyLarge.copy(
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = textPrimary,
+                                                fontSize = 15.sp
+                                            ),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = if (resolved != null && resolved.songCount > 0) {
+                                                "${resolved.songCount} 首单曲 · 点击前往歌手主页"
+                                            } else {
+                                                "点击前往歌手主页"
+                                            },
+                                            style = MaterialTheme.typography.bodySmall.copy(
+                                                color = textSecondary,
+                                                fontSize = 11.5.sp
+                                            ),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = activeHighlight.copy(alpha = 0.14f)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = "主页",
+                                                color = activeHighlight,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Rounded.ChevronRight,
+                                                contentDescription = null,
+                                                tint = activeHighlight,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

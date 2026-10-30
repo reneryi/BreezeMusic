@@ -97,7 +97,6 @@ fun RadioScreen(
     val isDark = LocalIsDarkTheme.current
 
     val fmChannels by viewModel.fmChannels.collectAsState()
-    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
     val dailySongs by viewModel.dailyRecommendSongs.collectAsState()
 
     var selectedChannelId by remember(initialChannelId, fmChannels) {
@@ -289,6 +288,7 @@ fun RadioScreen(
         ) { innerPadding ->
             val currentCatIdx = categories.indexOf(selectedCategory).coerceAtLeast(0)
             val radioListState = rememberLazyListState()
+            val radioAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
             val displayedRadioSongs by rememberProgressiveSongList(
                 sourceSongs = stationSongs,
                 listState = radioListState,
@@ -711,7 +711,7 @@ fun RadioScreen(
                             Text("暂未获取到电台曲目，请点击上方「换一批」", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                } else if (adaptiveInfo.useTwoColumnSongOrCardGrid) {
+                } else if (radioAdaptive.useTwoColumnSongOrCardGrid) {
                     val radioPairs = displayedRadioSongs.mapIndexed { idx, s -> idx to s }.chunked(2)
                     itemsIndexed(
                         items = radioPairs,

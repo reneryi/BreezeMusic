@@ -129,13 +129,14 @@ fun SongActionBottomSheet(
         RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     }
 
+    val sheetAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
     ConceptAnimatedOverlaySheet(
         onDismiss = {
             onDismiss()
             pendingActionAfterDismiss?.invoke()
             pendingActionAfterDismiss = null
         },
-        isLandscape = isLandscape,
+        isLandscape = isLandscape || sheetAdaptive.isLargeScreenDevice,
         zIndex = 88f
     ) {
         val dismissWithAction: (() -> Unit) -> Unit = { action ->
@@ -143,21 +144,25 @@ fun SongActionBottomSheet(
             requestDismiss()
         }
 
+        val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+        val useCenteredCompactDialog = isLandscape || adaptiveInfo.isLargeScreenDevice
         Surface(
-            shape = panelShape,
+            shape = if (useCenteredCompactDialog) RoundedCornerShape(24.dp) else panelShape,
             color = conceptSheetContainerColor(),
             contentColor = MaterialTheme.colorScheme.onSurface,
             shadowElevation = 24.dp,
-            modifier = (if (isLandscape) {
+            modifier = (if (useCenteredCompactDialog) {
                 Modifier
-                    .padding(horizontal = 24.dp, vertical = 14.dp)
-                    .widthIn(max = 520.dp)
+                    .padding(horizontal = 20.dp, vertical = 14.dp)
+                    .widthIn(max = 388.dp)
                     .fillMaxWidth()
-                    .fillMaxHeight(0.88f)
+                    .wrapContentHeight()
+                    .heightIn(max = (configuration.screenHeightDp * 0.84f).dp)
             } else {
                 Modifier
-                    .widthIn(max = 540.dp)
+                    .widthIn(max = 460.dp)
                     .fillMaxWidth()
+                    .wrapContentHeight()
                     .heightIn(max = (configuration.screenHeightDp * 0.82f).dp)
             }).clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -338,13 +343,11 @@ fun SongActionBottomSheet(
                     }
 
                     if (onOpenArtist != null && song.artist.isNotBlank()) {
-                        val artistNames = song.artist.split("、", "/", "&", "，", ",")
-                            .map { it.trim() }
-                            .filter { it.isNotBlank() }
+                        val artistNames = remember(song.artist) { parseSongArtistNames(song.artist) }
                         SongActionMenuItem(
                             icon = Icons.Rounded.Person,
-                            title = if (artistNames.size > 1) {
-                                "查看歌手：${artistNames.joinToString(" / ")}"
+                            title = if (artistNames.size >= 2) {
+                                "查看歌手 (${artistNames.size}位)：${artistNames.joinToString(" / ")}"
                             } else {
                                 "查看歌手：${song.artist}"
                             },

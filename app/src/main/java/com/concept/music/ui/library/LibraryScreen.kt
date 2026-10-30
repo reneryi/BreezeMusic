@@ -96,6 +96,9 @@ fun LibraryScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val isDark = LocalIsDarkTheme.current
+    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+    val isTabletStandalonePortrait = adaptiveInfo.isLargeScreenDevice &&
+        adaptiveInfo.navigationMode != com.concept.music.ui.theme.ConceptNavigationMode.DUAL_PANE_HOME
     val account by viewModel.accountState.collectAsState()
     val vip by viewModel.vipState.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
@@ -108,7 +111,6 @@ fun LibraryScreen(
 
     val selectedTab by viewModel.selectedAssetTab.collectAsState()
     val isGridView by viewModel.isGridView.collectAsState()
-    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
 
     val myPlaylists = remember(playlists) { playlists.filter { it.isCreatedByMe && !it.isLiked } }
     val favoritePlaylists = remember(playlists) { playlists.filter { it.isFavorite } }
@@ -167,17 +169,18 @@ fun LibraryScreen(
             .fillMaxSize()
             .nestedScroll(pullRefreshState.nestedScrollConnection)
     ) {
+        val horizontalPad = if (isTabletStandalonePortrait) adaptiveInfo.horizontalContentPadding else 16.dp
         LazyColumn(
             state = listState,
             modifier = Modifier
-                .widthIn(max = 860.dp)
+                .widthIn(max = if (isTabletStandalonePortrait) 920.dp else 860.dp)
                 .align(Alignment.TopCenter)
                 .fillMaxSize(),
             contentPadding = PaddingValues(
-                start = 16.dp,
-                end = 16.dp,
+                start = horizontalPad,
+                end = horizontalPad,
                 top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 60.dp,
-                bottom = 112.dp
+                bottom = if (adaptiveInfo.isLargeScreenDevice) 140.dp else 112.dp
             )
         ) {
             // 1. 头像账号与听歌等级时长一体式数字名片（去嵌套盒子化，视觉通透开阔）
@@ -494,7 +497,7 @@ fun LibraryScreen(
                                 }
                             }
                         }
-                    } else if (!isGridView && adaptiveInfo.navigationMode != com.concept.music.ui.theme.ConceptNavigationMode.NAVIGATION_RAIL) {
+                    } else if (!isGridView) {
                         itemsIndexed(
                             items = currentDisplayPlaylists,
                             key = { idx, pl -> "pl_list_${pl.id}_${pl.listId}_$idx" },
@@ -915,9 +918,11 @@ fun LibraryScreen(
             ) {
                 Row(
                     modifier = Modifier
+                        .widthIn(max = if (isTabletStandalonePortrait) 920.dp else 860.dp)
+                        .align(Alignment.CenterHorizontally)
                         .fillMaxWidth()
                         .height(56.dp)
-                        .padding(horizontal = 16.dp),
+                        .padding(horizontal = if (isTabletStandalonePortrait) adaptiveInfo.horizontalContentPadding else 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -992,16 +997,20 @@ fun LibraryScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        IconButton(
-                            onClick = onOpenSearch,
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Search,
-                                contentDescription = "搜索",
-                                tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(21.dp)
-                            )
+                        // 平板横屏双栏平铺模式（DUAL_PANE_HOME）下，左侧发现页已常驻搜索入口，右侧我的页不再重复显示搜索按钮；
+                        // 平板竖屏或手机端独立展示「我的」页时保留搜索与设置按钮
+                        if (adaptiveInfo.navigationMode != com.concept.music.ui.theme.ConceptNavigationMode.DUAL_PANE_HOME) {
+                            IconButton(
+                                onClick = onOpenSearch,
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Search,
+                                    contentDescription = "搜索",
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(21.dp)
+                                )
+                            }
                         }
 
                         IconButton(
@@ -1019,36 +1028,37 @@ fun LibraryScreen(
                 }
             }
         }
-    }
 
-    if (showVipCenterSheet) {
-        VipCenterBottomSheet(
-            state = vip,
-            loggedIn = isLoggedIn,
-            autoClaim = account.current?.autoClaim ?: false,
-            onDismiss = { showVipCenterSheet = false },
-            onClaim = { viewModel.claimVip() },
-            onAutoChange = { viewModel.setAuto(it) },
-            onRefresh = { viewModel.refreshAccount() },
-            onLogin = {
-                showVipCenterSheet = false
-                onLogin()
-            }
-        )
-    }
-
-    if (showFocusPodSheet) {
-        FocusPodBottomSheet(
-            onDismiss = { showFocusPodSheet = false },
-            onPlaySceneMusic = { sceneId ->
-                coroutineScope.launch {
-                    val songs = runCatching { VipManager.music.sceneRecommendSongs(sceneId, size = 20) }.getOrDefault(emptyList())
-                    if (songs.isNotEmpty()) {
-                        onPlaySong(songs.first(), songs)
+        // 心流舱置于「我的」页容器内部展示（平板横屏双栏平铺下严格限定在右侧「我的」页区域内显示，避免跨全屏铺满）
+        if (showFocusPodSheet) {
+            FocusPodBottomSheet(
+                onDismiss = { showFocusPodSheet = false },
+                onPlaySceneMusic = { sceneId ->
+                    coroutineScope.launch {
+                        val songs = runCatching { VipManager.music.sceneRecommendSongs(sceneId, size = 20) }.getOrDefault(emptyList())
+                        if (songs.isNotEmpty()) {
+                            onPlaySong(songs.first(), songs)
+                        }
                     }
                 }
-            }
-        )
+            )
+        }
+
+        if (showVipCenterSheet) {
+            VipCenterBottomSheet(
+                state = vip,
+                loggedIn = isLoggedIn,
+                autoClaim = account.current?.autoClaim ?: false,
+                onDismiss = { showVipCenterSheet = false },
+                onClaim = { viewModel.claimVip() },
+                onAutoChange = { viewModel.setAuto(it) },
+                onRefresh = { viewModel.refreshAccount() },
+                onLogin = {
+                    showVipCenterSheet = false
+                    onLogin()
+                }
+            )
+        }
     }
 
     if (showCreateDialog) {

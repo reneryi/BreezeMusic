@@ -410,8 +410,9 @@ class LibraryViewModel(
     }
 
     fun isArtistFollowed(artistId: String, list: List<FollowedArtist> = _followedArtists.value): Boolean {
-        if (artistId.isBlank() || artistId == "0") return false
-        return list.any { it.id == artistId }
+        val cleanId = artistId.trim()
+        if (cleanId.isBlank() || cleanId == "0") return false
+        return list.any { it.id == cleanId || (it.targetUserId.isNotBlank() && it.targetUserId == cleanId) }
     }
 
     fun toggleFollowArtist(
@@ -428,11 +429,25 @@ class LibraryViewModel(
             return
         }
         viewModelScope.launch {
-            val currentlyFollowed = isArtistFollowed(artistId)
             val prevList = _followedArtists.value
+            val matchedItem = prevList.firstOrNull {
+                it.id == artistId ||
+                    (it.targetUserId.isNotBlank() && it.targetUserId == artistId) ||
+                    (artist.name.isNotBlank() && it.name == artist.name)
+            }
+            val currentlyFollowed = matchedItem != null
             if (currentlyFollowed) {
-                _followedArtists.value = prevList.filterNot { it.id == artistId }
-                val ok = runCatching { VipManager.music.unfollowArtist(artistId) }.getOrDefault(false)
+                _followedArtists.value = prevList.filterNot {
+                    it.id == artistId ||
+                        (it.targetUserId.isNotBlank() && it.targetUserId == artistId) ||
+                        (matchedItem != null && it.id == matchedItem.id)
+                }
+                val ok = runCatching {
+                    VipManager.music.unfollowArtist(
+                        artistId = matchedItem?.id?.ifBlank { artistId } ?: artistId,
+                        fallbackTargetUserId = matchedItem?.targetUserId.orEmpty()
+                    )
+                }.getOrDefault(false)
                 if (ok) {
                     onResult(true, false, "已取消关注 ${artist.name}")
                 } else {
