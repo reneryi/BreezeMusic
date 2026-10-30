@@ -159,11 +159,17 @@ fun MiniPlayerBar(
             },
         contentAlignment = Alignment.Center
     ) {
+        val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
         Surface(
             shape = capsuleShape,
             color = if (isDark) Color(0xFF141E30) else Color(0xFFF7FAFF),
             shadowElevation = if (isDark) 14.dp else 7.dp,
             modifier = Modifier
+                .then(
+                    if (adaptiveInfo.miniPlayerMaxWidth != androidx.compose.ui.unit.Dp.Unspecified) {
+                        Modifier.widthIn(max = adaptiveInfo.miniPlayerMaxWidth)
+                    } else Modifier
+                )
                 .fillMaxWidth()
                 .height(58.dp)
                 .pointerInput(currentSong.id) {

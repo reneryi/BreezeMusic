@@ -108,6 +108,7 @@ fun LibraryScreen(
 
     val selectedTab by viewModel.selectedAssetTab.collectAsState()
     val isGridView by viewModel.isGridView.collectAsState()
+    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
 
     val myPlaylists = remember(playlists) { playlists.filter { it.isCreatedByMe && !it.isLiked } }
     val favoritePlaylists = remember(playlists) { playlists.filter { it.isFavorite } }
@@ -168,7 +169,10 @@ fun LibraryScreen(
     ) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .widthIn(max = 860.dp)
+                .align(Alignment.TopCenter)
+                .fillMaxSize(),
             contentPadding = PaddingValues(
                 start = 16.dp,
                 end = 16.dp,
@@ -490,7 +494,7 @@ fun LibraryScreen(
                                 }
                             }
                         }
-                    } else if (!isGridView) {
+                    } else if (!isGridView && adaptiveInfo.navigationMode != com.concept.music.ui.theme.ConceptNavigationMode.NAVIGATION_RAIL) {
                         itemsIndexed(
                             items = currentDisplayPlaylists,
                             key = { idx, pl -> "pl_list_${pl.id}_${pl.listId}_$idx" },

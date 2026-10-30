@@ -76,6 +76,7 @@ fun SearchScreen(
     modifier: Modifier = Modifier
 ) {
     val isDark = LocalIsDarkTheme.current
+    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
     val cardColor = conceptFloatingCardColor()
 
     val query by viewModel.query.collectAsState()
@@ -448,12 +449,33 @@ fun SearchScreen(
                                             modifier = Modifier.fillMaxSize(),
                                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                         ) {
-                                            itemsIndexed(
-                                                items = artistResults,
-                                                key = { idx, artist -> "search_artist_${artist.id}_$idx" },
-                                                contentType = { _, _ -> "artist_card" }
-                                            ) { _, artist ->
-                                                ArtistSearchCard(artist = artist, onClick = { onArtistClick(artist.id) })
+                                            if (adaptiveInfo.useTwoColumnSongOrCardGrid) {
+                                                val pairs = artistResults.chunked(2)
+                                                itemsIndexed(
+                                                    items = pairs,
+                                                    key = { idx, pair -> "search_artist_pair_${pair.first().id}_$idx" },
+                                                    contentType = { _, _ -> "artist_pair" }
+                                                ) { _, pair ->
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                                    ) {
+                                                        pair.forEach { artist ->
+                                                            Box(modifier = Modifier.weight(1f)) {
+                                                                ArtistSearchCard(artist = artist, onClick = { onArtistClick(artist.id) })
+                                                            }
+                                                        }
+                                                        if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                                                    }
+                                                }
+                                            } else {
+                                                itemsIndexed(
+                                                    items = artistResults,
+                                                    key = { idx, artist -> "search_artist_${artist.id}_$idx" },
+                                                    contentType = { _, _ -> "artist_card" }
+                                                ) { _, artist ->
+                                                    ArtistSearchCard(artist = artist, onClick = { onArtistClick(artist.id) })
+                                                }
                                             }
                                             if (loadingMore) {
                                                 item {
@@ -477,12 +499,33 @@ fun SearchScreen(
                                             modifier = Modifier.fillMaxSize(),
                                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                         ) {
-                                            itemsIndexed(
-                                                items = albumResults,
-                                                key = { idx, album -> "search_album_${album.id}_$idx" },
-                                                contentType = { _, _ -> "album_card" }
-                                            ) { _, album ->
-                                                AlbumCardItem(album = album, onClick = { onAlbumClick(album.id) })
+                                            if (adaptiveInfo.useTwoColumnSongOrCardGrid) {
+                                                val pairs = albumResults.chunked(2)
+                                                itemsIndexed(
+                                                    items = pairs,
+                                                    key = { idx, pair -> "search_album_pair_${pair.first().id}_$idx" },
+                                                    contentType = { _, _ -> "album_pair" }
+                                                ) { _, pair ->
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                                    ) {
+                                                        pair.forEach { album ->
+                                                            Box(modifier = Modifier.weight(1f)) {
+                                                                AlbumCardItem(album = album, onClick = { onAlbumClick(album.id) })
+                                                            }
+                                                        }
+                                                        if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                                                    }
+                                                }
+                                            } else {
+                                                itemsIndexed(
+                                                    items = albumResults,
+                                                    key = { idx, album -> "search_album_${album.id}_$idx" },
+                                                    contentType = { _, _ -> "album_card" }
+                                                ) { _, album ->
+                                                    AlbumCardItem(album = album, onClick = { onAlbumClick(album.id) })
+                                                }
                                             }
                                             if (loadingMore) {
                                                 item {
@@ -506,12 +549,33 @@ fun SearchScreen(
                                             modifier = Modifier.fillMaxSize(),
                                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                                         ) {
-                                            itemsIndexed(
-                                                items = playlistResults,
-                                                key = { idx, playlist -> "search_pl_${playlist.id}_$idx" },
-                                                contentType = { _, _ -> "playlist_card" }
-                                            ) { _, playlist ->
-                                                PlaylistSearchCard(playlist = playlist, onClick = { onPlaylistClick(playlist.id) })
+                                            if (adaptiveInfo.useTwoColumnSongOrCardGrid) {
+                                                val pairs = playlistResults.chunked(2)
+                                                itemsIndexed(
+                                                    items = pairs,
+                                                    key = { idx, pair -> "search_pl_pair_${pair.first().id}_$idx" },
+                                                    contentType = { _, _ -> "playlist_pair" }
+                                                ) { _, pair ->
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                                    ) {
+                                                        pair.forEach { playlist ->
+                                                            Box(modifier = Modifier.weight(1f)) {
+                                                                PlaylistSearchCard(playlist = playlist, onClick = { onPlaylistClick(playlist.id) })
+                                                            }
+                                                        }
+                                                        if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                                                    }
+                                                }
+                                            } else {
+                                                itemsIndexed(
+                                                    items = playlistResults,
+                                                    key = { idx, playlist -> "search_pl_${playlist.id}_$idx" },
+                                                    contentType = { _, _ -> "playlist_card" }
+                                                ) { _, playlist ->
+                                                    PlaylistSearchCard(playlist = playlist, onClick = { onPlaylistClick(playlist.id) })
+                                                }
                                             }
                                             if (loadingMore) {
                                                 item {
@@ -694,7 +758,86 @@ private fun ComplexSearchResultView(
     onSelectTab: (SearchTab) -> Unit
 ) {
     val isDark = LocalIsDarkTheme.current
+    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
     val elevatedColor = conceptElevatedSurfaceColor()
+
+    if (adaptiveInfo.useTwoPaneDetailLayout) {
+        // 平板 / 宽屏「左右分栏分类展示」综合搜索结果看板：
+        // 左栏：焦点歌手名片 + 精选单曲列表；右栏：同名/热门专辑 + 精选歌单
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .weight(0.52f)
+                    .fillMaxHeight(),
+                contentPadding = PaddingValues(top = 12.dp, bottom = 112.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                val leadArtist = result.primaryArtist ?: result.artists.firstOrNull()
+                if (leadArtist != null && leadArtist.id.isNotBlank() && leadArtist.id != "0") {
+                    item(key = "wide_complex_artist") {
+                        ArtistHeroCard(
+                            artist = leadArtist,
+                            roleBadge = if (result.intent == SearchIntent.ARTIST) "最佳匹配歌手" else "关联歌手",
+                            isDark = isDark,
+                            elevatedColor = elevatedColor,
+                            onClick = { onArtistClick(leadArtist.id) }
+                        )
+                    }
+                }
+                if (result.songs.isNotEmpty()) {
+                    item(key = "wide_complex_songs") {
+                        SongSectionBlock(
+                            title = "单曲与演绎版本",
+                            subtitle = null,
+                            songs = result.songs.take(10),
+                            allSongs = result.songs,
+                            currentSong = currentSong,
+                            onSongClick = onSongClick,
+                            onSongMoreClick = onSongMoreClick,
+                            onViewAll = { onSelectTab(SearchTab.SONG) }
+                        )
+                    }
+                }
+            }
+
+            LazyColumn(
+                modifier = Modifier
+                    .weight(0.48f)
+                    .fillMaxHeight(),
+                contentPadding = PaddingValues(top = 12.dp, bottom = 112.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                if (result.albums.isNotEmpty()) {
+                    item(key = "wide_complex_albums") {
+                        AlbumSectionBlock(
+                            title = "同名与热门专辑",
+                            albums = result.albums.take(6),
+                            primaryArtistName = result.primaryArtist?.name ?: result.artists.firstOrNull()?.name.orEmpty(),
+                            onAlbumClick = onAlbumClick,
+                            onViewAll = { onSelectTab(SearchTab.ALBUM) }
+                        )
+                    }
+                }
+                if (result.playlists.isNotEmpty()) {
+                    item(key = "wide_complex_playlists") {
+                        PlaylistGalleryBlock(
+                            title = "相关精选歌单",
+                            playlists = result.playlists.take(6),
+                            elevatedColor = elevatedColor,
+                            onPlaylistClick = onPlaylistClick,
+                            onViewAll = { onSelectTab(SearchTab.PLAYLIST) }
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),

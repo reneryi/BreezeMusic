@@ -62,9 +62,9 @@ enum class AppPermissionType(
         title = "存储读写与相册导出",
         badge = "存储权限",
         manifestPermissionName = "WRITE_EXTERNAL_STORAGE · READ_MEDIA_AUDIO · MANAGE_EXTERNAL_STORAGE · MediaStore",
-        purposeDescription = "用于申请与管理手机存储读写权限，支持在点击「保存海报」或「保存二维码」时将生成的 2K 超清歌词海报及登录二维码图片导出保存至系统相册或手机存储。",
-        privacyCommitment = "仅在您主动触发图片导出或本地文件保存时向目标路径写入文件，绝不扫描、读取或上传您手机中的私人照片与无关文件。",
-        disabledImpactDescription = "关闭后将无法向手机存储或系统相册保存歌词海报、登录二维码等本地导出文件。"
+        purposeDescription = "用于申请与管理手机存储读写权限，支持将高清歌曲封面、专辑封面、歌单封面、歌手头像、2K 超清歌词海报及登录二维码图片导出保存至系统相册或手机存储。",
+        privacyCommitment = "仅在您主动触发封面/头像保存、海报导出或本地文件保存时向目标路径写入文件，绝不扫描、读取或上传您手机中的私人照片与无关文件。",
+        disabledImpactDescription = "关闭后将无法向手机存储或系统相册保存高清歌曲/专辑/歌单封面、歌手头像、歌词海报及登录二维码等本地导出文件。"
     ),
     MUSIC_DOWNLOAD(
         key = "perm_music_download",

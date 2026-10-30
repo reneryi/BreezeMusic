@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/Version-v1.1.0-00E5FF?style=flat-square" alt="Version" />
+<img src="https://img.shields.io/badge/Version-v1.2.0-00E5FF?style=flat-square" alt="Version" />
 <img src="https://img.shields.io/badge/Platform-Android%208.0%2B%20(API%2026--34)-3898FF?style=flat-square" alt="Platform" />
 <img src="https://img.shields.io/badge/Language-Kotlin%201.9-7F52FF?style=flat-square" alt="Kotlin" />
 <img src="https://img.shields.io/badge/UI-Jetpack%20Compose%20%2B%20120fps%20Spring%20Motion-00E5FF?style=flat-square" alt="Compose" />
@@ -93,7 +93,7 @@
 ```
 BreezeMusic/
 ├── app/
-│   ├── build.gradle.kts                         # 模块级 Gradle 构建配置 (versionName = "1.1.0", versionCode = 4)
+│   ├── build.gradle.kts                         # 模块级 Gradle 构建配置 (versionName = "1.2.0", versionCode = 5)
 │   ├── proguard-rules.pro                       # Release 混淆与 R8 压缩保留规则
 │   └── src/
 │       ├── main/
@@ -149,20 +149,21 @@ BreezeMusic/
 * **Android SDK**：`minSdk = 26` (Android 8.0)，`compileSdk = 34` (Android 14)
 * **Gradle**：项目自带 Gradle Wrapper (`./gradlew` / `gradlew.bat`)，无需手动安装
 
-### 2. 编译 Debug 安装包（本地调试推荐）
+### 2. 编译手机版 (Phone) 与平板版 (Tablet) 安装包（双签名独立区分）
 
-在项目根目录打开终端执行：
+项目内置 `phone`（手机端，`phoneSign` 签名）与 `tablet`（平板端，`tabletSign` 签名）双构建变体：
 
 ```bash
-# macOS / Linux
-./gradlew :app:assembleDebug
+# 编译手机版与平板版 Debug 安装包
+./gradlew :app:assemblePhoneDebug :app:assembleTabletDebug
 
-# Windows PowerShell / CMD
-.\gradlew.bat :app:assembleDebug
+# 编译手机版与平板版 Release 正式安装包
+./gradlew :app:assemblePhoneRelease :app:assembleTabletRelease
 ```
 
-编译完成后，生成的安装包路径为：
-`app/build/outputs/apk/debug/app-debug.apk`
+编译完成后，生成的双平台独立签名安装包路径分别为：
+- 手机版：`app/build/outputs/apk/phone/release/app-phone-release.apk`
+- 平板版：`app/build/outputs/apk/tablet/release/app-tablet-release.apk`
 
 ### 3. 运行单元测试套件
 

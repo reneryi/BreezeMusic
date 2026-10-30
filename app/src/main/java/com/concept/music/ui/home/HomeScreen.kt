@@ -22,6 +22,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -224,8 +225,17 @@ fun HomeScreen(
             .fillMaxSize()
             .nestedScroll(pullRefreshState.nestedScrollConnection)
     ) {
+        val homeAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.TopCenter
+        ) {
+        // 仅在平板版安装包且当前发现页容器自身宽度 >= 680dp（如平板竖屏独享整屏宽度）时才将日推与私人FM左右并排；
+        // 在平板横屏「发现+我的」双栏平铺（DUAL_PANE_HOME）下，发现页占左半屏，保持上下排布更舒展美观。
+        val isWideDiscoverPane = homeAdaptive.isLargeScreenDevice && maxWidth >= 680.dp
         LazyColumn(
             modifier = Modifier
+                .widthIn(max = 920.dp)
                 .fillMaxSize()
                 .statusBarsPadding(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 148.dp),
@@ -249,65 +259,134 @@ fun HomeScreen(
                 DiscoverTopHeader(onSearchClick = onSearchClick)
             }
 
-            // 2. 每日推荐大横幅
-            item(key = "discover_daily_banner", contentType = "discover_daily_banner") {
-                DailyRecommendBanner(
-                    songs = dailySongs,
-                    onCardClick = onOpenDailyRecommend,
-                    onPlayAll = {
-                        if (dailySongs.isNotEmpty()) {
-                            onSongClick(dailySongs.first(), dailySongs)
-                        } else {
-                            Toast.makeText(context, "每日推荐正在加载中", Toast.LENGTH_SHORT).show()
+            if (isWideDiscoverPane) {
+                // 平板竖屏/分屏或超宽发现页：每日推荐与私人随心听 FM 并排双栏展示，消除单列大横幅过度拉伸
+                item(key = "discover_wide_hero_row", contentType = "discover_wide_hero_row") {
+                    val safeIdx = if (fmPool.isEmpty()) 0 else personalFmIndex.coerceIn(0, fmPool.lastIndex)
+                    val activeFmSong = fmPool.getOrNull(safeIdx)
+                    val nextFmSong = if (fmPool.size > 1) fmPool.getOrNull((safeIdx + 1) % fmPool.size) else null
+                    val isCurrentInFm = currentSong != null && activeFmSong != null && (
+                        (currentSong.id.isNotBlank() && currentSong.id == activeFmSong.id) ||
+                            (currentSong.hash.isNotBlank() && currentSong.hash.equals(activeFmSong.hash, ignoreCase = true))
+                        )
+                    val isFmPlayingNow = isCurrentInFm && isPlaying
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            DailyRecommendBanner(
+                                songs = dailySongs,
+                                onCardClick = onOpenDailyRecommend,
+                                onPlayAll = {
+                                    if (dailySongs.isNotEmpty()) {
+                                        onSongClick(dailySongs.first(), dailySongs)
+                                    } else {
+                                        Toast.makeText(context, "每日推荐正在加载中", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            )
+                        }
+                        Box(modifier = Modifier.weight(1f)) {
+                            PersonalFmPlayerCard(
+                                activeSong = activeFmSong,
+                                nextSong = nextFmSong,
+                                isPlaying = isFmPlayingNow,
+                                isRefreshing = personalFmRefreshing,
+                                onOpenList = { showPersonalFmSheet = true },
+                                onTogglePlayPause = {
+                                    if (isCurrentInFm) {
+                                        onTogglePlayPause()
+                                    } else if (activeFmSong != null) {
+                                        onSongClick(activeFmSong, fmPool)
+                                    } else {
+                                        viewModel.refreshPersonalFm { loaded ->
+                                            if (loaded.isNotEmpty()) {
+                                                onSongClick(loaded.first(), loaded)
+                                            }
+                                        }
+                                    }
+                                },
+                                onSkipNext = {
+                                    viewModel.skipToNextPersonalFm { nextSong, list ->
+                                        onSongClick(nextSong, list)
+                                    }
+                                },
+                                onRefreshNewBatch = {
+                                    viewModel.refreshPersonalFm { loaded ->
+                                        if (loaded.isNotEmpty()) {
+                                            onSongClick(loaded.first(), loaded)
+                                            Toast.makeText(context, "已根据你的听歌口味焕新 ${loaded.size} 首推荐", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            )
                         }
                     }
-                )
-            }
-
-            // 3. 私人随心听 FM（猜你喜欢定位 · 类播放器交互卡片）
-            item(key = "discover_personal_fm", contentType = "discover_personal_fm") {
-                val safeIdx = if (fmPool.isEmpty()) 0 else personalFmIndex.coerceIn(0, fmPool.lastIndex)
-                val activeFmSong = fmPool.getOrNull(safeIdx)
-                val nextFmSong = if (fmPool.size > 1) fmPool.getOrNull((safeIdx + 1) % fmPool.size) else null
-                val isCurrentInFm = currentSong != null && activeFmSong != null && (
-                    (currentSong.id.isNotBlank() && currentSong.id == activeFmSong.id) ||
-                        (currentSong.hash.isNotBlank() && currentSong.hash.equals(activeFmSong.hash, ignoreCase = true))
+                }
+            } else {
+                // 2. 每日推荐大横幅
+                item(key = "discover_daily_banner", contentType = "discover_daily_banner") {
+                    DailyRecommendBanner(
+                        songs = dailySongs,
+                        onCardClick = onOpenDailyRecommend,
+                        onPlayAll = {
+                            if (dailySongs.isNotEmpty()) {
+                                onSongClick(dailySongs.first(), dailySongs)
+                            } else {
+                                Toast.makeText(context, "每日推荐正在加载中", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     )
-                val isFmPlayingNow = isCurrentInFm && isPlaying
+                }
 
-                PersonalFmPlayerCard(
-                    activeSong = activeFmSong,
-                    nextSong = nextFmSong,
-                    isPlaying = isFmPlayingNow,
-                    isRefreshing = personalFmRefreshing,
-                    onOpenList = { showPersonalFmSheet = true },
-                    onTogglePlayPause = {
-                        if (isCurrentInFm) {
-                            onTogglePlayPause()
-                        } else if (activeFmSong != null) {
-                            onSongClick(activeFmSong, fmPool)
-                        } else {
+                // 3. 私人随心听 FM
+                item(key = "discover_personal_fm", contentType = "discover_personal_fm") {
+                    val safeIdx = if (fmPool.isEmpty()) 0 else personalFmIndex.coerceIn(0, fmPool.lastIndex)
+                    val activeFmSong = fmPool.getOrNull(safeIdx)
+                    val nextFmSong = if (fmPool.size > 1) fmPool.getOrNull((safeIdx + 1) % fmPool.size) else null
+                    val isCurrentInFm = currentSong != null && activeFmSong != null && (
+                        (currentSong.id.isNotBlank() && currentSong.id == activeFmSong.id) ||
+                            (currentSong.hash.isNotBlank() && currentSong.hash.equals(activeFmSong.hash, ignoreCase = true))
+                        )
+                    val isFmPlayingNow = isCurrentInFm && isPlaying
+
+                    PersonalFmPlayerCard(
+                        activeSong = activeFmSong,
+                        nextSong = nextFmSong,
+                        isPlaying = isFmPlayingNow,
+                        isRefreshing = personalFmRefreshing,
+                        onOpenList = { showPersonalFmSheet = true },
+                        onTogglePlayPause = {
+                            if (isCurrentInFm) {
+                                onTogglePlayPause()
+                            } else if (activeFmSong != null) {
+                                onSongClick(activeFmSong, fmPool)
+                            } else {
+                                viewModel.refreshPersonalFm { loaded ->
+                                    if (loaded.isNotEmpty()) {
+                                        onSongClick(loaded.first(), loaded)
+                                    }
+                                }
+                            }
+                        },
+                        onSkipNext = {
+                            viewModel.skipToNextPersonalFm { nextSong, list ->
+                                onSongClick(nextSong, list)
+                            }
+                        },
+                        onRefreshNewBatch = {
                             viewModel.refreshPersonalFm { loaded ->
                                 if (loaded.isNotEmpty()) {
                                     onSongClick(loaded.first(), loaded)
+                                    Toast.makeText(context, "已根据你的听歌口味焕新 ${loaded.size} 首推荐", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
-                    },
-                    onSkipNext = {
-                        viewModel.skipToNextPersonalFm { nextSong, list ->
-                            onSongClick(nextSong, list)
-                        }
-                    },
-                    onRefreshNewBatch = {
-                        viewModel.refreshPersonalFm { loaded ->
-                            if (loaded.isNotEmpty()) {
-                                onSongClick(loaded.first(), loaded)
-                                Toast.makeText(context, "已根据你的听歌口味焕新 ${loaded.size} 首推荐", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                )
+                    )
+                }
             }
 
             // 4. 新歌速递（对接 module/top_song.js: /musicadservice/container/v1/newsong_publish，采用横向三行分栏流卡片设计）
@@ -533,6 +612,7 @@ fun HomeScreen(
                 containerColor = MaterialTheme.colorScheme.surface,
                 contentColor = ConceptPrimary
             )
+        }
         }
     }
 
@@ -1758,6 +1838,7 @@ fun NewSongExpressScreen(
             val latestFullSongs by rememberUpdatedState(songs)
             val curPlayingId = currentSong?.id
             val curPlayingHash = currentSong?.hash.orEmpty()
+            val nsAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
             val showNewSongScrollTop by remember(songs.size) {
                 derivedStateOf {
                     newSongListState.firstVisibleItemIndex > 1 ||
@@ -1951,20 +2032,50 @@ fun NewSongExpressScreen(
                     }
 
                     if (!isCollapsed) {
-                        items(
-                            items = group.indexedSongs,
-                            key = { item -> "ns_row_${pubDate}_${item.rawSong.id}_${item.orderIndex}" },
-                            contentType = { "song_row" }
-                        ) { item ->
-                            val rawSong = item.rawSong
-                            Box(modifier = Modifier.padding(horizontal = 12.dp)) {
-                                SongItemRow(
-                                    song = item.displaySong,
-                                    orderIndex = item.orderIndex,
-                                    isPlaying = curPlayingId != null && (curPlayingId == rawSong.id || (curPlayingHash.isNotEmpty() && curPlayingHash.equals(rawSong.hash, ignoreCase = true))),
-                                    onClick = { onSongClick(rawSong, latestFullSongs) },
-                                    onMoreClick = { onSongMoreClick(rawSong) }
-                                )
+                        if (nsAdaptive.useTwoColumnSongOrCardGrid) {
+                            val pairs = group.indexedSongs.chunked(2)
+                            items(
+                                items = pairs,
+                                key = { pair -> "ns_pair_${pubDate}_${pair.first().rawSong.id}_${pair.first().orderIndex}" },
+                                contentType = { "song_pair_row" }
+                            ) { pair ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    pair.forEach { item ->
+                                        val rawSong = item.rawSong
+                                        Box(modifier = Modifier.weight(1f)) {
+                                            SongItemRow(
+                                                song = item.displaySong,
+                                                orderIndex = item.orderIndex,
+                                                isPlaying = curPlayingId != null && (curPlayingId == rawSong.id || (curPlayingHash.isNotEmpty() && curPlayingHash.equals(rawSong.hash, ignoreCase = true))),
+                                                onClick = { onSongClick(rawSong, latestFullSongs) },
+                                                onMoreClick = { onSongMoreClick(rawSong) }
+                                            )
+                                        }
+                                    }
+                                    if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        } else {
+                            items(
+                                items = group.indexedSongs,
+                                key = { item -> "ns_row_${pubDate}_${item.rawSong.id}_${item.orderIndex}" },
+                                contentType = { "song_row" }
+                            ) { item ->
+                                val rawSong = item.rawSong
+                                Box(modifier = Modifier.padding(horizontal = 12.dp)) {
+                                    SongItemRow(
+                                        song = item.displaySong,
+                                        orderIndex = item.orderIndex,
+                                        isPlaying = curPlayingId != null && (curPlayingId == rawSong.id || (curPlayingHash.isNotEmpty() && curPlayingHash.equals(rawSong.hash, ignoreCase = true))),
+                                        onClick = { onSongClick(rawSong, latestFullSongs) },
+                                        onMoreClick = { onSongMoreClick(rawSong) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -2305,14 +2416,224 @@ fun RankDetailScreen(
                     it.id == currentSong.id || (currentSong.hash.isNotBlank() && currentSong.hash.equals(it.hash, ignoreCase = true))
                 }
             }
+            val rankAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
+                    .padding(innerPadding),
+                contentAlignment = Alignment.TopCenter
             ) {
+            if (rankAdaptive.useTwoPaneDetailLayout) {
+                // 平板横屏双栏布局：左栏固定榜单封面信息与快捷切榜看板 + 右栏独立滚动曲目双列网格
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(28.dp),
+                        color = conceptFloatingCardColor(),
+                        modifier = Modifier
+                            .width(310.dp)
+                            .fillMaxHeight()
+                            .padding(bottom = 96.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(144.dp)
+                                    .shadow(10.dp, RoundedCornerShape(26.dp))
+                                    .clip(RoundedCornerShape(26.dp))
+                                    .background(Brush.linearGradient(listOf(accentColor, ConceptPrimaryDark))),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                val cover = currentRank.coverUrl.ifBlank { rankSongs.firstOrNull()?.coverUrl.orEmpty() }
+                                if (cover.isNotBlank()) {
+                                    AsyncImage(
+                                        model = cover,
+                                        contentDescription = currentRank.rankName,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Leaderboard,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(48.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Text(
+                                text = "${currentRank.category.ifBlank { "官方热榜" }} · ${currentRank.updateFrequency.ifBlank { "每日更新" }}",
+                                color = accentColor,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = currentRank.rankName,
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 20.sp
+                                ),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Button(
+                                onClick = {
+                                    if (filteredSongs.isNotEmpty()) {
+                                        onSongClick(filteredSongs.first(), filteredSongs)
+                                    }
+                                },
+                                enabled = filteredSongs.isNotEmpty(),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = accentColor, contentColor = Color.White),
+                                modifier = Modifier.fillMaxWidth().height(44.dp)
+                            ) {
+                                Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("播放全部 (${filteredSongs.size})", fontWeight = FontWeight.ExtraBold, fontSize = 13.5.sp)
+                            }
+                            if (quickSwitchRanks.size > 1) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "快捷切换榜单",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.align(Alignment.Start)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                quickSwitchRanks.forEach { item ->
+                                    val selected = item.rankId == currentRank.rankId
+                                    val itemAccent = rankAccentColor(item)
+                                    Surface(
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (selected) itemAccent.copy(alpha = 0.16f) else Color.Transparent,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 2.dp)
+                                            .softCardClickable { selectedRankId = item.rankId }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(6.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (selected) itemAccent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+                                            )
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Text(
+                                                text = item.rankName,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                                color = if (selected) itemAccent else MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    LazyColumn(
+                        state = rankListState,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        contentPadding = PaddingValues(bottom = 112.dp)
+                    ) {
+                        item {
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                singleLine = true,
+                                placeholder = { Text("搜索榜单歌曲 / 歌手...", fontSize = 13.sp) },
+                                leadingIcon = {
+                                    Icon(Icons.Rounded.Search, contentDescription = null, tint = accentColor, modifier = Modifier.size(18.dp))
+                                },
+                                trailingIcon = {
+                                    if (searchQuery.isNotBlank()) {
+                                        IconButton(onClick = { searchQuery = "" }) {
+                                            Icon(Icons.Rounded.Close, contentDescription = "清除", modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                },
+                                shape = CircleShape,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = accentColor,
+                                    unfocusedBorderColor = Color.Transparent,
+                                    focusedContainerColor = conceptFloatingCardColor(),
+                                    unfocusedContainerColor = conceptFloatingCardColor()
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            )
+                        }
+                        if (loading) {
+                            item {
+                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(color = accentColor)
+                                }
+                            }
+                        } else if (filteredSongs.isEmpty()) {
+                            item {
+                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
+                                    Text("未找到匹配的榜单歌曲", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        } else {
+                            val rankPairs = displayedRankSongs.mapIndexed { idx, s -> idx to s }.chunked(2)
+                            itemsIndexed(
+                                items = rankPairs,
+                                key = { pIdx, pair -> "rank_tp_pair_${pair.first().second.id}_$pIdx" },
+                                contentType = { _, _ -> "song_pair_row" }
+                            ) { _, pair ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    pair.forEach { (index, song) ->
+                                        Box(modifier = Modifier.weight(1f)) {
+                                            SongItemRow(
+                                                song = song,
+                                                orderIndex = index + 1,
+                                                isPlaying = curRankPlayingId != null && (curRankPlayingId == song.id || (curRankPlayingHash.isNotEmpty() && curRankPlayingHash.equals(song.hash, ignoreCase = true))),
+                                                onClick = { onSongClick(song, latestFilteredRankSongs) },
+                                                onMoreClick = { onSongMoreClick(song) }
+                                            )
+                                        }
+                                    }
+                                    if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
             LazyColumn(
                 state = rankListState,
                 modifier = Modifier
+                    .widthIn(max = 960.dp)
                     .fillMaxSize()
                     .horizontalCategorySwipe(
                         currentIndex = currentQuickIndex,
@@ -2525,6 +2846,31 @@ fun RankDetailScreen(
                             Text("未找到匹配的榜单歌曲", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
+                } else if (rankAdaptive.useTwoColumnSongOrCardGrid) {
+                    val rankPairs = displayedRankSongs.mapIndexed { idx, s -> idx to s }.chunked(2)
+                    itemsIndexed(
+                        items = rankPairs,
+                        key = { pIdx, pair -> "rank_pair_${pair.first().second.id}_$pIdx" },
+                        contentType = { _, _ -> "song_pair_row" }
+                    ) { _, pair ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            pair.forEach { (index, song) ->
+                                Box(modifier = Modifier.weight(1f)) {
+                                    SongItemRow(
+                                        song = song,
+                                        orderIndex = index + 1,
+                                        isPlaying = curRankPlayingId != null && (curRankPlayingId == song.id || (curRankPlayingHash.isNotEmpty() && curRankPlayingHash.equals(song.hash, ignoreCase = true))),
+                                        onClick = { onSongClick(song, latestFilteredRankSongs) },
+                                        onMoreClick = { onSongMoreClick(song) }
+                                    )
+                                }
+                            }
+                            if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
                 } else {
                     itemsIndexed(
                         items = displayedRankSongs,
@@ -2540,6 +2886,7 @@ fun RankDetailScreen(
                         )
                     }
                 }
+            }
             }
 
             Column(
@@ -2924,14 +3271,130 @@ fun DailyRecommendScreen(
                         (dailyListState.firstVisibleItemIndex == 2 && dailyListState.firstVisibleItemScrollOffset > 100)
                 }
             }
+            val dailyAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
+                    .padding(padding),
+                contentAlignment = Alignment.TopCenter
             ) {
+            if (dailyAdaptive.useTwoPaneDetailLayout) {
+                // 平板横屏双栏布局：左栏固定日推三叠封面与日期信息卡 + 右栏独立滚动双列推荐歌曲
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(28.dp),
+                        color = conceptFloatingCardColor(),
+                        modifier = Modifier
+                            .width(300.dp)
+                            .fillMaxHeight()
+                            .padding(bottom = 96.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(22.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            StaggeredThreeCovers(
+                                songs = dailySongs.take(3),
+                                primarySize = 118.dp,
+                                secondarySize = 100.dp,
+                                tertiarySize = 86.dp
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(
+                                    text = dayStr,
+                                    color = ConceptCoralAccent,
+                                    fontSize = 42.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                                Text(
+                                    text = " / $monthStr",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(bottom = 6.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "循着你的听歌轨迹 · 每日 6:00 更新",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Button(
+                                onClick = {
+                                    if (dailySongs.isNotEmpty()) onSongClick(dailySongs.first(), dailySongs)
+                                },
+                                enabled = dailySongs.isNotEmpty(),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = ConceptCoralAccent, contentColor = Color.White),
+                                modifier = Modifier.fillMaxWidth().height(46.dp)
+                            ) {
+                                Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(19.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("播放全部 (${dailySongs.size})", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+                            }
+                        }
+                    }
+
+                    LazyColumn(
+                        state = dailyListState,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        contentPadding = PaddingValues(bottom = 100.dp)
+                    ) {
+                        if (dailySongs.isEmpty() && !isBusy) {
+                            item {
+                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 64.dp), contentAlignment = Alignment.Center) {
+                                    Text("暂未获取到推荐歌曲，请点击右上角刷新", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        } else {
+                            val dailyPairs = displayedDailySongs.mapIndexed { idx, s -> idx to s }.chunked(2)
+                            itemsIndexed(
+                                items = dailyPairs,
+                                key = { pIdx, pair -> "daily_tp_pair_${pair.first().second.id}_$pIdx" },
+                                contentType = { _, _ -> "song_pair_row" }
+                            ) { _, pair ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    pair.forEach { (index, song) ->
+                                        Box(modifier = Modifier.weight(1f)) {
+                                            SongItemRow(
+                                                song = song,
+                                                orderIndex = index + 1,
+                                                isPlaying = curDailyPlayingId != null && (curDailyPlayingId == song.id || (curDailyPlayingHash.isNotEmpty() && curDailyPlayingHash.equals(song.hash, ignoreCase = true))),
+                                                onClick = { onSongClick(song, latestDailySongs) },
+                                                onMoreClick = { onSongMoreClick(song) }
+                                            )
+                                        }
+                                    }
+                                    if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
             LazyColumn(
                 state = dailyListState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .widthIn(max = 960.dp)
+                    .fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 100.dp)
             ) {
                 // 开放式日推头部（去除外层圆角卡片盒）
@@ -3032,6 +3495,33 @@ fun DailyRecommendScreen(
                             Text("暂未获取到推荐歌曲，请点击右上角刷新", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
+                } else if (dailyAdaptive.useTwoColumnSongOrCardGrid) {
+                    val dailyPairs = displayedDailySongs.mapIndexed { idx, s -> idx to s }.chunked(2)
+                    itemsIndexed(
+                        items = dailyPairs,
+                        key = { pIdx, pair -> "daily_pair_${pair.first().second.id}_$pIdx" },
+                        contentType = { _, _ -> "song_pair_row" }
+                    ) { _, pair ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            pair.forEach { (index, song) ->
+                                Box(modifier = Modifier.weight(1f)) {
+                                    SongItemRow(
+                                        song = song,
+                                        orderIndex = index + 1,
+                                        isPlaying = curDailyPlayingId != null && (curDailyPlayingId == song.id || (curDailyPlayingHash.isNotEmpty() && curDailyPlayingHash.equals(song.hash, ignoreCase = true))),
+                                        onClick = { onSongClick(song, latestDailySongs) },
+                                        onMoreClick = { onSongMoreClick(song) }
+                                    )
+                                }
+                            }
+                            if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
                 } else {
                     itemsIndexed(
                         items = displayedDailySongs,
@@ -3049,6 +3539,7 @@ fun DailyRecommendScreen(
                         }
                     }
                 }
+            }
             }
 
             FloatingScrollToTopButton(

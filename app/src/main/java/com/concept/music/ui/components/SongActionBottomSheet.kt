@@ -1,5 +1,6 @@
 package com.concept.music.ui.components
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -21,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -28,12 +30,22 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.concept.music.data.model.Song
 import com.concept.music.data.vip.VipManager
+import com.concept.music.service.AppPermissionManager
+import com.concept.music.service.AppPermissionType
 import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
+import com.concept.music.ui.theme.ConceptCyanAccent
 import com.concept.music.ui.theme.ConceptMintAccent
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.conceptSheetContainerColor
 import com.concept.music.ui.theme.softCardClickable
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private val songCoverSaveScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
 @Composable
 fun SongActionBottomSheet(
@@ -44,6 +56,7 @@ fun SongActionBottomSheet(
     onPlayNext: () -> Unit,
     onToggleFavorite: () -> Unit,
     onAddToPlaylist: () -> Unit,
+    onSaveSongCover: (() -> Unit)? = null,
     onDownloadSong: (() -> Unit)? = null,
     onOpenComments: (() -> Unit)? = null,
     onOpenArtist: (() -> Unit)? = null,
@@ -51,6 +64,7 @@ fun SongActionBottomSheet(
     onOpenSongDetail: (() -> Unit)? = null,
     onRemoveFromCurrentPlaylist: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.screenWidthDp > configuration.screenHeightDp
     var pendingActionAfterDismiss by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -75,6 +89,36 @@ fun SongActionBottomSheet(
             }
             if (resolvedAlbumId.isBlank() && fetchedId.isNotBlank()) {
                 resolvedAlbumId = fetchedId
+            }
+        }
+    }
+
+    val defaultSaveSongCoverAction: () -> Unit = {
+        val appCtx = context.applicationContext
+        if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.STORAGE_EXPORT)) {
+            Toast.makeText(
+                appCtx,
+                "已在权限管理中关闭「存储读写与相册导出」权限，请先在设置-权限管理中开启",
+                Toast.LENGTH_LONG
+            ).show()
+        } else {
+            Toast.makeText(appCtx, "正在保存《${song.title}》高清封面...", Toast.LENGTH_SHORT).show()
+            songCoverSaveScope.launch {
+                val res = withContext(Dispatchers.IO) {
+                    HdArtworkSaver.saveArtworkToGallery(
+                        context = appCtx,
+                        rawUrl = song.coverUrl,
+                        category = ArtworkDownloadCategory.SONG_COVER,
+                        title = song.title,
+                        subtitle = song.artist,
+                        songForFallback = song
+                    )
+                }
+                when (res) {
+                    is ArtworkSaveResult.Success -> Toast.makeText(appCtx, res.message, Toast.LENGTH_SHORT).show()
+                    is ArtworkSaveResult.PermissionDisabled -> Toast.makeText(appCtx, res.message, Toast.LENGTH_LONG).show()
+                    is ArtworkSaveResult.Failure -> Toast.makeText(appCtx, res.message, Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -112,6 +156,7 @@ fun SongActionBottomSheet(
                     .fillMaxHeight(0.88f)
             } else {
                 Modifier
+                    .widthIn(max = 540.dp)
                     .fillMaxWidth()
                     .heightIn(max = (configuration.screenHeightDp * 0.82f).dp)
             }).clickable(
@@ -230,7 +275,7 @@ fun SongActionBottomSheet(
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f))
                 }
 
-                // 2. 操作菜单项列表
+                // 2. 操作菜单项列表（不含播放页更多按钮，专属歌曲列表更多操作）
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -250,7 +295,7 @@ fun SongActionBottomSheet(
                         onClick = { dismissWithAction { onPlayNext() } }
                     )
 
-                    val permissionState by com.concept.music.service.AppPermissionManager.state.collectAsState()
+                    val permissionState by AppPermissionManager.state.collectAsState()
                     if (onDownloadSong != null && permissionState.musicDownloadEnabled) {
                         SongActionMenuItem(
                             icon = Icons.Rounded.Download,
@@ -259,6 +304,17 @@ fun SongActionBottomSheet(
                             onClick = { dismissWithAction { onDownloadSong() } }
                         )
                     }
+
+                    SongActionMenuItem(
+                        icon = Icons.Rounded.Image,
+                        title = "保存歌曲封面",
+                        tint = ConceptCyanAccent,
+                        onClick = {
+                            dismissWithAction {
+                                (onSaveSongCover ?: defaultSaveSongCoverAction).invoke()
+                            }
+                        }
+                    )
 
                     SongActionMenuItem(
                         icon = if (isFavorite) Icons.Rounded.HeartBroken else Icons.Rounded.FavoriteBorder,

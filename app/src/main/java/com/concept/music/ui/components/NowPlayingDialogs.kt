@@ -153,12 +153,14 @@ internal fun LyricSettingsDialog(
                 .then(
                     if (isLandscape) {
                         Modifier
-                            .padding(horizontal = 24.dp, vertical = 14.dp)
-                            .widthIn(max = 720.dp)
-                            .fillMaxWidth(0.92f)
-                            .heightIn(max = 420.dp)
+                            .padding(horizontal = 20.dp, vertical = 10.dp)
+                            .widthIn(max = 760.dp)
+                            .fillMaxWidth(0.94f)
+                            .heightIn(max = 460.dp)
                     } else {
-                        Modifier.fillMaxWidth()
+                        Modifier
+                            .widthIn(max = 560.dp)
+                            .fillMaxWidth()
                     }
                 )
                 .shadow(elevation = 28.dp, shape = panelShape)
@@ -489,20 +491,27 @@ private fun LyricThemeAndAlignCompactCard(
                 }
             }
 
-            // 2. 对齐方式分段控件 + 时间轴校准（单行不折行设计）
+            // 2. 歌词对齐方式独立行（左标签 + 右等宽分段胶囊，视野舒展不拥挤）
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // 对齐方式分段胶囊
+                Text(
+                    text = "歌词对齐",
+                    color = textPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false
+                )
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
                         .background(sheetBg)
                         .padding(2.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     LyricAlignment.entries.forEach { item ->
                         val selected = alignment == item
@@ -521,17 +530,30 @@ private fun LyricThemeAndAlignCompactCard(
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 softWrap = false,
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                             )
                         }
                     }
                 }
+            }
 
-                // 紧凑型时间轴微调器（强制单行不换行，彻底解决 +0.2s 折行问题）
+            // 3. 时长校准微调独立行（彻底杜绝横屏双栏下 +0.2s 被右侧边界截断问题，并与右栏滑块卡片高度对齐）
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "时长校准",
+                    color = textPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    softWrap = false
+                )
                 Row(
-                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.End)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Surface(
                         shape = RoundedCornerShape(9.dp),
@@ -543,11 +565,11 @@ private fun LyricThemeAndAlignCompactCard(
                         Text(
                             text = "-0.2s",
                             color = textPrimary,
-                            fontSize = 10.5.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             softWrap = false,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.5.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.5.dp)
                         )
                     }
                     Surface(
@@ -560,11 +582,11 @@ private fun LyricThemeAndAlignCompactCard(
                         Text(
                             text = if (offsetMs == 0L) "校准 0.0s" else String.format(Locale.getDefault(), "%+.1fs", offsetMs / 1000f),
                             color = if (offsetMs != 0L) goldRoles.onPrimaryContainer else roles.onSecondaryContainer,
-                            fontSize = 10.5.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.ExtraBold,
                             maxLines = 1,
                             softWrap = false,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.5.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.5.dp)
                         )
                     }
                     Surface(
@@ -577,11 +599,11 @@ private fun LyricThemeAndAlignCompactCard(
                         Text(
                             text = "+0.2s",
                             color = textPrimary,
-                            fontSize = 10.5.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             softWrap = false,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.5.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.5.dp)
                         )
                     }
                 }

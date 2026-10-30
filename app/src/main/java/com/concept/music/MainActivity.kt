@@ -22,13 +22,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -122,6 +116,14 @@ class MainActivity : ComponentActivity() {
         }
         com.concept.music.ui.theme.ThemeManager.syncSystemSplashAndNightMode(this, activeThemeMode)
         super.onCreate(savedInstanceState)
+        // 严格区分手机版安装包 (phone) 与平板版安装包 (tablet)：
+        // - 平板版安装包 (BuildConfig.IS_TABLET_FLAVOR == true)：遵循 Android 16 (API 36) 大屏规范，支持全方向自由旋转与分屏多窗口
+        // - 手机版安装包 (BuildConfig.IS_TABLET_FLAVOR == false)：主界面及常规页面严格锁定竖屏，仅在播放页进入横屏时切换
+        if (!BuildConfig.IS_TABLET_FLAVOR) {
+            runCatching { requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+        } else {
+            runCatching { requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED }
+        }
         val windowBgRes = if (isAppDark) R.drawable.bg_splash_window_dark else R.drawable.bg_splash_window_light
         runCatching { window.setBackgroundDrawableResource(windowBgRes) }
         requestHighRefreshRateDisplayMode()
@@ -403,6 +405,20 @@ fun MainContent(
         navController.navigate("login") { launchSingleTop = true }
     }
 
+    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+    val navMode = adaptiveInfo.navigationMode
+
+    // 当平板旋转至横屏双栏平铺模式（发现+我的同屏展示）且当前停留在独立 library 路由时，自动归并至主路由
+    LaunchedEffect(navMode, currentRoute) {
+        if (navMode == com.concept.music.ui.theme.ConceptNavigationMode.DUAL_PANE_HOME && currentRoute == Screen.Library.route) {
+            navController.navigate(Screen.Discover.route) {
+                popUpTo(navController.graph.startDestinationId) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+        }
+    }
+
     val isSubDetail = currentRoute.startsWith("playlist_detail") ||
         currentRoute.startsWith("album_detail") ||
         currentRoute.startsWith("artist_detail") ||
@@ -420,6 +436,10 @@ fun MainContent(
         currentRoute != "settings" &&
         currentRoute != "vip_center" &&
         currentRoute != "viper_effect"
+    val showBottomNavBar = navMode == com.concept.music.ui.theme.ConceptNavigationMode.BOTTOM_BAR &&
+        showFloatingMiniBar && !isSubDetail && !showNowPlaying && !showViperEffectOverlay
+    val showNavigationRail = navMode == com.concept.music.ui.theme.ConceptNavigationMode.NAVIGATION_RAIL &&
+        showFloatingMiniBar && !isSubDetail && !showNowPlaying && !showViperEffectOverlay
 
     // 监测底部「发现 ↔ 我的」同平面主页面切换，驱动 120Hz 绘制期水平方向动态虚化 (RenderEffect Motion Blur)
     val activeMainTab = mainTabIndex(currentRoute)
@@ -446,12 +466,45 @@ fun MainContent(
             modifier = Modifier.fillMaxSize(),
             contentWindowInsets = WindowInsets(0, 0, 0, 0)
         ) { innerPadding ->
-            NavHost(
-                navController = navController,
-                startDestination = Screen.Discover.route,
+            androidx.compose.foundation.layout.Row(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
+            ) {
+                AnimatedVisibility(
+                    visible = showNavigationRail,
+                    enter = slideInHorizontally(initialOffsetX = { -it }, animationSpec = ConceptMotion.spatialPageSpring()) + fadeIn(tween(220)),
+                    exit = slideOutHorizontally(targetOffsetX = { -it }, animationSpec = ConceptMotion.spatialPageSpring()) + fadeOut(tween(180))
+                ) {
+                    com.concept.music.ui.navigation.ConceptNavigationRail(
+                        currentRoute = currentRoute,
+                        onNavigate = { route ->
+                            if (route != currentRoute) {
+                                navController.navigate(route) {
+                                    popUpTo(navController.graph.startDestinationId) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            }
+                        },
+                        onOpenSearch = {
+                            searchViewModel.resetTabToDefault()
+                            navController.navigate("search") { launchSingleTop = true }
+                        },
+                        onOpenSettings = {
+                            navController.navigate("settings") { launchSingleTop = true }
+                        }
+                    )
+                }
+
+                NavHost(
+                    navController = navController,
+                    startDestination = Screen.Discover.route,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxSize()
                     .graphicsLayer {
                         val pulse = mainTabBlurPulse.value.coerceIn(0f, 1f)
                         val blurX = pulse * 16f * this.density
@@ -578,39 +631,119 @@ fun MainContent(
                     }
                 }
             ) {
-                // 发现页
+                // 发现页（在平板横屏 DUAL_PANE_HOME 模式下：左栏发现页 + 右栏我的页一左一右平铺显示，底栏不显示）
                 composable(Screen.Discover.route) {
-                    HomeScreen(
-                        viewModel = homeViewModel,
-                        onSongClick = { song, list ->
-                            musicPlayerViewModel.playSong(song, list)
-                        },
-                        onSearchClick = {
-                            searchViewModel.resetTabToDefault()
-                            navController.navigate("search") { launchSingleTop = true }
-                        },
-                        onOpenDailyRecommend = {
-                            navController.navigate("daily_recommend") { launchSingleTop = true }
-                        },
-                        onOpenNewSongExpress = {
-                            navController.navigate("new_song_express") { launchSingleTop = true }
-                        },
-                        onOpenRank = { rankId ->
-                            navController.navigate("rank_detail/$rankId") { launchSingleTop = true }
-                        },
-                        onOpenRadio = { channelId ->
-                            val target = channelId.ifBlank { "all" }
-                            navController.navigate("radio_station/$target") { launchSingleTop = true }
-                        },
-                        currentSong = currentSong,
-                        isPlaying = isPlaying,
-                        onTogglePlayPause = { musicPlayerViewModel.togglePlayPause() },
-                        onSongMoreClick = { song ->
-                            actionSheetSong = song
-                            actionSheetRemoveCallback = null
-                        },
-                        isOverlayOpen = showCommentsScreen || showNowPlaying || showViperEffectOverlay || isSubDetail
-                    )
+                    if (navMode == com.concept.music.ui.theme.ConceptNavigationMode.DUAL_PANE_HOME) {
+                        androidx.compose.foundation.layout.Row(
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            HomeScreen(
+                                viewModel = homeViewModel,
+                                onSongClick = { song, list ->
+                                    musicPlayerViewModel.playSong(song, list)
+                                },
+                                onSearchClick = {
+                                    searchViewModel.resetTabToDefault()
+                                    navController.navigate("search") { launchSingleTop = true }
+                                },
+                                onOpenDailyRecommend = {
+                                    navController.navigate("daily_recommend") { launchSingleTop = true }
+                                },
+                                onOpenNewSongExpress = {
+                                    navController.navigate("new_song_express") { launchSingleTop = true }
+                                },
+                                onOpenRank = { rankId ->
+                                    navController.navigate("rank_detail/$rankId") { launchSingleTop = true }
+                                },
+                                onOpenRadio = { channelId ->
+                                    val target = channelId.ifBlank { "all" }
+                                    navController.navigate("radio_station/$target") { launchSingleTop = true }
+                                },
+                                currentSong = currentSong,
+                                isPlaying = isPlaying,
+                                onTogglePlayPause = { musicPlayerViewModel.togglePlayPause() },
+                                onSongMoreClick = { song ->
+                                    actionSheetSong = song
+                                    actionSheetRemoveCallback = null
+                                },
+                                isOverlayOpen = showCommentsScreen || showNowPlaying || showViperEffectOverlay || isSubDetail,
+                                modifier = Modifier
+                                    .weight(0.53f)
+                                    .fillMaxSize()
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .width(0.8.dp)
+                                    .fillMaxHeight()
+                                    .padding(vertical = 18.dp)
+                                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
+                            )
+
+                            LibraryScreen(
+                                viewModel = libraryViewModel,
+                                onLogin = openLogin,
+                                onAccounts = { navController.navigate("accounts") { launchSingleTop = true } },
+                                onOpenPlaylist = { playlistId ->
+                                    navController.navigate("playlist_detail/$playlistId") { launchSingleTop = true }
+                                },
+                                onOpenSearch = {
+                                    searchViewModel.resetTabToDefault()
+                                    navController.navigate("search") { launchSingleTop = true }
+                                },
+                                onOpenSettings = {
+                                    navController.navigate("settings") { launchSingleTop = true }
+                                },
+                                onOpenVipCenter = {
+                                    navController.navigate("vip_center") { launchSingleTop = true }
+                                },
+                                onOpenArtist = { artistId ->
+                                    navController.navigate("artist_detail/$artistId") { launchSingleTop = true }
+                                },
+                                onOpenAlbum = { albumId ->
+                                    navController.navigate("album_detail/$albumId") { launchSingleTop = true }
+                                },
+                                onPlaySong = { song, list ->
+                                    musicPlayerViewModel.playSong(song, list)
+                                },
+                                modifier = Modifier
+                                    .weight(0.47f)
+                                    .fillMaxSize()
+                            )
+                        }
+                    } else {
+                        HomeScreen(
+                            viewModel = homeViewModel,
+                            onSongClick = { song, list ->
+                                musicPlayerViewModel.playSong(song, list)
+                            },
+                            onSearchClick = {
+                                searchViewModel.resetTabToDefault()
+                                navController.navigate("search") { launchSingleTop = true }
+                            },
+                            onOpenDailyRecommend = {
+                                navController.navigate("daily_recommend") { launchSingleTop = true }
+                            },
+                            onOpenNewSongExpress = {
+                                navController.navigate("new_song_express") { launchSingleTop = true }
+                            },
+                            onOpenRank = { rankId ->
+                                navController.navigate("rank_detail/$rankId") { launchSingleTop = true }
+                            },
+                            onOpenRadio = { channelId ->
+                                val target = channelId.ifBlank { "all" }
+                                navController.navigate("radio_station/$target") { launchSingleTop = true }
+                            },
+                            currentSong = currentSong,
+                            isPlaying = isPlaying,
+                            onTogglePlayPause = { musicPlayerViewModel.togglePlayPause() },
+                            onSongMoreClick = { song ->
+                                actionSheetSong = song
+                                actionSheetRemoveCallback = null
+                            },
+                            isOverlayOpen = showCommentsScreen || showNowPlaying || showViperEffectOverlay || isSubDetail
+                        )
+                    }
                 }
 
                 // 每日推荐独立页
@@ -846,12 +979,13 @@ fun MainContent(
                 }
 
 
+                }
             }
         }
 
-        // 底部「发现 / 我的」主导航栏（采用无回弹柔顺曲线升降，杜绝进出播放页时抖动）
+        // 底部「发现 / 我的」主导航栏（平板横屏双栏平铺或侧边导航栏模式下自动隐藏底栏）
         AnimatedVisibility(
-            visible = showFloatingMiniBar && !isSubDetail && !showNowPlaying && !showViperEffectOverlay,
+            visible = showBottomNavBar,
             modifier = Modifier.align(Alignment.BottomCenter),
             enter = slideInVertically(
                 initialOffsetY = { it },
@@ -878,10 +1012,10 @@ fun MainContent(
             )
         }
 
-        // 固定底部锚点 10.dp 并通过 `graphicsLayer { translationY = ... }` 在绘制期柔和避让底部导航栏
+        // 固定底部锚点 10.dp 并通过 `graphicsLayer { translationY = ... }` 在绘制期柔和避让底部导航栏（当平板隐藏底栏时直接贴底居中）
         val navBarAvoidOffsetPx = with(density) { -56.dp.toPx() }
         val miniBarOffsetYState = animateFloatAsState(
-            targetValue = if (isSubDetail) 0f else navBarAvoidOffsetPx,
+            targetValue = if (isSubDetail || navMode != com.concept.music.ui.theme.ConceptNavigationMode.BOTTOM_BAR) 0f else navBarAvoidOffsetPx,
             animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing),
             label = "miniBarOffsetY"
         )

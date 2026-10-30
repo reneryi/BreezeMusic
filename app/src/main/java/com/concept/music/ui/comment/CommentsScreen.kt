@@ -674,12 +674,20 @@ fun CommentsScreen(
                     )
                 }
             ) { innerPadding ->
+                val commAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(innerPadding)
+                        .padding(innerPadding),
+                    contentAlignment = Alignment.TopCenter
                 ) {
-                    Column(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        modifier = Modifier
+                            .then(
+                                if (commAdaptive.isLargeScreenDevice) Modifier.widthIn(max = 860.dp) else Modifier
+                            )
+                            .fillMaxSize()
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

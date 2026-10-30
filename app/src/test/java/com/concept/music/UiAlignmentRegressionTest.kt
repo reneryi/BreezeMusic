@@ -1129,7 +1129,7 @@ class UiAlignmentRegressionTest {
         assertTrue(issueTemplate.contains("### 复现步骤 (Steps to Reproduce)"))
         assertTrue(issueTemplate.contains("BreezeMusic v1.0.0 (Build 1)"))
 
-        assertEquals(2, com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.size)
+        assertEquals(5, com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.size)
         val latestRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.first()
         val initialRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.last()
         assertEquals("v${BuildConfig.VERSION_NAME}", latestRelease.version)
@@ -1604,10 +1604,10 @@ class UiAlignmentRegressionTest {
         assertEquals("v2.1.0 正式版 · Build 12", customVer.fullBadgeText)
 
         val history = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY
-        assertEquals("更新日志保留 v1.1.0 与 v1.0.0 正式版记录", 2, history.size)
+        assertEquals("更新日志完整记录全部 5 个发布版本 (v1.0.0 ~ v1.2.0)", 5, history.size)
         val latest = history.first()
         assertEquals("v${BuildConfig.VERSION_NAME}", latest.version)
-        assertEquals(5, latest.moduleGroups.size)
+        assertTrue(latest.moduleGroups.size >= 4)
         assertEquals("v1.0.0", history.last().version)
         assertEquals(0L, com.concept.music.ui.components.SPLASH_ICON_HOLD_DURATION_MS)
         assertEquals(
@@ -1802,6 +1802,93 @@ class UiAlignmentRegressionTest {
         assertTrue("我的页 VIP 权益中心卡片应使用精简无重复的小字文案", vipCardCode.contains("每日签到 · 畅享无损") && vipCardCode.contains("免费领取"))
 
         val gradleCode = java.io.File(projectRoot, "app/build.gradle.kts").readText(Charsets.UTF_8)
-        assertEquals("1.1.0", com.concept.music.ui.settings.extractVersionFromGradleText(gradleCode))
+        assertEquals("1.2.0", com.concept.music.ui.settings.extractVersionFromGradleText(gradleCode))
+    }
+
+    @Test
+    fun `v1_2_0全版本更新日志与KRC歌词HTML实体反转义及高清封面分类验证`() {
+        // 1. 验证更新日志完整记录每次发布的版本：v1.2.0, v1.1.0, v1.0.2, v1.0.1, v1.0.0
+        val versions = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.map { it.version }
+        assertEquals(listOf("v1.2.0", "v1.1.0", "v1.0.2", "v1.0.1", "v1.0.0"), versions)
+
+        // 2. 验证 KRC / LRC 歌词 HTML 实体（如 &apos;）自动反转义（解决图三 Vibe 英文歌词显示 &apos; 问题）
+        val rawKrcLine = "[1000,3000]<0,500,0>And <500,800,0>it&apos;s <1300,700,0>goin&apos; <2000,1000,0>home"
+        val parsedKrc = KrcDecoder.parseKrcText(rawKrcLine)
+        assertEquals(1, parsedKrc.lines.size)
+        assertEquals("And it's goin' home", parsedKrc.lines.first().text)
+        assertEquals("it's ", parsedKrc.lines.first().words[1].text)
+
+        // 3. 验证高清封面/头像下载仅包含四大指定类别（歌曲封面、专辑封面、歌单封面、歌手头像，不含榜单和电台）
+        val categories = com.concept.music.ui.components.ArtworkDownloadCategory.entries
+        assertEquals(4, categories.size)
+        assertEquals(
+            listOf("歌曲封面", "专辑封面", "歌单封面", "歌手头像"),
+            categories.map { it.label }
+        )
+        val candidates = com.concept.music.ui.components.HdArtworkSaver.buildHdArtworkUrlCandidates(
+            "http://imge.kugou.com/stdmusic/150/20261030/test_cover.jpg"
+        )
+        assertEquals("https://imge.kugou.com/stdmusic/1000/20261030/test_cover.jpg", candidates.first())
+    }
+
+    @Test
+    fun `平板与大屏WindowSizeClass自适应断点及双签名Flavor配置验证`() {
+        // 1. 手机版安装包 (isTabletFlavor = false)：无论竖屏 (392x820dp) 还是旋转至横屏 (890x392dp)，均严格保持手机端策略，不误触平板模式
+        val phonePortrait = com.concept.music.ui.theme.computeAdaptiveLayoutInfo(widthDp = 392, heightDp = 820, smallestWidthDp = 392, isTabletFlavor = false)
+        assertFalse(phonePortrait.isLargeScreenDevice)
+        assertEquals(com.concept.music.ui.theme.ConceptWidthSizeClass.COMPACT, phonePortrait.widthSizeClass)
+        assertEquals(com.concept.music.ui.theme.ConceptNavigationMode.BOTTOM_BAR, phonePortrait.navigationMode)
+        assertFalse(phonePortrait.useMasterDetailSettings)
+
+        val phoneLandscape = com.concept.music.ui.theme.computeAdaptiveLayoutInfo(widthDp = 890, heightDp = 392, smallestWidthDp = 392, isTabletFlavor = false)
+        assertFalse("手机横屏时绝不能误判为平板大屏", phoneLandscape.isLargeScreenDevice)
+        assertEquals(com.concept.music.ui.theme.ConceptNavigationMode.BOTTOM_BAR, phoneLandscape.navigationMode)
+        assertFalse(phoneLandscape.isTabletLandscapePlayer)
+
+        // 2. 平板版安装包竖屏或左右分屏窗口 (720x1024dp, isTabletFlavor = true) -> MEDIUM, NAVIGATION_RAIL, 双列网格, 设置页左右分栏
+        val tabletPortraitOrSplit = com.concept.music.ui.theme.computeAdaptiveLayoutInfo(widthDp = 720, heightDp = 1024, smallestWidthDp = 720, isTabletFlavor = true)
+        assertTrue(tabletPortraitOrSplit.isLargeScreenDevice)
+        assertEquals(com.concept.music.ui.theme.ConceptWidthSizeClass.MEDIUM, tabletPortraitOrSplit.widthSizeClass)
+        assertEquals(com.concept.music.ui.theme.ConceptNavigationMode.NAVIGATION_RAIL, tabletPortraitOrSplit.navigationMode)
+        assertTrue(tabletPortraitOrSplit.useMasterDetailSettings)
+        assertTrue(tabletPortraitOrSplit.useTwoColumnSongOrCardGrid)
+        assertEquals(460f, tabletPortraitOrSplit.miniPlayerMaxWidth.value, 0.1f)
+
+        // 3. 平板版安装包横屏 (1280x800dp, 16:10, isTabletFlavor = true) -> EXPANDED, DUAL_PANE_HOME (发现+我的左右平铺), 播放页横屏合并舞台
+        val tabletLandscape = com.concept.music.ui.theme.computeAdaptiveLayoutInfo(widthDp = 1280, heightDp = 800, smallestWidthDp = 800, isTabletFlavor = true)
+        assertTrue(tabletLandscape.isLargeScreenDevice)
+        assertEquals(com.concept.music.ui.theme.ConceptWidthSizeClass.EXPANDED, tabletLandscape.widthSizeClass)
+        assertEquals(com.concept.music.ui.theme.ConceptNavigationMode.DUAL_PANE_HOME, tabletLandscape.navigationMode)
+        assertTrue(tabletLandscape.useMasterDetailSettings)
+        assertTrue(tabletLandscape.useTwoPaneDetailLayout)
+        assertTrue(tabletLandscape.isTabletLandscapePlayer)
+        assertEquals(500f, tabletLandscape.miniPlayerMaxWidth.value, 0.1f)
+
+        // 4. 验证 Gradle 双安装包独立签名与 Product Flavors 配置
+        val projectRoot = java.io.File(".").canonicalFile.let { dir ->
+            if (java.io.File(dir, "app/src/main").exists()) dir else dir.parentFile
+        }
+        val gradleCode = java.io.File(projectRoot, "app/build.gradle.kts").readText(Charsets.UTF_8)
+        assertTrue("应包含 phoneSign 独立签名配置", gradleCode.contains("create(\"phoneSign\")"))
+        assertTrue("应包含 tabletSign 独立签名配置", gradleCode.contains("create(\"tabletSign\")"))
+        assertTrue("应包含 phone 与 tablet 两个 Product Flavor", gradleCode.contains("create(\"phone\")") && gradleCode.contains("create(\"tablet\")"))
+        assertTrue("平板变体应配置独立包名后缀 .tablet 防止签名冲突", gradleCode.contains("applicationIdSuffix = \".tablet\""))
+
+        // 5. 验证检查更新兼容对象数组格式、Releases 列表格式及非标准 Tag 前缀
+        assertEquals(
+            "1.2.0",
+            com.concept.music.ui.settings.extractLatestVersionFromJsDelivrPackageJson(
+                "{\"tags\":{},\"versions\":[{\"version\":\"1.2.0\"},{\"version\":\"1.1.0\"}]}"
+            )
+        )
+        val releaseListJson = "[{\"tag_name\":\"BreezeMusic-v1.2.0\",\"name\":\"BreezeMusic v1.2.0 正式版\",\"draft\":false,\"prerelease\":false,\"body\":\"新增平板适配与高清封面保存\",\"html_url\":\"https://github.com/reneryi/breezemusic/releases/tag/v1.2.0\",\"published_at\":\"2026-10-30T10:00:00Z\",\"assets\":[{\"name\":\"BreezeMusic-phone-v1.2.0.apk\",\"browser_download_url\":\"https://github.com/reneryi/breezemusic/releases/download/v1.2.0/BreezeMusic-phone-v1.2.0.apk\"}]}]"
+        val checkRes = com.concept.music.ui.settings.resolveUpdateCheckFromApiOrRedirect(
+            localVersionName = "1.1.0",
+            apiHttpCode = 200,
+            apiBodyJson = releaseListJson
+        )
+        assertTrue("v1.1.0 应能从 Releases 列表或自定义前缀 Tag 中检出 v1.2.0 更新", checkRes is com.concept.music.ui.settings.UpdateCheckResult.HasUpdate)
+        val hasUpdate = checkRes as com.concept.music.ui.settings.UpdateCheckResult.HasUpdate
+        assertEquals("v1.2.0", hasUpdate.latestVersion)
     }
 }

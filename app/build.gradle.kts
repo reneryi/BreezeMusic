@@ -1,6 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -11,8 +20,8 @@ android {
         applicationId = "com.concept.music"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.1.0"
+        versionCode = 5
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -20,11 +29,93 @@ android {
         }
     }
 
+    // 手机版 (phone) 与平板版 (tablet) 签名配置：
+    // 1. 手机版默认沿用与 v1.0.0 ~ v1.1.0 相同的 debug 签名配置（确保老版本用户直接覆盖升级不触发签名冲突，
+    //    若需切换为独立证书可在 keystore.properties 中设置 phone.useDedicatedKeystore=true）。
+    // 2. 平板版默认使用独立的 app/keystore/breezemusic-tablet.jks (tabletSign) 签名，并配合独立包名后缀 .tablet，
+    //    从签名与包名双维度彻底隔离，杜绝与手机版产生 INSTALL_FAILED_UPDATE_INCOMPATIBLE 签名冲突。
+    signingConfigs {
+        create("phoneSign") {
+            val phoneStorePath = keystoreProps.getProperty("phone.storeFile")
+                ?: System.getenv("PHONE_KEYSTORE_PATH")
+                ?: "keystore/breezemusic-phone.jks"
+            val resolvedPhoneStore = file(phoneStorePath)
+            if (resolvedPhoneStore.exists()) {
+                storeFile = resolvedPhoneStore
+                storePassword = keystoreProps.getProperty("phone.storePassword")
+                    ?: System.getenv("PHONE_KEYSTORE_PASSWORD")
+                    ?: "breezephone2026"
+                keyAlias = keystoreProps.getProperty("phone.keyAlias")
+                    ?: System.getenv("PHONE_KEY_ALIAS")
+                    ?: "breeze_phone"
+                keyPassword = keystoreProps.getProperty("phone.keyPassword")
+                    ?: System.getenv("PHONE_KEY_PASSWORD")
+                    ?: "breezephone2026"
+            }
+        }
+        create("tabletSign") {
+            val tabletStorePath = keystoreProps.getProperty("tablet.storeFile")
+                ?: System.getenv("TABLET_KEYSTORE_PATH")
+                ?: "keystore/breezemusic-tablet.jks"
+            val resolvedTabletStore = file(tabletStorePath)
+            if (resolvedTabletStore.exists()) {
+                storeFile = resolvedTabletStore
+                storePassword = keystoreProps.getProperty("tablet.storePassword")
+                    ?: System.getenv("TABLET_KEYSTORE_PASSWORD")
+                    ?: "breezetablet2026"
+                keyAlias = keystoreProps.getProperty("tablet.keyAlias")
+                    ?: System.getenv("TABLET_KEY_ALIAS")
+                    ?: "breeze_tablet"
+                keyPassword = keystoreProps.getProperty("tablet.keyPassword")
+                    ?: System.getenv("TABLET_KEY_PASSWORD")
+                    ?: "breezetablet2026"
+            }
+        }
+    }
+
+    // 双端平台构建变体（Product Flavors）：
+    // - phone：面向安卓手机构建（applicationId = com.concept.music），默认沿用与 v1.1.0 一致的签名以支持无缝覆盖升级
+    // - tablet：面向安卓平板与大屏设备构建（applicationId = com.concept.music.tablet），绑定 tabletSign 独立签名证书
+    flavorDimensions += "device"
+    productFlavors {
+        create("phone") {
+            dimension = "device"
+            val useDedicatedPhoneJks = keystoreProps.getProperty("phone.useDedicatedKeystore")?.toBoolean() == true ||
+                System.getenv("USE_DEDICATED_PHONE_KEYSTORE")?.toBoolean() == true
+            val phoneSignCfg = signingConfigs.getByName("phoneSign")
+            signingConfig = if (useDedicatedPhoneJks && phoneSignCfg.storeFile?.exists() == true) {
+                phoneSignCfg
+            } else {
+                signingConfigs.getByName("debug")
+            }
+            buildConfigField("String", "DEVICE_FLAVOR", "\"phone\"")
+            buildConfigField("boolean", "IS_TABLET_FLAVOR", "false")
+        }
+        create("tablet") {
+            dimension = "device"
+            applicationIdSuffix = ".tablet"
+            versionNameSuffix = "-tablet"
+            val tabletSignCfg = signingConfigs.getByName("tabletSign")
+            signingConfig = if (tabletSignCfg.storeFile?.exists() == true) {
+                tabletSignCfg
+            } else {
+                signingConfigs.getByName("debug")
+            }
+            buildConfigField("String", "DEVICE_FLAVOR", "\"tablet\"")
+            buildConfigField("boolean", "IS_TABLET_FLAVOR", "true")
+        }
+    }
+
     buildTypes {
+        debug {
+            // 置空 buildType 级默认签名，使 phoneDebug 与 tabletDebug 各自继承所属 Flavor 的签名
+            signingConfig = null
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            // 置空 buildType 级默认签名，使 phoneRelease 与 tabletRelease 各自使用所属 Flavor 的签名
+            signingConfig = null
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

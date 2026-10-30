@@ -422,3 +422,178 @@ private fun LibraryDualStateIcon(
         }
     }
 }
+
+/**
+ * 平板竖屏与分屏窗口（Medium 宽度）专属「侧边导航栏 (ConceptNavigationRail)」：
+ * - 基于 Google 官方 WindowSizeClass 自适应规范，当窗口处于平板竖屏或左右分屏时替代底部导航栏；
+ * - 复用圆润饱满双态「发现」与「我的」矢量动效图标，顶部与底部内置快捷搜索与设置入口。
+ */
+@Composable
+fun ConceptNavigationRail(
+    currentRoute: String,
+    onNavigate: (String) -> Unit,
+    onOpenSearch: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    val isDark = LocalIsDarkTheme.current
+    val railBg = if (isDark) Color(0xF50B111E) else Color(0xF7F2F7FF)
+    val borderColor = if (isDark) Color.White.copy(alpha = 0.07f) else ConceptPrimary.copy(alpha = 0.10f)
+    val selectedIndex = if (currentRoute == Screen.Library.route) 1 else 0
+
+    Surface(
+        modifier = modifier
+            .width(84.dp)
+            .fillMaxHeight(),
+        color = railBg,
+        tonalElevation = if (isDark) 2.dp else 4.dp
+    ) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .padding(vertical = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // 顶部品牌徽章与快捷搜索
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = ConceptPrimary.copy(alpha = if (isDark) 0.18f else 0.12f),
+                        modifier = Modifier
+                            .size(44.dp)
+                            .softClickable(onClick = onOpenSearch)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Canvas(modifier = Modifier.size(20.dp)) {
+                                val r = size.minDimension * 0.34f
+                                val c = Offset(size.width * 0.44f, size.height * 0.44f)
+                                drawCircle(
+                                    color = ConceptPrimary,
+                                    radius = r,
+                                    center = c,
+                                    style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                                drawLine(
+                                    color = ConceptCyanAccent,
+                                    start = Offset(c.x + r * 0.72f, c.y + r * 0.72f),
+                                    end = Offset(size.width * 0.84f, size.height * 0.84f),
+                                    strokeWidth = 2.4.dp.toPx(),
+                                    cap = StrokeCap.Round
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 中央核心双态导航项（优先「发现」，其次「我的」）
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    bottomNavScreens.forEachIndexed { index, screen ->
+                        val isSelected = selectedIndex == index
+                        val morphProgress by animateFloatAsState(
+                            targetValue = if (isSelected) 1f else 0f,
+                            animationSpec = ConceptMotion.expressiveSpring(),
+                            label = "railIconMorph_$index"
+                        )
+                        val textColor by animateColorAsState(
+                            targetValue = if (isSelected) {
+                                ConceptPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
+                            },
+                            animationSpec = tween(220),
+                            label = "railTextColor_$index"
+                        )
+                        val pillBrush = Brush.verticalGradient(
+                            listOf(
+                                ConceptPrimary.copy(alpha = if (isDark) 0.24f * morphProgress else 0.16f * morphProgress),
+                                ConceptCyanAccent.copy(alpha = if (isDark) 0.18f * morphProgress else 0.12f * morphProgress)
+                            )
+                        )
+
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .width(68.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(pillBrush)
+                                .softClickable(
+                                    pressScale = 0.92f,
+                                    pressAlpha = 0.80f,
+                                    onClick = { onNavigate(screen.route) }
+                                )
+                                .padding(vertical = 12.dp, horizontal = 6.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier.graphicsLayer {
+                                    val s = 1f + 0.10f * morphProgress
+                                    scaleX = s
+                                    scaleY = s
+                                },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (screen.route == Screen.Discover.route) {
+                                    DiscoverDualStateIcon(
+                                        progress = morphProgress,
+                                        isDark = isDark,
+                                        modifier = Modifier.size(26.dp)
+                                    )
+                                } else {
+                                    LibraryDualStateIcon(
+                                        progress = morphProgress,
+                                        isDark = isDark,
+                                        modifier = Modifier.size(26.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(5.dp))
+                            Text(
+                                text = screen.title,
+                                color = textColor,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+
+                // 底部快捷设置入口
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                    modifier = Modifier
+                        .size(40.dp)
+                        .softClickable(onClick = onOpenSettings)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        val gearColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        Canvas(modifier = Modifier.size(18.dp)) {
+                            val c = Offset(size.width / 2f, size.height / 2f)
+                            val rOuter = size.minDimension * 0.36f
+                            val rInner = size.minDimension * 0.16f
+                            drawCircle(gearColor, radius = rOuter, center = c, style = Stroke(width = 1.9.dp.toPx()))
+                            drawCircle(ConceptPrimary, radius = rInner, center = c)
+                        }
+                    }
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .width(0.8.dp)
+                    .fillMaxHeight()
+                    .background(borderColor)
+            )
+        }
+    }
+}

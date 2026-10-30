@@ -97,6 +97,7 @@ fun RadioScreen(
     val isDark = LocalIsDarkTheme.current
 
     val fmChannels by viewModel.fmChannels.collectAsState()
+    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
     val dailySongs by viewModel.dailyRecommendSongs.collectAsState()
 
     var selectedChannelId by remember(initialChannelId, fmChannels) {
@@ -307,11 +308,13 @@ fun RadioScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
+                    .padding(innerPadding),
+                contentAlignment = Alignment.TopCenter
             ) {
             LazyColumn(
                 state = radioListState,
                 modifier = Modifier
+                    .widthIn(max = 920.dp)
                     .fillMaxSize()
                     .horizontalCategorySwipe(
                         currentIndex = currentCatIdx,
@@ -706,6 +709,31 @@ fun RadioScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Text("暂未获取到电台曲目，请点击上方「换一批」", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                } else if (adaptiveInfo.useTwoColumnSongOrCardGrid) {
+                    val radioPairs = displayedRadioSongs.mapIndexed { idx, s -> idx to s }.chunked(2)
+                    itemsIndexed(
+                        items = radioPairs,
+                        key = { pIdx, pair -> "fm_song_pair_${pair.first().second.id}_$pIdx" },
+                        contentType = { _, _ -> "song_pair_row" }
+                    ) { _, pair ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            pair.forEach { (index, song) ->
+                                Box(modifier = Modifier.weight(1f)) {
+                                    SongItemRow(
+                                        song = song,
+                                        orderIndex = index + 1,
+                                        isPlaying = curRadioPlayingId != null && (curRadioPlayingId == song.id || (curRadioPlayingHash.isNotEmpty() && curRadioPlayingHash.equals(song.hash, ignoreCase = true))),
+                                        onClick = { onSongClick(song, latestStationSongs) },
+                                        onMoreClick = { onSongMoreClick(song) }
+                                    )
+                                }
+                            }
+                            if (pair.size == 1) Spacer(modifier = Modifier.weight(1f))
                         }
                     }
                 } else {

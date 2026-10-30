@@ -26,6 +26,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -58,6 +59,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
@@ -74,6 +76,8 @@ import com.concept.music.data.model.Song
 import com.concept.music.ui.theme.ConceptCyanAccent
 import com.concept.music.ui.theme.ConceptMotion
 import com.concept.music.ui.theme.ConceptPrimary
+import com.concept.music.ui.theme.LocalConceptAdaptiveInfo
+import com.concept.music.ui.theme.VipGold
 import com.concept.music.ui.theme.readableOnDarkSurface
 import com.concept.music.ui.theme.rememberIsLifecycleStarted
 import com.concept.music.ui.theme.softCardClickable
@@ -87,16 +91,17 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 
 /**
  * 现代沉浸式全屏横屏播放页面 (LandscapePlayerPage)：
- * 1. 界面绝对视觉重心聚焦于「大画幅 3D 专辑封面」与「全高 KRC 逐字流光歌词」；
- * 2. 引入 `lyricPositionProvider` 与 `rawPositionProvider` 隔离 120fps 高频采样，外层双栏 0 次重组；
- * 3. KRC 歌词列表采用统一字号 + GPU `graphicsLayer` 弹性缩放（0 文字重排）与黄金焦点平滑滚动；
- * 4. 暂停态自动休眠 3D 星环无限动画，播放/暂停按钮采用连续几何形变。
+ * 1. 界面视觉重心聚焦于「大画幅 3D 专辑封面 / 拟真黑胶」与「全高 KRC 逐字流光歌词」左右合体舞台；
+ * 2. 彻底重构左下方歌名与歌手布局：采用「上歌名 + 下歌手」双层独立无限跑马灯结构（`iterations = Int.MAX_VALUE`），
+ *    彻底根治歌手名过长挤占导致短歌名（如 Vibe）宽度归零消失、以及跑马灯滚动 3 次后半截停滞（如 Need Som）的问题；
+ * 3. 支持长按封面快捷呼出高清原图预览与纯图标下载按钮；
+ * 4. 针对平板横屏（`isTabletLandscapePlayer`）深度自适应：放大封面与控播坞尺寸、收敛纵向间距消除断层，
+ *    并无感融合封面页专属辅助工具栏（音质切换、加入歌单、歌词海报、桌面歌词、蝰蛇音效、评论计数、更多设置），清除重复按钮。
  */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
@@ -131,6 +136,10 @@ internal fun LandscapePlayerPage(
     highlightClimaxRange: Boolean,
     accentPrimary: Color = ConceptPrimary,
     accentSecondary: Color = ConceptCyanAccent,
+    currentQualityLabel: String = "",
+    commentCount: Int = 0,
+    viperEnabled: Boolean = false,
+    desktopLyricEnabled: Boolean = false,
     onExitLandscape: () -> Unit,
     onTogglePlay: () -> Unit,
     onPrevious: () -> Unit,
@@ -143,9 +152,19 @@ internal fun LandscapePlayerPage(
     onToggleTranslation: () -> Unit,
     onTogglePhonetic: () -> Unit,
     onOpenLyricSettings: () -> Unit,
-    onSelectPlayerBackgroundStyle: (PlayerBackgroundStyle) -> Unit = {}
+    onSelectPlayerBackgroundStyle: (PlayerBackgroundStyle) -> Unit = {},
+    onLongPressCover: () -> Unit = {},
+    onQualityClick: () -> Unit = {},
+    onAddToPlaylist: () -> Unit = {},
+    onOpenLyricPoster: () -> Unit = {},
+    onToggleDesktopLyric: () -> Unit = {},
+    onOpenAudioEffect: () -> Unit = {},
+    onOpenComments: () -> Unit = {},
+    onOpenMoreSheet: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val adaptiveInfo = LocalConceptAdaptiveInfo.current
+    val isTabletLandscape = adaptiveInfo.isTabletLandscapePlayer
     var showBgPickerMenu by remember { mutableStateOf(false) }
 
     val readableAccentPrimary = remember(accentPrimary) { accentPrimary.readableOnDarkSurface(0.46f) }
@@ -162,7 +181,7 @@ internal fun LandscapePlayerPage(
         Color(lyricHighlightTheme.secondaryHex)
     }
 
-    // 横屏圆角封面边缘色散光晕与流光框连续相位动画（暂停/播放 0 跳变，方案 A 顺势减速归位至 45° 对称交错姿态）
+    // 横屏圆角封面边缘色散光晕与流光框连续相位动画
     val coverMotionState = rememberRoundedCoverMotionState(
         isPlaying = isPlaying,
         songKey = song.id.ifBlank { song.coverUrl }
@@ -177,91 +196,123 @@ internal fun LandscapePlayerPage(
         label = "landscapeCoverPlayScale"
     )
 
+    val effectiveLyricFontSize = if (isTabletLandscape) (lyricFontSize + 2f).coerceAtMost(36f) else lyricFontSize
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 10.dp)
+            .padding(
+                horizontal = if (isTabletLandscape) 36.dp else 24.dp,
+                vertical = if (isTabletLandscape) 18.dp else 8.dp
+            )
     ) {
         Row(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // =========================================================================
-            // 左区 (weight 0.45f)：大尺寸主角圆角封面（搭载多光谱棱镜边缘光晕色散效果）+ 紧凑一体化控播坞
+            // 左区 (weight 0.46f)：大尺寸主角封面 + 一体化控播坞（平板下自适应放大并消除中部断层）
             // =========================================================================
             Column(
                 modifier = Modifier
-                    .weight(0.45f)
+                    .weight(if (isTabletLandscape) 0.46f else 0.45f)
                     .fillMaxHeight()
-                    .padding(end = 16.dp),
+                    .padding(end = if (isTabletLandscape) 24.dp else 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
+                verticalArrangement = if (isTabletLandscape) Arrangement.Center else Arrangement.SpaceBetween
             ) {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(top = 6.dp, bottom = 2.dp),
+                        .then(
+                            if (isTabletLandscape) {
+                                Modifier
+                                    .weight(1f, fill = false)
+                                    .fillMaxWidth()
+                                    .padding(bottom = 18.dp)
+                            } else {
+                                Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp, bottom = 2.dp)
+                            }
+                        )
+                        .pointerInput(song.id) {
+                            detectTapGestures(
+                                onDoubleTap = { onToggleFavorite() },
+                                onLongPress = { onLongPressCover() }
+                            )
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     BoxWithConstraints(
                         contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = if (isTabletLandscape) Modifier.wrapContentSize() else Modifier.fillMaxSize()
                     ) {
-                        val coverSide = minOf(maxWidth * 0.76f, maxHeight * 0.86f).coerceIn(164.dp, 248.dp)
+                        val coverSide = if (isTabletLandscape) {
+                            minOf(
+                                (adaptiveInfo.widthDp * 0.30f).dp,
+                                (adaptiveInfo.heightDp * 0.48f).dp
+                            ).coerceIn(216.dp, 328.dp)
+                        } else {
+                            minOf(maxWidth * 0.74f, maxHeight * 0.88f).coerceIn(152.dp, 238.dp)
+                        }
+                        val cornerRadiusDp = if (isTabletLandscape) 32.dp else 26.dp
 
-                        Box(
-                            modifier = Modifier
-                                .size(coverSide)
-                                .graphicsLayer {
-                                    val tilt = sin(dispersionPhase) * (0.55f + 1.05f * playTransition)
-                                    rotationY = tilt
-                                    rotationX = -tilt * 0.50f
-                                    scaleX = coverPlayScale
-                                    scaleY = coverPlayScale
-                                    cameraDistance = 14f * density
-                                    clip = false
-                                }
-                                .drawBehind {
-                                    // 横屏圆角封面边缘多光谱棱镜色散光晕 (Chromatic Dispersion Edge Halo)
-                                    drawRoundedCoverEdgeDispersionHalo(
-                                        cornerPx = 28.dp.toPx(),
-                                        accentPrimary = accentPrimary,
-                                        accentSecondary = accentSecondary,
-                                        dispersionPhase = dispersionPhase,
-                                        haloPulse = haloBreath,
-                                        isPlaying = isPlaying,
-                                        playTransition = playTransition
+                        if (isTabletLandscape && coverStyle == CoverStyle.VINYL) {
+                            // 平板横屏合并播放页下支持展示旋转黑胶唱盘样式
+                            Box(
+                                modifier = Modifier
+                                    .size(coverSide)
+                                    .shadow(
+                                        elevation = 28.dp,
+                                        shape = CircleShape,
+                                        spotColor = accentPrimary.copy(alpha = 0.55f)
+                                    )
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF10131C))
+                                    .graphicsLayer { rotationZ = rotationProvider() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    val r = size.minDimension / 2f
+                                    val c = Offset(size.width / 2f, size.height / 2f)
+                                    drawCircle(
+                                        brush = Brush.radialGradient(
+                                            colors = listOf(Color(0xFF222733), Color(0xFF101218), Color(0xFF08090D)),
+                                            center = c,
+                                            radius = r
+                                        ),
+                                        radius = r,
+                                        center = c
+                                    )
+                                    val innerR = r * 0.64f
+                                    val outerR = r * 0.95f
+                                    val step = (outerR - innerR) / 12f
+                                    for (i in 0..11) {
+                                        drawCircle(
+                                            color = Color.White.copy(alpha = if (i % 3 == 0) 0.09f else 0.035f),
+                                            radius = innerR + i * step,
+                                            center = c,
+                                            style = Stroke(width = 0.8.dp.toPx())
+                                        )
+                                    }
+                                    drawCircle(
+                                        color = VipGold.copy(alpha = 0.55f),
+                                        radius = r * 0.625f,
+                                        center = c,
+                                        style = Stroke(width = 1.8.dp.toPx())
                                     )
                                 }
-                                .clip(RoundedCornerShape(28.dp))
-                                .background(Color(0xFF151A26))
-                                .drawWithContent {
-                                    drawContent()
-                                    // 2.5D 棱镜折射色散倒角高光边框
-                                    drawRoundedCoverPrismaticRim(
-                                        cornerPx = 28.dp.toPx(),
-                                        accentPrimary = accentPrimary,
-                                        accentSecondary = accentSecondary,
-                                        dispersionPhase = dispersionPhase,
-                                        isPlaying = isPlaying,
-                                        playTransition = playTransition
-                                    )
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Crossfade(
-                                targetState = song.coverUrl,
-                                animationSpec = tween(durationMillis = 320, easing = ConceptMotion.EmphasizedDecelerate),
-                                label = "landscapeCoverCrossfade"
-                            ) { activeCoverUrl ->
                                 Box(
-                                    modifier = Modifier.fillMaxSize(),
+                                    modifier = Modifier
+                                        .size(coverSide * 0.61f)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF181C26)),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    if (activeCoverUrl.isNotBlank()) {
+                                    if (song.coverUrl.isNotBlank()) {
                                         AsyncImage(
-                                            model = activeCoverUrl,
+                                            model = song.coverUrl,
                                             contentDescription = song.title,
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize()
@@ -271,8 +322,88 @@ internal fun LandscapePlayerPage(
                                             imageVector = Icons.Rounded.MusicNote,
                                             contentDescription = null,
                                             tint = Color.White.copy(alpha = 0.4f),
-                                            modifier = Modifier.size(52.dp)
+                                            modifier = Modifier.size(48.dp)
                                         )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xAA0A0D14)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF07090E))
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(coverSide)
+                                    .graphicsLayer {
+                                        val tilt = sin(dispersionPhase) * (0.55f + 1.05f * playTransition)
+                                        rotationY = tilt
+                                        rotationX = -tilt * 0.50f
+                                        scaleX = coverPlayScale
+                                        scaleY = coverPlayScale
+                                        cameraDistance = 14f * density
+                                        clip = false
+                                    }
+                                    .drawBehind {
+                                        drawRoundedCoverEdgeDispersionHalo(
+                                            cornerPx = cornerRadiusDp.toPx(),
+                                            accentPrimary = accentPrimary,
+                                            accentSecondary = accentSecondary,
+                                            dispersionPhase = dispersionPhase,
+                                            haloPulse = haloBreath,
+                                            isPlaying = isPlaying,
+                                            playTransition = playTransition
+                                        )
+                                    }
+                                    .clip(RoundedCornerShape(cornerRadiusDp))
+                                    .background(Color(0xFF151A26))
+                                    .drawWithContent {
+                                        drawContent()
+                                        drawRoundedCoverPrismaticRim(
+                                            cornerPx = cornerRadiusDp.toPx(),
+                                            accentPrimary = accentPrimary,
+                                            accentSecondary = accentSecondary,
+                                            dispersionPhase = dispersionPhase,
+                                            isPlaying = isPlaying,
+                                            playTransition = playTransition
+                                        )
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Crossfade(
+                                    targetState = song.coverUrl,
+                                    animationSpec = tween(durationMillis = 320, easing = ConceptMotion.EmphasizedDecelerate),
+                                    label = "landscapeCoverCrossfade"
+                                ) { activeCoverUrl ->
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (activeCoverUrl.isNotBlank()) {
+                                            AsyncImage(
+                                                model = activeCoverUrl,
+                                                contentDescription = song.title,
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Rounded.MusicNote,
+                                                contentDescription = null,
+                                                tint = Color.White.copy(alpha = 0.4f),
+                                                modifier = Modifier.size(52.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -280,7 +411,7 @@ internal fun LandscapePlayerPage(
                     }
                 }
 
-                // 底部紧凑一体化控播坞（独立隔离高频进度刷新）
+                // 底部一体化控播坞（独立隔离高频进度刷新 + 歌名/歌手双层独立无限跑马灯）
                 LandscapeBottomControlDock(
                     song = song,
                     isPlaying = isPlaying,
@@ -294,6 +425,11 @@ internal fun LandscapePlayerPage(
                     highlightClimaxRange = highlightClimaxRange,
                     accentPrimary = accentPrimary,
                     accentSecondary = accentSecondary,
+                    isTabletLandscape = isTabletLandscape,
+                    currentQualityLabel = currentQualityLabel,
+                    commentCount = commentCount,
+                    viperEnabled = viperEnabled,
+                    desktopLyricEnabled = desktopLyricEnabled,
                     onToggleFavorite = onToggleFavorite,
                     onSeekTo = onSeekTo,
                     onCyclePlayMode = {
@@ -308,22 +444,29 @@ internal fun LandscapePlayerPage(
                     onPrevious = onPrevious,
                     onTogglePlay = onTogglePlay,
                     onNext = onNext,
-                    onOpenQueue = onOpenQueue
+                    onOpenQueue = onOpenQueue,
+                    onQualityClick = onQualityClick,
+                    onAddToPlaylist = onAddToPlaylist,
+                    onOpenLyricPoster = onOpenLyricPoster,
+                    onToggleDesktopLyric = onToggleDesktopLyric,
+                    onOpenAudioEffect = onOpenAudioEffect,
+                    onOpenComments = onOpenComments,
+                    onOpenMoreSheet = onOpenMoreSheet
                 )
             }
 
             // =========================================================================
-            // 右区 (weight 0.55f)：全高沉浸式 KRC 逐字流光歌词（零重排 GPU 缩放 + 视觉正中央自然滚动）
+            // 右区 (weight 0.54f~0.55f)：全高沉浸式 KRC 逐字流光歌词
             // =========================================================================
             BoxWithConstraints(
                 modifier = Modifier
-                    .weight(0.55f)
+                    .weight(if (isTabletLandscape) 0.54f else 0.55f)
                     .fillMaxHeight()
-                    .padding(start = 10.dp)
+                    .padding(start = if (isTabletLandscape) 18.dp else 10.dp)
             ) {
                 val containerHeightDp = maxHeight
                 val density = androidx.compose.ui.platform.LocalDensity.current
-                val estimatedHalfItemDp = ((lyricFontSize + 18f) * 0.5f).dp
+                val estimatedHalfItemDp = ((effectiveLyricFontSize + 18f) * 0.5f).dp
                 val dynamicVerticalPadDp = ((containerHeightDp * 0.5f) - estimatedHalfItemDp).coerceAtLeast(88.dp)
 
                 if (lyricData.lines.isEmpty()) {
@@ -334,7 +477,7 @@ internal fun LandscapePlayerPage(
                         Text(
                             text = "纯音乐或暂无歌词",
                             color = Color.White.copy(alpha = 0.55f),
-                            fontSize = 15.sp,
+                            fontSize = if (isTabletLandscape) 17.sp else 15.sp,
                             fontWeight = FontWeight.Medium
                         )
                     }
@@ -353,7 +496,6 @@ internal fun LandscapePlayerPage(
                         }
                     }
 
-                    // 切歌或歌词源更新时，立即定位到当前歌词居中位置（歌曲开头第 0 句亦依靠顶部留白自然居中）
                     LaunchedEffect(song.id, lyricData.lines.size) {
                         if (lyricData.lines.isNotEmpty()) {
                             val initIdx = currentLyricIndex.coerceIn(0, lyricData.lines.lastIndex)
@@ -382,13 +524,12 @@ internal fun LandscapePlayerPage(
                                     )
                                 }
                             } else {
-                                // 当目标歌词行尚未在可见视口内时，计算相对于 contentPadding 起点的居中偏移量
                                 val avgItemHeightPx = layoutInfo.visibleItemsInfo
                                     .takeIf { it.isNotEmpty() }
                                     ?.map { it.size }
                                     ?.average()
                                     ?.toInt()
-                                    ?: with(density) { (lyricFontSize + 28f).dp.toPx().toInt() }
+                                    ?: with(density) { (effectiveLyricFontSize + 28f).dp.toPx().toInt() }
                                 val topPadPx = layoutInfo.beforeContentPadding
                                 val desiredTopInViewport = (viewportH - avgItemHeightPx) / 2
                                 val centerScrollOffset = topPadPx - desiredTopInViewport
@@ -396,7 +537,6 @@ internal fun LandscapePlayerPage(
                                     index = targetIdx,
                                     scrollOffset = centerScrollOffset
                                 )
-                                // 待布局稳定后二次微调，确保多行长歌词也能精确垂直居中
                                 val settledLayout = listState.layoutInfo
                                 val settledCenter = (settledLayout.viewportStartOffset + settledLayout.viewportEndOffset) / 2
                                 val settledItem = settledLayout.visibleItemsInfo.firstOrNull { it.index == targetIdx }
@@ -434,12 +574,11 @@ internal fun LandscapePlayerPage(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(end = 36.dp)
+                            .padding(end = if (isTabletLandscape) 44.dp else 36.dp)
                             .graphicsLayer { alpha = 0.99f }
                             .drawWithContent {
                                 drawContent()
                                 val fadeH = (size.height * 0.14f).coerceIn(24.dp.toPx(), 64.dp.toPx())
-                                // 顶部与底部边缘柔化渐隐遮罩，使歌词滚入/滚出更加自然优雅
                                 drawRect(
                                     brush = Brush.verticalGradient(
                                         0.0f to Color.Transparent,
@@ -475,7 +614,6 @@ internal fun LandscapePlayerPage(
                             val isScrubTarget = isUserScrubbing && index == scrubLineIndex
                             val distance = abs(index - effectiveActiveIdx)
 
-                            // 统一使用 GPU 弹性缩放表达主次焦点，彻底消除字号跳变引发的 Text Relayout
                             val lineScaleState = animateFloatAsState(
                                 targetValue = when {
                                     isCurrent -> 1.05f
@@ -545,7 +683,7 @@ internal fun LandscapePlayerPage(
                                             initialPositionMs = currentPositionMs,
                                             isPlaying = isPlaying,
                                             lyricPositionProvider = lyricPositionProvider,
-                                            lyricFontSize = lyricFontSize,
+                                            lyricFontSize = effectiveLyricFontSize,
                                             accentPrimary = activePrimaryColor,
                                             accentSecondary = activeSecondaryColor,
                                             horizontalAlignment = Alignment.Start,
@@ -555,7 +693,7 @@ internal fun LandscapePlayerPage(
 
                                     val phoneticText = line.phonetic
                                     if (showPhonetic && showPhoneticButton && !phoneticText.isNullOrBlank()) {
-                                        val phoneticFontSize = (lyricFontSize * lyricTranslationScale * 0.85f).coerceAtLeast(11.5f)
+                                        val phoneticFontSize = (effectiveLyricFontSize * lyricTranslationScale * 0.85f).coerceAtLeast(11.5f)
                                         Text(
                                             text = phoneticText,
                                             style = MaterialTheme.typography.labelSmall.copy(
@@ -573,26 +711,25 @@ internal fun LandscapePlayerPage(
                                             line = line,
                                             isPlaying = isPlaying,
                                             lyricPositionProvider = lyricPositionProvider,
-                                            lyricFontSize = lyricFontSize,
+                                            lyricFontSize = effectiveLyricFontSize,
                                             activePrimaryColor = activePrimaryColor,
                                             activeSecondaryColor = activeSecondaryColor
                                         )
                                     } else {
-                                        // 固定基础字号与字重，配合外层 graphicsLayer 缩放实现 0 Relayout 丝滑过渡
                                         Text(
                                             text = line.text,
                                             style = MaterialTheme.typography.bodyLarge.copy(
                                                 fontWeight = FontWeight.ExtraBold,
                                                 color = if (isCurrent) activePrimaryColor else Color.White.copy(alpha = distanceAlpha),
-                                                fontSize = lyricFontSize.sp,
-                                                lineHeight = (lyricFontSize + 8f).sp
+                                                fontSize = effectiveLyricFontSize.sp,
+                                                lineHeight = (effectiveLyricFontSize + 8f).sp
                                             )
                                         )
                                     }
 
                                     val trans = line.translation
                                     if (showTranslation && showTranslationButton && !trans.isNullOrBlank()) {
-                                        val transFontSize = (lyricFontSize * lyricTranslationScale).coerceAtLeast(13f)
+                                        val transFontSize = (effectiveLyricFontSize * lyricTranslationScale).coerceAtLeast(13f)
                                         Spacer(modifier = Modifier.height(5.dp))
                                         Text(
                                             text = trans,
@@ -612,7 +749,7 @@ internal fun LandscapePlayerPage(
                                             initialPositionMs = currentPositionMs,
                                             isPlaying = isPlaying,
                                             lyricPositionProvider = lyricPositionProvider,
-                                            lyricFontSize = lyricFontSize,
+                                            lyricFontSize = effectiveLyricFontSize,
                                             accentPrimary = activePrimaryColor,
                                             accentSecondary = activeSecondaryColor,
                                             horizontalAlignment = Alignment.Start,
@@ -624,7 +761,6 @@ internal fun LandscapePlayerPage(
                         }
                     }
 
-                    // 横屏滑动歌词时的双翼渐隐中空导引线（不遮挡歌词）
                     androidx.compose.animation.AnimatedVisibility(
                         visible = isUserScrubbing && scrubLineIndex in lyricData.lines.indices,
                         enter = fadeIn(tween(150)),
@@ -632,7 +768,7 @@ internal fun LandscapePlayerPage(
                         modifier = Modifier
                             .align(Alignment.Center)
                             .fillMaxWidth()
-                            .padding(end = 36.dp)
+                            .padding(end = if (isTabletLandscape) 44.dp else 36.dp)
                     ) {
                         val targetTimeMs = lyricData.lines.getOrNull(scrubLineIndex)?.startTimeMs ?: 0L
                         Row(
@@ -698,7 +834,7 @@ internal fun LandscapePlayerPage(
         Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .size(34.dp)
+                .size(36.dp)
                 .softClickable(pressScale = 0.82f, onClick = onExitLandscape),
             contentAlignment = Alignment.Center
         ) {
@@ -716,7 +852,7 @@ internal fun LandscapePlayerPage(
         ) {
             Box(
                 modifier = Modifier
-                    .size(34.dp)
+                    .size(36.dp)
                     .softClickable(
                         pressScale = 0.82f,
                         onClick = { showBgPickerMenu = !showBgPickerMenu }
@@ -855,7 +991,7 @@ internal fun LandscapePlayerPage(
 }
 
 /**
- * 横屏激活行局部 120fps 逐字流光渲染器（仅重绘当前激活行，不触发 LazyColumn 兄弟行重组）
+ * 横屏激活行局部 120fps 逐字流光渲染器
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -942,7 +1078,11 @@ private fun LandscapeActiveKaraokeWords(
 }
 
 /**
- * 横屏左下角紧凑控播坞（内部局部帧采样进度，隔离对封面区的重组影响）
+ * 横屏左下方一体化控播坞：
+ * 1. 采用「上歌名 + 下歌手」双层错落结构，各自享有完整的横向空间并配备无限循环跑马灯（`iterations = Int.MAX_VALUE`）；
+ *    - 彻底解决图三歌手名过长（如 `Famba、Emily Bonabon、Frank Pierce`）时抢占无权重空间导致短歌名（`Vibe`）宽度为 0 完全消失的问题；
+ *    - 彻底解决图二歌名滚动几次后停止在截断状态（`Need Som`）的问题；
+ * 2. 在平板横屏下（`isTabletLandscape`），额外整合封面页的非重复快捷动作栏（音质档位、加入歌单、歌词海报、桌面歌词、蝰蛇音效、评论与更多菜单）。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -959,13 +1099,25 @@ private fun LandscapeBottomControlDock(
     highlightClimaxRange: Boolean,
     accentPrimary: Color,
     accentSecondary: Color,
+    isTabletLandscape: Boolean = false,
+    currentQualityLabel: String = "",
+    commentCount: Int = 0,
+    viperEnabled: Boolean = false,
+    desktopLyricEnabled: Boolean = false,
     onToggleFavorite: () -> Unit,
     onSeekTo: (Long) -> Unit,
     onCyclePlayMode: () -> Unit,
     onPrevious: () -> Unit,
     onTogglePlay: () -> Unit,
     onNext: () -> Unit,
-    onOpenQueue: () -> Unit
+    onOpenQueue: () -> Unit,
+    onQualityClick: () -> Unit = {},
+    onAddToPlaylist: () -> Unit = {},
+    onOpenLyricPoster: () -> Unit = {},
+    onToggleDesktopLyric: () -> Unit = {},
+    onOpenAudioEffect: () -> Unit = {},
+    onOpenComments: () -> Unit = {},
+    onOpenMoreSheet: () -> Unit = {}
 ) {
     var isInteractingWithBar by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
@@ -1016,42 +1168,88 @@ private fun LandscapeBottomControlDock(
         animationSpec = ConceptMotion.expressiveSpring(),
         label = "landFavScale"
     )
+    val readableAccentPrimary = remember(accentPrimary) { accentPrimary.readableOnDarkSurface(0.45f) }
 
     Column(
         modifier = Modifier
-            .widthIn(max = 316.dp)
-            .fillMaxWidth(0.94f),
+            .widthIn(max = if (isTabletLandscape) 420.dp else 332.dp)
+            .fillMaxWidth(0.95f),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // 1. 歌曲名与歌手双层错落名片头（左：上歌名 + 下歌手独立无限跑马灯；右：时间指示 + 红心收藏）
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(end = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(end = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
+                // 第一层：歌名独占整行，任何长度歌手名均不会挤压歌名宽度；超长歌名无限循环平滑滚动
                 Text(
-                    text = song.title,
+                    text = song.title.ifBlank { "未知歌曲" },
                     color = Color.White,
-                    fontSize = 14.5.sp,
+                    fontSize = if (isTabletLandscape) 17.sp else 14.5.sp,
+                    lineHeight = if (isTabletLandscape) 21.sp else 18.sp,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 1,
                     modifier = Modifier
-                        .weight(1f, fill = false)
-                        .basicMarquee()
+                        .fillMaxWidth()
+                        .basicMarquee(
+                            iterations = Int.MAX_VALUE,
+                            delayMillis = 1500,
+                            initialDelayMillis = 1200,
+                            velocity = 26.dp
+                        )
                 )
-                Text(
-                    text = "  ·  ${song.artist.ifBlank { "未知歌手" }}",
-                    color = Color.White.copy(alpha = 0.64f),
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+
+                // 第二层：歌手名（平板下附带音质切换胶囊），超长多位合作歌手名同样平滑滚动不截断
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isTabletLandscape && currentQualityLabel.isNotBlank()) {
+                        val isGoldQuality = currentQualityLabel.contains("Hi-Res", ignoreCase = true) ||
+                            currentQualityLabel.contains("母带", ignoreCase = true)
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isGoldQuality) VipGold.copy(alpha = 0.20f) else accentPrimary.copy(alpha = 0.20f),
+                            modifier = Modifier
+                                .padding(end = 6.dp)
+                                .softCardClickable(shape = RoundedCornerShape(6.dp), onClick = onQualityClick)
+                        ) {
+                            Text(
+                                text = currentQualityLabel,
+                                color = if (isGoldQuality) VipGold else readableAccentPrimary,
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 5.5.dp, vertical = 1.5.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = song.artist.ifBlank { "未知歌手" },
+                        color = Color.White.copy(alpha = 0.66f),
+                        fontSize = if (isTabletLandscape) 13.sp else 11.5.sp,
+                        lineHeight = if (isTabletLandscape) 16.sp else 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .weight(1f)
+                            .basicMarquee(
+                                iterations = Int.MAX_VALUE,
+                                delayMillis = 1800,
+                                initialDelayMillis = 1400,
+                                velocity = 22.dp
+                            )
+                    )
+                }
             }
 
             Row(
@@ -1060,13 +1258,14 @@ private fun LandscapeBottomControlDock(
             ) {
                 Text(
                     text = "${formatPlayerDuration(displayCurrentMs)} / ${formatPlayerDuration(durationMs)}",
-                    color = if (isInteractingWithBar) accentPrimary.readableOnDarkSurface(0.45f) else Color.White.copy(alpha = 0.52f),
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold
+                    color = if (isInteractingWithBar) readableAccentPrimary else Color.White.copy(alpha = 0.56f),
+                    fontSize = if (isTabletLandscape) 11.5.sp else 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum")
                 )
                 Box(
                     modifier = Modifier
-                        .size(26.dp)
+                        .size(if (isTabletLandscape) 32.dp else 28.dp)
                         .graphicsLayer {
                             val s = favScaleState.value
                             scaleX = s
@@ -1077,8 +1276,109 @@ private fun LandscapeBottomControlDock(
                 ) {
                     PlumpHeartCanvasIcon(
                         isFavorite = isFavorite,
-                        color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.82f),
-                        modifier = Modifier.size(17.dp)
+                        color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(if (isTabletLandscape) 20.dp else 17.5.dp)
+                    )
+                }
+            }
+        }
+
+        // 平板横屏合并播放页专属：无重复辅助功能栏（加入歌单、歌词海报、桌面歌词、蝰蛇音效、歌曲评论、更多设置）
+        if (isTabletLandscape) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onAddToPlaylist,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.PlaylistAdd,
+                        contentDescription = "添加到歌单",
+                        tint = Color.White.copy(alpha = 0.84f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onOpenLyricPoster,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.AutoAwesome,
+                        contentDescription = "歌词海报",
+                        tint = Color.White.copy(alpha = 0.84f),
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onToggleDesktopLyric,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Lyrics,
+                        contentDescription = "桌面歌词",
+                        tint = if (desktopLyricEnabled) readableAccentPrimary else Color.White.copy(alpha = 0.84f),
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onOpenAudioEffect,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.GraphicEq,
+                        contentDescription = "蝰蛇音效",
+                        tint = if (viperEnabled) readableAccentPrimary else Color.White.copy(alpha = 0.84f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .height(34.dp)
+                        .widthIn(min = 42.dp)
+                        .softClickable(onClick = onOpenComments),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.ChatBubbleOutline,
+                            contentDescription = "评论",
+                            tint = Color.White.copy(alpha = 0.84f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        val countStr = formatPlayerCommentCount(commentCount)
+                        if (countStr.isNotEmpty()) {
+                            Text(
+                                text = countStr,
+                                color = readableAccentPrimary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                }
+
+                IconButton(
+                    onClick = onOpenMoreSheet,
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.MoreHoriz,
+                        contentDescription = "更多功能",
+                        tint = Color.White.copy(alpha = 0.84f),
+                        modifier = Modifier.size(21.dp)
                     )
                 }
             }
@@ -1099,7 +1399,7 @@ private fun LandscapeBottomControlDock(
             highlightClimaxRange = highlightClimaxRange,
             accentPrimary = accentPrimary,
             accentSecondary = accentSecondary,
-            compact = true,
+            compact = !isTabletLandscape,
             onDragStart = {
                 isInteractingWithBar = true
                 dragFraction = it
@@ -1121,6 +1421,7 @@ private fun LandscapeBottomControlDock(
         LandscapeCompactControlRow(
             playMode = playMode,
             isPlaying = isPlaying,
+            isTabletLandscape = isTabletLandscape,
             accentPrimary = accentPrimary,
             accentSecondary = accentSecondary,
             onCyclePlayMode = onCyclePlayMode,
@@ -1133,12 +1434,13 @@ private fun LandscapeBottomControlDock(
 }
 
 /**
- * 横屏专属紧凑低重心播放控制栏（总高 38.dp，采用连续几何插值播放/暂停形变）
+ * 横屏专属紧凑低重心播放控制栏（沿用封面页五大核心控制控件与连续几何插值播放/暂停形变）
  */
 @Composable
 private fun LandscapeCompactControlRow(
     playMode: PlayMode,
     isPlaying: Boolean,
+    isTabletLandscape: Boolean = false,
     accentPrimary: Color,
     accentSecondary: Color,
     onCyclePlayMode: () -> Unit,
@@ -1156,18 +1458,20 @@ private fun LandscapeCompactControlRow(
         animationSpec = ConceptMotion.expressiveSpring(),
         label = "landPlayMorph"
     )
+    val rowHeight = if (isTabletLandscape) 48.dp else 38.dp
+    val centerBtnSize = if (isTabletLandscape) 46.dp else 38.dp
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(38.dp),
+            .height(rowHeight),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 1. 播放模式
         Box(
             modifier = Modifier
-                .size(34.dp)
+                .size(if (isTabletLandscape) 38.dp else 34.dp)
                 .softClickable(pressScale = 0.84f, onClick = onCyclePlayMode),
             contentAlignment = Alignment.Center
         ) {
@@ -1179,7 +1483,7 @@ private fun LandscapeCompactControlRow(
                 },
                 label = "landPlayModeMorph"
             ) { mode ->
-                Canvas(modifier = Modifier.size(19.dp)) {
+                Canvas(modifier = Modifier.size(if (isTabletLandscape) 21.dp else 19.dp)) {
                     val w = size.width
                     val h = size.height
                     val stroke = 2.0.dp.toPx()
@@ -1224,7 +1528,7 @@ private fun LandscapeCompactControlRow(
         // 2. 上一首
         Box(
             modifier = Modifier
-                .size(36.dp)
+                .size(if (isTabletLandscape) 40.dp else 36.dp)
                 .graphicsLayer { translationX = prevNudge.value }
                 .softClickable(
                     pressScale = 0.84f,
@@ -1238,7 +1542,7 @@ private fun LandscapeCompactControlRow(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.size(21.dp)) {
+            Canvas(modifier = Modifier.size(if (isTabletLandscape) 23.dp else 21.dp)) {
                 val w = size.width
                 val h = size.height
                 val barW = w * 0.145f
@@ -1257,10 +1561,10 @@ private fun LandscapeCompactControlRow(
             }
         }
 
-        // 3. 紧凑中心播放/暂停按钮（连续几何插值形变）
+        // 3. 中心播放/暂停按钮（连续几何插值形变）
         Box(
             modifier = Modifier
-                .size(38.dp)
+                .size(centerBtnSize)
                 .clip(CircleShape)
                 .background(
                     Brush.linearGradient(
@@ -1274,7 +1578,7 @@ private fun LandscapeCompactControlRow(
                 .softClickable(pressScale = 0.86f, onClick = onTogglePlay),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.size(17.dp)) {
+            Canvas(modifier = Modifier.size(if (isTabletLandscape) 20.dp else 17.dp)) {
                 drawContinuousPlayPauseMorph(
                     morphProgress = morphProgressState.value,
                     color = Color.White
@@ -1285,7 +1589,7 @@ private fun LandscapeCompactControlRow(
         // 4. 下一首
         Box(
             modifier = Modifier
-                .size(36.dp)
+                .size(if (isTabletLandscape) 40.dp else 36.dp)
                 .graphicsLayer { translationX = nextNudge.value }
                 .softClickable(
                     pressScale = 0.84f,
@@ -1299,7 +1603,7 @@ private fun LandscapeCompactControlRow(
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.size(21.dp)) {
+            Canvas(modifier = Modifier.size(if (isTabletLandscape) 23.dp else 21.dp)) {
                 val w = size.width
                 val h = size.height
                 val barW = w * 0.145f
@@ -1319,11 +1623,11 @@ private fun LandscapeCompactControlRow(
         // 5. 播放队列
         Box(
             modifier = Modifier
-                .size(34.dp)
+                .size(if (isTabletLandscape) 38.dp else 34.dp)
                 .softClickable(pressScale = 0.84f, onClick = onOpenQueue),
             contentAlignment = Alignment.Center
         ) {
-            Canvas(modifier = Modifier.size(19.dp)) {
+            Canvas(modifier = Modifier.size(if (isTabletLandscape) 21.dp else 19.dp)) {
                 val w = size.width
                 val h = size.height
                 val stroke = 2.0.dp.toPx()

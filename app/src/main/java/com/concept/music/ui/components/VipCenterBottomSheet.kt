@@ -124,21 +124,30 @@ fun VipCenterScreen(
                 )
             }
         ) { innerPadding ->
-            VipCenterContentBody(
-                state = state,
-                loggedIn = loggedIn,
-                autoClaim = autoClaim,
-                onClaim = onClaim,
-                onAutoChange = onAutoChange,
-                onLogin = onLogin,
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
-                    .padding(horizontal = 16.dp)
-                    .verticalScroll(rememberScrollState())
-                    .navigationBarsPadding()
-                    .padding(top = 6.dp, bottom = 80.dp)
-            )
+                    .padding(innerPadding),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                val vipAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+                VipCenterContentBody(
+                    state = state,
+                    loggedIn = loggedIn,
+                    autoClaim = autoClaim,
+                    onClaim = onClaim,
+                    onAutoChange = onAutoChange,
+                    onLogin = onLogin,
+                    useTwoColumnDashboard = vipAdaptive.useTwoPaneDetailLayout,
+                    modifier = Modifier
+                        .widthIn(max = if (vipAdaptive.useTwoPaneDetailLayout) 1140.dp else 760.dp)
+                        .fillMaxSize()
+                        .padding(horizontal = if (vipAdaptive.useTwoPaneDetailLayout) 24.dp else 16.dp)
+                        .verticalScroll(rememberScrollState())
+                        .navigationBarsPadding()
+                        .padding(top = 6.dp, bottom = 80.dp)
+                )
+            }
         }
     }
 }
@@ -212,6 +221,7 @@ private fun VipCenterContentBody(
     onClaim: () -> Unit,
     onAutoChange: (Boolean) -> Unit,
     onLogin: () -> Unit,
+    useTwoColumnDashboard: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -264,10 +274,8 @@ private fun VipCenterContentBody(
     val heroPrimaryText = if (isDark) Color.White else Color(0xFF231A0B)
     val heroSubText = if (isDark) Color.White.copy(alpha = 0.76f) else Color(0xFF5C4722)
 
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
+    val renderVipHeroAndAutoClaim: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         // 1. 概念版 VIP 会员核心权益卡
         Surface(
             shape = RoundedCornerShape(24.dp),
@@ -423,6 +431,11 @@ private fun VipCenterContentBody(
             }
         }
 
+        }
+    }
+
+    val renderVipCalendarAndCredentials: @Composable () -> Unit = {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         // 2. 月度 VIP 打卡日历
         val currentDate = remember { LocalDate.now(CHINA_ZONE) }
         val currentYearMonth = remember(currentDate) { YearMonth.from(currentDate) }
@@ -797,6 +810,31 @@ private fun VipCenterContentBody(
                     }
                 }
             }
+        }
+        }
+    }
+
+    if (useTwoColumnDashboard) {
+        // 平板横屏双栏看板：左栏核心权益与一键领取，右栏打卡日历与设备凭证诊断，告别单列超高与底部按钮挤出屏幕
+        Row(
+            modifier = modifier,
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Box(modifier = Modifier.weight(0.46f)) {
+                renderVipHeroAndAutoClaim()
+            }
+            Box(modifier = Modifier.weight(0.54f)) {
+                renderVipCalendarAndCredentials()
+            }
+        }
+    } else {
+        Column(
+            modifier = modifier,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            renderVipHeroAndAutoClaim()
+            renderVipCalendarAndCredentials()
         }
     }
 }

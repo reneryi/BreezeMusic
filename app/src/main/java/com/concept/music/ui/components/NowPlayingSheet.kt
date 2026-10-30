@@ -343,7 +343,18 @@ fun NowPlayingSheet(
 
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
-    val activity = context as? Activity
+    val activity = remember(context) {
+        var ctx: Context? = context
+        var found: Activity? = null
+        while (ctx is android.content.ContextWrapper) {
+            if (ctx is Activity) {
+                found = ctx
+                break
+            }
+            ctx = ctx.baseContext
+        }
+        found
+    }
     val view = LocalView.current
     var showLyricView by remember { mutableStateOf(false) }
     var isLandscapeMode by remember { mutableStateOf(false) }
@@ -360,6 +371,10 @@ fun NowPlayingSheet(
     var showDoubleTapHeart by remember { mutableStateOf(false) }
     var showMoreControlSheet by remember { mutableStateOf(false) }
     var showDownloadDialog by remember { mutableStateOf(false) }
+    var showCoverPreviewDialog by remember { mutableStateOf(false) }
+    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+    val isLargeScreen = adaptiveInfo.isLargeScreenDevice
+    val latestIsLargeScreen by rememberUpdatedState(isLargeScreen)
 
     val audioEffectState by AudioEffectManager.state.collectAsState()
     val systemLyricState by SystemLyricBridge.state.collectAsState()
@@ -372,9 +387,18 @@ fun NowPlayingSheet(
         }
     }
     val exitLandscape: () -> Unit = {
-        isLandscapeMode = false
-        enteredLandscapeViaSensor = false
-        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        if (isLargeScreen && configuration.orientation == Configuration.ORIENTATION_LANDSCAPE && !isLandscapeMode) {
+            // 平板本身处于横屏状态时，点击左上角返回直接收起播放页回到上一界面
+            onDismiss()
+        } else {
+            isLandscapeMode = false
+            enteredLandscapeViaSensor = false
+            if (isLargeScreen) {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            } else {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+        }
     }
 
     // 严格限制横屏自动触发范围：
@@ -434,10 +458,15 @@ fun NowPlayingSheet(
         }
     }
 
-    // 退出播放页时强制恢复竖屏与系统状态栏显示
+    // 退出播放页时恢复屏幕方向：注意仅以 activity 为 Key，绝不把随旋转变化的布尔值作为 Key，
+    // 彻底避免手机旋转进入横屏瞬间触发旧闭包 onDispose 把屏幕强行掰回竖屏！
     DisposableEffect(activity) {
         onDispose {
-            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            if (!latestIsLargeScreen) {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            } else {
+                activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
             activity?.window?.let { win ->
                 WindowCompat.getInsetsController(win, view).show(
                     WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars()
@@ -446,7 +475,15 @@ fun NowPlayingSheet(
         }
     }
 
-    val effectiveLandscape = !showLyricView && (isLandscapeMode || configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
+    // 严格校验当前窗口已处于真实横屏状态（ORIENTATION_LANDSCAPE 且 width > height）后才渲染 LandscapePlayerPage，
+    // 彻底杜绝在竖屏窗口内挤压渲染横屏播放页的现象！
+    val isWindowActuallyLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE &&
+        configuration.screenWidthDp > configuration.screenHeightDp
+    val effectiveLandscape = if (adaptiveInfo.isTabletLandscapePlayer) {
+        isWindowActuallyLandscape
+    } else {
+        !showLyricView && isWindowActuallyLandscape && (isLandscapeMode || !isLargeScreen)
+    }
 
     // 横屏模式下隐藏手机顶部状态栏与底部导航栏，实现纯粹全屏幕沉浸显示
     DisposableEffect(effectiveLandscape, activity) {
@@ -475,6 +512,7 @@ fun NowPlayingSheet(
     // 系统返回键：优先关闭已打开的子面板（队列/歌词设置），若正处于横屏播放页则退回竖屏，若处于歌词页则退回封面，否则收起播放页
     BackHandler {
         when {
+            showCoverPreviewDialog -> showCoverPreviewDialog = false
             showQueueSheet -> showQueueSheet = false
             showLyricSettingsDialog -> showLyricSettingsDialog = false
             effectiveLandscape -> exitLandscape()
@@ -697,6 +735,10 @@ fun NowPlayingSheet(
                     highlightClimaxRange = climaxModeEnabled && !climaxUnlockedForCurrentSong,
                     accentPrimary = activeAccentColor,
                     accentSecondary = activeSecondaryAccent,
+                    currentQualityLabel = currentQualityLabel,
+                    commentCount = commentCount,
+                    viperEnabled = audioEffectState.isEnabled,
+                    desktopLyricEnabled = systemLyricState.floatingCapsuleEnabled,
                     onExitLandscape = exitLandscape,
                     onTogglePlay = onTogglePlay,
                     onPrevious = onPrevious,
@@ -709,16 +751,33 @@ fun NowPlayingSheet(
                     onToggleTranslation = onToggleTranslation,
                     onTogglePhonetic = onTogglePhonetic,
                     onOpenLyricSettings = { showLyricSettingsDialog = true },
-                    onSelectPlayerBackgroundStyle = onSelectPlayerBackgroundStyle
+                    onSelectPlayerBackgroundStyle = onSelectPlayerBackgroundStyle,
+                    onLongPressCover = { showCoverPreviewDialog = true },
+                    onQualityClick = { showQualityDialog = true },
+                    onAddToPlaylist = onAddToPlaylist,
+                    onOpenLyricPoster = { showLyricPosterDialog = true },
+                    onToggleDesktopLyric = {
+                        SystemLyricBridge.toggleDesktopLyricWithPermissionCheck(context)
+                    },
+                    onOpenAudioEffect = openViperAction,
+                    onOpenComments = onOpenComments,
+                    onOpenMoreSheet = { showMoreControlSheet = true }
                 )
             } else {
-                // 2. 竖屏主体内容区：顶部返回按钮与歌名区域适度上移，使视觉重心更紧凑自然
+                // 2. 竖屏主体内容区（平板竖屏/分屏下受控最大宽度居中展示，避免进度条与按钮过度拉宽）
                 val density = LocalDensity.current
                 val dismissSlideTargetPx = remember(configuration.screenHeightDp, density) {
                     with(density) { configuration.screenHeightDp.dp.toPx() }.coerceAtLeast(1200f)
                 }
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.TopCenter
+                ) {
                 Column(
                     modifier = Modifier
+                        .then(
+                            if (adaptiveInfo.isWideWindow) Modifier.widthIn(max = 560.dp) else Modifier
+                        )
                         .fillMaxSize()
                         .statusBarsPadding()
                         .navigationBarsPadding()
@@ -871,7 +930,8 @@ fun NowPlayingSheet(
                             onNext = onNext,
                             onCyclePlayMode = onCyclePlayMode,
                             onOpenQueue = { showQueueSheet = true },
-                            onOpenComments = onOpenComments
+                            onOpenComments = onOpenComments,
+                            onLongPressCover = { showCoverPreviewDialog = true }
                         )
                     } else {
                         RedesignedDedicatedLyricPage(
@@ -908,6 +968,7 @@ fun NowPlayingSheet(
                             onOpenLyricSettings = { showLyricSettingsDialog = true }
                         )
                     }
+                }
                 }
             }
             }
@@ -1095,6 +1156,20 @@ fun NowPlayingSheet(
             SongDetailSheet(
                 detail = effectiveDetail,
                 onDismiss = { showDetailSheet = false }
+            )
+        }
+
+        // 播放页长按黑胶/方形封面：高清封面预览与纯图标下载按钮（无文字说明）
+        if (showCoverPreviewDialog) {
+            HdArtworkPreviewDialog(
+                artworkUrl = song.coverUrl,
+                title = song.title,
+                subtitle = song.artist,
+                category = ArtworkDownloadCategory.SONG_COVER,
+                songForFallback = song,
+                iconOnlySaveButton = true,
+                accentColor = activeAccentColor,
+                onDismiss = { showCoverPreviewDialog = false }
             )
         }
     }
@@ -1649,7 +1724,8 @@ private fun CoverPlayerPageContent(
     onNext: () -> Unit,
     onCyclePlayMode: () -> Unit,
     onOpenQueue: () -> Unit,
-    onOpenComments: () -> Unit
+    onOpenComments: () -> Unit,
+    onLongPressCover: () -> Unit = {}
 ) {
     val favBurstAnim = remember { Animatable(1f) }
     var prevFavState by remember { mutableStateOf(isFavorite) }
@@ -1683,7 +1759,8 @@ private fun CoverPlayerPageContent(
                 .pointerInput(song.id, isFavorite) {
                     detectTapGestures(
                         onTap = { onOpenLyricView() },
-                        onDoubleTap = { onTriggerDoubleTapHeart() }
+                        onDoubleTap = { onTriggerDoubleTapHeart() },
+                        onLongPress = { onLongPressCover() }
                     )
                 }
                 .pointerInput(song.id) {

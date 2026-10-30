@@ -20,6 +20,20 @@ object KrcDecoder {
         "[id:", "[ar:", "[ti:", "[by:", "[hash:", "[al:", "[sign:", "[qq:", "[total:", "[offset:", "[language:", "[kana:"
     )
 
+    internal fun unescapeLyricEntities(raw: String): String {
+        if (!raw.contains('&')) return raw
+        return raw
+            .replace("&apos;", "'")
+            .replace("&#39;", "'")
+            .replace("&#x27;", "'")
+            .replace("&quot;", "\"")
+            .replace("&#34;", "\"")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+    }
+
     fun decodeKrc(base64Content: String): String {
         return try {
             val rawBytes = Base64.getMimeDecoder().decode(base64Content.trim())
@@ -93,14 +107,14 @@ object KrcDecoder {
             for (m in wordMatches) {
                 val offset = m.groupValues[1].toLongOrNull() ?: 0L
                 val duration = m.groupValues[2].toLongOrNull() ?: 0L
-                val wordText = m.groupValues[3]
+                val wordText = unescapeLyricEntities(m.groupValues[3])
                 if (wordText.isNotEmpty()) {
                     words.add(LyricWord(lineStart + offset, duration, wordText))
                     lineTextBuilder.append(wordText)
                 }
             }
 
-            val lineText = if (words.isNotEmpty()) lineTextBuilder.toString() else rest.replace(Regex("<[^>]+>"), "").trim()
+            val lineText = if (words.isNotEmpty()) lineTextBuilder.toString() else unescapeLyricEntities(rest.replace(Regex("<[^>]+>"), "").trim())
             if (lineText.isNotEmpty()) {
                 val nonBlankIndex = lines.size
                 val transIdx = if (useRawTimeIndexForTrans) currentTimeIdx else nonBlankIndex
@@ -193,7 +207,7 @@ object KrcDecoder {
             }
 
             fun cleanLayerText(raw: String): String {
-                val trimmed = raw.trim()
+                val trimmed = unescapeLyricEntities(raw.trim())
                 return if (trimmed == "//" || trimmed == "/") "" else trimmed
             }
 
@@ -253,7 +267,7 @@ object KrcDecoder {
             }
             if (leadingTags.isEmpty()) continue
 
-            val lineText = line.substring(expectedStart).trim()
+            val lineText = unescapeLyricEntities(line.substring(expectedStart).trim())
             if (lineText.isEmpty() || lineText == "//") continue
 
             val doubleSlashParts = if (lineText.contains(" // ")) {

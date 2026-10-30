@@ -107,8 +107,16 @@ fun ViperSoundEffectScreen(
                 containerColor = Color.Transparent,
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 topBar = {
+                    val viperAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.TopCenter
+                    ) {
                     Column(
                         modifier = Modifier
+                            .then(
+                                if (viperAdaptive.isLargeScreenDevice) Modifier.widthIn(max = 920.dp) else Modifier
+                            )
                             .fillMaxWidth()
                             .statusBarsPadding()
                             .padding(horizontal = 16.dp, vertical = 6.dp)
@@ -214,8 +222,10 @@ fun ViperSoundEffectScreen(
                             }
                         }
                     }
+                    }
                 }
             ) { innerPadding ->
+                val viperBodyAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -225,10 +235,16 @@ fun ViperSoundEffectScreen(
                             itemCount = SoundEffectMainTab.entries.size,
                             onSelectIndex = { selectedMainTab = it },
                             onSwipeRightAtStart = onBack
-                        )
+                        ),
+                    contentAlignment = Alignment.TopCenter
                 ) {
                     AnimatedContent(
                         targetState = selectedMainTab,
+                        modifier = Modifier
+                            .then(
+                                if (viperBodyAdaptive.isLargeScreenDevice) Modifier.widthIn(max = 920.dp) else Modifier
+                            )
+                            .fillMaxSize(),
                         transitionSpec = {
                             conceptCategoryContentTransition(if (targetState > initialState) 1 else -1)
                         },

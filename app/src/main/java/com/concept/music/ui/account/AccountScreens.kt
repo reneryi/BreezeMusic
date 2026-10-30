@@ -36,7 +36,7 @@ import kotlinx.coroutines.withContext
 fun LoginScreen(viewModel: LibraryViewModel, onBack: () -> Unit) {
     val state by viewModel.login.collectAsState()
     LaunchedEffect(state.completed) { if (state.completed) onBack() }
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding().imePadding(), contentPadding = PaddingValues(20.dp),
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) { LazyColumn(Modifier.widthIn(max = 600.dp).fillMaxSize().statusBarsPadding().imePadding(), contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { TextButton(onClick = onBack) { Text("返回") }; Text("登录酷狗账号", style = MaterialTheme.typography.headlineMedium) }
         item {
@@ -89,7 +89,7 @@ fun LoginScreen(viewModel: LibraryViewModel, onBack: () -> Unit) {
         }
         if (state.busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
         state.message?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.primary) } }
-    }
+    } }
 }
 
 internal fun decodeQr(data: String?): Bitmap? = runCatching {
@@ -156,7 +156,7 @@ private fun saveQr(context: Context, bitmap: Bitmap) {
 fun AccountsScreen(viewModel: LibraryViewModel, onBack: () -> Unit, onLogin: () -> Unit) {
     val state by viewModel.accountState.collectAsState()
     var removing by remember { mutableStateOf<SavedAccount?>(null) }
-    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) { LazyColumn(Modifier.widthIn(max = 640.dp).fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { TextButton(onClick = onBack) { Text("返回") }; Text("账号管理", style = MaterialTheme.typography.headlineMedium) }
         item { Button(onClick = onLogin) { Text("添加账号") } }
         if (state.accounts.isEmpty()) item { Text("还没有保存的账号") }
@@ -179,7 +179,7 @@ fun AccountsScreen(viewModel: LibraryViewModel, onBack: () -> Unit, onLogin: () 
                 }
             }
         }
-    }
+    } }
     removing?.let { account -> AlertDialog(onDismissRequest = { removing = null }, title = { Text("移除账号？") },
         text = { Text("清除本机保存的 ${account.nickname} 的登录凭证和设置，其他账号保留。") },
         confirmButton = { TextButton(onClick = { viewModel.removeAccount(account.userId); removing = null }) { Text("移除") } },

@@ -42,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -93,10 +94,15 @@ object ProjectLinks {
     const val GITHUB_RELEASES_URL = "https://github.com/reneryi/breezemusic/releases"
     const val GITHUB_LATEST_RELEASE_WEB_URL = "https://github.com/reneryi/breezemusic/releases/latest"
     const val GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/reneryi/breezemusic/releases/latest"
+    const val GITHUB_RELEASES_LIST_API = "https://api.github.com/repos/reneryi/breezemusic/releases?per_page=5"
+    const val GHPROXY_LATEST_RELEASE_API = "https://ghfast.top/https://api.github.com/repos/reneryi/breezemusic/releases/latest"
+    const val GHPROXY_RELEASES_LIST_API = "https://ghfast.top/https://api.github.com/repos/reneryi/breezemusic/releases?per_page=5"
+    const val GHPROXY_MIRROR_LATEST_RELEASE_API = "https://gh-proxy.com/https://api.github.com/repos/reneryi/breezemusic/releases/latest"
+    const val GHPROXY_RAW_GRADLE_MAIN_URL = "https://ghfast.top/https://raw.githubusercontent.com/reneryi/breezemusic/main/app/build.gradle.kts"
+    const val GHPROXY_RAW_GRADLE_MASTER_URL = "https://ghfast.top/https://raw.githubusercontent.com/reneryi/breezemusic/master/app/build.gradle.kts"
     const val JSDELIVR_PACKAGE_API = "https://data.jsdelivr.com/v1/package/gh/reneryi/breezemusic"
     const val GCORE_JSDELIVR_GRADLE_URL = "https://gcore.jsdelivr.net/gh/reneryi/breezemusic@main/app/build.gradle.kts"
     const val FASTLY_JSDELIVR_GRADLE_URL = "https://fastly.jsdelivr.net/gh/reneryi/breezemusic@main/app/build.gradle.kts"
-    const val GHPROXY_LATEST_RELEASE_API = "https://ghfast.top/https://api.github.com/repos/reneryi/breezemusic/releases/latest"
 }
 
 /**
@@ -117,19 +123,39 @@ sealed class UpdateCheckResult {
 }
 
 /**
- * 版本号语义化比对（如 remoteTag = "v1.1.0" vs localVersion = "1.0.0"）
+ * 从任意格式的版本字符串或 Tag（如 "v1.2.0"、"BreezeMusic-v1.2.0"、"1.2.0-tablet"、"release_1.2.0"）中提取核心语义化版本号
+ */
+internal fun extractCleanSemverString(raw: String): String {
+    val trimmed = raw.trim()
+    val regexMatch = Regex("(\\d+(?:\\.\\d+)+)").find(trimmed)
+    if (regexMatch != null) {
+        return regexMatch.groupValues[1]
+    }
+    return trimmed.removePrefix("v").removePrefix("V").substringBefore("-").trim()
+}
+
+/**
+ * 版本号语义化比对（如 remoteTag = "v1.2.0" vs localVersion = "1.1.0"）
  */
 internal fun isRemoteVersionNewer(param1: String, param2: String): Boolean {
-    // 智能识别 remoteTag 与 localVersion 传入顺序（兼容 (remoteTag, localVersion) 与 (localVersion, remoteTag) 调用）
-    val (remoteTag, localVersion) = if (param2.trim().startsWith("v", ignoreCase = true) && !param1.trim().startsWith("v", ignoreCase = true)) {
-        param2 to param1
+    val p1 = param1.trim()
+    val p2 = param2.trim()
+    val (remoteTag, localVersion) = if (p2.startsWith("v", ignoreCase = true) && !p1.startsWith("v", ignoreCase = true)) {
+        p2 to p1
+    } else if (!p1.startsWith("v", ignoreCase = true) && !p2.startsWith("v", ignoreCase = true)) {
+        val currentClean = extractCleanSemverString(BuildConfig.VERSION_NAME)
+        if (extractCleanSemverString(p1) == currentClean && extractCleanSemverString(p2) != currentClean) {
+            p2 to p1
+        } else {
+            p1 to p2
+        }
     } else {
-        param1 to param2
+        p1 to p2
     }
 
     fun parseNumericParts(raw: String): List<Int> {
-        val cleaned = raw.trim().removePrefix("v").removePrefix("V").substringBefore("-")
-        return cleaned.split(".")
+        val core = extractCleanSemverString(raw)
+        return core.split(".")
             .mapNotNull { it.trim().toIntOrNull() }
     }
     val localParts = parseNumericParts(localVersion)
@@ -142,10 +168,11 @@ internal fun isRemoteVersionNewer(param1: String, param2: String): Boolean {
         if (r > l) return true
         if (r < l) return false
     }
-    // 版本相同时，非 rc/beta 的正式发布版高于预发布版（带 -rc / -beta，判定远端更新）
-    val localIsPreRelease = localVersion.contains("-")
-    val remoteIsPreRelease = remoteTag.contains("-")
-    return localIsPreRelease && !remoteIsPreRelease
+    fun isPreReleaseSuffix(ver: String): Boolean {
+        val lower = ver.lowercase()
+        return lower.contains("-rc") || lower.contains("-beta") || lower.contains("-alpha")
+    }
+    return isPreReleaseSuffix(localVersion) && !isPreReleaseSuffix(remoteTag)
 }
 
 /**
@@ -204,6 +231,53 @@ data class ChangelogVersionItem(
 internal val PROJECT_CHANGELOG_HISTORY = listOf(
     ChangelogVersionItem(
         version = "v${BuildConfig.VERSION_NAME}",
+        date = "2026-10-30",
+        tag = "正式版 · 平板与大屏自适应、高清封面保存与横屏体验升级",
+        summary = "基于 WindowSizeClass 与 Android 16 规范构建全场景平板/分屏自适应架构（主界面双栏平铺与侧边导航栏、设置页左右分栏、独立详情页与搜索页多栏自适应、MiniPlayer 居中限宽、平板横屏封面与歌词合并舞台）、新增歌曲/专辑/歌单封面与歌手头像高清原图预览保存（同步存储读写权限）、重构横屏播放页双层独立跑马灯与歌词设置弹窗防截断 UI、支持手机与平板双安装包独立签名区分",
+        highlights = listOf(
+            "全场景平板与大屏自适应架构（适配 Android 16 API 36 与多窗口分屏）：基于 WindowSizeClass 实时监听应用窗口 dp 断点；平板横屏（Expanded）将「发现」与「我的」左右双栏同屏平铺并隐藏底栏；平板竖屏或分屏窗口（Medium）自动切换为左侧 NavigationRail 侧边导航栏，优先展示发现页并采用双列网格与受控阅读宽度；悬浮播放条（MiniPlayerBar）自动限宽底部居中",
+            "设置页、搜索页与独立详情页大屏重构：设置页在宽屏下支持 Master-Detail 左右并排分栏；搜索发现页与搜索结果页支持按分类左右分栏看板及双列网格；歌单详情（含我喜欢/最近）、专辑详情、歌手主页、每日推荐、排行榜与 VIP 中心全面支持「左固定信息头 + 右独立滚动列表」双栏排版；平板横屏播放页将封面与歌词左右合并，放大封面与控播坞并整合非重复工具栏",
+            "高清封面与歌手头像原图预览下载（同步「存储读写与相册导出」权限，与歌词海报同级）：支持歌曲封面、专辑封面、歌单封面、歌手头像 1000P 原图导出至系统相册（不含榜单和电台封面）；歌曲列表更多按钮新增「保存歌曲封面」；播放页长按黑胶/方形封面快捷预览并提供纯图标无文字下载按钮；专辑/歌单/歌手主页点击封面或头像即可预览并保存",
+            "横屏播放页歌名/歌手跑马灯与歌词设置窗口 UI 深度修复：将横屏控播坞重构为「上歌名 + 下歌手」双层独立无限跑马灯（iterations = Int.MAX_VALUE），彻底解决长歌手名抢占导致短歌名（如 Vibe）消失及跑马灯停滞截断问题；歌词解析自动反转义 &apos; 等 HTML 实体；将歌词设置弹窗中的「歌词对齐」与「时长校准」拆分为独立行，彻底解决 +0.2s 截断并对齐左右双栏高度",
+            "全量版本更新日志归档与手机/平板双签名构建体系：在「设置 -> 关于 -> 更新日志」完整收录 v1.0.0、v1.0.1、v1.0.2、v1.1.0、v1.2.0 每次发布版本详情；Gradle 构建配置新增 phone 与 tablet 两个 Product Flavors 并绑定独立签名配置（phoneSign / tabletSign），支持编译发布双平台独立安装包"
+        ),
+        moduleGroups = listOf(
+            ChangelogModuleGroup(
+                moduleTitle = "一、平板与大屏自适应架构（Android 16 API 36 & WindowSizeClass）",
+                points = listOf(
+                    "构建零外部依赖的 ConceptAdaptiveLayoutInfo 响应式断点引擎，实时感知窗口宽度（Compact <600dp / Medium 600..839dp / Expanded >=840dp）与多窗口分屏状态，移除大屏设备锁死竖屏限制",
+                    "主界面三级自适应：平板横屏下「发现」与「我的」一左一右双栏平铺并隐藏底栏；平板竖屏与分屏窗口切换为 ConceptNavigationRail 左侧边导航栏（优先显示发现页，列表升级为双列网格或受控宽度单列）；手机端保持底部胶囊导航与同平面满屏弹性横滑",
+                    "悬浮播放控制条（MiniPlayerBar）在大屏横竖屏及分屏窗口下自动限制最大宽度（420dp~500dp）并底部居中悬浮，告别横向过度拉长",
+                    "设置中心支持 Master-Detail 左右并排分栏常驻展示；搜索页支持左右双栏热搜与分类看板；歌单、专辑、歌手、日推、榜单等独立单页支持左信息看板 + 右列表双栏布局；平板横屏播放页合并封面页与歌词页，清除重复按钮并放大封面与控件比例"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "二、高清封面与歌手头像原图预览及保存",
+                points = listOf(
+                    "新增 HdArtworkSaver 与 HdArtworkPreviewDialog，将高清封面/头像保存同步纳入「设置 -> 权限管理 -> 存储读写与相册导出 (STORAGE_EXPORT)」管控，与 2K 歌词海报处于同一权限级别",
+                    "覆盖歌曲封面、专辑封面、歌单封面、歌手头像四大范围（自动升级酷狗 1000×1000 原图源并支持多级回退，严格排除榜单与电台封面）",
+                    "打通三类保存入口：① 歌曲列表更多菜单（非播放页更多菜单）新增「保存歌曲封面」；② 播放页长按黑胶或方形封面弹出高清预览与无文字纯图标下载按钮；③ 专辑详情、歌单详情、歌手主页点击封面或头像弹出高清缩放预览与保存按钮"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "三、横屏播放页歌名/歌手显示与歌词设置弹窗 UI 修复",
+                points = listOf(
+                    "重构 LandscapeBottomControlDock 曲目信息区为「上歌名 + 下歌手」双层错落布局，赋予各自独立行宽与无限循环跑马灯（iterations = Int.MAX_VALUE），彻底修复歌手名过长导致歌名（如 Vibe）宽度归零不可见及跑马灯滚动三次后半截停滞（如 Need Som）的缺陷",
+                    "KrcDecoder 新增 HTML 实体反转义（unescapeLyricEntities），自动还原歌词中的 &apos;、&quot;、&amp; 等转义字符",
+                    "重构 LyricSettingsDialog 左栏卡片排版，将「歌词对齐（居左/居中/居右）」与「时长校准（-0.2s / 校准 0.0s / +0.2s）」拆分为上下独立两行，彻底消除横屏双栏下 +0.2s 被截断问题，并使左栏与右栏五滑块卡片高度均衡对齐"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "四、全版本更新日志记录与手机/平板独立签名打包",
+                points = listOf(
+                    "补全 v1.0.0、v1.0.1、v1.0.2、v1.1.0、v1.2.0 全部历史发布版本的更新日志记录，每个版本均可独立展开查阅核心亮点与模块明细",
+                    "在 app/build.gradle.kts 中配置 phone 与 tablet 两个 Product Flavors 及独立签名证书（phoneSign 与 tabletSign），支持针对手机端与平板端分别编译带独立签名的 Release / Debug 安装包"
+                )
+            )
+        )
+    ),
+    ChangelogVersionItem(
+        version = "v1.1.0",
         date = "2026-10-29",
         tag = "正式版 · 视觉动效与性能大版本",
         summary = "单层 96dp 极速启动页与双套深浅主题独立持久化、设置中心全面无边框美化与分级收折、全局 120fps 欠阻尼弹性动效与方向性运动虚化、全链路低功耗/熄屏零唤醒与 120fps 列表上下滑动满帧率优化、64-bit 母带 DSP 与免 VPN 登录解析稳固",
@@ -254,6 +328,62 @@ internal val PROJECT_CHANGELOG_HISTORY = listOf(
                 points = listOf(
                     "ConceptMasteringAudioProcessor 预统计非 Bypass 的有效均衡器频段与子模块状态（hasActiveEqBands 等），在 44.1kHz~96kHz PCM 采样热循环中对 0dB 平直频段直接整组短路跳过，显著降低后台 Hi-Res 播放 CPU 占用与发热",
                     "完整保留 64-bit 双精度 Biquad 10 段参量均衡、声场调音、Schroeder 立体声混响与 120ms~360ms 低延迟硬件缓冲，以及国内免 VPN 验证码/扫码多通道容灾登录、未登录访客态音源解析与 jsDelivr 多源免 VPN 更新检查"
+                )
+            )
+        )
+    ),
+    ChangelogVersionItem(
+        version = "v1.0.2",
+        date = "2026-10-29",
+        tag = "正式版 · 多音质下载内嵌与 STREAMINFO 硬件级探测",
+        summary = "新增多音质本地下载与零依赖 FLAC/MP3 1000P 高清封面及双语歌词二进制内嵌、自定义音乐与 .lrc 歌词保存路径、FLAC STREAMINFO 硬件级真实采样率与位深探测、权限管理第 8 项独立下载开关、全新深海微风黑胶流光图标",
+        highlights = listOf(
+            "多音质本地下载与零依赖二进制元数据内嵌：自研 AudioMetadataEmbedder，支持将标题、歌手、专辑、发行日期、1000×1000 高清封面与双语 LRC 歌词直接写入 FLAC (Vorbis Comment + Picture Block) 与 MP3 (ID3v2.3 TIT2/TPE1/TALB/USLT/APIC)，并识别 OGG 容器防损坏",
+            "自定义保存目录与独立「下载」设置中心：支持通过系统 SAF 文件夹选择器（OpenDocumentTree）或手动输入自定义音乐下载路径与 .lrc 歌词路径，提供「最近下载记录」二级管理页与同名文件智能防重跳过",
+            "FLAC STREAMINFO 硬件级真实采样率与位深探测：遵循 RFC 9639 标准通过 HTTP Range 读取音频流前 42~512 字节直接解析 FLAC STREAMINFO、OGG Vorbis 识别头与 MP3 帧头，精准还原 44.1kHz / 48.0kHz / 96.0kHz / 192.0kHz 真实采样率与 16bit / 24bit 位深",
+            "权限管理新增「音乐下载与歌词保存」独立开关（默认关闭隐藏，开启后解锁设置页下载项与歌曲下载菜单），并换装全新「深海微风 · 黑胶流光」自适应应用图标"
+        ),
+        moduleGroups = listOf(
+            ChangelogModuleGroup(
+                moduleTitle = "一、多音质音频下载与零依赖高清封面/歌词内嵌",
+                points = listOf(
+                    "构建 MusicDownloadManager 与 AudioMetadataEmbedder，支持 Hi-Res / SQ 无损 / 320K / 128K 自动解析降级下载",
+                    "对 FLAC 格式重写 Metadata Block 链表注入 Vorbis Comment (Block 4) 与 1000P 高清封面 Picture (Block 6)；对 MP3 格式写入 ID3v2.3 UTF-16LE 标签帧、USLT 同步歌词与 APIC 封面帧",
+                    "支持系统 SAF 目录选择器自定义音频与独立 .lrc 歌词保存目录，并在「设置 -> 权限管理」提供默认关闭的「音乐下载与歌词保存」独立总开关"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "二、FLAC STREAMINFO 硬件级真实音频参数探测",
+                points = listOf(
+                    "通过轻量 HTTP Range (bytes=0-511) 请求提取音频流头部字节，精确解析真实采样率（如 44.1kHz / 24bit Hi-Res）与声道数，消除按码率估算的偏差",
+                    "重绘「深海微风 · 黑胶流光」自适应应用图标并同步至关于页品牌横幅与启动窗口"
+                )
+            )
+        )
+    ),
+    ChangelogVersionItem(
+        version = "v1.0.1",
+        date = "2026-10-28",
+        tag = "正式版 · 跨应用桌面歌词、耳机线控与透明权限中心",
+        summary = "上线系统级跨应用全局悬浮桌面歌词与通知栏/流体云快捷控制、有线耳机双击/三击切歌与三档音频焦点混音策略、蓝牙歌词延迟自动补偿、存储缓存四维分项统计清理、GitHub 多源免 VPN 更新检查与透明权限管控中心",
+        highlights = listOf(
+            "系统级跨应用全局悬浮桌面歌词：支持横向全屏自适应宽度、三行恒定高度容器（短句双行插空居中、长句自然三行换行不抖动）、封面动态取色实时同步、物理点击穿透锁定，以及系统通知栏与 OPPO 流体云「桌面歌词开关 / 锁定解锁」快捷按钮",
+            "外设耳机线控与三档音频焦点混音：新增 HeadsetMediaButtonController 支持有线耳机中键单击暂停、双击下一首、三击上一首（支持方向互换与三档灵敏度防误触）；支持独占焦点、压低音量闪避（Ducking）与多应用完全混音同播，以及蓝牙音频歌词延迟自动补偿",
+            "存储缓存四维分项统计与透明权限管理中心：AudioCacheManager 支持音频流、图片缓存、歌单 SWR 快照与运行期歌词四维明细统计及 512MB~10GB 上限调节；上线公开透明的「权限管理」二级页与 GitHub 多通道免 VPN 在线更新检查"
+        ),
+        moduleGroups = listOf(
+            ChangelogModuleGroup(
+                moduleTitle = "一、跨应用全局桌面悬浮歌词与通知栏/流体云联动",
+                points = listOf(
+                    "实现 NativeDesktopLyricView 与 SystemLyricBridge 跨应用悬浮窗渲染，支持 KRC 逐字卡拉 OK 扫光、App 内外字号/配色（「封面随动」等）双向实时同步与纵向位置记忆",
+                    "在 Media3 PlaybackService 媒体会话中注入通知栏与流体云自定义按钮，支持一键开启/关闭桌面歌词及解锁穿透状态"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "二、耳机线控定制、多应用混音与透明权限管控",
+                points = listOf(
+                    "支持有线耳机物理中键多击切歌、拔出耳机自动暂停、插入耳机自动续播及蓝牙连接状态下的歌词时间轴自动补偿",
+                    "构建 AppPermissionManager 公开披露各项权限用途、隐私承诺与关闭影响，并提供预填充设备环境的标准 GitHub Issue 反馈模板"
                 )
             )
         )
@@ -426,56 +556,120 @@ internal fun resolveUpdateCheckFromApiOrRedirect(
     apiBodyJson: String?,
     redirectFinalUrl: String? = null
 ): UpdateCheckResult {
-    val cleanLocal = localVersionName.trim().removePrefix("v").removePrefix("V").ifBlank { BuildConfig.VERSION_NAME }
+    val cleanLocal = extractCleanSemverString(localVersionName).ifBlank {
+        extractCleanSemverString(BuildConfig.VERSION_NAME)
+    }
     val localDisplay = "v$cleanLocal"
 
     if (apiHttpCode in 200..299 && !apiBodyJson.isNullOrBlank()) {
         runCatching {
-            val json = JsonParser.parseString(apiBodyJson).asJsonObject
-            val tagName = json.get("tag_name")?.takeIf { !it.isJsonNull }?.asString.orEmpty().trim()
-            val releaseTitle = json.get("name")?.takeIf { !it.isJsonNull }?.asString.orEmpty().ifBlank { tagName }
-            val releaseNotes = json.get("body")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-            val htmlUrl = json.get("html_url")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-                .ifBlank { ProjectLinks.GITHUB_RELEASES_URL }
-            val publishedAt = json.get("published_at")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-                .take(10)
-
-            val assets = json.getAsJsonArray("assets")
-            val apkDownloadUrl = assets?.asSequence()
-                ?.mapNotNull { el -> runCatching { el.asJsonObject }.getOrNull() }
-                ?.mapNotNull { obj ->
-                    val assetName = obj.get("name")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-                    val dlUrl = obj.get("browser_download_url")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
-                    if (assetName.endsWith(".apk", ignoreCase = true) && dlUrl.isNotBlank()) dlUrl else null
+            val parsedElement = JsonParser.parseString(apiBodyJson)
+            val candidateObjects = when {
+                parsedElement.isJsonObject -> listOf(parsedElement.asJsonObject)
+                parsedElement.isJsonArray -> parsedElement.asJsonArray.mapNotNull { el ->
+                    runCatching { el.asJsonObject }.getOrNull()?.takeIf { obj ->
+                        val isDraft = obj.get("draft")?.takeIf { !it.isJsonNull }?.asBoolean ?: false
+                        !isDraft
+                    }
                 }
-                ?.firstOrNull() ?: htmlUrl
+                else -> emptyList()
+            }
 
-            return if (tagName.isNotBlank() && isRemoteVersionNewer(cleanLocal, tagName)) {
-                val normalizedTag = if (tagName.startsWith("v", ignoreCase = true)) tagName else "v$tagName"
-                UpdateCheckResult.HasUpdate(
-                    latestVersion = normalizedTag,
-                    title = releaseTitle.ifBlank { normalizedTag },
-                    releaseNotes = releaseNotes.ifBlank { "包含体验优化与问题修复，建议更新至最新版本。" },
-                    downloadUrl = apkDownloadUrl,
-                    publishedAt = publishedAt
-                )
-            } else {
-                UpdateCheckResult.UpToDate(
-                    versionText = localDisplay,
-                    message = "您正在使用最新正式版，暂无可用更新"
-                )
+            var bestJson: com.google.gson.JsonObject? = null
+            var bestVersionStr = ""
+            for (candidate in candidateObjects) {
+                val rawTag = candidate.get("tag_name")?.takeIf { !it.isJsonNull }?.asString.orEmpty().trim()
+                val rawTitle = candidate.get("name")?.takeIf { !it.isJsonNull }?.asString.orEmpty().trim()
+                val candidateVer = extractCleanSemverString(rawTag).takeIf { it.any { c -> c.isDigit() } }
+                    ?: extractCleanSemverString(rawTitle)
+                if (candidateVer.isNotBlank()) {
+                    if (bestJson == null || isRemoteVersionNewer("v$candidateVer", bestVersionStr)) {
+                        bestJson = candidate
+                        bestVersionStr = candidateVer
+                    }
+                }
+            }
+
+            val json = bestJson ?: candidateObjects.firstOrNull()
+            if (json != null) {
+                val rawTagName = json.get("tag_name")?.takeIf { !it.isJsonNull }?.asString.orEmpty().trim()
+                val releaseTitle = json.get("name")?.takeIf { !it.isJsonNull }?.asString.orEmpty().ifBlank { rawTagName }
+                val effectiveVer = extractCleanSemverString(rawTagName).takeIf { it.any { c -> c.isDigit() } }
+                    ?: extractCleanSemverString(releaseTitle)
+                val releaseNotes = json.get("body")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+                val htmlUrl = json.get("html_url")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+                    .ifBlank { ProjectLinks.GITHUB_RELEASES_URL }
+                val publishedAt = json.get("published_at")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+                    .take(10)
+
+                val isTabletFlavor = runCatching { BuildConfig.IS_TABLET_FLAVOR }.getOrDefault(false)
+                val assets = json.getAsJsonArray("assets")
+                val apkAssets = assets?.asSequence()
+                    ?.mapNotNull { el -> runCatching { el.asJsonObject }.getOrNull() }
+                    ?.mapNotNull { obj ->
+                        val assetName = obj.get("name")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+                        val dlUrl = obj.get("browser_download_url")?.takeIf { !it.isJsonNull }?.asString.orEmpty()
+                        if (assetName.endsWith(".apk", ignoreCase = true) && dlUrl.isNotBlank()) {
+                            assetName to dlUrl
+                        } else null
+                    }
+                    ?.toList()
+                    .orEmpty()
+
+                val preferredApkUrl = if (isTabletFlavor) {
+                    apkAssets.firstOrNull { (name, _) ->
+                        name.contains("tablet", ignoreCase = true) || name.contains("pad", ignoreCase = true)
+                    }?.second ?: apkAssets.firstOrNull()?.second
+                } else {
+                    apkAssets.firstOrNull { (name, _) ->
+                        name.contains("phone", ignoreCase = true)
+                    }?.second ?: apkAssets.firstOrNull { (name, _) ->
+                        !name.contains("tablet", ignoreCase = true) && !name.contains("pad", ignoreCase = true)
+                    }?.second ?: apkAssets.firstOrNull()?.second
+                }
+                val apkDownloadUrl = preferredApkUrl ?: htmlUrl
+
+                val compareTag = if (effectiveVer.isNotBlank()) "v$effectiveVer" else rawTagName
+                return if (compareTag.isNotBlank() && isRemoteVersionNewer("v$compareTag".replace("vv", "v"), cleanLocal)) {
+                    val normalizedTag = if (effectiveVer.isNotBlank()) {
+                        "v$effectiveVer"
+                    } else if (rawTagName.startsWith("v", ignoreCase = true)) {
+                        rawTagName
+                    } else {
+                        "v$rawTagName"
+                    }
+                    UpdateCheckResult.HasUpdate(
+                        latestVersion = normalizedTag,
+                        title = releaseTitle.ifBlank { normalizedTag },
+                        releaseNotes = releaseNotes.ifBlank { "包含体验优化与问题修复，建议更新至最新版本。" },
+                        downloadUrl = apkDownloadUrl,
+                        publishedAt = publishedAt
+                    )
+                } else {
+                    UpdateCheckResult.UpToDate(
+                        versionText = localDisplay,
+                        message = "您正在使用最新正式版，暂无可用更新"
+                    )
+                }
             }
         }
     }
 
-    // 解析 GitHub Web /releases/latest 重定向地址（不受 api.github.com 60次/小时匿名配额限制）
     if (!redirectFinalUrl.isNullOrBlank() && redirectFinalUrl.contains("/releases/tag/")) {
         val rawTag = redirectFinalUrl.substringAfter("/releases/tag/")
             .substringBefore("?")
             .substringBefore("#")
             .trim()
-        if (rawTag.isNotBlank() && isRemoteVersionNewer(cleanLocal, rawTag)) {
-            val normalizedTag = if (rawTag.startsWith("v", ignoreCase = true)) rawTag else "v$rawTag"
+        val effectiveVer = extractCleanSemverString(rawTag)
+        val compareTag = if (effectiveVer.isNotBlank()) "v$effectiveVer" else rawTag
+        if (compareTag.isNotBlank() && isRemoteVersionNewer("v$compareTag".replace("vv", "v"), cleanLocal)) {
+            val normalizedTag = if (effectiveVer.isNotBlank()) {
+                "v$effectiveVer"
+            } else if (rawTag.startsWith("v", ignoreCase = true)) {
+                rawTag
+            } else {
+                "v$rawTag"
+            }
             return UpdateCheckResult.HasUpdate(
                 latestVersion = normalizedTag,
                 title = "BreezeMusic $normalizedTag",
@@ -490,7 +684,6 @@ internal fun resolveUpdateCheckFromApiOrRedirect(
         )
     }
 
-    // 404 (仓库尚未创建其它 Release) 或 403/429 (GitHub API 匿名限流且重定向未发现更高版本) 均归并为当前已是最新版
     if (apiHttpCode == 404 || apiHttpCode == 403 || apiHttpCode == 429 || !redirectFinalUrl.isNullOrBlank()) {
         return UpdateCheckResult.UpToDate(
             versionText = localDisplay,
@@ -514,10 +707,28 @@ internal fun extractLatestVersionFromJsDelivrPackageJson(jsonText: String?): Str
     return runCatching {
         val obj = JsonParser.parseString(jsonText).asJsonObject
         val versionsArr = obj.getAsJsonArray("versions")
-        val firstVer = versionsArr?.firstOrNull()?.takeIf { it.isJsonPrimitive }?.asString?.trim()
-        if (!firstVer.isNullOrBlank()) return@runCatching firstVer
+        val extractedVersions = mutableListOf<String>()
+        if (versionsArr != null) {
+            for (el in versionsArr) {
+                val verStr = when {
+                    el.isJsonPrimitive -> el.asString.trim()
+                    el.isJsonObject -> el.asJsonObject.get("version")?.takeIf { !it.isJsonNull }?.asString?.trim().orEmpty()
+                    else -> ""
+                }
+                if (verStr.isNotBlank()) extractedVersions.add(verStr)
+            }
+        }
         val tagsObj = obj.getAsJsonObject("tags")
-        tagsObj?.get("latest")?.takeIf { it.isJsonPrimitive }?.asString?.trim()
+        val latestTag = tagsObj?.get("latest")?.takeIf { it.isJsonPrimitive }?.asString?.trim()
+        if (!latestTag.isNullOrBlank()) extractedVersions.add(latestTag)
+
+        var highest: String? = null
+        for (candidate in extractedVersions) {
+            if (highest == null || isRemoteVersionNewer("v${extractCleanSemverString(candidate)}", highest)) {
+                highest = candidate
+            }
+        }
+        highest
     }.getOrNull()
 }
 
@@ -527,68 +738,102 @@ private suspend fun checkGitHubLatestRelease(
     if (!AppPermissionManager.isPermissionEnabled(AppPermissionType.NETWORK_ACCESS)) {
         return@withContext UpdateCheckResult.Error("已在权限管理中关闭「网络访问」权限，请先开启后再检查更新")
     }
-    val cleanLocal = localVersionName.trim().removePrefix("v").removePrefix("V").ifBlank { BuildConfig.VERSION_NAME }
+    val cleanLocal = extractCleanSemverString(localVersionName).ifBlank {
+        extractCleanSemverString(BuildConfig.VERSION_NAME)
+    }
     val fastClient = NetworkClientProvider.baseClient.newBuilder()
         .connectTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
         .callTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 
-    // 1. 优先尝试国内免 VPN 高速可达的 jsDelivr Package 元数据接口与国内加速镜像 + 官方 GitHub Releases API
-    for (apiEndpoint in listOf(ProjectLinks.JSDELIVR_PACKAGE_API, ProjectLinks.GHPROXY_LATEST_RELEASE_API, ProjectLinks.GITHUB_LATEST_RELEASE_API)) {
+    var confirmedUpToDate: UpdateCheckResult.UpToDate? = null
+    val cacheBuster = System.currentTimeMillis() / 15000L
+
+    // 1. 优先请求实时性最高的 GitHub Releases API（含国内免 VPN 加速镜像 + 官方直连 + Releases 列表接口）
+    // 关键修复：若某个镜像因缓存滞后返回 UpToDate 或 404，绝不提前短路退出，而是继续核实后续实时通道，只有发现 HasUpdate 时才立即返回！
+    val releaseApiEndpoints = listOf(
+        "${ProjectLinks.GHPROXY_LATEST_RELEASE_API}?_t=$cacheBuster",
+        "${ProjectLinks.GHPROXY_MIRROR_LATEST_RELEASE_API}?_t=$cacheBuster",
+        "${ProjectLinks.GITHUB_LATEST_RELEASE_API}?_t=$cacheBuster",
+        "${ProjectLinks.GHPROXY_RELEASES_LIST_API}&_t=$cacheBuster",
+        "${ProjectLinks.GITHUB_RELEASES_LIST_API}&_t=$cacheBuster"
+    )
+    for (apiEndpoint in releaseApiEndpoints) {
         val result = runCatching {
             val req = Request.Builder()
                 .url(apiEndpoint)
-                .header("Accept", "application/json, application/vnd.github+json")
+                .header("Accept", "application/vnd.github+json, application/json")
+                .header("Cache-Control", "no-cache, no-store, max-age=0")
+                .header("Pragma", "no-cache")
                 .header("User-Agent", "BreezeMusic-Android/${BuildConfig.VERSION_NAME}")
                 .get()
                 .build()
             fastClient.newCall(req).execute().use { resp ->
                 val code = resp.code
                 val body = if (resp.isSuccessful) resp.body?.string() else null
-                if (apiEndpoint == ProjectLinks.JSDELIVR_PACKAGE_API) {
-                    if (code in 200..299 && !body.isNullOrBlank()) {
-                        val jsdTag = extractLatestVersionFromJsDelivrPackageJson(body)
-                        if (!jsdTag.isNullOrBlank()) {
-                            return@use resolveUpdateCheckFromApiOrRedirect(
-                                localVersionName = cleanLocal,
-                                apiHttpCode = 200,
-                                apiBodyJson = null,
-                                redirectFinalUrl = "${ProjectLinks.GITHUB_REPO_URL}/releases/tag/$jsdTag"
-                            )
-                        }
-                        // 仓库存在但暂无高于当前版本的 Release Tag
-                        return@use UpdateCheckResult.UpToDate(
-                            versionText = "v$cleanLocal",
-                            message = "您正在使用最新正式版，暂无可用更新"
-                        )
-                    }
-                    null
-                } else if (code in 200..299 && !body.isNullOrBlank()) {
+                if (code in 200..299 && !body.isNullOrBlank()) {
                     resolveUpdateCheckFromApiOrRedirect(
                         localVersionName = cleanLocal,
                         apiHttpCode = code,
                         apiBodyJson = body,
                         redirectFinalUrl = null
                     )
-                } else if (code == 404) {
-                    UpdateCheckResult.UpToDate(
-                        versionText = "v$cleanLocal",
-                        message = "您正在使用最新正式版，暂无可用更新"
-                    )
                 } else {
                     null
                 }
             }
         }.getOrNull()
-        if (result != null) return@withContext result
+        if (result is UpdateCheckResult.HasUpdate) return@withContext result
+        if (result is UpdateCheckResult.UpToDate && confirmedUpToDate == null) {
+            confirmedUpToDate = result
+        }
     }
 
-    // 2. 尝试国内免 VPN 直连的 GCore / Fastly jsDelivr 源码分支版本号比对
-    for (cdnGradleUrl in listOf(ProjectLinks.GCORE_JSDELIVR_GRADLE_URL, ProjectLinks.FASTLY_JSDELIVR_GRADLE_URL)) {
+    // 2. 尝试 GitHub Web /releases/latest 实时 302 Location 重定向探测（零 API 限流、零 CDN 缓存延迟）
+    val noRedirectClient = fastClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
+    for (webUrl in listOf(
+        "https://ghfast.top/${ProjectLinks.GITHUB_LATEST_RELEASE_WEB_URL}",
+        ProjectLinks.GITHUB_LATEST_RELEASE_WEB_URL
+    )) {
+        val webResult = runCatching {
+            val webReq = Request.Builder()
+                .url("$webUrl?_t=$cacheBuster")
+                .header("Accept", "text/html,application/xhtml+xml")
+                .header("Cache-Control", "no-cache")
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 15) BreezeMusic/${BuildConfig.VERSION_NAME}")
+                .get()
+                .build()
+            noRedirectClient.newCall(webReq).execute().use { webResp ->
+                val loc = webResp.header("Location").orEmpty()
+                val targetUrl = if (loc.contains("/releases/tag/")) loc else webResp.request.url.toString()
+                if (targetUrl.contains("/releases/tag/")) {
+                    resolveUpdateCheckFromApiOrRedirect(
+                        localVersionName = cleanLocal,
+                        apiHttpCode = 200,
+                        apiBodyJson = null,
+                        redirectFinalUrl = targetUrl
+                    )
+                } else null
+            }
+        }.getOrNull()
+        if (webResult is UpdateCheckResult.HasUpdate) return@withContext webResult
+        if (webResult is UpdateCheckResult.UpToDate && confirmedUpToDate == null) {
+            confirmedUpToDate = webResult
+        }
+    }
+
+    // 3. 尝试国内免 VPN 直连的 GitHub Raw 镜像与 GCore / Fastly jsDelivr 源码分支 app/build.gradle.kts 版本号比对
+    for (cdnGradleUrl in listOf(
+        "${ProjectLinks.GHPROXY_RAW_GRADLE_MAIN_URL}?_t=$cacheBuster",
+        "${ProjectLinks.GHPROXY_RAW_GRADLE_MASTER_URL}?_t=$cacheBuster",
+        ProjectLinks.GCORE_JSDELIVR_GRADLE_URL,
+        ProjectLinks.FASTLY_JSDELIVR_GRADLE_URL
+    )) {
         val cdnVer = runCatching {
             val req = Request.Builder()
                 .url(cdnGradleUrl)
+                .header("Cache-Control", "no-cache")
                 .header("User-Agent", "BreezeMusic-Android/${BuildConfig.VERSION_NAME}")
                 .get()
                 .build()
@@ -597,36 +842,51 @@ private suspend fun checkGitHubLatestRelease(
             }
         }.getOrNull()
         if (!cdnVer.isNullOrBlank()) {
-            return@withContext resolveUpdateCheckFromApiOrRedirect(
+            val gradleResult = resolveUpdateCheckFromApiOrRedirect(
                 localVersionName = cleanLocal,
                 apiHttpCode = 200,
                 apiBodyJson = null,
-                redirectFinalUrl = "${ProjectLinks.GITHUB_REPO_URL}/releases/tag/v${cdnVer.removePrefix("v").removePrefix("V")}"
+                redirectFinalUrl = "${ProjectLinks.GITHUB_REPO_URL}/releases/tag/v${extractCleanSemverString(cdnVer)}"
             )
+            if (gradleResult is UpdateCheckResult.HasUpdate) return@withContext gradleResult
+            if (gradleResult is UpdateCheckResult.UpToDate && confirmedUpToDate == null) {
+                confirmedUpToDate = gradleResult
+            }
         }
     }
 
-    // 3. 兜底尝试 GitHub Web /releases/latest 重定向探测；若国内网络阻断 GitHub 直连但设备在线，平滑提示当前已是最新版
-    var redirectedUrl: String? = null
-    var anyCode = -1
-    runCatching {
-        val webReq = Request.Builder()
-            .url(ProjectLinks.GITHUB_LATEST_RELEASE_WEB_URL)
-            .header("Accept", "text/html,application/xhtml+xml")
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) BreezeMusic/${BuildConfig.VERSION_NAME}")
-            .head()
+    // 4. 兜底查询 jsDelivr Package 元数据接口（置于末尾，防止其 CDN 缓存延迟屏蔽刚发布的 GitHub Release）
+    val jsdResult = runCatching {
+        val req = Request.Builder()
+            .url("${ProjectLinks.JSDELIVR_PACKAGE_API}?_t=$cacheBuster")
+            .header("Accept", "application/json")
+            .header("Cache-Control", "no-cache")
+            .header("User-Agent", "BreezeMusic-Android/${BuildConfig.VERSION_NAME}")
+            .get()
             .build()
-        fastClient.newCall(webReq).execute().use { webResp ->
-            anyCode = webResp.code
-            redirectedUrl = webResp.request.url.toString()
+        fastClient.newCall(req).execute().use { resp ->
+            val body = if (resp.isSuccessful) resp.body?.string() else null
+            if (!body.isNullOrBlank()) {
+                val jsdTag = extractLatestVersionFromJsDelivrPackageJson(body)
+                if (!jsdTag.isNullOrBlank()) {
+                    resolveUpdateCheckFromApiOrRedirect(
+                        localVersionName = cleanLocal,
+                        apiHttpCode = 200,
+                        apiBodyJson = null,
+                        redirectFinalUrl = "${ProjectLinks.GITHUB_REPO_URL}/releases/tag/$jsdTag"
+                    )
+                } else null
+            } else null
         }
+    }.getOrNull()
+    if (jsdResult is UpdateCheckResult.HasUpdate) return@withContext jsdResult
+    if (jsdResult is UpdateCheckResult.UpToDate && confirmedUpToDate == null) {
+        confirmedUpToDate = jsdResult
     }
 
-    resolveUpdateCheckFromApiOrRedirect(
-        localVersionName = cleanLocal,
-        apiHttpCode = if (anyCode > 0) anyCode else 404,
-        apiBodyJson = null,
-        redirectFinalUrl = redirectedUrl
+    confirmedUpToDate ?: UpdateCheckResult.UpToDate(
+        versionText = "v$cleanLocal",
+        message = "您正在使用最新正式版，暂无可用更新"
     )
 }
 
@@ -701,12 +961,16 @@ fun SettingsScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    val adaptiveInfo = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+    val isMasterDetail = adaptiveInfo.useMasterDetailSettings
+
     var activeCategoryName by rememberSaveable { mutableStateOf<String?>(null) }
     var showChangelogSubPage by rememberSaveable { mutableStateOf(false) }
     var showDownloadHistorySubPage by rememberSaveable { mutableStateOf(false) }
     val activeCategory = remember(activeCategoryName) {
         activeCategoryName?.let { name -> runCatching { SettingsCategory.valueOf(name) }.getOrNull() }
     }
+    val effectiveMasterDetailCategory = activeCategory ?: SettingsCategory.APPEARANCE
 
     // 若权限管理中关闭了「音乐下载与歌词保存」，自动退出并隐藏「下载」设置项
     LaunchedEffect(permissionState.musicDownloadEnabled, activeCategory) {
@@ -716,8 +980,14 @@ fun SettingsScreen(
         }
     }
 
-    // 处于更新日志、最近下载记录子页面或二级菜单时，系统返回手势逐级退回上一层
-    BackHandler(enabled = activeCategory != null || showChangelogSubPage || showDownloadHistorySubPage) {
+    // 处于更新日志、最近下载记录子页面或二级菜单时，系统返回手势逐级退回上一层（平板左右分栏模式下仅对三级子页拦截返回）
+    BackHandler(
+        enabled = if (isMasterDetail) {
+            showChangelogSubPage || showDownloadHistorySubPage
+        } else {
+            activeCategory != null || showChangelogSubPage || showDownloadHistorySubPage
+        }
+    ) {
         when {
             showChangelogSubPage -> showChangelogSubPage = false
             showDownloadHistorySubPage -> showDownloadHistorySubPage = false
@@ -747,6 +1017,7 @@ fun SettingsScreen(
                             text = when {
                                 showChangelogSubPage -> "更新日志"
                                 showDownloadHistorySubPage -> "最近下载记录"
+                                isMasterDetail -> "设置 · ${effectiveMasterDetailCategory.title}"
                                 activeCategory != null -> activeCategory.title
                                 else -> "设置"
                             },
@@ -764,7 +1035,7 @@ fun SettingsScreen(
                                 when {
                                     showChangelogSubPage -> showChangelogSubPage = false
                                     showDownloadHistorySubPage -> showDownloadHistorySubPage = false
-                                    activeCategory != null -> activeCategoryName = null
+                                    !isMasterDetail && activeCategory != null -> activeCategoryName = null
                                     else -> onBackClick()
                                 }
                             }
@@ -782,200 +1053,144 @@ fun SettingsScreen(
             },
             containerColor = Color.Transparent
         ) { innerPadding ->
-            val subPageTransitionState = Triple(activeCategory, showChangelogSubPage, showDownloadHistorySubPage)
-            var lastSubPageDepth by remember { mutableIntStateOf(0) }
-            val subPageBlurPulse = remember { androidx.compose.animation.core.Animatable(0f) }
-            LaunchedEffect(subPageTransitionState) {
-                val curDepth = when {
-                    subPageTransitionState.second || subPageTransitionState.third -> 2
-                    subPageTransitionState.first != null -> 1
-                    else -> 0
-                }
-                if (curDepth != lastSubPageDepth) {
-                    lastSubPageDepth = curDepth
-                    subPageBlurPulse.snapTo(1f)
-                    subPageBlurPulse.animateTo(0f, ConceptMotion.spatialPageSpring())
+            val selectCategoryAction: (SettingsCategory) -> Unit = { cat ->
+                showChangelogSubPage = false
+                showDownloadHistorySubPage = false
+                activeCategoryName = cat.name
+            }
+
+            val renderMasterMenuList: @Composable (Modifier, SettingsCategory?) -> Unit = { listMod, highlightedCat ->
+                LazyColumn(
+                    modifier = listMod,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 140.dp, top = 8.dp)
+                ) {
+                    item {
+                        SettingsGroupHeader(title = "视听与显示")
+                    }
+                    item {
+                        SettingsMenuEntryCard(
+                            category = SettingsCategory.APPEARANCE,
+                            icon = Icons.Rounded.Palette,
+                            accentColor = ConceptVioletAccent,
+                            statusText = "${themeMode.label} · ${coverStyle.label}",
+                            selected = highlightedCat == SettingsCategory.APPEARANCE,
+                            onClick = { selectCategoryAction(SettingsCategory.APPEARANCE) }
+                        )
+                    }
+                    item {
+                        SettingsMenuEntryCard(
+                            category = SettingsCategory.LYRICS,
+                            icon = Icons.Rounded.Lyrics,
+                            accentColor = ConceptCyanAccent,
+                            statusText = "${lyricFontSize.toInt()}sp · ${lyricAlignment.label}",
+                            selected = highlightedCat == SettingsCategory.LYRICS,
+                            onClick = { selectCategoryAction(SettingsCategory.LYRICS) }
+                        )
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        SettingsGroupHeader(title = "播放与控制")
+                    }
+                    item {
+                        SettingsMenuEntryCard(
+                            category = SettingsCategory.AUDIO_QUALITY,
+                            icon = Icons.Rounded.HighQuality,
+                            accentColor = ConceptMintAccent,
+                            statusText = if (audioEffectState.isEnabled) "${preferredQuality.shortBadge} · 蝰蛇开" else preferredQuality.label,
+                            selected = highlightedCat == SettingsCategory.AUDIO_QUALITY,
+                            onClick = { selectCategoryAction(SettingsCategory.AUDIO_QUALITY) }
+                        )
+                    }
+                    item {
+                        SettingsMenuEntryCard(
+                            category = SettingsCategory.PLAYBACK_CONTROL,
+                            icon = Icons.Rounded.Headphones,
+                            accentColor = ConceptCoralAccent,
+                            statusText = if (allowPlayWithOtherApps) "混音同播" else audioFocusMode.label,
+                            selected = highlightedCat == SettingsCategory.PLAYBACK_CONTROL,
+                            onClick = { selectCategoryAction(SettingsCategory.PLAYBACK_CONTROL) }
+                        )
+                    }
+                    item {
+                        SettingsMenuEntryCard(
+                            category = SettingsCategory.SPEED_SLEEP,
+                            icon = Icons.Rounded.Speed,
+                            accentColor = ConceptPrimary,
+                            statusText = if (isSleepActive) sleepStatusText else "${String.format(Locale.getDefault(), "%.2f", playbackSpeed)}x",
+                            selected = highlightedCat == SettingsCategory.SPEED_SLEEP,
+                            onClick = { selectCategoryAction(SettingsCategory.SPEED_SLEEP) }
+                        )
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        SettingsGroupHeader(title = "系统与信息")
+                    }
+                    item {
+                        SettingsMenuEntryCard(
+                            category = SettingsCategory.STORAGE,
+                            icon = Icons.Rounded.Storage,
+                            accentColor = ConceptAmberAccent,
+                            statusText = AudioCacheManager.formatSize(cacheSizeBytes),
+                            selected = highlightedCat == SettingsCategory.STORAGE,
+                            onClick = { selectCategoryAction(SettingsCategory.STORAGE) }
+                        )
+                    }
+                    if (permissionState.musicDownloadEnabled) {
+                        item {
+                            SettingsMenuEntryCard(
+                                category = SettingsCategory.DOWNLOAD,
+                                icon = Icons.Rounded.Download,
+                                accentColor = ConceptCyanAccent,
+                                statusText = downloadConfig.defaultDownloadQuality.shortBadge,
+                                selected = highlightedCat == SettingsCategory.DOWNLOAD,
+                                onClick = { selectCategoryAction(SettingsCategory.DOWNLOAD) }
+                            )
+                        }
+                    }
+                    item {
+                        val permEnabledCnt = permissionState.enabledCount
+                        val permTotalCnt = permissionState.totalCount
+                        SettingsMenuEntryCard(
+                            category = SettingsCategory.PERMISSIONS,
+                            icon = Icons.Rounded.VerifiedUser,
+                            accentColor = ConceptMintAccent,
+                            statusText = "已开 $permEnabledCnt/$permTotalCnt",
+                            selected = highlightedCat == SettingsCategory.PERMISSIONS,
+                            onClick = { selectCategoryAction(SettingsCategory.PERMISSIONS) }
+                        )
+                    }
+                    item {
+                        SettingsMenuEntryCard(
+                            category = SettingsCategory.FEEDBACK,
+                            icon = Icons.Rounded.BugReport,
+                            accentColor = ConceptRoseAccent,
+                            statusText = "GitHub Issue",
+                            selected = highlightedCat == SettingsCategory.FEEDBACK,
+                            onClick = { selectCategoryAction(SettingsCategory.FEEDBACK) }
+                        )
+                    }
+                    item {
+                        SettingsMenuEntryCard(
+                            category = SettingsCategory.ABOUT,
+                            icon = Icons.Rounded.Info,
+                            accentColor = ConceptPrimary,
+                            statusText = appVersionInfo.displayVersion,
+                            selected = highlightedCat == SettingsCategory.ABOUT,
+                            onClick = { selectCategoryAction(SettingsCategory.ABOUT) }
+                        )
+                    }
                 }
             }
 
-            AnimatedContent(
-                targetState = subPageTransitionState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-                    .graphicsLayer {
-                        val b = subPageBlurPulse.value.coerceIn(0f, 1f) * 12f * density
-                        applyDirectionalMotionBlur(blurX = b, blurY = b * 0.08f)
-                    },
-                transitionSpec = {
-                    fun depth(state: Triple<SettingsCategory?, Boolean, Boolean>): Int = when {
-                        state.second || state.third -> 2
-                        state.first != null -> 1
-                        else -> 0
-                    }
-                    if (depth(targetState) > depth(initialState)) {
-                        (slideInHorizontally(
-                            initialOffsetX = { fullWidth -> (fullWidth * 0.32f).toInt() },
-                            animationSpec = ConceptMotion.spatialPageSpring()
-                        ) + androidx.compose.animation.scaleIn(
-                            initialScale = 0.968f,
-                            animationSpec = ConceptMotion.spatialPageSpring()
-                        ) + fadeIn(tween(durationMillis = 240, easing = ConceptMotion.EmphasizedDecelerate))) togetherWith
-                            (slideOutHorizontally(
-                                targetOffsetX = { fullWidth -> -(fullWidth * 0.11f).toInt() },
-                                animationSpec = ConceptMotion.spatialPageSpring()
-                            ) + androidx.compose.animation.scaleOut(
-                                targetScale = 0.975f,
-                                animationSpec = ConceptMotion.spatialPageSpring()
-                            ) + fadeOut(tween(durationMillis = 220, easing = ConceptMotion.EmphasizedAccelerate)))
-                    } else {
-                        (slideInHorizontally(
-                            initialOffsetX = { fullWidth -> -(fullWidth * 0.11f).toInt() },
-                            animationSpec = ConceptMotion.spatialPageSpring()
-                        ) + androidx.compose.animation.scaleIn(
-                            initialScale = 0.975f,
-                            animationSpec = ConceptMotion.spatialPageSpring()
-                        ) + fadeIn(tween(durationMillis = 240, easing = ConceptMotion.EmphasizedDecelerate))) togetherWith
-                            (slideOutHorizontally(
-                                targetOffsetX = { fullWidth -> (fullWidth * 0.32f).toInt() },
-                                animationSpec = ConceptMotion.spatialPageSpring()
-                            ) + androidx.compose.animation.scaleOut(
-                                targetScale = 0.968f,
-                                animationSpec = ConceptMotion.spatialPageSpring()
-                            ) + fadeOut(tween(durationMillis = 220, easing = ConceptMotion.EmphasizedAccelerate)))
-                    }
-                },
-                label = "SettingsSubPageTransition"
-            ) { (category, isChangelogPage, isDownloadHistoryPage) ->
-                if (category == null) {
-                    // 一级菜单主页：分类卡片导航列表
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        contentPadding = PaddingValues(bottom = 140.dp, top = 8.dp)
-                    ) {
-                        item {
-                            SettingsGroupHeader(title = "视听与显示")
-                        }
-                        item {
-                            SettingsMenuEntryCard(
-                                category = SettingsCategory.APPEARANCE,
-                                icon = Icons.Rounded.Palette,
-                                accentColor = ConceptVioletAccent,
-                                statusText = "${themeMode.label} · ${coverStyle.label}",
-                                onClick = { activeCategoryName = SettingsCategory.APPEARANCE.name }
-                            )
-                        }
-                        item {
-                            SettingsMenuEntryCard(
-                                category = SettingsCategory.LYRICS,
-                                icon = Icons.Rounded.Lyrics,
-                                accentColor = ConceptCyanAccent,
-                                statusText = "${lyricFontSize.toInt()}sp · ${lyricAlignment.label}",
-                                onClick = { activeCategoryName = SettingsCategory.LYRICS.name }
-                            )
-                        }
-
-                        item {
-                            Spacer(modifier = Modifier.height(2.dp))
-                            SettingsGroupHeader(title = "播放与控制")
-                        }
-                        item {
-                            SettingsMenuEntryCard(
-                                category = SettingsCategory.AUDIO_QUALITY,
-                                icon = Icons.Rounded.HighQuality,
-                                accentColor = ConceptMintAccent,
-                                statusText = if (audioEffectState.isEnabled) "${preferredQuality.shortBadge} · 蝰蛇开" else preferredQuality.label,
-                                onClick = { activeCategoryName = SettingsCategory.AUDIO_QUALITY.name }
-                            )
-                        }
-                        item {
-                            SettingsMenuEntryCard(
-                                category = SettingsCategory.PLAYBACK_CONTROL,
-                                icon = Icons.Rounded.Headphones,
-                                accentColor = ConceptCoralAccent,
-                                statusText = if (allowPlayWithOtherApps) "混音同播" else audioFocusMode.label,
-                                onClick = { activeCategoryName = SettingsCategory.PLAYBACK_CONTROL.name }
-                            )
-                        }
-                        item {
-                            SettingsMenuEntryCard(
-                                category = SettingsCategory.SPEED_SLEEP,
-                                icon = Icons.Rounded.Speed,
-                                accentColor = ConceptPrimary,
-                                statusText = if (isSleepActive) sleepStatusText else "${String.format(Locale.getDefault(), "%.2f", playbackSpeed)}x",
-                                onClick = { activeCategoryName = SettingsCategory.SPEED_SLEEP.name }
-                            )
-                        }
-
-                        item {
-                            Spacer(modifier = Modifier.height(2.dp))
-                            SettingsGroupHeader(title = "系统与信息")
-                        }
-                        item {
-                            SettingsMenuEntryCard(
-                                category = SettingsCategory.STORAGE,
-                                icon = Icons.Rounded.Storage,
-                                accentColor = ConceptAmberAccent,
-                                statusText = AudioCacheManager.formatSize(cacheSizeBytes),
-                                onClick = { activeCategoryName = SettingsCategory.STORAGE.name }
-                            )
-                        }
-                        if (permissionState.musicDownloadEnabled) {
-                            item {
-                                SettingsMenuEntryCard(
-                                    category = SettingsCategory.DOWNLOAD,
-                                    icon = Icons.Rounded.Download,
-                                    accentColor = ConceptCyanAccent,
-                                    statusText = downloadConfig.defaultDownloadQuality.shortBadge,
-                                    onClick = {
-                                        showDownloadHistorySubPage = false
-                                        activeCategoryName = SettingsCategory.DOWNLOAD.name
-                                    }
-                                )
-                            }
-                        }
-                        item {
-                            val permEnabledCnt = permissionState.enabledCount
-                            val permTotalCnt = permissionState.totalCount
-                            SettingsMenuEntryCard(
-                                category = SettingsCategory.PERMISSIONS,
-                                icon = Icons.Rounded.VerifiedUser,
-                                accentColor = ConceptMintAccent,
-                                statusText = "已开 $permEnabledCnt/$permTotalCnt",
-                                onClick = { activeCategoryName = SettingsCategory.PERMISSIONS.name }
-                            )
-                        }
-                        item {
-                            SettingsMenuEntryCard(
-                                category = SettingsCategory.FEEDBACK,
-                                icon = Icons.Rounded.BugReport,
-                                accentColor = ConceptRoseAccent,
-                                statusText = "GitHub Issue",
-                                onClick = { activeCategoryName = SettingsCategory.FEEDBACK.name }
-                            )
-                        }
-                        item {
-                            SettingsMenuEntryCard(
-                                category = SettingsCategory.ABOUT,
-                                icon = Icons.Rounded.Info,
-                                accentColor = ConceptPrimary,
-                                statusText = appVersionInfo.displayVersion,
-                                onClick = { activeCategoryName = SettingsCategory.ABOUT.name }
-                            )
-                        }
-                    }
-                } else {
-                    // 二级菜单详情页：仅展示当前所选分类的具体设置项
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                        contentPadding = PaddingValues(bottom = 140.dp, top = 8.dp)
-                    ) {
+            val renderDetailCategoryPane: @Composable (Modifier, SettingsCategory, Boolean, Boolean) -> Unit = { detailMod, category, isChangelogPage, isDownloadHistoryPage ->
+                LazyColumn(
+                    modifier = detailMod,
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    contentPadding = PaddingValues(bottom = 140.dp, top = 8.dp)
+                ) {
                         when (category) {
                             SettingsCategory.APPEARANCE -> {
                                 item {
@@ -1858,6 +2073,129 @@ fun SettingsScreen(
                                 }
                             }
                         }
+                }
+            }
+
+            if (isMasterDetail) {
+                // 平板 / 大屏左右并排分栏（Master-Detail）：左栏常驻一级菜单，右栏实时展示当前所选分类详情
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                        .padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(22.dp)
+                ) {
+                    renderMasterMenuList(
+                        Modifier
+                            .width(if (adaptiveInfo.isExpandedWindow) 336.dp else 276.dp)
+                            .fillMaxHeight(),
+                        effectiveMasterDetailCategory
+                    )
+
+                    val detailTransitionState = Triple(effectiveMasterDetailCategory, showChangelogSubPage, showDownloadHistorySubPage)
+                    AnimatedContent(
+                        targetState = detailTransitionState,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        transitionSpec = {
+                            (fadeIn(tween(220, easing = ConceptMotion.EmphasizedDecelerate)) +
+                                androidx.compose.animation.scaleIn(initialScale = 0.975f, animationSpec = ConceptMotion.spatialPageSpring())) togetherWith
+                                (fadeOut(tween(180, easing = ConceptMotion.EmphasizedAccelerate)) +
+                                    androidx.compose.animation.scaleOut(targetScale = 0.975f, animationSpec = ConceptMotion.spatialPageSpring()))
+                        },
+                        label = "MasterDetailRightPaneTransition"
+                    ) { (cat, isChangelogPage, isDownloadHistoryPage) ->
+                        renderDetailCategoryPane(
+                            Modifier.fillMaxSize(),
+                            cat,
+                            isChangelogPage,
+                            isDownloadHistoryPage
+                        )
+                    }
+                }
+            } else {
+                val subPageTransitionState = Triple(activeCategory, showChangelogSubPage, showDownloadHistorySubPage)
+                var lastSubPageDepth by remember { mutableIntStateOf(0) }
+                val subPageBlurPulse = remember { androidx.compose.animation.core.Animatable(0f) }
+                LaunchedEffect(subPageTransitionState) {
+                    val curDepth = when {
+                        subPageTransitionState.second || subPageTransitionState.third -> 2
+                        subPageTransitionState.first != null -> 1
+                        else -> 0
+                    }
+                    if (curDepth != lastSubPageDepth) {
+                        lastSubPageDepth = curDepth
+                        subPageBlurPulse.snapTo(1f)
+                        subPageBlurPulse.animateTo(0f, ConceptMotion.spatialPageSpring())
+                    }
+                }
+
+                AnimatedContent(
+                    targetState = subPageTransitionState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                        .graphicsLayer {
+                            val b = subPageBlurPulse.value.coerceIn(0f, 1f) * 12f * density
+                            applyDirectionalMotionBlur(blurX = b, blurY = b * 0.08f)
+                        },
+                    transitionSpec = {
+                        fun depth(state: Triple<SettingsCategory?, Boolean, Boolean>): Int = when {
+                            state.second || state.third -> 2
+                            state.first != null -> 1
+                            else -> 0
+                        }
+                        if (depth(targetState) > depth(initialState)) {
+                            (slideInHorizontally(
+                                initialOffsetX = { fullWidth -> (fullWidth * 0.32f).toInt() },
+                                animationSpec = ConceptMotion.spatialPageSpring()
+                            ) + androidx.compose.animation.scaleIn(
+                                initialScale = 0.968f,
+                                animationSpec = ConceptMotion.spatialPageSpring()
+                            ) + fadeIn(tween(durationMillis = 240, easing = ConceptMotion.EmphasizedDecelerate))) togetherWith
+                                (slideOutHorizontally(
+                                    targetOffsetX = { fullWidth -> -(fullWidth * 0.11f).toInt() },
+                                    animationSpec = ConceptMotion.spatialPageSpring()
+                                ) + androidx.compose.animation.scaleOut(
+                                    targetScale = 0.975f,
+                                    animationSpec = ConceptMotion.spatialPageSpring()
+                                ) + fadeOut(tween(durationMillis = 220, easing = ConceptMotion.EmphasizedAccelerate)))
+                        } else {
+                            (slideInHorizontally(
+                                initialOffsetX = { fullWidth -> -(fullWidth * 0.11f).toInt() },
+                                animationSpec = ConceptMotion.spatialPageSpring()
+                            ) + androidx.compose.animation.scaleIn(
+                                initialScale = 0.975f,
+                                animationSpec = ConceptMotion.spatialPageSpring()
+                            ) + fadeIn(tween(durationMillis = 240, easing = ConceptMotion.EmphasizedDecelerate))) togetherWith
+                                (slideOutHorizontally(
+                                    targetOffsetX = { fullWidth -> (fullWidth * 0.32f).toInt() },
+                                    animationSpec = ConceptMotion.spatialPageSpring()
+                                ) + androidx.compose.animation.scaleOut(
+                                    targetScale = 0.968f,
+                                    animationSpec = ConceptMotion.spatialPageSpring()
+                                ) + fadeOut(tween(durationMillis = 220, easing = ConceptMotion.EmphasizedAccelerate)))
+                        }
+                    },
+                    label = "SettingsSubPageTransition"
+                ) { (category, isChangelogPage, isDownloadHistoryPage) ->
+                    if (category == null) {
+                        renderMasterMenuList(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            null
+                        )
+                    } else {
+                        renderDetailCategoryPane(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            category,
+                            isChangelogPage,
+                            isDownloadHistoryPage
+                        )
                     }
                 }
             }
@@ -4849,11 +5187,17 @@ private fun SettingsMenuEntryCard(
     icon: ImageVector,
     accentColor: Color,
     statusText: String,
+    selected: Boolean = false,
     onClick: () -> Unit
 ) {
+    val containerBg = if (selected) {
+        accentColor.copy(alpha = 0.16f).compositeOver(conceptFloatingCardColor())
+    } else {
+        conceptFloatingCardColor()
+    }
     Surface(
         shape = RoundedCornerShape(22.dp),
-        color = conceptFloatingCardColor(),
+        color = containerBg,
         contentColor = MaterialTheme.colorScheme.onSurface,
         shadowElevation = 0.dp,
         modifier = Modifier

@@ -1188,8 +1188,10 @@ fun ConceptMusicTheme(
         }
     }
 
+    val adaptiveInfo = currentConceptAdaptiveInfo()
     CompositionLocalProvider(
         LocalIsDarkTheme provides isDark,
+        LocalConceptAdaptiveInfo provides adaptiveInfo,
         androidx.compose.material3.LocalContentColor provides colorScheme.onSurface
     ) {
         MaterialTheme(
