@@ -1302,6 +1302,34 @@ object AudioEffectManager {
         return true
     }
 
+    /**
+     * 删除/重置指定自定义参量均衡记忆槽位 (0..2 对应槽位 A/B/C)
+     */
+    fun deleteCustomPeqSlot(slotIndex: Int): Boolean {
+        val idx = slotIndex.coerceIn(0, 2)
+        val cur = _state.value
+        val existed = cur.customPeqSlots.any { it.slotIndex == idx }
+        val updated = cur.customPeqSlots.filterNot { it.slotIndex == idx }
+        _state.value = cur.copy(customPeqSlots = updated)
+        prefs?.edit()?.remove("peq_custom_slot_$idx")?.apply()
+        saveToPrefs()
+        return existed
+    }
+
+    /**
+     * 一键清空全部自定义参量均衡记忆槽位 (A/B/C)
+     */
+    fun clearAllCustomPeqSlots() {
+        val cur = _state.value
+        _state.value = cur.copy(customPeqSlots = emptyList())
+        prefs?.edit()
+            ?.remove("peq_custom_slot_0")
+            ?.remove("peq_custom_slot_1")
+            ?.remove("peq_custom_slot_2")
+            ?.apply()
+        saveToPrefs()
+    }
+
     fun setBassBoostStrength(strength: Int) {
         val s = strength.coerceIn(0, 1000)
         val cur = _state.value
@@ -1770,18 +1798,23 @@ object AudioEffectManager {
             .putString("ten_band_hz_v3", hzSerialized)
             .putString("ten_band_types_v3", typesSerialized)
 
-        s.customPeqSlots.forEach { slot ->
-            val serializedSlot = listOf(
-                slot.name.replace("|", " "),
-                slot.tenBandLevels.joinToString(","),
-                slot.tenBandQFactors.joinToString(",") { String.format(java.util.Locale.US, "%.2f", it) },
-                slot.tenBandCenterHz.joinToString(",") { String.format(java.util.Locale.US, "%.1f", it) },
-                slot.tenBandFilterTypes.joinToString(",") { it.name },
-                slot.preampGainDb.toString(),
-                slot.highPassHz.toString(),
-                slot.lowPassHz.toString()
-            ).joinToString("|")
-            editor.putString("peq_custom_slot_${slot.slotIndex}", serializedSlot)
+        for (slotIdx in 0..2) {
+            val slot = s.customPeqSlots.firstOrNull { it.slotIndex == slotIdx }
+            if (slot != null) {
+                val serializedSlot = listOf(
+                    slot.name.replace("|", " "),
+                    slot.tenBandLevels.joinToString(","),
+                    slot.tenBandQFactors.joinToString(",") { String.format(java.util.Locale.US, "%.2f", it) },
+                    slot.tenBandCenterHz.joinToString(",") { String.format(java.util.Locale.US, "%.1f", it) },
+                    slot.tenBandFilterTypes.joinToString(",") { it.name },
+                    slot.preampGainDb.toString(),
+                    slot.highPassHz.toString(),
+                    slot.lowPassHz.toString()
+                ).joinToString("|")
+                editor.putString("peq_custom_slot_$slotIdx", serializedSlot)
+            } else {
+                editor.remove("peq_custom_slot_$slotIdx")
+            }
         }
         editor.apply()
     }

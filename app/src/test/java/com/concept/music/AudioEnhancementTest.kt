@@ -626,10 +626,15 @@ class AudioEnhancementTest {
             assertTrue("4kHz 挂载 NOTCH 陷波后幅频响应应显著衰减 (< -3dB): $magAt4k", magAt4k < -3.0f)
 
             manager.saveCustomPeqSlot(0, "发烧人声槽A")
+            manager.saveCustomPeqSlot(1, "发烧低音槽B")
             manager.setPreset(EffectPreset.FLAT)
             assertTrue(manager.loadCustomPeqSlot(0))
             assertEquals(35, manager.state.value.highPassCutoffHz)
             assertEquals(com.concept.music.service.PeqFilterType.NOTCH, manager.state.value.tenBandFilterTypes[7])
+            assertTrue("应支持单槽删除/重置自定义记忆槽", manager.deleteCustomPeqSlot(0))
+            assertFalse("删除后的记忆槽不应再被载入", manager.loadCustomPeqSlot(0))
+            manager.clearAllCustomPeqSlots()
+            assertTrue("一键重置全部槽位后应为空", manager.state.value.customPeqSlots.isEmpty())
 
             // 4. 验证声场调音新增详细控制项
             manager.setBassPunchStrength(650)

@@ -1380,7 +1380,7 @@ private fun ProfessionalEqualizerPage(
             }
         }
 
-        // 2. 发烧友声学目标参考曲线 & 曲风预设 & 自定义存档槽位 (A / B / C)
+        // 2. 发烧友声学目标参考曲线 & 曲风预设 & 自定义存档槽位 (A / B / C 含载入/存入/删除重置)
         item {
             Surface(
                 shape = RoundedCornerShape(22.dp),
@@ -1403,13 +1403,34 @@ private fun ProfessionalEqualizerPage(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f)
                         )
-                        Text(
-                            text = "哈曼 / 弥散场 / 记忆槽",
-                            color = subText,
-                            fontSize = 11.sp,
-                            softWrap = false,
-                            maxLines = 1
-                        )
+                        if (state.customPeqSlots.isNotEmpty()) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = ConceptCoralAccent.copy(alpha = 0.14f),
+                                modifier = Modifier.softCardClickable(shape = RoundedCornerShape(8.dp)) {
+                                    AudioEffectManager.clearAllCustomPeqSlots()
+                                    Toast.makeText(context, "已清空并重置全部自定义记忆槽", Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Text(
+                                    text = "重置全部槽位",
+                                    color = ConceptCoralAccent,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    softWrap = false,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "哈曼 / 弥散场 / 记忆槽",
+                                color = subText,
+                                fontSize = 11.sp,
+                                softWrap = false,
+                                maxLines = 1
+                            )
+                        }
                     }
 
                     // 发烧目标参考曲线横滑栏
@@ -1481,7 +1502,7 @@ private fun ProfessionalEqualizerPage(
                         }
                     }
 
-                    // 3 个用户自定义记忆槽位 (槽位 A / B / C)
+                    // 3 个用户自定义记忆槽位 (槽位 A / B / C：支持点击载入、覆盖存入、独立删除重置)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1523,26 +1544,47 @@ private fun ProfessionalEqualizerPage(
                                             maxLines = 1
                                         )
                                         Text(
-                                            text = if (savedSlot != null) "点击载入" else "点击存入",
+                                            text = if (savedSlot != null) "已存 · 载入" else "空 · 存入",
                                             fontSize = 9.5.sp,
-                                            color = subText,
+                                            color = if (savedSlot != null) ConceptCyanAccent else subText,
                                             softWrap = false,
                                             maxLines = 1
                                         )
                                     }
-                                    IconButton(
-                                        onClick = {
-                                            AudioEffectManager.saveCustomPeqSlot(slotIdx)
-                                            Toast.makeText(context, "已覆盖保存当前 PEQ 至记忆槽 $slotChar", Toast.LENGTH_SHORT).show()
-                                        },
-                                        modifier = Modifier.size(24.dp)
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Save,
-                                            contentDescription = "保存到槽位 $slotChar",
-                                            tint = ConceptPrimary,
-                                            modifier = Modifier.size(14.dp)
-                                        )
+                                        IconButton(
+                                            onClick = {
+                                                AudioEffectManager.saveCustomPeqSlot(slotIdx)
+                                                Toast.makeText(context, if (savedSlot != null) "已更新记忆槽 $slotChar" else "已存入记忆槽 $slotChar", Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.size(22.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Save,
+                                                contentDescription = "保存到槽位 $slotChar",
+                                                tint = ConceptPrimary,
+                                                modifier = Modifier.size(13.5.dp)
+                                            )
+                                        }
+                                        if (savedSlot != null) {
+                                            IconButton(
+                                                onClick = {
+                                                    AudioEffectManager.deleteCustomPeqSlot(slotIdx)
+                                                    Toast.makeText(context, "已删除/重置记忆槽 $slotChar", Toast.LENGTH_SHORT).show()
+                                                },
+                                                modifier = Modifier.size(22.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.DeleteOutline,
+                                                    contentDescription = "删除重置槽位 $slotChar",
+                                                    tint = ConceptCoralAccent,
+                                                    modifier = Modifier.size(13.5.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
