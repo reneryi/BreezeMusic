@@ -1803,7 +1803,7 @@ class UiAlignmentRegressionTest {
         assertTrue("我的页 VIP 权益中心卡片应使用精简无重复的小字文案", vipCardCode.contains("每日签到 · 畅享无损") && vipCardCode.contains("免费领取"))
 
         val gradleCode = java.io.File(projectRoot, "app/build.gradle.kts").readText(Charsets.UTF_8)
-        assertEquals("1.3.0", com.concept.music.ui.settings.extractVersionFromGradleText(gradleCode))
+        assertEquals("1.3.1", com.concept.music.ui.settings.extractVersionFromGradleText(gradleCode))
     }
 
     @Test

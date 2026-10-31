@@ -86,7 +86,7 @@
 ```
 BreezeMusic/
 ├── app/
-│   ├── build.gradle.kts                         # 模块级 Gradle 构建配置 (versionName = "1.3.0", phone/tablet 双变体独立签名)
+│   ├── build.gradle.kts                         # 模块级 Gradle 构建配置 (versionName = "1.3.1", phone/tablet 双变体独立签名)
 │   ├── proguard-rules.pro                       # Release 混淆与 R8 压缩保留规则
 │   └── src/
 │       ├── main/

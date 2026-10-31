@@ -1224,7 +1224,7 @@ fun RankDetailScreen(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RankGridPickerSheet(
+internal fun RankGridPickerSheet(
     ranks: List<RankItem>,
     selectedRankId: Int?,
     onSelectRank: (Int) -> Unit,

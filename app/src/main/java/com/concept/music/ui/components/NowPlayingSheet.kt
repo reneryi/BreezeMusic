@@ -1478,7 +1478,6 @@ private fun NowPlayingSelectableBackground(
                 PlayerBackgroundStyle.FLUID_AURORA -> {
                     // 纯净三色流体极光（不显示专辑封面，基于封面提取的三种色彩 + 深邃色阶平滑交融流动）
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        drawRect(color = Color(0xFF070B14).copy(alpha = 0.88f))
                         val w = size.width
                         val h = size.height
                         val maxDim = maxOf(w, h).coerceAtLeast(1f)
@@ -1520,10 +1519,10 @@ private fun NowPlayingSelectableBackground(
                                     Color.Transparent
                                 ),
                                 center = orb1,
-                                radius = w * 0.75f * pulse
+                                radius = maxDim * 0.62f * pulse
                             ),
                             center = orb1,
-                            radius = w * 0.75f * pulse
+                            radius = maxDim * 0.62f * pulse
                         )
 
                         // 第二流体副色光团 (Secondary Fluid Bloom)
