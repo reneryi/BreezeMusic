@@ -518,6 +518,12 @@ data class ViperOnlineEffectMeta(
     val tuningSummary: String = ""
 )
 
+private val TOP_DEFAULT_TEN_BAND_HZ: List<Float> = listOf(
+    31.25f, 62.5f, 125.0f, 250.0f, 500.0f, 1000.0f, 2000.0f, 4000.0f, 8000.0f, 16000.0f
+)
+private val TOP_DEFAULT_TEN_BAND_Q: List<Float> = List(10) { 1.20f }
+private val TOP_DEFAULT_TEN_BAND_TYPES: List<PeqFilterType> = List(10) { PeqFilterType.PEAK }
+
 data class AudioEffectState(
     val isEnabled: Boolean = false,
     val currentPreset: EffectPreset = EffectPreset.OFF,
@@ -530,13 +536,13 @@ data class AudioEffectState(
     val vocalClarityStrength: Int = 0,       // 0 ~ 1000 (人声通透与泛音激励)
     val deEsserStrength: Int = 200,          // 0 ~ 1000 (6.2kHz 人声齿音动态柔化抑制)
     val trebleAirStrength: Int = 0,          // 0 ~ 1000 (12kHz+ 极高频空气泛音激励)
-    val analogWarmthStrength: Int = 0,       // 0 ~ 1000 (黑胶/胆机偶次谐波温暖度)
-    val transientAttackStrength: Int = 0,    // 0 ~ 1000 (瞬态微动态与鼓点包络增强)
+    val analogWarmthStrength: Int = 0,       // 0 ~ 1000 (黑胶/胆机中低频温润度)
+    val transientAttackStrength: Int = 0,    // 0 ~ 1000 (瞬态微动态与鼓点清晰度增强)
     val surroundRotationSpeed: Int = 0,      // 0 ~ 100 (3D 旋转/动态声场速率)
     val loudnessGainMb: Int = 0,             // 0 ~ 1500 mB (0 ~ 15 dB 动态响度增益)
     val preampGainDb: Float = 0f,            // -12f ~ +12f dB (专业参量均衡器前置增益)
     val channelBalance: Float = 0f,          // -1f (左) ~ +1f (右) 声像平衡
-    val antiClippingEnabled: Boolean = true, // 双声道耦合真峰值包络限幅保护 + 自动防削波预衰减
+    val antiClippingEnabled: Boolean = true, // 双声道耦合真峰值包络限幅保护 + 智能余量管理
     val equalLoudnessCompensation: Boolean = false, // 夜间小音量等响度听感曲线补偿 (Fletcher-Munson)
     val volumeNormalizationEnabled: Boolean = true, // 跨曲目智能响度均衡
     val reverbMode: ReverbMode = ReverbMode.NONE,
@@ -545,9 +551,9 @@ data class AudioEffectState(
     val reverbDamping: Int = 350,            // 0 ~ 1000 (混响高频吸收阻尼)
     val bandLevels: List<Int> = listOf(0, 0, 0, 0, 0),
     val tenBandLevels: List<Int> = List(10) { 0 },
-    val tenBandQFactors: List<Float> = AudioEffectManager.DEFAULT_TEN_BAND_Q,
-    val tenBandCenterHz: List<Float> = AudioEffectManager.DEFAULT_TEN_BAND_HZ,
-    val tenBandFilterTypes: List<PeqFilterType> = AudioEffectManager.DEFAULT_TEN_BAND_TYPES,
+    val tenBandQFactors: List<Float> = TOP_DEFAULT_TEN_BAND_Q,
+    val tenBandCenterHz: List<Float> = TOP_DEFAULT_TEN_BAND_HZ,
+    val tenBandFilterTypes: List<PeqFilterType> = TOP_DEFAULT_TEN_BAND_TYPES,
     val highPassCutoffHz: Int = 0,           // 0 = Off, 20..120 Hz 高通亚音速切除滤波 (HPF)
     val lowPassCutoffHz: Int = 20000,        // 8000..20000 Hz 低通滚降滤波 (LPF, 20000 = Off)
     val selectedPeqBandIndex: Int = 0,       // 0..9 当前选中的 PEQ 精调频段
@@ -578,9 +584,9 @@ object AudioEffectManager {
 
     val TEN_BAND_FREQUENCIES = listOf("31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k")
     val TEN_BAND_CENTER_HZ = doubleArrayOf(31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0)
-    val DEFAULT_TEN_BAND_HZ = TEN_BAND_CENTER_HZ.map { it.toFloat() }
-    val DEFAULT_TEN_BAND_Q = List(10) { 1.20f }
-    val DEFAULT_TEN_BAND_TYPES = List(10) { PeqFilterType.PEAK }
+    val DEFAULT_TEN_BAND_HZ: List<Float> = TOP_DEFAULT_TEN_BAND_HZ
+    val DEFAULT_TEN_BAND_Q: List<Float> = TOP_DEFAULT_TEN_BAND_Q
+    val DEFAULT_TEN_BAND_TYPES: List<PeqFilterType> = TOP_DEFAULT_TEN_BAND_TYPES
     val FIVE_BAND_FREQUENCIES = listOf("60Hz", "230Hz", "910Hz", "3.6kHz", "14kHz")
 
     val BASS_CUTOFF_OPTIONS = listOf(40, 55, 60, 75, 95, 110)
@@ -1296,6 +1302,34 @@ object AudioEffectManager {
         return true
     }
 
+    /**
+     * 删除/重置指定自定义参量均衡记忆槽位 (0..2 对应槽位 A/B/C)
+     */
+    fun deleteCustomPeqSlot(slotIndex: Int): Boolean {
+        val idx = slotIndex.coerceIn(0, 2)
+        val cur = _state.value
+        val existed = cur.customPeqSlots.any { it.slotIndex == idx }
+        val updated = cur.customPeqSlots.filterNot { it.slotIndex == idx }
+        _state.value = cur.copy(customPeqSlots = updated)
+        prefs?.edit()?.remove("peq_custom_slot_$idx")?.apply()
+        saveToPrefs()
+        return existed
+    }
+
+    /**
+     * 一键清空全部自定义参量均衡记忆槽位 (A/B/C)
+     */
+    fun clearAllCustomPeqSlots() {
+        val cur = _state.value
+        _state.value = cur.copy(customPeqSlots = emptyList())
+        prefs?.edit()
+            ?.remove("peq_custom_slot_0")
+            ?.remove("peq_custom_slot_1")
+            ?.remove("peq_custom_slot_2")
+            ?.apply()
+        saveToPrefs()
+    }
+
     fun setBassBoostStrength(strength: Int) {
         val s = strength.coerceIn(0, 1000)
         val cur = _state.value
@@ -1764,18 +1798,23 @@ object AudioEffectManager {
             .putString("ten_band_hz_v3", hzSerialized)
             .putString("ten_band_types_v3", typesSerialized)
 
-        s.customPeqSlots.forEach { slot ->
-            val serializedSlot = listOf(
-                slot.name.replace("|", " "),
-                slot.tenBandLevels.joinToString(","),
-                slot.tenBandQFactors.joinToString(",") { String.format(java.util.Locale.US, "%.2f", it) },
-                slot.tenBandCenterHz.joinToString(",") { String.format(java.util.Locale.US, "%.1f", it) },
-                slot.tenBandFilterTypes.joinToString(",") { it.name },
-                slot.preampGainDb.toString(),
-                slot.highPassHz.toString(),
-                slot.lowPassHz.toString()
-            ).joinToString("|")
-            editor.putString("peq_custom_slot_${slot.slotIndex}", serializedSlot)
+        for (slotIdx in 0..2) {
+            val slot = s.customPeqSlots.firstOrNull { it.slotIndex == slotIdx }
+            if (slot != null) {
+                val serializedSlot = listOf(
+                    slot.name.replace("|", " "),
+                    slot.tenBandLevels.joinToString(","),
+                    slot.tenBandQFactors.joinToString(",") { String.format(java.util.Locale.US, "%.2f", it) },
+                    slot.tenBandCenterHz.joinToString(",") { String.format(java.util.Locale.US, "%.1f", it) },
+                    slot.tenBandFilterTypes.joinToString(",") { it.name },
+                    slot.preampGainDb.toString(),
+                    slot.highPassHz.toString(),
+                    slot.lowPassHz.toString()
+                ).joinToString("|")
+                editor.putString("peq_custom_slot_$slotIdx", serializedSlot)
+            } else {
+                editor.remove("peq_custom_slot_$slotIdx")
+            }
         }
         editor.apply()
     }

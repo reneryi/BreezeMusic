@@ -2003,8 +2003,32 @@ class UiAlignmentRegressionTest {
         assertTrue("每日推荐页面应包含定位当前播放歌曲按钮 playingDailySongIndex", homeCode.contains("playingDailySongIndex"))
 
         val npCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/NowPlayingSheet.kt").readText(Charsets.UTF_8)
-        assertTrue("播放页封面虚化应使用独立 SoftCoverDiffusionBlurTransformation 防止缓存污染", npCode.contains("SoftCoverDiffusionBlurTransformation"))
-        assertTrue("封面取色应支持三色提取 tertiaryAccent", npCode.contains("val tertiaryAccent: Color"))
+        assertFalse("播放页封面虚化应回退原版设计并移除过度模糊的 SoftCoverDiffusionBlurTransformation", npCode.contains("SoftCoverDiffusionBlurTransformation"))
+        assertTrue("播放页封面虚化应统一使用 .size(400, 400) 彻底修复切歌后 24x24 缓存未命中变糊 BUG", npCode.contains(".size(400, 400)"))
         assertTrue("律动光晕应读取实时音频遥测 AudioRhythmTelemetry", npCode.contains("AudioRhythmTelemetry"))
+        assertTrue("流体极光/律动光晕/暗夜星尘应使用 playMomentum 实现播放与暂停间的连续平滑过渡", npCode.contains("val playMomentum by animateFloatAsState"))
+        assertTrue("流体极光应支持三色流体极光渲染 accentTertiary", npCode.contains("accentTertiary.copy(alpha = 0.36f)"))
+
+        val audioDialogCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/AudioEffectDialog.kt").readText(Charsets.UTF_8)
+        assertTrue("参量均衡记忆槽应提供删除/重置功能 deleteCustomPeqSlot 與 clearAllCustomPeqSlots", audioDialogCode.contains("deleteCustomPeqSlot(") && audioDialogCode.contains("clearAllCustomPeqSlots()"))
+
+        val focusPodCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/FocusPodBottomSheet.kt").readText(Charsets.UTF_8)
+        assertFalse("心流舱竖屏抽屉不应硬编码 fillMaxHeight(0.86f) 造成底部大片空白", focusPodCode.contains("fillMaxHeight(0.86f)"))
+        assertTrue("心流舱竖屏抽屉应使用 wrapContentHeight 自适应包裹内容", focusPodCode.contains("wrapContentHeight().heightIn(max = 640.dp)"))
+
+        // 4. 验证项目结构模块化拆分文件均已就绪
+        val modularFiles = listOf(
+            "app/src/main/java/com/concept/music/service/ConceptMasteringAudioProcessor.kt",
+            "app/src/main/java/com/concept/music/ui/components/NowPlayingTurntableAndCover.kt",
+            "app/src/main/java/com/concept/music/ui/components/NowPlayingCanvasControls.kt",
+            "app/src/main/java/com/concept/music/ui/components/NowPlayingDedicatedLyricPage.kt",
+            "app/src/main/java/com/concept/music/ui/components/PlayQueueBottomSheet.kt",
+            "app/src/main/java/com/concept/music/ui/settings/SettingsDownloadAndPermissions.kt",
+            "app/src/main/java/com/concept/music/ui/settings/SettingsChangelogAndAbout.kt",
+            "app/src/main/java/com/concept/music/ui/home/RankAndNewSongScreens.kt"
+        )
+        modularFiles.forEach { rel ->
+            assertTrue("模块化拆分文件 $rel 应存在", java.io.File(projectRoot, rel).exists())
+        }
     }
 }

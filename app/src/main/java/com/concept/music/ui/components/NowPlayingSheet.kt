@@ -1304,100 +1304,6 @@ fun NowPlayingSheet(
     }
 }
 
-private object SoftCoverDiffusionBlurTransformation : coil.transform.Transformation {
-    override val cacheKey: String = "soft_cover_diffusion_blur_v3"
-
-    override suspend fun transform(
-        input: android.graphics.Bitmap,
-        size: coil.size.Size
-    ): android.graphics.Bitmap {
-        val targetW = 96
-        val targetH = 96
-        val scaled = android.graphics.Bitmap.createScaledBitmap(input, targetW, targetH, true)
-        val working = scaled.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
-        if (scaled !== input && scaled !== working) {
-            scaled.recycle()
-        }
-
-        val w = working.width
-        val h = working.height
-        val pixels = IntArray(w * h)
-        val temp = IntArray(w * h)
-        working.getPixels(pixels, 0, w, 0, 0, w, h)
-
-        // 先对像素做色彩柔化与高光压制，彻底消除封面上的文字、锐利线条与刺眼白斑，转化为温润的弥散色块
-        val hsv = FloatArray(3)
-        for (i in pixels.indices) {
-            val c = pixels[i]
-            val r = (c shr 16) and 0xFF
-            val g = (c shr 8) and 0xFF
-            val b = c and 0xFF
-            android.graphics.Color.RGBToHSV(r, g, b, hsv)
-            if (hsv[1] > 0.08f) {
-                hsv[1] = (hsv[1] * 1.18f).coerceIn(0.28f, 0.82f)
-            }
-            hsv[2] = (hsv[2] * 0.72f + 0.08f).coerceIn(0.14f, 0.66f)
-            pixels[i] = android.graphics.Color.HSVToColor(0xFF, hsv)
-        }
-
-        // 3 遍大半径双向均值卷积（等效高斯模糊 sigma ≈ 18），保证任何歌曲切歌或首次进入都具备 100% 均匀丝滑的弥散模糊
-        val radius = 16
-        val div = 2 * radius + 1
-        repeat(3) {
-            // Horizontal pass
-            for (y in 0 until h) {
-                var rSum = 0
-                var gSum = 0
-                var bSum = 0
-                val rowOffset = y * w
-                for (k in -radius..radius) {
-                    val x = k.coerceIn(0, w - 1)
-                    val p = pixels[rowOffset + x]
-                    rSum += (p shr 16) and 0xFF
-                    gSum += (p shr 8) and 0xFF
-                    bSum += p and 0xFF
-                }
-                for (x in 0 until w) {
-                    temp[rowOffset + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val leftX = (x - radius).coerceIn(0, w - 1)
-                    val rightX = (x + radius + 1).coerceIn(0, w - 1)
-                    val pOut = pixels[rowOffset + leftX]
-                    val pIn = pixels[rowOffset + rightX]
-                    rSum += ((pIn shr 16) and 0xFF) - ((pOut shr 16) and 0xFF)
-                    gSum += ((pIn shr 8) and 0xFF) - ((pOut shr 8) and 0xFF)
-                    bSum += (pIn and 0xFF) - (pOut and 0xFF)
-                }
-            }
-            // Vertical pass
-            for (x in 0 until w) {
-                var rSum = 0
-                var gSum = 0
-                var bSum = 0
-                for (k in -radius..radius) {
-                    val y = k.coerceIn(0, h - 1)
-                    val p = temp[y * w + x]
-                    rSum += (p shr 16) and 0xFF
-                    gSum += (p shr 8) and 0xFF
-                    bSum += p and 0xFF
-                }
-                for (y in 0 until h) {
-                    pixels[y * w + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val topY = (y - radius).coerceIn(0, h - 1)
-                    val botY = (y + radius + 1).coerceIn(0, h - 1)
-                    val pOut = temp[topY * w + x]
-                    val pIn = temp[botY * w + x]
-                    rSum += ((pIn shr 16) and 0xFF) - ((pOut shr 16) and 0xFF)
-                    gSum += ((pIn shr 8) and 0xFF) - ((pOut shr 8) and 0xFF)
-                    bSum += (pIn and 0xFF) - (pOut and 0xFF)
-                }
-            }
-        }
-
-        working.setPixels(pixels, 0, w, 0, 0, w, h)
-        return working
-    }
-}
-
 @Composable
 private fun NowPlayingSelectableBackground(
     coverUrl: String,
@@ -1413,108 +1319,102 @@ private fun NowPlayingSelectableBackground(
     accentTertiary: Color = ConceptVioletAccent
 ) {
     val context = LocalContext.current
-    val infiniteTransition = rememberInfiniteTransition(label = "bgModeAnim")
-    val animatedPhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 18000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "bgPhase"
-    )
-    val animatedSecondaryPhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 11500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "bgSecPhase"
-    )
-    val animatedPulse by infiniteTransition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.12f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2600, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "bgPulse"
+
+    // 播放 <-> 暂停连续动量因子：暂停时从 1f 丝滑减速至 0f (880ms)，恢复播放时从 0f 原位柔和加速至 1f，彻底消除暂停/播放切换时的位置跳变
+    val playMomentum by animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0f,
+        animationSpec = tween(durationMillis = 880, easing = FastOutSlowInEasing),
+        label = "bgPlayMomentum"
     )
 
-    val phase = if (isPlaying) animatedPhase else 0.85f
-    val secPhase = if (isPlaying) animatedSecondaryPhase else 1.45f
-    val pulse = if (isPlaying) animatedPulse else 0.96f
+    var phase by remember { mutableFloatStateOf(0.85f) }
+    var secPhase by remember { mutableFloatStateOf(1.45f) }
+    var pulsePhase by remember { mutableFloatStateOf(0f) }
 
-    // 律动光晕模式专用的 60fps 实时音频能量追踪状态（直接读取 ConceptMasteringAudioProcessor 实时计算的低/中/高频与鼓点脉冲）
-    var liveBassEnergy by remember { mutableFloatStateOf(0.18f) }
-    var liveMidEnergy by remember { mutableFloatStateOf(0.16f) }
-    var liveHighEnergy by remember { mutableFloatStateOf(0.14f) }
+    // 律动光晕模式专用的 60fps 实时音频能量追踪状态（读取 ConceptMasteringAudioProcessor 实时计算的歌曲低/中/高频与节拍脉冲）
+    var liveBassEnergy by remember { mutableFloatStateOf(0.08f) }
+    var liveMidEnergy by remember { mutableFloatStateOf(0.06f) }
+    var liveHighEnergy by remember { mutableFloatStateOf(0.05f) }
     var liveBeatImpulse by remember { mutableFloatStateOf(0f) }
-    var liveWaveTime by remember { mutableFloatStateOf(0f) }
-    val liveSpectrumBins = remember { FloatArray(10) { 0.15f } }
 
-    LaunchedEffect(backgroundStyle, isPlaying) {
-        if (backgroundStyle == PlayerBackgroundStyle.RHYTHM_HALO && isPlaying) {
+    val isAnimatedBackground = backgroundStyle == PlayerBackgroundStyle.FLUID_AURORA ||
+        backgroundStyle == PlayerBackgroundStyle.RHYTHM_HALO ||
+        backgroundStyle == PlayerBackgroundStyle.STARLIGHT_NEBULA
+
+    LaunchedEffect(backgroundStyle, isPlaying, playMomentum > 0.002f) {
+        if (isAnimatedBackground && (isPlaying || playMomentum > 0.002f || liveBassEnergy > 0.09f || liveBeatImpulse > 0.005f)) {
+            var waveClock = 0f
             var lastNanos = 0L
+            val twoPi = (2.0 * PI).toFloat()
             while (isActive) {
+                var keepRunning = false
                 withFrameNanos { nanos ->
                     val dt = if (lastNanos == 0L) 0.016f else ((nanos - lastNanos) / 1_000_000_000f).coerceIn(0.004f, 0.05f)
                     lastNanos = nanos
-                    val telemetryActive = com.concept.music.service.AudioRhythmTelemetry.isActive()
-                    val targetBass = if (telemetryActive) {
-                        com.concept.music.service.AudioRhythmTelemetry.bassEnergy
-                    } else {
-                        0.28f + 0.16f * abs(sin(liveWaveTime * 2.4f))
-                    }
-                    val targetMid = if (telemetryActive) {
-                        com.concept.music.service.AudioRhythmTelemetry.midEnergy
-                    } else {
-                        0.24f + 0.14f * abs(cos(liveWaveTime * 1.9f + 0.8f))
-                    }
-                    val targetHigh = if (telemetryActive) {
-                        com.concept.music.service.AudioRhythmTelemetry.highEnergy
-                    } else {
-                        0.20f + 0.12f * abs(sin(liveWaveTime * 3.1f + 1.7f))
-                    }
-                    val targetBeat = if (telemetryActive) {
-                        com.concept.music.service.AudioRhythmTelemetry.beatImpulse
-                    } else {
-                        0.15f * abs(sin(liveWaveTime * 2.8f)).pow(3)
+                    val m = playMomentum.coerceIn(0f, 1f)
+
+                    if (m > 0.001f) {
+                        phase = (phase + dt * 0.349f * m) % twoPi
+                        secPhase = (secPhase + dt * 0.546f * m) % twoPi
+                        pulsePhase = (pulsePhase + dt * 2.416f * m) % twoPi
+                        keepRunning = true
                     }
 
-                    liveBassEnergy += (targetBass - liveBassEnergy) * (if (targetBass > liveBassEnergy) 0.36f else 0.14f)
-                    liveMidEnergy += (targetMid - liveMidEnergy) * (if (targetMid > liveMidEnergy) 0.32f else 0.15f)
-                    liveHighEnergy += (targetHigh - liveHighEnergy) * (if (targetHigh > liveHighEnergy) 0.38f else 0.18f)
-                    liveBeatImpulse += (targetBeat - liveBeatImpulse) * (if (targetBeat > liveBeatImpulse) 0.48f else 0.16f)
-
-                    for (b in 0 until 10) {
-                        val rawBin = if (telemetryActive) {
-                            com.concept.music.service.AudioRhythmTelemetry.readBin(b)
+                    if (backgroundStyle == PlayerBackgroundStyle.RHYTHM_HALO) {
+                        waveClock = (waveClock + dt * m) % 628.318f
+                        val telemetryActive = isPlaying && com.concept.music.service.AudioRhythmTelemetry.isActive()
+                        val rawBass = if (telemetryActive) {
+                            com.concept.music.service.AudioRhythmTelemetry.bassEnergy
                         } else {
-                            0.18f + 0.12f * abs(sin(liveWaveTime * (1.5f + b * 0.22f) + b))
+                            0.24f + 0.14f * abs(sin(waveClock * 2.2f))
                         }
-                        liveSpectrumBins[b] += (rawBin - liveSpectrumBins[b]) * 0.28f
-                    }
+                        val rawMid = if (telemetryActive) {
+                            com.concept.music.service.AudioRhythmTelemetry.midEnergy
+                        } else {
+                            0.20f + 0.12f * abs(cos(waveClock * 1.8f + 0.7f))
+                        }
+                        val rawHigh = if (telemetryActive) {
+                            com.concept.music.service.AudioRhythmTelemetry.highEnergy
+                        } else {
+                            0.16f + 0.10f * abs(sin(waveClock * 2.9f + 1.4f))
+                        }
+                        val rawBeat = if (telemetryActive) {
+                            com.concept.music.service.AudioRhythmTelemetry.beatImpulse
+                        } else {
+                            0.12f * abs(sin(waveClock * 2.6f)).pow(3)
+                        }
 
-                    val speedFactor = 1.0f + liveBassEnergy * 1.8f + liveBeatImpulse * 2.2f
-                    liveWaveTime = (liveWaveTime + dt * speedFactor) % 628.318f
+                        // 按播放动量 m 平滑收放能量，使播放->暂停与暂停->播放拥有连续丝滑的呼吸阻尼过渡
+                        val targetBass = 0.08f + (rawBass - 0.08f) * m
+                        val targetMid = 0.06f + (rawMid - 0.06f) * m
+                        val targetHigh = 0.05f + (rawHigh - 0.05f) * m
+                        val targetBeat = rawBeat * m
+
+                        liveBassEnergy += (targetBass - liveBassEnergy) * (if (targetBass > liveBassEnergy) 0.28f else 0.10f)
+                        liveMidEnergy += (targetMid - liveMidEnergy) * (if (targetMid > liveMidEnergy) 0.25f else 0.10f)
+                        liveHighEnergy += (targetHigh - liveHighEnergy) * (if (targetHigh > liveHighEnergy) 0.30f else 0.12f)
+                        liveBeatImpulse += (targetBeat - liveBeatImpulse) * (if (targetBeat > liveBeatImpulse) 0.36f else 0.12f)
+
+                        if (abs(liveBassEnergy - 0.08f) > 0.004f || liveBeatImpulse > 0.004f) {
+                            keepRunning = true
+                        }
+                    }
+                }
+                if (!keepRunning && !isPlaying && playMomentum <= 0.002f) {
+                    break
                 }
             }
-        } else {
-            liveBassEnergy = 0.12f
-            liveMidEnergy = 0.10f
-            liveHighEnergy = 0.08f
-            liveBeatImpulse = 0f
         }
     }
 
-    // 采用 AnimatedContent 包裹五种背景预设，彻底消除切歌或切换预设时的图层残留与光晕叠加 BUG
+    val pulse = 0.96f + (0.04f + 0.12f * playMomentum) * (0.5f + 0.5f * sin(pulsePhase))
+
+    // 采用 AnimatedContent 包裹五种背景预设，确保切换背景或切歌时图层独立无残留
     AnimatedContent(
         targetState = backgroundStyle,
         transitionSpec = {
-            fadeIn(animationSpec = tween(durationMillis = 460, easing = FastOutSlowInEasing))
-                .togetherWith(fadeOut(animationSpec = tween(durationMillis = 460, easing = FastOutSlowInEasing)))
+            fadeIn(animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing))
+                .togetherWith(fadeOut(animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing)))
         },
         modifier = Modifier.fillMaxSize(),
         label = "NowPlayingBackgroundStyleTransition"
@@ -1522,172 +1422,100 @@ private fun NowPlayingSelectableBackground(
         Box(modifier = Modifier.fillMaxSize()) {
             when (activeStyle) {
                 PlayerBackgroundStyle.COVER_BLUR -> {
-                    // 预设 1：封面虚化（独立缓存 Key + 三遍堆栈高斯弥散 + 柔和三色呼吸色彩晕染，彻底解决切歌光晕突变与原图未模糊 BUG）
-                    androidx.compose.animation.Crossfade(
-                        targetState = coverUrl,
-                        animationSpec = tween(durationMillis = 620, easing = FastOutSlowInEasing),
-                        modifier = Modifier.fillMaxSize(),
-                        label = "CoverBlurCrossfade"
-                    ) { currentUrl ->
-                        if (currentUrl.isNotEmpty()) {
-                            val bgImageModel = remember(currentUrl) {
-                                ImageRequest.Builder(context)
-                                    .data(currentUrl)
-                                    .size(96, 96)
-                                    .precision(coil.size.Precision.EXACT)
-                                    .memoryCacheKey("${currentUrl}#cover_blur_diffusion_v3")
-                                    .transformations(SoftCoverDiffusionBlurTransformation)
-                                    .allowHardware(false)
-                                    .crossfade(false)
-                                    .build()
-                            }
-                            AsyncImage(
-                                model = bgImageModel,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                filterQuality = FilterQuality.Medium,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .graphicsLayer {
-                                        // 缓慢呼吸微缩放以避免边缘裁切并赋予柔和生命力
-                                        val s = 1.08f + 0.03f * sin(phase)
-                                        scaleX = s
-                                        scaleY = s
-                                    }
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color(0xFF0A101D))
-                            )
+                    // 还原原版封面虚化视觉，同时将请求尺寸与黑胶唱盘统一为 400x400，彻底修复原版切歌时因 24x24 缓存未命中导致莫名变糊的 BUG
+                    if (coverUrl.isNotEmpty()) {
+                        val bgImageModel = remember(coverUrl) {
+                            ImageRequest.Builder(context)
+                                .data(coverUrl)
+                                .size(400, 400)
+                                .allowHardware(false)
+                                .crossfade(true)
+                                .build()
                         }
+                        AsyncImage(
+                            model = bgImageModel,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            filterQuality = FilterQuality.High,
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
-
-                    // 柔和三色流光弥散叠加层（按实际屏幕宽高比例自适应分布，消除硬编码像素坐标偏移）
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val w = size.width
-                        val h = size.height
-                        val minDim = minOf(w, h).coerceAtLeast(1f)
-                        val maxDim = maxOf(w, h).coerceAtLeast(1f)
-
-                        // 基础丝绒暗色底衬（平衡封面明暗对比，确保前景白色歌词与控件极佳可读性）
-                        val baseOverlayAlpha = if (showLyricView) {
-                            (dimAlpha * 0.78f).coerceIn(0.46f, 0.84f)
-                        } else {
-                            0.52f
-                        }
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    Color(0xFF070B14).copy(alpha = (baseOverlayAlpha - 0.06f).coerceAtLeast(0.36f)),
-                                    Color(0xFF0A111E).copy(alpha = baseOverlayAlpha),
-                                    Color(0xFF050810).copy(alpha = (baseOverlayAlpha + 0.14f).coerceAtMost(0.92f))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFF070B12).copy(alpha = dimAlpha),
+                                        Color(0xFF0D1422).copy(alpha = (dimAlpha + 0.06f).coerceAtMost(0.95f)),
+                                        Color(0xFF060910).copy(alpha = (dimAlpha + 0.12f).coerceAtMost(0.97f))
+                                    )
                                 )
                             )
-                        )
-
-                        // 三色柔和色彩弥散云团 (Soft Color Diffusion Blooms)
-                        val bloomAlphaScale = if (showLyricView) 0.72f else 1.0f
-                        val c1Center = Offset(
-                            x = w * (0.24f + 0.08f * cos(phase)),
-                            y = h * (0.26f + 0.06f * sin(phase))
-                        )
-                        val c2Center = Offset(
-                            x = w * (0.76f + 0.08f * sin(phase * 0.85f + 1.2f)),
-                            y = h * (0.68f + 0.07f * cos(phase * 0.85f + 0.9f))
-                        )
-                        val c3Center = Offset(
-                            x = w * (0.48f + 0.10f * sin(secPhase + 2.1f)),
-                            y = h * (0.44f + 0.06f * cos(secPhase + 1.5f))
-                        )
-
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentPrimary.copy(alpha = 0.26f * bloomAlphaScale),
-                                    meshColorPrimary.copy(alpha = 0.34f * bloomAlphaScale),
-                                    Color.Transparent
-                                ),
-                                center = c1Center,
-                                radius = maxDim * 0.68f
-                            ),
-                            center = c1Center,
-                            radius = maxDim * 0.68f
-                        )
-
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentSecondary.copy(alpha = 0.22f * bloomAlphaScale),
-                                    meshColorSecondary.copy(alpha = 0.30f * bloomAlphaScale),
-                                    Color.Transparent
-                                ),
-                                center = c2Center,
-                                radius = maxDim * 0.72f
-                            ),
-                            center = c2Center,
-                            radius = maxDim * 0.72f
-                        )
-
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentTertiary.copy(alpha = 0.18f * bloomAlphaScale),
-                                    meshColorTertiary.copy(alpha = 0.24f * bloomAlphaScale),
-                                    Color.Transparent
-                                ),
-                                center = c3Center,
-                                radius = minDim * 0.82f
-                            ),
-                            center = c3Center,
-                            radius = minDim * 0.82f
-                        )
-                    }
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        meshColorPrimary.copy(alpha = if (showLyricView) 0.44f else 0.56f),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(240f, 360f),
+                                    radius = 980f
+                                )
+                            )
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        meshColorSecondary.copy(alpha = if (showLyricView) 0.38f else 0.48f),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(820f, 1420f),
+                                    radius = 1080f
+                                )
+                            )
+                    )
                 }
 
                 PlayerBackgroundStyle.FLUID_AURORA -> {
-                    // 预设 2：流体极光（完全移除封面残影，提取封面主色/副色/第三色共 3 种色彩，采用多频李萨如轨迹与贝塞尔极光绸带丝滑流动）
+                    // 纯净三色流体极光（不显示专辑封面，基于封面提取的三种色彩 + 深邃色阶平滑交融流动）
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val w = size.width
                         val h = size.height
                         val maxDim = maxOf(w, h).coerceAtLeast(1f)
 
-                        // 纯净深邃极夜天幕底色（100% 不渲染任何专辑封面纹理）
                         drawRect(
                             brush = Brush.verticalGradient(
                                 colors = listOf(
-                                    Color(0xFF050812),
-                                    meshColorPrimary.copy(alpha = 0.88f),
-                                    meshColorSecondary.copy(alpha = 0.82f),
-                                    Color(0xFF04070E)
+                                    Color(0xFF060A14),
+                                    meshColorPrimary.copy(alpha = 0.72f),
+                                    meshColorSecondary.copy(alpha = 0.64f),
+                                    Color(0xFF050811)
                                 )
                             )
                         )
 
-                        // 第一层：三色李萨如流体光晕团 (Lissajous Fluid Color Orbs)
                         val orb1 = Offset(
-                            w * (0.24f + 0.22f * cos(phase) + 0.06f * sin(secPhase)),
-                            h * (0.25f + 0.15f * sin(phase * 1.2f))
+                            w * (0.26f + 0.22f * cos(phase)),
+                            h * (0.24f + 0.14f * sin(phase))
                         )
                         val orb2 = Offset(
-                            w * (0.76f - 0.20f * sin(phase * 0.9f + 1.1f)),
-                            h * (0.48f + 0.18f * cos(secPhase * 0.8f + 0.6f))
+                            w * (0.74f + 0.20f * sin(phase * 0.85f + 1.2f)),
+                            h * (0.48f + 0.16f * cos(phase * 0.9f))
                         )
                         val orb3 = Offset(
-                            w * (0.45f + 0.24f * sin(secPhase + 2.2f)),
-                            h * (0.76f - 0.14f * cos(phase + 1.7f))
+                            w * (0.38f + 0.24f * sin(secPhase * 0.85f + 2.2f)),
+                            h * (0.76f + 0.12f * cos(phase * 0.75f))
                         )
                         val orb4 = Offset(
-                            w * (0.62f + 0.18f * cos(phase + 3.1f)),
-                            h * (0.22f + 0.14f * sin(secPhase + 2.8f))
+                            w * (0.64f - 0.18f * cos(secPhase + 0.8f)),
+                            h * (0.28f + 0.15f * sin(phase * 0.7f + 1.9f))
                         )
 
+                        // 第一流体主色光团 (Primary Fluid Bloom)
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    accentPrimary.copy(alpha = 0.44f),
-                                    accentPrimary.copy(alpha = 0.16f),
+                                    accentPrimary.copy(alpha = 0.42f),
+                                    meshColorPrimary.copy(alpha = 0.24f),
                                     Color.Transparent
                                 ),
                                 center = orb1,
@@ -1697,174 +1525,86 @@ private fun NowPlayingSelectableBackground(
                             radius = maxDim * 0.62f * pulse
                         )
 
+                        // 第二流体副色光团 (Secondary Fluid Bloom)
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    accentSecondary.copy(alpha = 0.40f),
-                                    accentSecondary.copy(alpha = 0.14f),
+                                    accentSecondary.copy(alpha = 0.38f),
+                                    meshColorSecondary.copy(alpha = 0.22f),
                                     Color.Transparent
                                 ),
                                 center = orb2,
-                                radius = maxDim * 0.60f * (2.02f - pulse)
+                                radius = maxDim * 0.58f * (1.98f - pulse * 0.98f)
                             ),
                             center = orb2,
-                            radius = maxDim * 0.60f * (2.02f - pulse)
+                            radius = maxDim * 0.58f * (1.98f - pulse * 0.98f)
                         )
 
+                        // 第三流体极光色团 (Tertiary Fluid Bloom)
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    accentTertiary.copy(alpha = 0.38f),
-                                    meshColorTertiary.copy(alpha = 0.22f),
+                                    accentTertiary.copy(alpha = 0.36f),
+                                    meshColorTertiary.copy(alpha = 0.26f),
                                     Color.Transparent
                                 ),
                                 center = orb3,
-                                radius = maxDim * 0.66f * pulse
+                                radius = maxDim * 0.65f * pulse
                             ),
                             center = orb3,
-                            radius = maxDim * 0.66f * pulse
+                            radius = maxDim * 0.65f * pulse
                         )
 
+                        // 伴随融合流体晕染层，使三种颜色过渡更加饱满丝滑
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    accentSecondary.copy(alpha = 0.24f),
-                                    accentTertiary.copy(alpha = 0.12f),
+                                    accentTertiary.copy(alpha = 0.22f),
+                                    accentPrimary.copy(alpha = 0.12f),
                                     Color.Transparent
                                 ),
                                 center = orb4,
-                                radius = maxDim * 0.50f
+                                radius = maxDim * 0.52f
                             ),
                             center = orb4,
-                            radius = maxDim * 0.50f
+                            radius = maxDim * 0.52f
                         )
 
-                        // 第二层：三色流体极光丝带 (Bezier Aurora Curtains)
-                        for (band in 0 until 3) {
-                            val bandOffset = band * 1.9f
-                            val yBase = h * (0.28f + band * 0.21f)
-                            val waveAmp = h * (0.085f + band * 0.018f)
-                            val y0 = yBase + waveAmp * sin(phase + bandOffset)
-                            val y1 = yBase + waveAmp * cos(secPhase + bandOffset + 0.9f)
-                            val y2 = yBase - waveAmp * sin(phase * 1.2f + bandOffset + 1.8f)
-                            val y3 = yBase + waveAmp * cos(phase + secPhase * 0.5f + bandOffset)
-                            val thickness = h * (0.16f + 0.03f * sin(secPhase + band))
-
-                            val ribbonPath = Path().apply {
-                                moveTo(-w * 0.05f, y0)
-                                cubicTo(
-                                    w * 0.30f, y1,
-                                    w * 0.68f, y2,
-                                    w * 1.05f, y3
-                                )
-                                lineTo(w * 1.05f, y3 + thickness)
-                                cubicTo(
-                                    w * 0.68f, y2 + thickness * 1.1f,
-                                    w * 0.30f, y1 + thickness * 0.9f,
-                                    -w * 0.05f, y0 + thickness
-                                )
-                                close()
-                            }
-
-                            val ribbonColors = when (band) {
-                                0 -> listOf(
-                                    Color.Transparent,
-                                    accentPrimary.copy(alpha = 0.24f),
-                                    accentSecondary.copy(alpha = 0.22f),
-                                    Color.Transparent
-                                )
-                                1 -> listOf(
-                                    Color.Transparent,
-                                    accentSecondary.copy(alpha = 0.22f),
-                                    accentTertiary.copy(alpha = 0.26f),
-                                    Color.Transparent
-                                )
-                                else -> listOf(
-                                    Color.Transparent,
-                                    accentTertiary.copy(alpha = 0.20f),
-                                    accentPrimary.copy(alpha = 0.22f),
-                                    Color.Transparent
-                                )
-                            }
-
-                            drawPath(
-                                path = ribbonPath,
-                                brush = Brush.horizontalGradient(colors = ribbonColors)
-                            )
-                        }
-
                         if (showLyricView) {
-                            drawRect(color = Color(0xFF050811).copy(alpha = (dimAlpha * 0.52f).coerceIn(0.20f, 0.76f)))
+                            drawRect(color = Color(0xFF060911).copy(alpha = (dimAlpha * 0.55f).coerceIn(0.20f, 0.78f)))
                         }
                     }
                 }
 
                 PlayerBackgroundStyle.RHYTHM_HALO -> {
-                    // 预设 3：律动光晕（实时读取当前播放歌曲的低频/中频/高频与节拍脉冲能量，驱动光晕波纹与极坐标声波环同频律动）
+                    // 还原原版三层同心圆光晕视觉，同时保留根据当前播放歌曲真实音频能量同频律动与播放/暂停平滑阻尼过渡
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val w = size.width
-                        val h = size.height
-                        val minDim = minOf(w, h).coerceAtLeast(1f)
-
                         drawRect(
                             brush = Brush.verticalGradient(
                                 colors = listOf(
-                                    meshColorPrimary.copy(alpha = 0.88f),
-                                    Color(0xFF070C17),
-                                    meshColorSecondary.copy(alpha = 0.65f),
-                                    Color(0xFF04070D)
+                                    meshColorPrimary.copy(alpha = 0.85f),
+                                    Color(0xFF080D18),
+                                    Color(0xFF05080F)
                                 )
                             )
                         )
-
-                        val center = Offset(
-                            x = w * 0.5f,
-                            y = if (w > h * 1.15f) h * 0.48f else h * 0.39f
-                        )
-                        val baseR = minDim * 0.32f
-                        val bassBoost = liveBassEnergy
-                        val midBoost = liveMidEnergy
-                        val highBoost = liveHighEnergy
-                        val beatKick = liveBeatImpulse
-
-                        // 底层环境低频呼吸大光晕（随歌曲低频能量与鼓点冲击实时扩张）
-                        val ambientR = baseR * (1.85f + bassBoost * 0.65f + beatKick * 0.38f)
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentPrimary.copy(alpha = (0.24f + bassBoost * 0.22f).coerceAtMost(0.55f)),
-                                    accentSecondary.copy(alpha = (0.14f + midBoost * 0.16f).coerceAtMost(0.38f)),
-                                    accentTertiary.copy(alpha = (0.08f + highBoost * 0.12f).coerceAtMost(0.28f)),
-                                    Color.Transparent
-                                ),
-                                center = center,
-                                radius = ambientR
-                            ),
-                            center = center,
-                            radius = ambientR
-                        )
-
-                        // 多层同频律动光晕环（外圈响应重低音与鼓点脉冲，中圈响应人声中频，内圈响应高频泛音）
-                        for (ring in 4 downTo 1) {
-                            val ringFreqEnergy = when (ring) {
-                                4 -> bassBoost * 0.85f + beatKick * 0.55f
-                                3 -> bassBoost * 0.50f + midBoost * 0.65f + beatKick * 0.35f
-                                2 -> midBoost * 0.80f + highBoost * 0.40f
-                                else -> highBoost * 0.85f + beatKick * 0.30f
+                        val center = Offset(size.width * 0.5f, size.height * 0.40f)
+                        val baseR = size.width * 0.36f
+                        for (ring in 3 downTo 1) {
+                            val ringEnergy = when (ring) {
+                                3 -> liveBassEnergy * 0.55f + liveBeatImpulse * 0.35f
+                                2 -> liveMidEnergy * 0.50f + liveBassEnergy * 0.25f + liveBeatImpulse * 0.25f
+                                else -> liveHighEnergy * 0.45f + liveMidEnergy * 0.30f + liveBeatImpulse * 0.22f
                             }
-                            val r = baseR * (0.86f + ring * 0.24f + ringFreqEnergy * (0.18f + ring * 0.05f))
-                            val ringColor = when (ring) {
-                                4 -> accentPrimary
-                                3 -> accentSecondary
-                                2 -> accentTertiary
-                                else -> accentPrimary
-                            }
-                            val fillAlpha = ((0.14f + ringFreqEnergy * 0.18f) / ring).coerceIn(0.03f, 0.32f)
+                            val activeScale = (0.94f + ringEnergy * 0.34f).coerceIn(0.90f, 1.32f)
+                            val dynamicPulse = pulse * (1f - playMomentum) + activeScale * playMomentum
+                            val r = baseR * (1f + ring * 0.24f) * dynamicPulse
+                            val alphaBoost = 1f + ringEnergy * 0.55f * playMomentum
                             drawCircle(
                                 brush = Brush.radialGradient(
                                     colors = listOf(
-                                        ringColor.copy(alpha = fillAlpha * 0.6f),
-                                        ringColor.copy(alpha = fillAlpha),
+                                        accentPrimary.copy(alpha = ((0.22f * alphaBoost) / ring).coerceAtMost(0.42f)),
+                                        accentSecondary.copy(alpha = ((0.12f * alphaBoost) / ring).coerceAtMost(0.26f)),
                                         Color.Transparent
                                     ),
                                     center = center,
@@ -1874,64 +1614,12 @@ private fun NowPlayingSelectableBackground(
                                 radius = r
                             )
                             drawCircle(
-                                color = ringColor.copy(alpha = ((0.18f + ringFreqEnergy * 0.35f) / ring).coerceIn(0.05f, 0.45f)),
+                                color = accentPrimary.copy(alpha = ((0.15f * alphaBoost) / ring).coerceAtMost(0.32f)),
                                 center = center,
-                                radius = r * 0.84f,
-                                style = Stroke(width = (1.2f + ringFreqEnergy * 2.2f).dp.toPx())
+                                radius = r * 0.78f,
+                                style = Stroke(width = 1.4.dp.toPx())
                             )
                         }
-
-                        // 极坐标音频频谱律动光波环 (Audio-Reactive Harmonic Polar Wave Ring)
-                        val wavePoints = 48
-                        val wavePath = Path()
-                        val innerWavePath = Path()
-                        for (i in 0..wavePoints) {
-                            val idx = i % wavePoints
-                            val angle = (idx.toFloat() / wavePoints) * (2f * PI.toFloat())
-                            val binIdx = (idx % 10)
-                            val binEnergy = liveSpectrumBins[binIdx]
-                            val harmonic1 = sin(angle * 3f + liveWaveTime * 1.4f) * (0.04f + bassBoost * 0.08f)
-                            val harmonic2 = cos(angle * 5f - liveWaveTime * 2.1f) * (0.03f + midBoost * 0.07f)
-                            val harmonic3 = sin(angle * 8f + liveWaveTime * 3.0f) * (0.02f + highBoost * 0.06f)
-                            val rMod = baseR * (1.16f + binEnergy * 0.22f + beatKick * 0.12f + harmonic1 + harmonic2 + harmonic3)
-                            val rInnerMod = baseR * (0.96f + binEnergy * 0.14f - harmonic1 * 0.7f + harmonic2 * 0.8f)
-
-                            val px = center.x + rMod * cos(angle)
-                            val py = center.y + rMod * sin(angle)
-                            val ix = center.x + rInnerMod * cos(angle)
-                            val iy = center.y + rInnerMod * sin(angle)
-
-                            if (i == 0) {
-                                wavePath.moveTo(px, py)
-                                innerWavePath.moveTo(ix, iy)
-                            } else {
-                                wavePath.lineTo(px, py)
-                                innerWavePath.lineTo(ix, iy)
-                            }
-                        }
-                        wavePath.close()
-                        innerWavePath.close()
-
-                        drawPath(
-                            path = wavePath,
-                            brush = Brush.sweepGradient(
-                                colors = listOf(
-                                    accentPrimary.copy(alpha = (0.34f + beatKick * 0.30f).coerceAtMost(0.70f)),
-                                    accentSecondary.copy(alpha = (0.30f + midBoost * 0.28f).coerceAtMost(0.65f)),
-                                    accentTertiary.copy(alpha = (0.32f + highBoost * 0.28f).coerceAtMost(0.65f)),
-                                    accentPrimary.copy(alpha = (0.34f + beatKick * 0.30f).coerceAtMost(0.70f))
-                                ),
-                                center = center
-                            ),
-                            style = Stroke(width = (1.8f + beatKick * 2.4f).dp.toPx())
-                        )
-
-                        drawPath(
-                            path = innerWavePath,
-                            color = accentSecondary.copy(alpha = (0.20f + highBoost * 0.25f).coerceAtMost(0.50f)),
-                            style = Stroke(width = 1.2.dp.toPx())
-                        )
-
                         if (showLyricView) {
                             drawRect(color = Color(0xFF050811).copy(alpha = (dimAlpha * 0.55f).coerceIn(0.20f, 0.78f)))
                         }
@@ -1939,25 +1627,23 @@ private fun NowPlayingSelectableBackground(
                 }
 
                 PlayerBackgroundStyle.STARLIGHT_NEBULA -> {
-                    // 预设 4：暗夜星尘（升级深空三色旋转星云、三层景深视差星尘、十字衍射星芒与柔光流星轨迹）
+                    // 保留深空星云与柔和圆点星尘美化，彻底去掉十字星芒线条与流星线条，并支持播放/暂停平滑减速过渡
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val w = size.width
                         val h = size.height
                         val maxDim = maxOf(w, h).coerceAtLeast(1f)
 
-                        // 深空天鹅绒渐变底幕
                         drawRect(
                             brush = Brush.verticalGradient(
                                 colors = listOf(
                                     Color(0xFF040711),
-                                    meshColorPrimary.copy(alpha = 0.82f),
-                                    meshColorTertiary.copy(alpha = 0.72f),
+                                    meshColorPrimary.copy(alpha = 0.80f),
+                                    meshColorTertiary.copy(alpha = 0.68f),
                                     Color(0xFF03050B)
                                 )
                             )
                         )
 
-                        // 三团缓慢呼吸旋转的深空星云 (Deep Space Nebula Clouds)
                         val neb1 = Offset(
                             w * (0.28f + 0.08f * cos(phase)),
                             h * (0.30f + 0.06f * sin(phase))
@@ -1974,8 +1660,8 @@ private fun NowPlayingSelectableBackground(
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    accentPrimary.copy(alpha = 0.26f * pulse),
-                                    meshColorPrimary.copy(alpha = 0.18f),
+                                    accentPrimary.copy(alpha = 0.25f * pulse),
+                                    meshColorPrimary.copy(alpha = 0.16f),
                                     Color.Transparent
                                 ),
                                 center = neb1,
@@ -1987,8 +1673,8 @@ private fun NowPlayingSelectableBackground(
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    accentSecondary.copy(alpha = 0.22f),
-                                    meshColorSecondary.copy(alpha = 0.15f),
+                                    accentSecondary.copy(alpha = 0.20f),
+                                    meshColorSecondary.copy(alpha = 0.14f),
                                     Color.Transparent
                                 ),
                                 center = neb2,
@@ -2000,7 +1686,7 @@ private fun NowPlayingSelectableBackground(
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    accentTertiary.copy(alpha = 0.20f),
+                                    accentTertiary.copy(alpha = 0.18f),
                                     Color.Transparent
                                 ),
                                 center = neb3,
@@ -2010,27 +1696,27 @@ private fun NowPlayingSelectableBackground(
                             radius = maxDim * 0.46f * pulse
                         )
 
-                        // 三层视差星尘与十字星芒 (56 颗远/中/近景星辰)
+                        // 柔和圆点星尘（无十字星芒线条）
                         val normPhase = phase / (2f * PI.toFloat())
-                        for (i in 0 until 56) {
-                            val layer = i % 3 // 0=远景微尘, 1=中景星辰, 2=近景亮星
+                        for (i in 0 until 48) {
+                            val layer = i % 3
                             val seedX = ((i * 73 + 19) % 97) / 97f
                             val seedY = ((i * 41 + 11) % 89) / 89f
                             val speed = when (layer) {
                                 0 -> 0.08f
-                                1 -> 0.16f
-                                else -> 0.24f
+                                1 -> 0.14f
+                                else -> 0.20f
                             }
                             val driftY = (seedY - normPhase * speed + 1f) % 1f
-                            val driftX = (seedX + 0.025f * sin(phase + i * 0.7f)).coerceIn(0.03f, 0.97f)
-                            val twinkle = (0.30f + 0.70f * abs(sin(secPhase * (0.9f + (i % 5) * 0.28f) + i * 1.3f))).coerceIn(0.18f, 1f)
+                            val driftX = (seedX + 0.02f * sin(phase + i * 0.7f)).coerceIn(0.03f, 0.97f)
+                            val twinkle = (0.32f + 0.68f * abs(sin(secPhase * (0.9f + (i % 4) * 0.26f) + i * 1.3f))).coerceIn(0.18f, 1f)
 
                             val sx = w * driftX
                             val sy = h * driftY
                             val sr = when (layer) {
-                                0 -> 0.9f.dp.toPx()
-                                1 -> 1.45f.dp.toPx()
-                                else -> 2.15f.dp.toPx()
+                                0 -> 1.0f.dp.toPx()
+                                1 -> 1.5f.dp.toPx()
+                                else -> 2.1f.dp.toPx()
                             }
                             val starColor = when (i % 5) {
                                 0 -> accentPrimary
@@ -2040,70 +1726,25 @@ private fun NowPlayingSelectableBackground(
                                 else -> Color.White
                             }
 
-                            // 星晕
                             if (layer >= 1) {
                                 drawCircle(
                                     brush = Brush.radialGradient(
                                         colors = listOf(
-                                            starColor.copy(alpha = 0.32f * twinkle),
+                                            starColor.copy(alpha = 0.28f * twinkle),
                                             Color.Transparent
                                         ),
                                         center = Offset(sx, sy),
-                                        radius = sr * 3.6f
+                                        radius = sr * 3.2f
                                     ),
                                     center = Offset(sx, sy),
-                                    radius = sr * 3.6f
+                                    radius = sr * 3.2f
                                 )
                             }
 
-                            // 星核
                             drawCircle(
-                                color = starColor.copy(alpha = (0.45f + layer * 0.22f).coerceAtMost(0.95f) * twinkle),
+                                color = starColor.copy(alpha = (0.42f + layer * 0.20f).coerceAtMost(0.90f) * twinkle),
                                 radius = sr,
                                 center = Offset(sx, sy)
-                            )
-
-                            // 近景亮星绘制十字衍射星芒 (4-Point Star Gleam)
-                            if (layer == 2 && i % 6 == 2 && twinkle > 0.62f) {
-                                val gleamLen = sr * (4.2f + twinkle * 2.5f)
-                                val gleamAlpha = (twinkle - 0.45f).coerceIn(0.1f, 0.65f)
-                                drawLine(
-                                    color = Color.White.copy(alpha = gleamAlpha),
-                                    start = Offset(sx - gleamLen, sy),
-                                    end = Offset(sx + gleamLen, sy),
-                                    strokeWidth = 0.9.dp.toPx()
-                                )
-                                drawLine(
-                                    color = Color.White.copy(alpha = gleamAlpha),
-                                    start = Offset(sx, sy - gleamLen),
-                                    end = Offset(sx, sy + gleamLen),
-                                    strokeWidth = 0.9.dp.toPx()
-                                )
-                            }
-                        }
-
-                        // 周期性柔光流星划过轨迹 (Gentle Shooting Star Trail)
-                        val meteorCycle = (secPhase / (2f * PI.toFloat()))
-                        if (meteorCycle in 0.15f..0.45f) {
-                            val mp = ((meteorCycle - 0.15f) / 0.30f).coerceIn(0f, 1f)
-                            val headX = w * (0.82f - mp * 0.52f)
-                            val headY = h * (0.14f + mp * 0.28f)
-                            val tailX = headX + w * 0.11f
-                            val tailY = headY - h * 0.06f
-                            val meteorAlpha = sin(mp * PI.toFloat()).coerceIn(0f, 1f) * 0.65f
-                            drawLine(
-                                brush = Brush.linearGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = meteorAlpha),
-                                        accentSecondary.copy(alpha = meteorAlpha * 0.5f),
-                                        Color.Transparent
-                                    ),
-                                    start = Offset(headX, headY),
-                                    end = Offset(tailX, tailY)
-                                ),
-                                start = Offset(headX, headY),
-                                end = Offset(tailX, tailY),
-                                strokeWidth = 1.6.dp.toPx()
                             )
                         }
 
@@ -2778,944 +2419,6 @@ private fun CoverPlayerPageContent(
     }
 }
 
-@Composable
-internal fun RedesignedCommentCountButton(
-    commentCount: Int,
-    accentColor: Color,
-    onClick: () -> Unit
-) {
-    val countText = formatPlayerCommentCount(commentCount)
-    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
-    Box(
-        modifier = Modifier
-            .height(if (isLargeScreen) 54.dp else 44.dp)
-            .widthIn(min = if (isLargeScreen) 64.dp else 52.dp)
-            .softClickable(
-                pressScale = 0.86f,
-                pressAlpha = 0.78f,
-                onClick = onClick
-            )
-            .padding(horizontal = 4.dp),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        // 气泡主图标偏左下放置，为右上角数字角标留出独立无遮挡空间
-        Canvas(
-            modifier = Modifier
-                .size(if (isLargeScreen) 28.dp else 23.dp)
-                .align(if (countText.isNotEmpty()) Alignment.CenterStart else Alignment.Center)
-                .offset(y = if (countText.isNotEmpty()) 2.dp else 0.dp)
-        ) {
-            val w = size.width
-            val h = size.height
-            val stroke = (if (isLargeScreen) 2.4.dp else 2.1.dp).toPx()
-            val c = Color.White.copy(alpha = 0.90f)
-            val bubblePath = Path().apply {
-                moveTo(w * 0.20f, h * 0.22f)
-                lineTo(w * 0.80f, h * 0.22f)
-                quadraticBezierTo(w * 0.90f, h * 0.22f, w * 0.90f, h * 0.36f)
-                lineTo(w * 0.90f, h * 0.65f)
-                quadraticBezierTo(w * 0.90f, h * 0.77f, w * 0.78f, h * 0.77f)
-                lineTo(w * 0.44f, h * 0.77f)
-                lineTo(w * 0.24f, h * 0.91f)
-                lineTo(w * 0.26f, h * 0.77f)
-                lineTo(w * 0.20f, h * 0.77f)
-                quadraticBezierTo(w * 0.10f, h * 0.77f, w * 0.10f, h * 0.65f)
-                lineTo(w * 0.10f, h * 0.36f)
-                quadraticBezierTo(w * 0.10f, h * 0.22f, w * 0.20f, h * 0.22f)
-                close()
-            }
-            drawPath(
-                path = bubblePath,
-                color = c,
-                style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
-            )
-            val dotR = (if (isLargeScreen) 1.8.dp else 1.5.dp).toPx()
-            drawCircle(accentColor, radius = dotR, center = Offset(w * 0.36f, h * 0.49f))
-            drawCircle(c, radius = dotR, center = Offset(w * 0.50f, h * 0.49f))
-            drawCircle(c, radius = dotR, center = Offset(w * 0.64f, h * 0.49f))
-        }
-
-        // 右上角悬浮无遮挡角标（不遮盖评论气泡主体，也不被父容器裁切）
-        if (countText.isNotEmpty()) {
-            Surface(
-                shape = RoundedCornerShape(if (isLargeScreen) 8.dp else 7.dp),
-                color = accentColor.copy(alpha = 0.24f),
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = if (isLargeScreen) 21.dp else 17.dp, top = 2.dp)
-            ) {
-                Text(
-                    text = countText,
-                    color = Color.White,
-                    fontSize = if (isLargeScreen) 10.5.sp else 9.sp,
-                    lineHeight = if (isLargeScreen) 12.sp else 10.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-internal fun PlumpLandscapeModeCanvasIcon(
-    color: Color,
-    accentColor: Color,
-    iconSize: androidx.compose.ui.unit.Dp = if (com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice) 29.dp else 24.dp
-) {
-    Canvas(modifier = Modifier.size(iconSize)) {
-        val w = size.width
-        val h = size.height
-        val stroke = 2.2.dp.toPx() * (w / 24.dp.toPx()).coerceIn(0.85f, 1.35f)
-        drawRoundRect(
-            color = color,
-            topLeft = Offset(w * 0.10f, h * 0.24f),
-            size = Size(w * 0.80f, h * 0.52f),
-            cornerRadius = CornerRadius(w * 0.16f, w * 0.16f),
-            style = Stroke(width = stroke, cap = StrokeCap.Round)
-        )
-        drawLine(accentColor, Offset(w * 0.26f, h * 0.58f), Offset(w * 0.42f, h * 0.40f), stroke * 0.9f, StrokeCap.Round)
-        drawLine(accentColor, Offset(w * 0.26f, h * 0.58f), Offset(w * 0.40f, h * 0.58f), stroke * 0.9f, StrokeCap.Round)
-        drawLine(accentColor, Offset(w * 0.26f, h * 0.58f), Offset(w * 0.26f, h * 0.44f), stroke * 0.9f, StrokeCap.Round)
-
-        drawLine(color, Offset(w * 0.74f, h * 0.42f), Offset(w * 0.58f, h * 0.60f), stroke * 0.9f, StrokeCap.Round)
-        drawLine(color, Offset(w * 0.74f, h * 0.42f), Offset(w * 0.60f, h * 0.42f), stroke * 0.9f, StrokeCap.Round)
-        drawLine(color, Offset(w * 0.74f, h * 0.42f), Offset(w * 0.74f, h * 0.56f), stroke * 0.9f, StrokeCap.Round)
-    }
-}
-
-@Composable
-internal fun PlayerActionIconButton(
-    onClick: () -> Unit,
-    content: @Composable BoxScope.() -> Unit
-) {
-    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
-    Box(
-        modifier = Modifier
-            .size(if (isLargeScreen) 54.dp else 44.dp)
-            .clip(CircleShape)
-            .softClickable(
-                pressScale = 0.85f,
-                pressAlpha = 0.78f,
-                onClick = onClick
-            ),
-        contentAlignment = Alignment.Center,
-        content = content
-    )
-}
-
-@Composable
-internal fun MasterVinylTurntableView(
-    coverUrl: String,
-    isPlaying: Boolean,
-    accentColor: Color,
-    rotationProvider: () -> Float,
-    scale: Float = 1f
-) {
-    val s = scale.coerceIn(0.50f, 1.60f)
-    // 液压阻尼唱臂动画（Hydraulic Damped Tonearm）：
-    // - 0f 为暂停态：唱臂垂直优雅停靠在右侧唱臂托架上，完全脱离黑胶盘面；
-    // - 24f 为播放态：唱臂顺时针平稳旋入黑胶黄金声轨区；
-    val HydraulicTonearmPlayEasing = remember { CubicBezierEasing(0.22f, 0.88f, 0.24f, 1.0f) }
-    val HydraulicTonearmPauseEasing = remember { CubicBezierEasing(0.42f, 0.04f, 0.22f, 1.0f) }
-    val armAngle by animateFloatAsState(
-        targetValue = if (isPlaying) 24f else 0f,
-        animationSpec = if (isPlaying) {
-            tween(durationMillis = 640, easing = HydraulicTonearmPlayEasing)
-        } else {
-            tween(durationMillis = 1260, easing = HydraulicTonearmPauseEasing)
-        },
-        label = "masterTonearmAngle"
-    )
-    // 抬臂高度状态：暂停移开时先柔顺抬起唱臂（投影拉远柔化），落针时贴合盘面
-    val stylusLift by animateFloatAsState(
-        targetValue = if (isPlaying) 0f else 1f,
-        animationSpec = if (isPlaying) {
-            tween(durationMillis = 480, easing = FastOutSlowInEasing)
-        } else {
-            tween(durationMillis = 620, easing = FastOutSlowInEasing)
-        },
-        label = "masterStylusLift"
-    )
-
-    Box(
-        modifier = Modifier.size(width = (312f * s).dp, height = (296f * s).dp),
-        contentAlignment = Alignment.Center
-    ) {
-        // 黑胶主盘体略微左偏 (-8.dp * s)，为右侧精密液压唱臂与驻停托架留出黄金机械空间
-        Box(
-            modifier = Modifier
-                .offset(x = (-8f * s).dp)
-                .size((278f * s).dp)
-                .shadow(
-                    elevation = (28f * s).dp,
-                    shape = CircleShape,
-                    spotColor = accentColor.copy(alpha = 0.55f)
-                )
-                .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            Color(0xFF222836).copy(alpha = 0.45f),
-                            Color(0xFF0E121B).copy(alpha = 0.75f)
-                        )
-                    )
-                )
-        )
-
-        Box(
-            modifier = Modifier
-                .offset(x = (-8f * s).dp)
-                .size((266f * s).dp)
-                .clip(CircleShape)
-                .graphicsLayer { rotationZ = rotationProvider() },
-            contentAlignment = Alignment.Center
-        ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                if (size.minDimension <= 2f) return@Canvas
-                val radius = (size.minDimension / 2f).coerceAtLeast(1f)
-                val center = Offset(size.width / 2f, size.height / 2f)
-
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color(0xFF1E222B),
-                            Color(0xFF101217),
-                            Color(0xFF08090C)
-                        ),
-                        center = center,
-                        radius = radius
-                    ),
-                    radius = radius,
-                    center = center
-                )
-
-                drawCircle(
-                    brush = Brush.sweepGradient(
-                        0.00f to Color.White.copy(alpha = 0.01f),
-                        0.08f to Color.White.copy(alpha = 0.11f),
-                        0.16f to Color.White.copy(alpha = 0.01f),
-                        0.50f to Color.White.copy(alpha = 0.01f),
-                        0.58f to Color.White.copy(alpha = 0.11f),
-                        0.66f to Color.White.copy(alpha = 0.01f),
-                        1.00f to Color.White.copy(alpha = 0.01f),
-                        center = center
-                    ),
-                    radius = radius * 0.98f,
-                    center = center
-                )
-
-                val innerR = radius * 0.64f
-                val outerR = radius * 0.95f
-                val step = (outerR - innerR) / 14f
-                for (i in 0..13) {
-                    val r = innerR + i * step
-                    val alpha = when {
-                        i == 0 || i == 13 -> 0.12f
-                        i % 4 == 0 -> 0.09f
-                        else -> 0.035f
-                    }
-                    drawCircle(
-                        color = Color.White.copy(alpha = alpha),
-                        radius = r,
-                        center = center,
-                        style = Stroke(width = (if (i % 4 == 0) 1.1f * s else 0.6f * s).dp.toPx())
-                    )
-                }
-
-                drawCircle(
-                    brush = Brush.linearGradient(
-                        listOf(
-                            VipGold.copy(alpha = 0.65f),
-                            ConceptPrimary.copy(alpha = 0.45f),
-                            VipGold.copy(alpha = 0.65f)
-                        )
-                    ),
-                    radius = radius * 0.625f,
-                    center = center,
-                    style = Stroke(width = (2f * s).dp.toPx())
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .size((164f * s).dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF181C26)),
-                contentAlignment = Alignment.Center
-            ) {
-                Crossfade(
-                    targetState = coverUrl,
-                    animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
-                    label = "vinylCoverArtworkCrossfade"
-                ) { activeCoverUrl ->
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (activeCoverUrl.isNotBlank()) {
-                            AsyncImage(
-                                model = activeCoverUrl,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        } else {
-                            Icon(
-                                imageVector = Icons.Rounded.MusicNote,
-                                contentDescription = null,
-                                tint = Color.White.copy(alpha = 0.4f),
-                                modifier = Modifier.size((54f * s).dp)
-                            )
-                        }
-                    }
-                }
-
-                Box(
-                    modifier = Modifier
-                        .size((28f * s).dp)
-                        .clip(CircleShape)
-                        .background(Color(0xAA0A0D14)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size((10f * s).dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF07090E))
-                    )
-                }
-            }
-        }
-
-        // 右上精密液压平衡唱臂组件（按比例 s 同步缩放全套机械几何坐标）
-        Canvas(
-            modifier = Modifier.fillMaxSize()
-        ) {
-            if (size.minDimension <= 2f) return@Canvas
-            fun Float.sdp(): Float = (this * s).dp.toPx()
-
-            val pivot = Offset(size.width - 24f.sdp(), 34f.sdp())
-
-            // 1. 右侧唱臂驻停托架 (Tonearm Rest Cradle)：暂停时唱臂正好稳稳落在此托架中
-            val cradleCenter = Offset(pivot.x - 2f.sdp(), pivot.y + 72f.sdp())
-            drawCircle(
-                color = Color(0xFF121722).copy(alpha = 0.85f),
-                radius = 7.5f.sdp(),
-                center = cradleCenter
-            )
-            drawArc(
-                color = Color(0xFF94A3B8).copy(alpha = 0.65f),
-                startAngle = 15f,
-                sweepAngle = 150f,
-                useCenter = false,
-                topLeft = Offset(cradleCenter.x - 5.5f.sdp(), cradleCenter.y - 5.5f.sdp()),
-                size = Size(11f.sdp(), 11f.sdp()),
-                style = Stroke(width = 1.8f.sdp(), cap = StrokeCap.Round)
-            )
-
-            // 2. 唱臂金属轴承底座 (Gimbal Pivot Base)
-            drawCircle(
-                color = Color(0xFF080B12).copy(alpha = 0.72f),
-                radius = 21f.sdp(),
-                center = pivot
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFF3E4759), Color(0xFF1A202C)),
-                    center = pivot,
-                    radius = 18f.sdp()
-                ),
-                radius = 17f.sdp(),
-                center = pivot
-            )
-            drawCircle(
-                color = Color.White.copy(alpha = 0.24f),
-                radius = 17f.sdp(),
-                center = pivot,
-                style = Stroke(width = 1f.sdp())
-            )
-
-            // 3. 液压旋转唱臂主体（0° 为垂直停靠在右侧托架，+24° 为旋入唱片声轨）
-            rotate(degrees = armAngle, pivot = pivot) {
-                val weightEnd = Offset(pivot.x + 2f.sdp(), pivot.y - 23f.sdp())
-                drawLine(
-                    color = Color(0xFF78849B),
-                    start = pivot,
-                    end = weightEnd,
-                    strokeWidth = 5.5f.sdp(),
-                    cap = StrokeCap.Round
-                )
-                drawRoundRect(
-                    brush = Brush.horizontalGradient(
-                        listOf(Color(0xFF222836), Color(0xFF475569), Color(0xFF1E2430))
-                    ),
-                    topLeft = Offset(pivot.x - 6f.sdp(), weightEnd.y),
-                    size = Size(14f.sdp(), 11f.sdp()),
-                    cornerRadius = CornerRadius(3f.sdp(), 3f.sdp())
-                )
-
-                val armEnd = Offset(pivot.x - 4f.sdp(), pivot.y + 104f.sdp())
-                val sCurvePath = Path().apply {
-                    moveTo(pivot.x, pivot.y)
-                    cubicTo(
-                        pivot.x + 5f.sdp(), pivot.y + 34f.sdp(),
-                        pivot.x - 8f.sdp(), pivot.y + 68f.sdp(),
-                        armEnd.x, armEnd.y
-                    )
-                }
-
-                val shadowDx = (-2f - 2.5f * stylusLift).sdp()
-                val shadowDy = (4f + 3.5f * stylusLift).sdp()
-                val shadowPath = Path().apply {
-                    moveTo(pivot.x + shadowDx * 0.3f, pivot.y + shadowDy * 0.3f)
-                    cubicTo(
-                        pivot.x + 5f.sdp() + shadowDx, pivot.y + 34f.sdp() + shadowDy,
-                        pivot.x - 8f.sdp() + shadowDx, pivot.y + 68f.sdp() + shadowDy,
-                        armEnd.x + shadowDx, armEnd.y + shadowDy
-                    )
-                }
-                drawPath(
-                    path = shadowPath,
-                    color = Color.Black.copy(alpha = 0.42f - 0.14f * stylusLift),
-                    style = Stroke(width = (5.8f + 1.5f * stylusLift).sdp(), cap = StrokeCap.Round)
-                )
-
-                drawPath(
-                    path = sCurvePath,
-                    brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color(0xFFF1F5F9),
-                            Color(0xFF94A3B8),
-                            Color(0xFFE2E8F0)
-                        ),
-                        start = pivot,
-                        end = armEnd
-                    ),
-                    style = Stroke(width = 3.8f.sdp(), cap = StrokeCap.Round)
-                )
-
-                val headTip = Offset(armEnd.x - 8f.sdp(), armEnd.y + 16f.sdp())
-                drawLine(
-                    color = Color(0xFF1E293B),
-                    start = armEnd,
-                    end = headTip,
-                    strokeWidth = 7.8f.sdp(),
-                    cap = StrokeCap.Round
-                )
-                drawLine(
-                    color = VipGold,
-                    start = Offset(armEnd.x - 1.5f.sdp(), armEnd.y + 3f.sdp()),
-                    end = Offset(headTip.x + 1.5f.sdp(), headTip.y - 2.5f.sdp()),
-                    strokeWidth = 2.2f.sdp(),
-                    cap = StrokeCap.Round
-                )
-                drawCircle(
-                    color = lerp(ConceptCyanAccent, Color.White.copy(alpha = 0.45f), stylusLift),
-                    radius = (2.6f - 0.4f * stylusLift).sdp(),
-                    center = headTip
-                )
-            }
-
-            // 4. 轴承中心高光顶盖
-            drawCircle(
-                brush = Brush.linearGradient(
-                    listOf(Color(0xFFF1F5F9), Color(0xFF64748B))
-                ),
-                radius = 7.2f.sdp(),
-                center = pivot
-            )
-        }
-    }
-}
-
-internal const val ROUNDED_COVER_INITIAL_REST_PHASE_RAD = (PI / 4.0).toFloat()
-internal const val ROUNDED_COVER_SYMMETRY_PERIOD_RAD = (PI / 2.0).toFloat()
-internal const val ROUNDED_COVER_TWO_PI_RAD = (PI * 2.0).toFloat()
-internal const val ROUNDED_COVER_MIN_STOP_GLIDE_RAD = (PI / 12.0).toFloat() // 最小前向滑行角位移 15°，避免过近急刹
-internal const val ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC = (2.0 * PI / 8.0).toFloat() // 巡航角速度 45°/s (8s/圈，每 2s 转过一个 90° 对称周期)
-internal const val ROUNDED_COVER_SPIN_UP_DURATION_SEC = 0.68f
-private const val ROUNDED_COVER_DECEL_EXPONENT = 2.2f
-
-/**
- * 圆角方形封面流光动效连续状态容器：
- * - [dispersionPhase]：连续相位角（弧度），暂停/播放切换时严格保持 C1 连续，绝不重置回 0°；
- * - [haloPulse]：光晕呼吸缩放因子，随播放/暂停平滑收放；
- * - [playTransition]：0f（静止暂停态）到 1f（饱满播放态）的连续插值因子。
- */
-@Immutable
-internal data class RoundedCoverMotionState(
-    val dispersionPhase: Float,
-    val haloPulse: Float,
-    val playTransition: Float,
-    val coverScale: Float = 1.0f
-)
-
-/**
- * 方案 A：计算「播放 -> 暂停」时顺势向前滑行归位的最近 45° (mod 90°) 对角交错对称目标角（弧度）。
- * - 正方形流光框具有 90° (π/2) 四重旋转对称性，因此 45°、135°、225°、315° 几何形态完全一致；
- * - 暂停瞬间绝不瞬移或倒转，而是顺着当前旋转方向锁定前方最近的 k*(π/2) + π/4 对称角平顺滑行停靠。
- */
-internal fun computeRoundedCoverSymmetryStopTargetRad(
-    currentPhaseRad: Float,
-    currentVelocityRadPerSec: Float = ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC
-): Float {
-    val period = ROUNDED_COVER_SYMMETRY_PERIOD_RAD
-    val offset = ROUNDED_COVER_INITIAL_REST_PHASE_RAD
-    val normalizedIndex = (currentPhaseRad - offset) / period
-    val ceilIndex = kotlin.math.ceil(normalizedIndex.toDouble() - 1e-5).toInt()
-    val candidate = ceilIndex * period + offset
-    val delta = (candidate - currentPhaseRad).coerceAtLeast(0f)
-
-    if (currentVelocityRadPerSec <= 0.02f && delta < 0.02f) {
-        return candidate
-    }
-    val velocityRatio = (currentVelocityRadPerSec / ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC).coerceIn(0.25f, 1.0f)
-    val minGlide = ROUNDED_COVER_MIN_STOP_GLIDE_RAD * velocityRatio
-    return if (delta < minGlide) {
-        candidate + period
-    } else {
-        candidate
-    }
-}
-
-/**
- * 根据前向滑行角位移 Δθ 与当前角速度计算自然的阻尼减速时长（秒）。
- */
-internal fun computeRoundedCoverDecelDurationSec(
-    deltaRad: Float,
-    currentVelocityRadPerSec: Float = ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC
-): Float {
-    if (deltaRad <= 1e-4f) return 0f
-    val velocityFactor = (currentVelocityRadPerSec / ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC).coerceIn(0.45f, 1.15f)
-    val rawDuration = (0.58f + 0.56f * deltaRad) / velocityFactor
-    return rawDuration.coerceIn(0.68f, 1.52f)
-}
-
-/**
- * 计算「暂停 -> 播放」渐进加速阶段在 [elapsedSec] 时刻的瞬时角速度（smoothstep S 型平滑加速，0 阶跃）。
- */
-internal fun computeRoundedCoverSpinUpVelocity(
-    startOmegaRadPerSec: Float,
-    elapsedSec: Float,
-    targetOmegaRadPerSec: Float = ROUNDED_COVER_CRUISE_OMEGA_RAD_PER_SEC,
-    durationSec: Float = ROUNDED_COVER_SPIN_UP_DURATION_SEC
-): Float {
-    if (durationSec <= 0f) return targetOmegaRadPerSec
-    val u = (elapsedSec / durationSec).coerceIn(0f, 1f)
-    val smooth = u * u * (3f - 2f * u)
-    return startOmegaRadPerSec + (targetOmegaRadPerSec - startOmegaRadPerSec) * smooth
-}
-
-/**
- * 计算「播放 -> 暂停」阻尼减速阶段在 [elapsedSec] 时刻的瞬时相位角与瞬时角速度：
- * - 采用 p(s) = θ0 + Δθ * (1 - (1 - s)^n)，满足 p(0) = θ0, p(1) = θ_target, ω(1) = 0；
- * - 速度导数 ω(s) 全程严格单调递减至 0，无过冲、无回弹、无瞬移。
- */
-internal fun evaluateRoundedCoverDecelerationStep(
-    startPhaseRad: Float,
-    targetPhaseRad: Float,
-    durationSec: Float,
-    elapsedSec: Float
-): Pair<Float, Float> {
-    val deltaRad = (targetPhaseRad - startPhaseRad).coerceAtLeast(0f)
-    if (deltaRad <= 1e-5f || durationSec <= 1e-4f) {
-        return targetPhaseRad to 0f
-    }
-    val s = (elapsedSec / durationSec).coerceIn(0f, 1f)
-    val rem = 1f - s
-    val remPow = Math.pow(rem.toDouble(), ROUNDED_COVER_DECEL_EXPONENT.toDouble()).toFloat()
-    val remDerivPow = Math.pow(rem.toDouble(), (ROUNDED_COVER_DECEL_EXPONENT - 1f).toDouble()).toFloat()
-    val phase = startPhaseRad + deltaRad * (1f - remPow)
-    val velocity = if (s >= 1f) 0f else (ROUNDED_COVER_DECEL_EXPONENT * deltaRad / durationSec) * remDerivPow
-    return phase to velocity
-}
-
-@Composable
-internal fun rememberRoundedCoverMotionState(
-    isPlaying: Boolean,
-    songKey: Any? = null,
-    activeAndVisible: Boolean = true
-): RoundedCoverMotionState {
-    var phaseRad by remember(songKey) { mutableFloatStateOf(ROUNDED_COVER_INITIAL_REST_PHASE_RAD) }
-    var velocityRadPerSec by remember(songKey) { mutableFloatStateOf(0f) }
-    var breathPhaseRad by remember(songKey) { mutableFloatStateOf(0f) }
-    var hasEverPlayed by remember(songKey) { mutableStateOf(isPlaying) }
-
-    val playTransition by animateFloatAsState(
-        targetValue = if (isPlaying) 1f else 0f,
-        animationSpec = tween(durationMillis = 560, easing = FastOutSlowInEasing),
-        label = "roundedCoverPlayTransition"
-    )
-    val coverScale by animateFloatAsState(
-        targetValue = if (isPlaying) 1.0f else 0.92f,
-        animationSpec = ConceptMotion.gentleBounceSpring(),
-        label = "squareCoverScale"
-    )
-
-    LaunchedEffect(isPlaying, songKey, activeAndVisible) {
-        if (!activeAndVisible) return@LaunchedEffect
-        val twoPi = ROUNDED_COVER_TWO_PI_RAD
-        if (isPlaying) {
-            hasEverPlayed = true
-            val startOmega = velocityRadPerSec.coerceAtLeast(0f)
-            var elapsedSec = 0f
-            var lastFrameNanos = -1L
-            while (isActive) {
-                withFrameNanos { frameNanos ->
-                    val dt = if (lastFrameNanos < 0L) {
-                        0f
-                    } else {
-                        ((frameNanos - lastFrameNanos) / 1_000_000_000f).coerceIn(0f, 0.05f)
-                    }
-                    lastFrameNanos = frameNanos
-                    elapsedSec += dt
-                    val currentOmega = computeRoundedCoverSpinUpVelocity(
-                        startOmegaRadPerSec = startOmega,
-                        elapsedSec = elapsedSec
-                    )
-                    velocityRadPerSec = currentOmega
-                    phaseRad = (phaseRad + currentOmega * dt) % twoPi
-                    breathPhaseRad = (breathPhaseRad + dt * (twoPi / 6.0f)) % twoPi
-                }
-            }
-        } else if (hasEverPlayed || velocityRadPerSec > 0.005f) {
-            val startPhase = phaseRad
-            val startVelocity = velocityRadPerSec.coerceAtLeast(0.15f)
-            val targetPhase = computeRoundedCoverSymmetryStopTargetRad(
-                currentPhaseRad = startPhase,
-                currentVelocityRadPerSec = startVelocity
-            )
-            val deltaRad = (targetPhase - startPhase).coerceAtLeast(0f)
-            val durationSec = computeRoundedCoverDecelDurationSec(
-                deltaRad = deltaRad,
-                currentVelocityRadPerSec = startVelocity
-            )
-            if (durationSec > 0f && deltaRad > 1e-4f) {
-                var elapsedSec = 0f
-                var lastFrameNanos = -1L
-                while (isActive && elapsedSec < durationSec) {
-                    withFrameNanos { frameNanos ->
-                        val dt = if (lastFrameNanos < 0L) {
-                            0f
-                        } else {
-                            ((frameNanos - lastFrameNanos) / 1_000_000_000f).coerceIn(0f, 0.05f)
-                        }
-                        lastFrameNanos = frameNanos
-                        elapsedSec = (elapsedSec + dt).coerceAtMost(durationSec)
-                        val (nextPhase, nextVel) = evaluateRoundedCoverDecelerationStep(
-                            startPhaseRad = startPhase,
-                            targetPhaseRad = targetPhase,
-                            durationSec = durationSec,
-                            elapsedSec = elapsedSec
-                        )
-                        phaseRad = nextPhase
-                        velocityRadPerSec = nextVel
-                        breathPhaseRad = (breathPhaseRad + dt * (twoPi / 6.0f) * (1f - elapsedSec / durationSec)) % twoPi
-                    }
-                }
-            }
-            phaseRad = ((targetPhase % twoPi) + twoPi) % twoPi
-            velocityRadPerSec = 0f
-        }
-    }
-
-    val haloPulse = 0.94f + playTransition * (0.065f + 0.055f * sin(breathPhaseRad))
-    return RoundedCoverMotionState(
-        dispersionPhase = phaseRad,
-        haloPulse = haloPulse,
-        playTransition = playTransition,
-        coverScale = coverScale
-    )
-}
-
-/**
- * 圆角封面多光谱棱镜边缘色散光晕绘制引擎 (Chromatic Dispersion Edge Halo):
- * - 同时赋能竖屏与横屏圆角封面；
- * - 将歌曲主题色分解为「青蓝短波 (Cyan-Blue)」「玫瑰品红长波 (Rose-Magenta)」「电光紫中波 (Electric-Violet)」三大色散通道；
- * - 采用满足离屏图层 Alpha 结合律的高明度预乘羽化混合 (BlendMode.SrcOver)，
- *   确保在 AnimatedContent 进出歌词页离屏透明层切换 (alpha < 1 <-> alpha == 1) 时光晕亮度 100% 连续零闪烁。
- */
-internal fun DrawScope.drawRoundedCoverEdgeDispersionHalo(
-    cornerPx: Float,
-    accentPrimary: Color,
-    accentSecondary: Color,
-    dispersionPhase: Float,
-    haloPulse: Float,
-    isPlaying: Boolean,
-    playTransition: Float = if (isPlaying) 1f else 0f
-) {
-    val w = size.width
-    val h = size.height
-    if (w <= 4f || h <= 4f) return
-    val p = playTransition.coerceIn(0f, 1f)
-
-    // 三原色高明度棱镜色散光谱通道（向高明度霓虹色偏置，保障在 SrcOver 预乘混合下通透鲜亮且不受离屏透明层突变影响）
-    val prismCyan = lerp(lerp(accentSecondary, Color(0xFF00F0FF), 0.62f), Color.White, 0.22f)
-    val prismMagenta = lerp(lerp(accentPrimary, Color(0xFFFF3E8E), 0.56f), Color.White, 0.20f)
-    val prismViolet = lerp(lerp(lerp(accentPrimary, accentSecondary, 0.5f), Color(0xFFA29BFE), 0.58f), Color.White, 0.22f)
-    val prismGold = lerp(lerp(accentPrimary, Color(0xFFFFD166), 0.48f), Color.White, 0.20f)
-    val deepShadowColor = lerp(accentPrimary, Color.Black, 0.68f)
-
-    // 1. 底部深邃悬浮立体暗影（随 playTransition 平滑过渡）
-    val shadowCenter = Offset(w * 0.5f, h * 0.58f)
-    val shadowRadius = (w * 0.68f).coerceAtLeast(1f)
-    drawCircle(
-        brush = Brush.radialGradient(
-            colorStops = arrayOf(
-                0.00f to deepShadowColor.copy(alpha = 0.42f + 0.20f * p),
-                0.64f to deepShadowColor.copy(alpha = 0.16f + 0.12f * p),
-                1.00f to Color.Transparent
-            ),
-            center = shadowCenter,
-            radius = shadowRadius
-        ),
-        radius = shadowRadius,
-        center = shadowCenter
-    )
-
-    // 2. 沿圆角矩形边缘展开的三通道色散错位光场 (Chromatic Aberration Rounded-Rect Shells)
-    val dispAmp = (3.8f + 2.7f * p).dp.toPx() * haloPulse
-    val cyanShift = Offset(cos(dispersionPhase) * dispAmp, sin(dispersionPhase) * dispAmp)
-    val magentaShift = Offset(cos(dispersionPhase + 2.094f) * dispAmp, sin(dispersionPhase + 2.094f) * dispAmp)
-    val violetShift = Offset(cos(dispersionPhase + 4.188f) * dispAmp, sin(dispersionPhase + 4.188f) * dispAmp)
-
-    val maxSpreadPx = 28.dp.toPx() * haloPulse
-    val shellCount = 7
-    val activityBoost = 0.66f + 0.34f * p
-
-    for (i in shellCount downTo 1) {
-        val t = i.toFloat() / shellCount.toFloat()
-        val outset = maxSpreadPx * t
-        // 越靠近封面边缘色散能量越凝聚，向外呈二次方柔和衰减；采用 BlendMode.SrcOver 消除离屏层切换闪烁
-        val shellAlpha = ((1f - t * 0.76f) * (1f - t * 0.76f) * 0.155f * activityBoost).coerceIn(0.010f, 0.20f)
-        val shellSize = Size(w + outset * 2f, h + outset * 2f)
-        val shellCorner = CornerRadius(cornerPx + outset, cornerPx + outset)
-
-        // 短波青蓝色散壳
-        drawRoundRect(
-            color = prismCyan.copy(alpha = shellAlpha),
-            topLeft = Offset(-outset + cyanShift.x * t, -outset + cyanShift.y * t),
-            size = shellSize,
-            cornerRadius = shellCorner,
-            blendMode = BlendMode.SrcOver
-        )
-        // 长波品红色散壳
-        drawRoundRect(
-            color = prismMagenta.copy(alpha = shellAlpha * 0.95f),
-            topLeft = Offset(-outset + magentaShift.x * t, -outset + magentaShift.y * t),
-            size = shellSize,
-            cornerRadius = shellCorner,
-            blendMode = BlendMode.SrcOver
-        )
-        // 中波电光紫色散壳
-        drawRoundRect(
-            color = prismViolet.copy(alpha = shellAlpha * 0.92f),
-            topLeft = Offset(-outset + violetShift.x * t, -outset + violetShift.y * t),
-            size = shellSize,
-            cornerRadius = shellCorner,
-            blendMode = BlendMode.SrcOver
-        )
-    }
-
-    // 3. 贴合圆角边缘的旋转棱镜光谱色散流光环 (Prismatic Spectral Dispersion Edge Rings)
-    val center = Offset(w * 0.5f, h * 0.5f)
-    val deg = ((dispersionPhase * 180f / PI.toFloat()) % 360f + 360f) % 360f
-    rotate(degrees = deg, pivot = center) {
-        val sweepBrush = Brush.sweepGradient(
-            0.00f to prismCyan,
-            0.16f to lerp(accentPrimary, Color.White, 0.18f),
-            0.33f to prismMagenta,
-            0.50f to prismGold,
-            0.66f to prismViolet,
-            0.83f to lerp(accentSecondary, Color.White, 0.18f),
-            0.92f to Color.White.copy(alpha = 0.94f),
-            1.00f to prismCyan,
-            center = center
-        )
-        for (ring in 1..4) {
-            val ringOutset = (1.2f + ring * 2.1f).dp.toPx() * haloPulse
-            val ringAlpha = ((0.44f / ring) * activityBoost).coerceIn(0.05f, 0.48f)
-            val strokeW = ((5.2f - ring * 0.9f).coerceAtLeast(1.2f)).dp.toPx()
-            drawRoundRect(
-                brush = sweepBrush,
-                topLeft = Offset(-ringOutset, -ringOutset),
-                size = Size(w + ringOutset * 2f, h + ringOutset * 2f),
-                cornerRadius = CornerRadius(cornerPx + ringOutset, cornerPx + ringOutset),
-                alpha = ringAlpha,
-                style = Stroke(width = strokeW),
-                blendMode = BlendMode.SrcOver
-            )
-        }
-    }
-}
-
-/**
- * 圆角封面表层 2.5D 棱镜色散折射倒角高光边 (Prismatic Chamfered Bevel Rim)
- */
-internal fun DrawScope.drawRoundedCoverPrismaticRim(
-    cornerPx: Float,
-    accentPrimary: Color,
-    accentSecondary: Color,
-    dispersionPhase: Float,
-    isPlaying: Boolean,
-    playTransition: Float = if (isPlaying) 1f else 0f
-) {
-    val w = size.width
-    val h = size.height
-    if (w <= 4f || h <= 4f) return
-    val p = playTransition.coerceIn(0f, 1f)
-
-    val prismCyan = lerp(accentSecondary, Color(0xFF00F0FF), 0.58f)
-    val prismMagenta = lerp(accentPrimary, Color(0xFFFF3E8E), 0.52f)
-    val prismViolet = lerp(accentPrimary, Color(0xFFA29BFE), 0.50f)
-
-    // 1. 表层微受光柔面与暗角
-    drawRect(
-        brush = Brush.linearGradient(
-            colors = listOf(
-                Color.White.copy(alpha = 0.13f),
-                Color.Transparent,
-                Color.Black.copy(alpha = 0.22f)
-            ),
-            start = Offset(0f, 0f),
-            end = Offset(w, h)
-        )
-    )
-
-    // 2. 外沿多光谱棱镜色散折射高光边框
-    val strokePx = 1.8.dp.toPx()
-    val halfStroke = strokePx / 2f
-    val phaseCos = cos(dispersionPhase)
-    val phaseSin = sin(dispersionPhase)
-    val gradStart = Offset(
-        w * (0.5f - 0.5f * phaseCos),
-        h * (0.5f - 0.5f * phaseSin)
-    )
-    val gradEnd = Offset(
-        w * (0.5f + 0.5f * phaseCos),
-        h * (0.5f + 0.5f * phaseSin)
-    )
-    drawRoundRect(
-        brush = Brush.linearGradient(
-            colors = listOf(
-                Color.White.copy(alpha = 0.48f + 0.24f * p),
-                prismCyan.copy(alpha = 0.42f + 0.26f * p),
-                prismMagenta.copy(alpha = 0.36f + 0.26f * p),
-                prismViolet.copy(alpha = 0.40f + 0.26f * p),
-                Color.White.copy(alpha = 0.32f + 0.22f * p)
-            ),
-            start = gradStart,
-            end = gradEnd
-        ),
-        topLeft = Offset(halfStroke, halfStroke),
-        size = Size(w - strokePx, h - strokePx),
-        cornerRadius = CornerRadius(cornerPx - halfStroke, cornerPx - halfStroke),
-        style = Stroke(width = strokePx)
-    )
-
-    // 3. 内侧晶莹次级折射细线
-    val innerInset = 2.4.dp.toPx()
-    drawRoundRect(
-        brush = Brush.linearGradient(
-            colors = listOf(
-                prismCyan.copy(alpha = 0.26f),
-                Color.White.copy(alpha = 0.16f),
-                prismMagenta.copy(alpha = 0.22f)
-            ),
-            start = Offset(0f, 0f),
-            end = Offset(w, h)
-        ),
-        topLeft = Offset(innerInset, innerInset),
-        size = Size(w - innerInset * 2f, h - innerInset * 2f),
-        cornerRadius = CornerRadius(cornerPx - innerInset, cornerPx - innerInset),
-        style = Stroke(width = 0.85.dp.toPx())
-    )
-}
-
-@Composable
-private fun StaticRoundedSquareCoverView(
-    coverUrl: String,
-    isPlaying: Boolean,
-    accentColor: Color,
-    secondaryAccentColor: Color = ConceptCyanAccent,
-    motionState: RoundedCoverMotionState? = null,
-    coverSize: androidx.compose.ui.unit.Dp = 276.dp,
-    cornerRadius: androidx.compose.ui.unit.Dp = 30.dp
-) {
-    val resolvedMotionState = motionState ?: rememberRoundedCoverMotionState(
-        isPlaying = isPlaying,
-        songKey = coverUrl
-    )
-    val coverScale = resolvedMotionState.coverScale
-    val haloPulse = resolvedMotionState.haloPulse
-    val dispersionPhase = resolvedMotionState.dispersionPhase
-    val playTransition = resolvedMotionState.playTransition
-
-    Box(
-        modifier = Modifier
-            .size(coverSize)
-            .graphicsLayer {
-                scaleX = coverScale
-                scaleY = coverScale
-                clip = false
-            }
-            .drawBehind {
-                drawRoundedCoverEdgeDispersionHalo(
-                    cornerPx = cornerRadius.toPx(),
-                    accentPrimary = accentColor,
-                    accentSecondary = secondaryAccentColor,
-                    dispersionPhase = dispersionPhase,
-                    haloPulse = haloPulse,
-                    isPlaying = isPlaying,
-                    playTransition = playTransition
-                )
-            }
-            .clip(RoundedCornerShape(cornerRadius))
-            .background(Color(0xFF151A26))
-            .drawWithContent {
-                drawContent()
-                drawRoundedCoverPrismaticRim(
-                    cornerPx = cornerRadius.toPx(),
-                    accentPrimary = accentColor,
-                    accentSecondary = secondaryAccentColor,
-                    dispersionPhase = dispersionPhase,
-                    isPlaying = isPlaying,
-                    playTransition = playTransition
-                )
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Crossfade(
-            targetState = coverUrl,
-            animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
-            label = "squareCoverArtworkCrossfade"
-        ) { activeCoverUrl ->
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                if (activeCoverUrl.isNotBlank()) {
-                    AsyncImage(
-                        model = activeCoverUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    Icon(
-                        imageVector = Icons.Rounded.MusicNote,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.4f),
-                        modifier = Modifier.size(68.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FullWidthLyricPreviewSection(
@@ -4216,2230 +2919,6 @@ private fun PlayerControlsSection(
     }
 }
 
-/**
- * 自然光学彗星拖尾进度条 (CometTailProgressBar):
- * - 彗星外层羽化光流与内层晶核光束均采用「前端半圆包络 (Rounded Teardrop Envelope)」平滑包裹圆点中心，
- *   使拖尾从圆核内部自然向后渐隐收拢，彻底消除原直径处的垂直切线。
- */
-@Composable
-internal fun CometTailProgressBar(
-    fraction: Float,
-    isPlaying: Boolean,
-    isInteracting: Boolean,
-    currentTimeText: String,
-    totalTimeText: String,
-    climaxStartFrac: Float,
-    climaxEndFrac: Float,
-    highlightClimaxRange: Boolean,
-    accentPrimary: Color = ConceptPrimary,
-    accentSecondary: Color = ConceptCyanAccent,
-    compact: Boolean = false,
-    onDragStart: (Float) -> Unit,
-    onDrag: (Float) -> Unit,
-    onDragEnd: () -> Unit,
-    onDragCancel: () -> Unit = onDragEnd
-) {
-    val currentOnDragStart by rememberUpdatedState(onDragStart)
-    val currentOnDrag by rememberUpdatedState(onDrag)
-    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
-    val currentOnDragCancel by rememberUpdatedState(onDragCancel)
-    val trackHeightDp by animateDpAsState(
-        targetValue = if (compact) {
-            if (isInteracting) 5.8.dp else 3.4.dp
-        } else {
-            if (isInteracting) 8.0.dp else 4.8.dp
-        },
-        animationSpec = spring(
-            dampingRatio = 0.68f,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "cometTrackHeight"
-    )
-    val thumbScale by animateFloatAsState(
-        targetValue = if (isInteracting) 1.32f else 1.0f,
-        animationSpec = spring(
-            dampingRatio = 0.65f,
-            stiffness = Spring.StiffnessMedium
-        ),
-        label = "cometThumbScale"
-    )
-
-    val cometPulse: Float
-    val stardustPhase: Float
-    if (isPlaying) {
-        val infiniteTransition = rememberInfiniteTransition(label = "cometOpticalFlow")
-        val animatedPulse by infiniteTransition.animateFloat(
-            initialValue = 0.90f,
-            targetValue = 1.12f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "cometBreath"
-        )
-        val animatedStardust by infiniteTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 1400, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "stardustPhase"
-        )
-        cometPulse = animatedPulse
-        stardustPhase = animatedStardust
-    } else {
-        cometPulse = 1.0f
-        stardustPhase = 0f
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(if (compact) 22.dp else 40.dp)
-            .steplessHorizontalScrubGesture(
-                onScrubStart = { startF -> currentOnDragStart(startF) },
-                onScrubMove = { moveF -> currentOnDrag(moveF) },
-                onScrubEnd = { currentOnDragEnd() },
-                onScrubCancel = { currentOnDragCancel() }
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        AnimatedVisibility(
-            visible = isInteracting,
-            enter = fadeIn(tween(120)) + scaleIn(initialScale = 0.85f),
-            exit = fadeOut(tween(150)) + scaleOut(targetScale = 0.85f),
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = (-8).dp)
-        ) {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = Color(0xE6141E30),
-                contentColor = Color.White
-            ) {
-                Text(
-                    text = "$currentTimeText / $totalTimeText",
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                )
-            }
-        }
-
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp)
-                .height(if (compact) 18.dp else 32.dp)
-        ) {
-            val w = size.width
-            val h = size.height
-            if (w <= 2f || h <= 2f) return@Canvas
-            val centerY = h / 2f
-            val barH = trackHeightDp.toPx().coerceIn(2f, h)
-            val barRadius = CornerRadius(barH / 2f, barH / 2f)
-            val topY = centerY - barH / 2f
-
-            drawRoundRect(
-                color = Color.White.copy(alpha = if (isInteracting) 0.22f else 0.15f),
-                topLeft = Offset(0f, topY),
-                size = Size(w, barH),
-                cornerRadius = barRadius
-            )
-
-            if (climaxEndFrac > climaxStartFrac) {
-                val cStart = (w * climaxStartFrac).coerceIn(0f, w)
-                val cWidth = (w * (climaxEndFrac - climaxStartFrac)).coerceIn(4f, (w - cStart).coerceAtLeast(4f))
-                if (highlightClimaxRange) {
-                    drawRoundRect(
-                        color = VipGold.copy(alpha = 0.24f),
-                        topLeft = Offset(cStart, centerY - barH * 1.10f),
-                        size = Size(cWidth, barH * 2.20f),
-                        cornerRadius = CornerRadius(barH, barH)
-                    )
-                }
-                drawRoundRect(
-                    color = VipGold.copy(alpha = if (highlightClimaxRange) 0.86f else 0.48f),
-                    topLeft = Offset(cStart, topY),
-                    size = Size(cWidth, barH),
-                    cornerRadius = barRadius
-                )
-            }
-
-            val headX = (w * fraction.coerceIn(0f, 1f)).coerceIn(0f, w)
-            val headCenter = Offset(headX, centerY)
-            val thumbRadius = (if (compact) 3.8.dp else 5.0.dp).toPx() * thumbScale
-            val pulseFactor = (if (isPlaying) cometPulse else 1f).coerceIn(0.88f, 1.16f)
-
-            if (headX > 1f) {
-                drawRoundRect(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(
-                            accentPrimary.copy(alpha = 0.38f),
-                            accentPrimary.copy(alpha = 0.85f),
-                            lerp(accentPrimary, accentSecondary, 0.75f)
-                        ),
-                        startX = 0f,
-                        endX = headX
-                    ),
-                    topLeft = Offset(0f, topY),
-                    size = Size(headX, barH),
-                    cornerRadius = barRadius
-                )
-            }
-
-            // 自然水滴包络式彗星拖尾 (Seamless Teardrop Comet Wake)
-            val maxTailLen = min(headX, 118.dp.toPx())
-            if (maxTailLen > 4f) {
-                val tailStartX = (headX - maxTailLen).coerceAtLeast(0f)
-                val outerCapR = (thumbRadius * 1.38f * pulseFactor).coerceAtLeast(barH * 0.9f)
-                val innerCapR = (thumbRadius * 0.82f).coerceAtLeast(barH * 0.55f)
-
-                val outerTeardropPath = Path().apply {
-                    moveTo(tailStartX, centerY)
-                    cubicTo(
-                        tailStartX + maxTailLen * 0.45f, centerY - outerCapR * 0.15f,
-                        tailStartX + maxTailLen * 0.82f, centerY - outerCapR,
-                        headX, centerY - outerCapR
-                    )
-                    arcTo(
-                        rect = androidx.compose.ui.geometry.Rect(
-                            left = headX - outerCapR,
-                            top = centerY - outerCapR,
-                            right = headX + outerCapR,
-                            bottom = centerY + outerCapR
-                        ),
-                        startAngleDegrees = -90f,
-                        sweepAngleDegrees = 180f,
-                        forceMoveTo = false
-                    )
-                    cubicTo(
-                        tailStartX + maxTailLen * 0.82f, centerY + outerCapR,
-                        tailStartX + maxTailLen * 0.45f, centerY + outerCapR * 0.15f,
-                        tailStartX, centerY
-                    )
-                    close()
-                }
-                drawPath(
-                    path = outerTeardropPath,
-                    brush = Brush.horizontalGradient(
-                        colorStops = arrayOf(
-                            0.00f to Color.Transparent,
-                            0.38f to accentPrimary.copy(alpha = 0.12f),
-                            0.76f to accentSecondary.copy(alpha = 0.34f),
-                            0.94f to Color.White.copy(alpha = 0.46f),
-                            1.00f to Color.White.copy(alpha = 0.25f)
-                        ),
-                        startX = tailStartX,
-                        endX = (headX + outerCapR).coerceAtLeast(tailStartX + 2f)
-                    )
-                )
-
-                val coreStart = tailStartX + maxTailLen * 0.20f
-                val innerTeardropPath = Path().apply {
-                    moveTo(coreStart, centerY)
-                    cubicTo(
-                        tailStartX + maxTailLen * 0.58f, centerY - innerCapR * 0.22f,
-                        tailStartX + maxTailLen * 0.86f, centerY - innerCapR,
-                        headX, centerY - innerCapR
-                    )
-                    arcTo(
-                        rect = androidx.compose.ui.geometry.Rect(
-                            left = headX - innerCapR,
-                            top = centerY - innerCapR,
-                            right = headX + innerCapR,
-                            bottom = centerY + innerCapR
-                        ),
-                        startAngleDegrees = -90f,
-                        sweepAngleDegrees = 180f,
-                        forceMoveTo = false
-                    )
-                    cubicTo(
-                        tailStartX + maxTailLen * 0.86f, centerY + innerCapR,
-                        tailStartX + maxTailLen * 0.58f, centerY + innerCapR * 0.22f,
-                        coreStart, centerY
-                    )
-                    close()
-                }
-                drawPath(
-                    path = innerTeardropPath,
-                    brush = Brush.horizontalGradient(
-                        colorStops = arrayOf(
-                            0.00f to Color.Transparent,
-                            0.42f to accentPrimary.copy(alpha = 0.45f),
-                            0.82f to lerp(accentSecondary, Color.White, 0.55f).copy(alpha = 0.88f),
-                            1.00f to Color.White
-                        ),
-                        startX = coreStart,
-                        endX = (headX + innerCapR).coerceAtLeast(coreStart + 2f)
-                    )
-                )
-
-                for (i in 0 until 5) {
-                    val pNorm = (stardustPhase + i * 0.20f) % 1f
-                    val distRatio = 1f - pNorm
-                    val px = tailStartX + maxTailLen * (0.24f + 0.70f * distRatio)
-                    val spread = distRatio * outerCapR * 0.55f
-                    val dirSign = if (i % 2 == 0) 1f else -1f
-                    val py = centerY + dirSign * sin(pNorm * PI.toFloat() * 2.0f + i) * spread
-                    val pAlpha = (sin(distRatio * PI.toFloat()) * 0.78f).coerceIn(0f, 0.82f)
-                    val pRadius = (0.8f + 1.2f * distRatio).dp.toPx()
-                    drawCircle(
-                        color = if (i % 2 == 0) Color.White.copy(alpha = pAlpha) else accentSecondary.copy(alpha = pAlpha),
-                        radius = pRadius,
-                        center = Offset(px, py)
-                    )
-                }
-            }
-
-            // 彗星晶核头部：多层同心柔光晕 + 融合炽白核心
-            val haloRadius = (if (compact) 9.5.dp else 13.5.dp).toPx() * thumbScale * pulseFactor
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colorStops = arrayOf(
-                        0.00f to Color.White,
-                        0.26f to Color.White.copy(alpha = 0.92f),
-                        0.52f to lerp(accentSecondary, Color.White, 0.45f).copy(alpha = 0.58f),
-                        0.78f to accentPrimary.copy(alpha = 0.24f),
-                        1.00f to Color.Transparent
-                    ),
-                    center = headCenter,
-                    radius = haloRadius
-                ),
-                radius = haloRadius,
-                center = headCenter
-            )
-
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color.White,
-                        Color.White,
-                        lerp(accentSecondary, Color.White, 0.65f)
-                    ),
-                    center = headCenter,
-                    radius = thumbRadius
-                ),
-                radius = thumbRadius,
-                center = headCenter
-            )
-        }
-    }
-}
-
-internal fun createPlumpPlayTrianglePath(
-    centerX: Float,
-    centerY: Float,
-    size: Float
-): Path {
-    val halfH = size * 0.50f
-    val leftX = centerX - size * 0.42f
-    val rightX = centerX + size * 0.48f
-    val topY = centerY - halfH
-    val bottomY = centerY + halfH
-    val corner = size * 0.19f
-
-    val p1 = Offset(leftX, topY)
-    val p2 = Offset(rightX, centerY)
-    val p3 = Offset(leftX, bottomY)
-
-    fun moveAlong(from: Offset, to: Offset, dist: Float): Offset {
-        val dx = to.x - from.x
-        val dy = to.y - from.y
-        val len = kotlin.math.sqrt(dx * dx + dy * dy).coerceAtLeast(0.001f)
-        val r = (dist / len).coerceIn(0f, 0.45f)
-        return Offset(from.x + dx * r, from.y + dy * r)
-    }
-
-    val p1a = moveAlong(p1, p3, corner)
-    val p1b = moveAlong(p1, p2, corner)
-    val p2a = moveAlong(p2, p1, corner)
-    val p2b = moveAlong(p2, p3, corner)
-    val p3a = moveAlong(p3, p2, corner)
-    val p3b = moveAlong(p3, p1, corner)
-
-    return Path().apply {
-        moveTo(p1b.x, p1b.y)
-        lineTo(p2a.x, p2a.y)
-        quadraticBezierTo(p2.x, p2.y, p2b.x, p2b.y)
-        lineTo(p3a.x, p3a.y)
-        quadraticBezierTo(p3.x, p3.y, p3b.x, p3b.y)
-        lineTo(p1a.x, p1a.y)
-        quadraticBezierTo(p1.x, p1.y, p1b.x, p1b.y)
-        close()
-    }
-}
-
-/**
- * 连续几何插值播放/暂停形变绘制 (True Geometric Play/Pause Morph):
- * - 彻底淘汰 `morphProgress > 0.5f` 瞬间硬切；
- * - `morphProgress = 0f`（暂停态，显示饱满圆角播放三角） <-> `morphProgress = 1f`（播放态，分裂并延展为双圆角暂停竖柱）；
- * - 通过左右两组圆润四边几何路径连续线性插值，实现 120fps 丝滑无缝形变。
- */
-internal fun DrawScope.drawContinuousPlayPauseMorph(
-    morphProgress: Float,
-    color: Color
-) {
-    val w = size.width
-    val h = size.height
-    if (w <= 2f || h <= 2f) return
-    val p = morphProgress.coerceIn(0f, 1f)
-
-    if (p <= 0.02f) {
-        val triPath = createPlumpPlayTrianglePath(
-            centerX = w * 0.54f,
-            centerY = h * 0.50f,
-            size = min(w, h) * 0.84f
-        )
-        drawPath(path = triPath, color = color)
-        return
-    }
-    if (p >= 0.98f) {
-        val barW = w * 0.24f
-        val barH = h * 0.72f
-        val topY = (h - barH) / 2f
-        val leftX = w * 0.18f
-        val rightX = w - leftX - barW
-        val radius = CornerRadius(barW / 2f, barW / 2f)
-        drawRoundRect(
-            color = color,
-            topLeft = Offset(leftX, topY),
-            size = Size(barW, barH),
-            cornerRadius = radius
-        )
-        drawRoundRect(
-            color = color,
-            topLeft = Offset(rightX, topY),
-            size = Size(barW, barH),
-            cornerRadius = radius
-        )
-        return
-    }
-
-    fun lerpF(a: Float, b: Float, t: Float): Float = a + (b - a) * t
-
-    // 左半路径：从三角左半梯形平滑过渡到左暂停竖条
-    val lTopLeftX = lerpF(w * 0.19f, w * 0.18f, p)
-    val lTopLeftY = lerpF(h * 0.14f, h * 0.14f, p)
-    val lTopRightX = lerpF(w * 0.53f, w * 0.42f, p)
-    val lTopRightY = lerpF(h * 0.32f, h * 0.14f, p)
-    val lBotRightX = lerpF(w * 0.53f, w * 0.42f, p)
-    val lBotRightY = lerpF(h * 0.68f, h * 0.86f, p)
-    val lBotLeftX = lerpF(w * 0.19f, w * 0.18f, p)
-    val lBotLeftY = lerpF(h * 0.86f, h * 0.86f, p)
-
-    // 右半路径：从三角右尖端平滑分裂延展为右暂停竖条
-    val gapProgress = ((p - 0.10f) / 0.90f).coerceIn(0f, 1f)
-    val rTopLeftX = lerpF(w * 0.51f, w * 0.58f, gapProgress)
-    val rTopLeftY = lerpF(h * 0.31f, h * 0.14f, p)
-    val rTopRightX = lerpF(w * 0.87f, w * 0.82f, p)
-    val rTopRightY = lerpF(h * 0.50f, h * 0.14f, p)
-    val rBotRightX = lerpF(w * 0.87f, w * 0.82f, p)
-    val rBotRightY = lerpF(h * 0.50f, h * 0.86f, p)
-    val rBotLeftX = lerpF(w * 0.51f, w * 0.58f, gapProgress)
-    val rBotLeftY = lerpF(h * 0.69f, h * 0.86f, p)
-
-    val strokeJoinRadius = min(w, h) * 0.11f
-
-    val leftMorphPath = Path().apply {
-        moveTo(lTopLeftX, lTopLeftY)
-        lineTo(lTopRightX, lTopRightY)
-        lineTo(lBotRightX, lBotRightY)
-        lineTo(lBotLeftX, lBotLeftY)
-        close()
-    }
-    val rightMorphPath = Path().apply {
-        moveTo(rTopLeftX, rTopLeftY)
-        lineTo(rTopRightX, rTopRightY)
-        lineTo(rBotRightX, rBotRightY)
-        lineTo(rBotLeftX, rBotLeftY)
-        close()
-    }
-
-    drawPath(path = leftMorphPath, color = color)
-    drawPath(
-        path = leftMorphPath,
-        color = color,
-        style = Stroke(width = strokeJoinRadius, cap = StrokeCap.Round, join = StrokeJoin.Round)
-    )
-    drawPath(path = rightMorphPath, color = color)
-    drawPath(
-        path = rightMorphPath,
-        color = color,
-        style = Stroke(width = strokeJoinRadius, cap = StrokeCap.Round, join = StrokeJoin.Round)
-    )
-}
-
-// =========================================================================================
-// 圆润饱满重绘图标组件库 (Plump & Rounded Custom Canvas Icons)
-// =========================================================================================
-
-@Composable
-internal fun PlumpHeartCanvasIcon(
-    isFavorite: Boolean,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    Canvas(modifier = modifier) {
-        val w = size.width
-        val h = size.height
-        val path = Path().apply {
-            moveTo(w * 0.50f, h * 0.85f)
-            cubicTo(w * 0.10f, h * 0.60f, w * 0.06f, h * 0.25f, w * 0.28f, h * 0.16f)
-            cubicTo(w * 0.42f, h * 0.10f, w * 0.50f, h * 0.22f, w * 0.50f, h * 0.28f)
-            cubicTo(w * 0.50f, h * 0.22f, w * 0.58f, h * 0.10f, w * 0.72f, h * 0.16f)
-            cubicTo(w * 0.94f, h * 0.25f, w * 0.90f, h * 0.60f, w * 0.50f, h * 0.85f)
-            close()
-        }
-        if (isFavorite) {
-            drawPath(path = path, color = color)
-        } else {
-            drawPath(
-                path = path,
-                color = color,
-                style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-            )
-        }
-    }
-}
-
-@Composable
-internal fun PlumpPosterSparkleCanvasIcon(
-    color: Color,
-    accentColor: Color,
-    iconSize: androidx.compose.ui.unit.Dp = 22.dp
-) {
-    Canvas(modifier = Modifier.size(iconSize)) {
-        val w = size.width
-        val h = size.height
-        val stroke = 2.2.dp.toPx() * (w / 22.dp.toPx()).coerceIn(0.85f, 1.35f)
-        drawRoundRect(
-            color = color,
-            topLeft = Offset(w * 0.12f, h * 0.12f),
-            size = Size(w * 0.76f, h * 0.76f),
-            cornerRadius = CornerRadius(w * 0.24f, w * 0.24f),
-            style = Stroke(width = stroke, cap = StrokeCap.Round)
-        )
-        drawLine(color, Offset(w * 0.28f, h * 0.44f), Offset(w * 0.68f, h * 0.44f), stroke, StrokeCap.Round)
-        drawLine(accentColor, Offset(w * 0.28f, h * 0.62f), Offset(w * 0.54f, h * 0.62f), stroke, StrokeCap.Round)
-        drawCircle(accentColor, radius = w * 0.08f, center = Offset(w * 0.68f, h * 0.28f))
-    }
-}
-
-@Composable
-internal fun PlumpPlaylistAddCanvasIcon(
-    color: Color,
-    accentColor: Color,
-    iconSize: androidx.compose.ui.unit.Dp = 24.dp
-) {
-    Canvas(modifier = Modifier.size(iconSize)) {
-        val w = size.width
-        val h = size.height
-        val stroke = 2.5.dp.toPx() * (w / 24.dp.toPx()).coerceIn(0.85f, 1.35f)
-        drawLine(color, Offset(w * 0.14f, h * 0.26f), Offset(w * 0.78f, h * 0.26f), stroke, StrokeCap.Round)
-        drawLine(color, Offset(w * 0.14f, h * 0.50f), Offset(w * 0.56f, h * 0.50f), stroke, StrokeCap.Round)
-        drawLine(color, Offset(w * 0.14f, h * 0.74f), Offset(w * 0.46f, h * 0.74f), stroke, StrokeCap.Round)
-        drawLine(accentColor, Offset(w * 0.74f, h * 0.52f), Offset(w * 0.74f, h * 0.84f), stroke, StrokeCap.Round)
-        drawLine(accentColor, Offset(w * 0.58f, h * 0.68f), Offset(w * 0.90f, h * 0.68f), stroke, StrokeCap.Round)
-    }
-}
-
-@Composable
-internal fun PlumpAudioWaveCanvasIcon(
-    color: Color,
-    accentColor: Color,
-    iconSize: androidx.compose.ui.unit.Dp = if (com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice) 29.dp else 24.dp
-) {
-    Canvas(modifier = Modifier.size(iconSize)) {
-        val w = size.width
-        val h = size.height
-        val pillW = w * 0.13f
-        val xs = listOf(0.15f, 0.34f, 0.53f, 0.72f)
-        val hs = listOf(0.36f, 0.76f, 0.56f, 0.36f)
-        xs.forEachIndexed { idx, xr ->
-            val bh = h * hs[idx]
-            val top = (h - bh) / 2f
-            drawRoundRect(
-                color = if (idx == 1) accentColor else color,
-                topLeft = Offset(w * xr, top),
-                size = Size(pillW, bh),
-                cornerRadius = CornerRadius(pillW / 2f, pillW / 2f)
-            )
-        }
-    }
-}
-
-@Composable
-internal fun PlumpDesktopLyricCanvasIcon(
-    enabled: Boolean,
-    color: Color,
-    accentColor: Color,
-    iconSize: androidx.compose.ui.unit.Dp = if (com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice) 29.dp else 24.dp
-) {
-    Canvas(modifier = Modifier.size(iconSize)) {
-        val w = size.width
-        val h = size.height
-        val stroke = 2.3.dp.toPx() * (w / 24.dp.toPx()).coerceIn(0.85f, 1.35f)
-        if (enabled) {
-            drawRoundRect(
-                color = color.copy(alpha = 0.20f),
-                topLeft = Offset(w * 0.12f, h * 0.18f),
-                size = Size(w * 0.76f, h * 0.64f),
-                cornerRadius = CornerRadius(w * 0.22f, w * 0.22f)
-            )
-        }
-        drawRoundRect(
-            color = color,
-            topLeft = Offset(w * 0.12f, h * 0.18f),
-            size = Size(w * 0.76f, h * 0.64f),
-            cornerRadius = CornerRadius(w * 0.22f, w * 0.22f),
-            style = Stroke(width = stroke, cap = StrokeCap.Round)
-        )
-        drawLine(color, Offset(w * 0.28f, h * 0.42f), Offset(w * 0.72f, h * 0.42f), stroke, StrokeCap.Round)
-        drawLine(if (enabled) accentColor else color, Offset(w * 0.28f, h * 0.60f), Offset(w * 0.56f, h * 0.60f), stroke, StrokeCap.Round)
-    }
-}
-
-@Composable
-internal fun PlumpMoreDotsCanvasIcon(
-    color: Color,
-    iconSize: androidx.compose.ui.unit.Dp = if (com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice) 29.dp else 24.dp
-) {
-    Canvas(modifier = Modifier.size(iconSize)) {
-        val w = size.width
-        val h = size.height
-        val r = w * 0.088f
-        drawCircle(color, radius = r, center = Offset(w * 0.23f, h * 0.5f))
-        drawCircle(color, radius = r, center = Offset(w * 0.50f, h * 0.5f))
-        drawCircle(color, radius = r, center = Offset(w * 0.77f, h * 0.5f))
-    }
-}
-
-/**
- * 重绘控件 1：圆润饱满播放模式切换按钮
- */
-@Composable
-internal fun AnimatedPlayModeButton(
-    playMode: PlayMode,
-    accentColor: Color = ConceptCyanAccent,
-    onClick: () -> Unit
-) {
-    var clickCount by remember { mutableIntStateOf(0) }
-    val spinDeg by animateFloatAsState(
-        targetValue = clickCount * 180f,
-        animationSpec = spring(
-            dampingRatio = 0.65f,
-            stiffness = Spring.StiffnessMediumLow
-        ),
-        label = "playModeSpin"
-    )
-    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
-
-    Box(
-        modifier = Modifier
-            .size(if (isLargeScreen) 56.dp else 46.dp)
-            .clip(CircleShape)
-            .softClickable(
-                pressScale = 0.84f,
-                onClick = {
-                    clickCount++
-                    onClick()
-                }
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        AnimatedContent(
-            targetState = playMode,
-            transitionSpec = {
-                (scaleIn(initialScale = 0.65f, animationSpec = spring(dampingRatio = 0.65f)) +
-                    fadeIn(tween(160))) togetherWith
-                    (scaleOut(targetScale = 0.65f, animationSpec = tween(130)) +
-                        fadeOut(tween(120)))
-            },
-            label = "playModeMorph"
-        ) { mode ->
-            Canvas(
-                modifier = Modifier
-                    .size(if (isLargeScreen) 30.dp else 25.dp)
-                    .graphicsLayer {
-                        rotationZ = if (mode == PlayMode.REPEAT_ALL) spinDeg % 360f else 0f
-                    }
-            ) {
-                val w = size.width
-                val h = size.height
-                val stroke = (if (isLargeScreen) 2.7.dp else 2.4.dp).toPx()
-                val tint = Color.White.copy(alpha = 0.90f)
-
-                when (mode) {
-                    PlayMode.REPEAT_ALL -> {
-                        val pad = w * 0.14f
-                        val rectSize = Size(w - pad * 2, h - pad * 2)
-                        drawArc(
-                            color = tint,
-                            startAngle = -155f,
-                            sweepAngle = 130f,
-                            useCenter = false,
-                            topLeft = Offset(pad, pad),
-                            size = rectSize,
-                            style = Stroke(width = stroke, cap = StrokeCap.Round)
-                        )
-                        drawArc(
-                            color = tint,
-                            startAngle = 25f,
-                            sweepAngle = 130f,
-                            useCenter = false,
-                            topLeft = Offset(pad, pad),
-                            size = rectSize,
-                            style = Stroke(width = stroke, cap = StrokeCap.Round)
-                        )
-                        val topTip = Offset(w * 0.78f, h * 0.26f)
-                        drawLine(tint, topTip, Offset(topTip.x - 4.2.dp.toPx(), topTip.y - 1.dp.toPx()), stroke, StrokeCap.Round)
-                        drawLine(tint, topTip, Offset(topTip.x - 1.dp.toPx(), topTip.y + 4.2.dp.toPx()), stroke, StrokeCap.Round)
-
-                        val botTip = Offset(w * 0.22f, h * 0.74f)
-                        drawLine(tint, botTip, Offset(botTip.x + 4.2.dp.toPx(), botTip.y + 1.dp.toPx()), stroke, StrokeCap.Round)
-                        drawLine(tint, botTip, Offset(botTip.x + 1.dp.toPx(), botTip.y - 4.2.dp.toPx()), stroke, StrokeCap.Round)
-                    }
-
-                    PlayMode.REPEAT_ONE -> {
-                        val pad = w * 0.14f
-                        val rectSize = Size(w - pad * 2, h - pad * 2)
-                        drawArc(
-                            color = accentColor,
-                            startAngle = -155f,
-                            sweepAngle = 130f,
-                            useCenter = false,
-                            topLeft = Offset(pad, pad),
-                            size = rectSize,
-                            style = Stroke(width = stroke, cap = StrokeCap.Round)
-                        )
-                        drawArc(
-                            color = accentColor,
-                            startAngle = 25f,
-                            sweepAngle = 130f,
-                            useCenter = false,
-                            topLeft = Offset(pad, pad),
-                            size = rectSize,
-                            style = Stroke(width = stroke, cap = StrokeCap.Round)
-                        )
-                        drawLine(
-                            color = Color.White,
-                            start = Offset(w * 0.50f, h * 0.34f),
-                            end = Offset(w * 0.50f, h * 0.66f),
-                            strokeWidth = stroke * 1.05f,
-                            cap = StrokeCap.Round
-                        )
-                        drawLine(
-                            color = Color.White,
-                            start = Offset(w * 0.41f, h * 0.41f),
-                            end = Offset(w * 0.50f, h * 0.34f),
-                            strokeWidth = stroke * 0.95f,
-                            cap = StrokeCap.Round
-                        )
-                    }
-
-                    PlayMode.SHUFFLE -> {
-                        val path1 = Path().apply {
-                            moveTo(w * 0.15f, h * 0.32f)
-                            cubicTo(w * 0.45f, h * 0.32f, w * 0.55f, h * 0.68f, w * 0.85f, h * 0.68f)
-                        }
-                        val path2 = Path().apply {
-                            moveTo(w * 0.15f, h * 0.68f)
-                            cubicTo(w * 0.45f, h * 0.68f, w * 0.55f, h * 0.32f, w * 0.85f, h * 0.32f)
-                        }
-                        drawPath(path1, tint, style = Stroke(width = stroke, cap = StrokeCap.Round))
-                        drawPath(path2, accentColor, style = Stroke(width = stroke, cap = StrokeCap.Round))
-
-                        val tipTop = Offset(w * 0.86f, h * 0.32f)
-                        drawLine(accentColor, tipTop, Offset(tipTop.x - 3.8.dp.toPx(), tipTop.y - 3.2.dp.toPx()), stroke, StrokeCap.Round)
-                        drawLine(accentColor, tipTop, Offset(tipTop.x - 3.8.dp.toPx(), tipTop.y + 3.2.dp.toPx()), stroke, StrokeCap.Round)
-
-                        val tipBot = Offset(w * 0.86f, h * 0.68f)
-                        drawLine(tint, tipBot, Offset(tipBot.x - 3.8.dp.toPx(), tipBot.y - 3.2.dp.toPx()), stroke, StrokeCap.Round)
-                        drawLine(tint, tipBot, Offset(tipBot.x - 3.8.dp.toPx(), tipBot.y + 3.2.dp.toPx()), stroke, StrokeCap.Round)
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * 重绘控件 2 & 4：圆润饱满上一首 / 下一首按钮（饱满大圆角三角 + 圆润胶囊竖柱）
- */
-@Composable
-internal fun RedrawnSkipButton(
-    isNext: Boolean,
-    onClick: () -> Unit
-) {
-    val scope = rememberCoroutineScope()
-    val nudgeX = remember { Animatable(0f) }
-    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
-
-    Box(
-        modifier = Modifier
-            .size(if (isLargeScreen) 62.dp else 52.dp)
-            .clip(CircleShape)
-            .graphicsLayer {
-                translationX = nudgeX.value
-            }
-            .softClickable(
-                pressScale = 0.86f,
-                onClick = {
-                    scope.launch {
-                        val target = if (isNext) 12f else -12f
-                        nudgeX.animateTo(target, tween(85))
-                        nudgeX.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMedium))
-                    }
-                    onClick()
-                }
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        Canvas(modifier = Modifier.size(if (isLargeScreen) 36.dp else 30.dp)) {
-            val w = size.width
-            val h = size.height
-            val barW = w * 0.145f
-            val barH = h * 0.60f
-            val barTop = (h - barH) / 2f
-
-            if (isNext) {
-                val triPath = createPlumpPlayTrianglePath(
-                    centerX = w * 0.40f,
-                    centerY = h * 0.50f,
-                    size = min(w, h) * 0.66f
-                )
-                drawPath(path = triPath, color = Color.White)
-                drawRoundRect(
-                    color = Color.White,
-                    topLeft = Offset(w * 0.72f, barTop),
-                    size = Size(barW, barH),
-                    cornerRadius = CornerRadius(barW / 2f, barW / 2f)
-                )
-            } else {
-                rotate(degrees = 180f, pivot = Offset(w / 2f, h / 2f)) {
-                    val triPath = createPlumpPlayTrianglePath(
-                        centerX = w * 0.40f,
-                        centerY = h * 0.50f,
-                        size = min(w, h) * 0.66f
-                    )
-                    drawPath(path = triPath, color = Color.White)
-                    drawRoundRect(
-                        color = Color.White,
-                        topLeft = Offset(w * 0.72f, barTop),
-                        size = Size(barW, barH),
-                        cornerRadius = CornerRadius(barW / 2f, barW / 2f)
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * 重绘控件 3：核心播放/暂停流体按钮 (AnimatedPlayPauseCenterButton)
- */
-@Composable
-internal fun AnimatedPlayPauseCenterButton(
-    isPlaying: Boolean,
-    accentPrimary: Color = ConceptPrimary,
-    accentSecondary: Color = ConceptCyanAccent,
-    onClick: () -> Unit
-) {
-    val morphProgress by animateFloatAsState(
-        targetValue = if (isPlaying) 1f else 0f,
-        animationSpec = ConceptMotion.expressiveSpring(),
-        label = "playPauseMorph"
-    )
-    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
-
-    val auraScale: Float = if (isPlaying) {
-        val infiniteTransition = rememberInfiniteTransition(label = "playButtonAura")
-        val animatedAura by infiniteTransition.animateFloat(
-            initialValue = 1.0f,
-            targetValue = 1.12f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(1600, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "auraScale"
-        )
-        animatedAura
-    } else {
-        1.0f
-    }
-
-    Box(
-        modifier = Modifier.size(if (isLargeScreen) 88.dp else 76.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        // 动态封面色彩呼吸光环
-        Box(
-            modifier = Modifier
-                .size(if (isLargeScreen) 86.dp else 74.dp)
-                .graphicsLayer {
-                    scaleX = auraScale
-                    scaleY = auraScale
-                    alpha = if (isPlaying) 0.38f else 0.20f
-                }
-                .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        listOf(accentPrimary, accentSecondary.copy(alpha = 0.5f), Color.Transparent)
-                    )
-                )
-        )
-
-        Surface(
-            shape = CircleShape,
-            color = Color.Transparent,
-            shadowElevation = 14.dp,
-            modifier = Modifier
-                .size(if (isLargeScreen) 76.dp else 66.dp)
-                .clip(CircleShape)
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(
-                            lerp(accentPrimary, Color.White, 0.14f),
-                            accentPrimary,
-                            lerp(accentPrimary, accentSecondary, 0.72f)
-                        )
-                    )
-                )
-                .softClickable(
-                    pressScale = 0.88f,
-                    onClick = onClick
-                )
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                val safeMorph = morphProgress.coerceIn(0f, 1f)
-                Canvas(
-                    modifier = Modifier
-                        .size(if (isLargeScreen) 33.dp else 28.dp)
-                        .graphicsLayer {
-                            val bounce = (1f - 0.08f * sin(safeMorph * PI.toFloat())).coerceIn(0.88f, 1.10f)
-                            scaleX = bounce
-                            scaleY = bounce
-                            rotationZ = (1f - safeMorph) * -6f * sin(safeMorph * PI.toFloat())
-                        }
-                ) {
-                    drawContinuousPlayPauseMorph(
-                        morphProgress = safeMorph,
-                        color = Color.White
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * 重绘控件 5：圆润饱满播放列表/队列按钮
- */
-@Composable
-internal fun RedrawnQueueButton(
-    accentColor: Color = ConceptCyanAccent,
-    onClick: () -> Unit
-) {
-    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
-    Box(
-        modifier = Modifier
-            .size(if (isLargeScreen) 56.dp else 46.dp)
-            .clip(CircleShape)
-            .softClickable(
-                pressScale = 0.84f,
-                onClick = onClick
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        Canvas(modifier = Modifier.size(if (isLargeScreen) 30.dp else 25.dp)) {
-            val w = size.width
-            val h = size.height
-            val stroke = (if (isLargeScreen) 2.8.dp else 2.5.dp).toPx()
-            val tint = Color.White.copy(alpha = 0.90f)
-
-            drawLine(tint, Offset(w * 0.14f, h * 0.26f), Offset(w * 0.78f, h * 0.26f), stroke, StrokeCap.Round)
-            drawLine(tint, Offset(w * 0.14f, h * 0.50f), Offset(w * 0.62f, h * 0.50f), stroke, StrokeCap.Round)
-            drawLine(tint, Offset(w * 0.14f, h * 0.74f), Offset(w * 0.48f, h * 0.74f), stroke, StrokeCap.Round)
-
-            val noteCenter = Offset(w * 0.72f, h * 0.74f)
-            drawCircle(accentColor, radius = (if (isLargeScreen) 4.0.dp else 3.4.dp).toPx(), center = noteCenter)
-            drawLine(
-                color = accentColor,
-                start = Offset(noteCenter.x + 2.5.dp.toPx(), noteCenter.y),
-                end = Offset(noteCenter.x + 2.5.dp.toPx(), h * 0.40f),
-                strokeWidth = stroke * 0.95f,
-                cap = StrokeCap.Round
-            )
-            drawLine(
-                color = accentColor,
-                start = Offset(noteCenter.x + 2.5.dp.toPx(), h * 0.40f),
-                end = Offset(w * 0.90f, h * 0.47f),
-                strokeWidth = stroke * 0.95f,
-                cap = StrokeCap.Round
-            )
-        }
-    }
-}
-
-/**
- * 独立高定歌词页面：
- * - 右侧按钮与底部播放键全部去除边框线 (`.border(...)`)，采用圆润饱满的无边框磨砂胶囊与圆钮；
- * - 修复居中/居右对齐时左窄右宽不对称问题；
- * - 支持封面动态取色高亮主题 (`DYNAMIC_COVER`) 与副歌词字号缩放比 (`lyricTranslationScale`)。
- */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun RedesignedDedicatedLyricPage(
-    lyricData: LyricData,
-    currentLyricIndex: Int,
-    currentPositionMs: Long,
-    rawPositionMs: Long,
-    lyricPositionProvider: () -> Long = { currentPositionMs },
-    rawPositionProvider: () -> Long = { rawPositionMs },
-    durationMs: Long,
-    isPlaying: Boolean,
-    isFavorite: Boolean,
-    showTranslation: Boolean,
-    showTranslationButton: Boolean,
-    showPhonetic: Boolean,
-    showPhoneticButton: Boolean = false,
-    lyricFontSize: Float,
-    lyricTranslationScale: Float = 0.80f,
-    lyricAlignment: LyricAlignment,
-    lyricWordByWord: Boolean,
-    lyricBlurEnabled: Boolean,
-    lyricBlurIntensity: Float,
-    lyricLineSpacing: Float,
-    lyricHighlightTheme: LyricHighlightTheme,
-    dynamicCoverAccent: Color = ConceptPrimary,
-    dynamicCoverSecondary: Color = ConceptCyanAccent,
-    onLineClick: (Int) -> Unit,
-    onReturnToCover: () -> Unit,
-    onTogglePlay: () -> Unit,
-    onSeekTo: (Long) -> Unit,
-    onToggleFavorite: () -> Unit,
-    onToggleTranslation: () -> Unit,
-    onTogglePhonetic: () -> Unit = {},
-    onOpenLyricSettings: () -> Unit
-) {
-    val activePrimaryColor = if (lyricHighlightTheme == LyricHighlightTheme.DYNAMIC_COVER) {
-        dynamicCoverAccent.readableOnDarkSurface(minLuminance = 0.46f)
-    } else {
-        Color(lyricHighlightTheme.primaryHex)
-    }
-    val activeSecondaryColor = if (lyricHighlightTheme == LyricHighlightTheme.DYNAMIC_COVER) {
-        dynamicCoverSecondary.readableOnDarkSurface(minLuminance = 0.50f)
-    } else {
-        Color(lyricHighlightTheme.secondaryHex)
-    }
-
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onReturnToCover
-                )
-        ) {
-            if (lyricData.lines.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "纯音乐，暂无歌词或正在检索官方歌词...",
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            color = Color.White.copy(alpha = 0.55f),
-                            fontWeight = FontWeight.Medium
-                        )
-                    )
-                }
-            } else {
-                val listState = rememberLazyListState()
-                val isDragged by listState.interactionSource.collectIsDraggedAsState()
-                var isUserScrubbing by remember { mutableStateOf(false) }
-
-                LaunchedEffect(isDragged) {
-                    if (isDragged) {
-                        isUserScrubbing = true
-                    }
-                }
-
-                LaunchedEffect(isUserScrubbing, isDragged, listState.isScrollInProgress) {
-                    if (isUserScrubbing && !isDragged && !listState.isScrollInProgress) {
-                        delay(3200L)
-                        isUserScrubbing = false
-                    }
-                }
-
-                LaunchedEffect(currentLyricIndex, isUserScrubbing) {
-                    if (!isUserScrubbing && currentLyricIndex in lyricData.lines.indices) {
-                        val layoutInfo = listState.layoutInfo
-                        val viewportHeight = (layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset).coerceAtLeast(360)
-                        val goldenFocusOffset = -(viewportHeight * 0.28f).roundToInt()
-                        val targetItem = layoutInfo.visibleItemsInfo.firstOrNull { it.index == currentLyricIndex }
-                        if (targetItem != null) {
-                            val currentTargetCenter = targetItem.offset + (targetItem.size / 2)
-                            val desiredCenter = -goldenFocusOffset
-                            val scrollDelta = (currentTargetCenter - desiredCenter).toFloat()
-                            if (abs(scrollDelta) > 2f) {
-                                listState.animateScrollBy(
-                                    value = scrollDelta,
-                                    animationSpec = tween(
-                                        durationMillis = 420,
-                                        easing = ConceptMotion.LyricSmoothScrollEasing
-                                    )
-                                )
-                            }
-                        } else {
-                            listState.animateScrollToItem(
-                                index = currentLyricIndex,
-                                scrollOffset = goldenFocusOffset
-                            )
-                        }
-                    }
-                }
-
-                val scrubLineIndex by remember(lyricData.lines) {
-                    derivedStateOf {
-                        val layoutInfo = listState.layoutInfo
-                        val visibleItems = layoutInfo.visibleItemsInfo
-                        if (visibleItems.isEmpty()) {
-                            currentLyricIndex.coerceIn(0, (lyricData.lines.size - 1).coerceAtLeast(0))
-                        } else {
-                            val viewportCenter = (layoutInfo.viewportStartOffset + layoutInfo.viewportEndOffset) / 2
-                            visibleItems.minByOrNull { item ->
-                                abs((item.offset + item.size / 2) - viewportCenter)
-                            }?.index?.coerceIn(0, (lyricData.lines.size - 1).coerceAtLeast(0)) ?: 0
-                        }
-                    }
-                }
-
-                val textAlign = when (lyricAlignment) {
-                    LyricAlignment.LEFT -> TextAlign.Start
-                    LyricAlignment.CENTER -> TextAlign.Center
-                    LyricAlignment.RIGHT -> TextAlign.End
-                }
-                val horizontalAlignment = when (lyricAlignment) {
-                    LyricAlignment.LEFT -> Alignment.Start
-                    LyricAlignment.CENTER -> Alignment.CenterHorizontally
-                    LyricAlignment.RIGHT -> Alignment.End
-                }
-                val flowArrangement = when (lyricAlignment) {
-                    LyricAlignment.LEFT -> Arrangement.Start
-                    LyricAlignment.CENTER -> Arrangement.Center
-                    LyricAlignment.RIGHT -> Arrangement.End
-                }
-                val supportsHardwareBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-
-                val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
-                val effectiveLyricPageFontSize = if (isLargeScreen) (lyricFontSize + 2f).coerceAtMost(36f) else lyricFontSize
-
-                // 平衡左右内边距，使歌词显示位置保持不变，同时在大屏下让左右两侧空白点击可返回封面页
-                val startPad = when (lyricAlignment) {
-                    LyricAlignment.CENTER -> 28.dp
-                    LyricAlignment.RIGHT -> 16.dp
-                    LyricAlignment.LEFT -> 8.dp
-                }
-                val endPad = when (lyricAlignment) {
-                    LyricAlignment.CENTER -> 28.dp
-                    LyricAlignment.RIGHT -> if (isLargeScreen) 28.dp else 54.dp
-                    LyricAlignment.LEFT -> if (isLargeScreen) 28.dp else 50.dp
-                }
-
-                // 在平板端将歌词列表约束在中央原位置（widthIn(max = 560.dp)），使左右两侧空白区域完全暴露给外层 Box，点击左右空白即可返回封面页；
-                // 同时在列表内部点击非歌词文字空白处也支持返回封面页
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .then(if (isLargeScreen) Modifier.widthIn(max = 560.dp) else Modifier)
-                        .fillMaxSize()
-                        .pointerInput(onReturnToCover) {
-                            detectTapGestures(onTap = { onReturnToCover() })
-                        }
-                        .padding(start = startPad, end = endPad),
-                    contentPadding = PaddingValues(vertical = 170.dp),
-                    horizontalAlignment = horizontalAlignment
-                ) {
-                    itemsIndexed(
-                        items = lyricData.lines,
-                        key = { idx, item -> "${idx}_${item.startTimeMs}" },
-                        contentType = { _, _ -> "lyric_line" }
-                    ) { index, line ->
-                        val isCurrent = index == currentLyricIndex
-                        val isScrubTarget = isUserScrubbing && index == scrubLineIndex
-                        val distance = abs(index - currentLyricIndex)
-
-                        // 零 Text Relayout 弹性缩放：统一基础排版字号，通过 GPU graphicsLayer 连续驱动缩放 (0.86f <-> 1.05f)
-                        val lineScale by animateFloatAsState(
-                            targetValue = when {
-                                isCurrent -> 1.05f
-                                isScrubTarget -> 1.0f
-                                else -> (0.93f - (distance - 1).coerceAtLeast(0) * 0.02f).coerceAtLeast(0.86f)
-                            },
-                            animationSpec = ConceptMotion.spatialPageSpring(),
-                            label = "lyricLineScale"
-                        )
-
-                        val targetDepthBlurVal = if (lyricBlurEnabled && !isUserScrubbing && !isCurrent) {
-                            when (distance) {
-                                1 -> 0.72f * lyricBlurIntensity
-                                2 -> 1.35f * lyricBlurIntensity
-                                3 -> 2.10f * lyricBlurIntensity
-                                else -> 2.85f * lyricBlurIntensity
-                            }.coerceIn(0f, 5.0f)
-                        } else 0f
-                        val depthBlurVal by animateFloatAsState(
-                            targetValue = targetDepthBlurVal,
-                            animationSpec = tween(
-                                durationMillis = 420,
-                                easing = ConceptMotion.LyricSmoothScrollEasing
-                            ),
-                            label = "lyricLineDepthBlur"
-                        )
-
-                        val targetDistanceAlpha = when {
-                            isCurrent -> 1.0f
-                            isScrubTarget -> 0.92f
-                            distance == 1 -> 0.58f
-                            distance == 2 -> 0.38f
-                            distance == 3 -> 0.24f
-                            else -> 0.14f
-                        }
-                        val distanceAlpha by animateFloatAsState(
-                            targetValue = targetDistanceAlpha,
-                            animationSpec = tween(
-                                durationMillis = 420,
-                                easing = ConceptMotion.LyricSmoothScrollEasing
-                            ),
-                            label = "lyricLineDistanceAlpha"
-                        )
-
-                        val transformOriginX = when (lyricAlignment) {
-                            LyricAlignment.LEFT -> 0f
-                            LyricAlignment.CENTER -> 0.5f
-                            LyricAlignment.RIGHT -> 1f
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .graphicsLayer {
-                                    scaleX = lineScale
-                                    scaleY = lineScale
-                                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(transformOriginX, 0.5f)
-                                }
-                                .then(
-                                    if (supportsHardwareBlur && depthBlurVal >= 0.05f) {
-                                        Modifier.blur(depthBlurVal.dp)
-                                    } else Modifier
-                                )
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(
-                                    if (isScrubTarget) activePrimaryColor.copy(alpha = 0.10f) else Color.Transparent
-                                )
-                                .softClickable(
-                                    pressScale = 0.98f,
-                                    onClick = {
-                                        isUserScrubbing = false
-                                        onLineClick(index)
-                                    }
-                                )
-                                .padding(vertical = lyricLineSpacing.dp, horizontal = 8.dp)
-                        ) {
-                            Column(
-                                horizontalAlignment = horizontalAlignment,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                if (index == 0 && currentLyricIndex <= 0) {
-                                    LyricInterludeBreathingIndicator(
-                                        lyricData = lyricData,
-                                        lineIndex = -1,
-                                        initialPositionMs = currentPositionMs,
-                                        isPlaying = isPlaying,
-                                        lyricPositionProvider = lyricPositionProvider,
-                                        lyricFontSize = effectiveLyricPageFontSize,
-                                        accentPrimary = activePrimaryColor,
-                                        accentSecondary = activeSecondaryColor,
-                                        horizontalAlignment = horizontalAlignment,
-                                        modifier = Modifier.padding(bottom = 10.dp)
-                                    )
-                                }
-
-                                val phoneticText = line.phonetic
-                                if (showPhonetic && showPhoneticButton && !phoneticText.isNullOrBlank()) {
-                                    val phoneticFontSize = (effectiveLyricPageFontSize * lyricTranslationScale * 0.86f).coerceAtLeast(11.5f)
-                                    Text(
-                                        text = phoneticText,
-                                        style = MaterialTheme.typography.labelSmall.copy(
-                                            color = if (isCurrent) activePrimaryColor.copy(alpha = 0.90f) else Color.White.copy(alpha = (distanceAlpha * 0.68f).coerceIn(0.12f, 0.55f)),
-                                            fontSize = phoneticFontSize.sp,
-                                            lineHeight = (phoneticFontSize * 1.38f).sp,
-                                            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                                            textAlign = textAlign,
-                                            letterSpacing = 0.4.sp
-                                        ),
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                }
-
-                                if (isCurrent && line.hasWordTiming && lyricWordByWord) {
-                                    DedicatedActiveKaraokeWords(
-                                        words = line.words,
-                                        initialPositionMs = currentPositionMs,
-                                        isPlaying = isPlaying,
-                                        lyricPositionProvider = lyricPositionProvider,
-                                        lyricFontSize = effectiveLyricPageFontSize,
-                                        flowArrangement = flowArrangement,
-                                        activePrimaryColor = activePrimaryColor,
-                                        activeSecondaryColor = activeSecondaryColor
-                                    )
-                                } else {
-                                    val textColor = if (isCurrent) activePrimaryColor else Color.White.copy(alpha = distanceAlpha)
-                                    val textWeight = if (isCurrent || isScrubTarget) FontWeight.ExtraBold else FontWeight.SemiBold
-                                    val lineSize = effectiveLyricPageFontSize.sp
-
-                                    val fallbackBlurShadow = if (!supportsHardwareBlur && depthBlurVal >= 0.15f) {
-                                        Shadow(
-                                            color = Color.White.copy(alpha = (distanceAlpha * 0.85f).coerceIn(0f, 1f)),
-                                            offset = Offset.Zero,
-                                            blurRadius = (depthBlurVal * 3.0f).coerceAtLeast(1f)
-                                        )
-                                    } else null
-
-                                    Text(
-                                        text = line.text,
-                                        style = MaterialTheme.typography.bodyLarge.copy(
-                                            fontWeight = textWeight,
-                                            color = if (fallbackBlurShadow != null) Color.Transparent else textColor,
-                                            fontSize = lineSize,
-                                            lineHeight = (effectiveLyricPageFontSize + 9f).sp,
-                                            textAlign = textAlign,
-                                            shadow = fallbackBlurShadow
-                                        ),
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-
-                                val trans = line.translation
-                                if (showTranslation && showTranslationButton && !trans.isNullOrBlank()) {
-                                    val transFontSize = (effectiveLyricPageFontSize * lyricTranslationScale).coerceAtLeast(13f)
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = trans,
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            color = when {
-                                                isCurrent -> activePrimaryColor.copy(alpha = 0.90f)
-                                                isScrubTarget -> Color.White.copy(alpha = 0.78f)
-                                                else -> Color.White.copy(alpha = (distanceAlpha * 0.82f).coerceIn(0.14f, 0.62f))
-                                            },
-                                            fontSize = transFontSize.sp,
-                                            lineHeight = (transFontSize * 1.42f).sp,
-                                            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                                            textAlign = textAlign
-                                        ),
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                }
-
-                                if (isCurrent) {
-                                    LyricInterludeBreathingIndicator(
-                                        lyricData = lyricData,
-                                        lineIndex = index,
-                                        initialPositionMs = currentPositionMs,
-                                        isPlaying = isPlaying,
-                                        lyricPositionProvider = lyricPositionProvider,
-                                        lyricFontSize = effectiveLyricPageFontSize,
-                                        accentPrimary = activePrimaryColor,
-                                        accentSecondary = activeSecondaryColor,
-                                        horizontalAlignment = horizontalAlignment,
-                                        modifier = Modifier.padding(top = 10.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 手动滑动歌词时的「双翼渐隐中空导引线 (Split-Wing Hollow Timeline)」
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = isUserScrubbing && scrubLineIndex in lyricData.lines.indices,
-                    enter = fadeIn(tween(160)),
-                    exit = fadeOut(tween(160)),
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .then(if (isLargeScreen) Modifier.widthIn(max = 580.dp) else Modifier)
-                        .fillMaxWidth()
-                ) {
-                    val targetTimeMs = lyricData.lines.getOrNull(scrubLineIndex)?.startTimeMs ?: 0L
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(
-                                shape = RoundedCornerShape(9.dp),
-                                color = Color(0xD90E1624),
-                                contentColor = Color.White
-                            ) {
-                                Text(
-                                    text = formatDuration(targetTimeMs),
-                                    color = activePrimaryColor,
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .width(26.dp)
-                                    .height(1.5.dp)
-                                    .background(
-                                        Brush.horizontalGradient(
-                                            listOf(
-                                                activePrimaryColor.copy(alpha = 0.68f),
-                                                Color.Transparent
-                                            )
-                                        )
-                                    )
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.weight(1f))
-
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .width(26.dp)
-                                    .height(1.5.dp)
-                                    .background(
-                                        Brush.horizontalGradient(
-                                            listOf(
-                                                Color.Transparent,
-                                                activePrimaryColor.copy(alpha = 0.68f)
-                                            )
-                                        )
-                                    )
-                            )
-                            Surface(
-                                shape = RoundedCornerShape(11.dp),
-                                color = activePrimaryColor.copy(alpha = 0.28f),
-                                modifier = Modifier
-                                    .softCardClickable(shape = RoundedCornerShape(11.dp)) {
-                                        isUserScrubbing = false
-                                        onLineClick(scrubLineIndex)
-                                    }
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.PlayArrow,
-                                        contentDescription = "跳转播放",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(2.dp))
-                                    Text(
-                                        text = "播放",
-                                        color = Color.White,
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.ExtraBold
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 手机端：保持屏幕右侧偏下黄金拇指区竖向按钮组；平板端：统一整合进下方居中紧凑控播栏，避免按钮散落与遮挡右侧空白点击返回区
-            val isLargeScreenDock = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
-            if (!isLargeScreenDock) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    LyricRightDockGlassButton(
-                        active = isFavorite,
-                        activeColor = Color(0xFFFF4D6D),
-                        onClick = onToggleFavorite
-                    ) {
-                        PlumpHeartCanvasIcon(
-                            isFavorite = isFavorite,
-                            color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.88f),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = showTranslationButton,
-                        enter = scaleIn() + fadeIn(),
-                        exit = scaleOut() + fadeOut()
-                    ) {
-                        LyricRightDockGlassButton(
-                            active = showTranslation,
-                            activeColor = activePrimaryColor,
-                            onClick = onToggleTranslation
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = "译",
-                                    color = if (showTranslation) Color.White else Color.White.copy(alpha = 0.76f),
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                                if (showTranslation) {
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.BottomCenter)
-                                            .offset(y = 8.dp)
-                                            .size(width = 10.dp, height = 2.5.dp)
-                                            .clip(CircleShape)
-                                            .background(activePrimaryColor)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = showPhoneticButton,
-                        enter = scaleIn() + fadeIn(),
-                        exit = scaleOut() + fadeOut()
-                    ) {
-                        LyricRightDockGlassButton(
-                            active = showPhonetic,
-                            activeColor = activePrimaryColor,
-                            onClick = onTogglePhonetic
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = "音",
-                                    color = if (showPhonetic) Color.White else Color.White.copy(alpha = 0.76f),
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                                if (showPhonetic) {
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.BottomCenter)
-                                            .offset(y = 8.dp)
-                                            .size(width = 10.dp, height = 2.5.dp)
-                                            .clip(CircleShape)
-                                            .background(activePrimaryColor)
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    LyricRightDockGlassButton(
-                        active = false,
-                        activeColor = activePrimaryColor,
-                        onClick = onOpenLyricSettings
-                    ) {
-                        Canvas(modifier = Modifier.size(19.dp)) {
-                            val w = size.width
-                            val h = size.height
-                            val stroke = 2.2.dp.toPx()
-                            val c = Color.White.copy(alpha = 0.90f)
-                            drawLine(c, Offset(w * 0.14f, h * 0.32f), Offset(w * 0.86f, h * 0.32f), stroke, StrokeCap.Round)
-                            drawCircle(activePrimaryColor, radius = 3.0.dp.toPx(), center = Offset(w * 0.65f, h * 0.32f))
-
-                            drawLine(c, Offset(w * 0.14f, h * 0.68f), Offset(w * 0.86f, h * 0.68f), stroke, StrokeCap.Round)
-                            drawCircle(c, radius = 3.0.dp.toPx(), center = Offset(w * 0.35f, h * 0.68f))
-                        }
-                    }
-                }
-            }
-        }
-
-        // 歌词页专属底部极简控播栏：平板端将播放键、进度条与右侧工具按钮紧凑居中编组，彻底告别分散感
-        val isLargeScreenBottom = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            Row(
-                modifier = Modifier
-                    .then(if (isLargeScreenBottom) Modifier.widthIn(max = 580.dp) else Modifier)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(modifier = Modifier.weight(1f)) {
-                    LyricPageMinimalBottomBar(
-                        currentPositionMs = rawPositionMs,
-                        positionProvider = rawPositionProvider,
-                        durationMs = durationMs,
-                        isPlaying = isPlaying,
-                        accentColor = activePrimaryColor,
-                        onTogglePlay = onTogglePlay,
-                        onSeekTo = onSeekTo
-                    )
-                }
-
-                if (isLargeScreenBottom) {
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        if (showTranslationButton) {
-                            LyricRightDockGlassButton(
-                                active = showTranslation,
-                                activeColor = activePrimaryColor,
-                                buttonSize = 46.dp,
-                                onClick = onToggleTranslation
-                            ) {
-                                Text(
-                                    text = "译",
-                                    color = if (showTranslation) Color.White else Color.White.copy(alpha = 0.78f),
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                            }
-                        }
-
-                        if (showPhoneticButton) {
-                            LyricRightDockGlassButton(
-                                active = showPhonetic,
-                                activeColor = activePrimaryColor,
-                                buttonSize = 46.dp,
-                                onClick = onTogglePhonetic
-                            ) {
-                                Text(
-                                    text = "音",
-                                    color = if (showPhonetic) Color.White else Color.White.copy(alpha = 0.78f),
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                            }
-                        }
-
-                        LyricRightDockGlassButton(
-                            active = isFavorite,
-                            activeColor = Color(0xFFFF4D6D),
-                            buttonSize = 46.dp,
-                            onClick = onToggleFavorite
-                        ) {
-                            PlumpHeartCanvasIcon(
-                                isFavorite = isFavorite,
-                                color = if (isFavorite) Color(0xFFFF4D6D) else Color.White.copy(alpha = 0.88f),
-                                modifier = Modifier.size(23.dp)
-                            )
-                        }
-
-                        LyricRightDockGlassButton(
-                            active = false,
-                            activeColor = activePrimaryColor,
-                            buttonSize = 46.dp,
-                            onClick = onOpenLyricSettings
-                        ) {
-                            Canvas(modifier = Modifier.size(22.dp)) {
-                                val w = size.width
-                                val h = size.height
-                                val stroke = 2.4.dp.toPx()
-                                val c = Color.White.copy(alpha = 0.90f)
-                                drawLine(c, Offset(w * 0.14f, h * 0.32f), Offset(w * 0.86f, h * 0.32f), stroke, StrokeCap.Round)
-                                drawCircle(activePrimaryColor, radius = 3.3.dp.toPx(), center = Offset(w * 0.65f, h * 0.32f))
-
-                                drawLine(c, Offset(w * 0.14f, h * 0.68f), Offset(w * 0.86f, h * 0.68f), stroke, StrokeCap.Round)
-                                drawCircle(c, radius = 3.3.dp.toPx(), center = Offset(w * 0.35f, h * 0.68f))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun DedicatedActiveKaraokeWords(
-    words: List<com.concept.music.data.model.LyricWord>,
-    initialPositionMs: Long,
-    isPlaying: Boolean,
-    lyricPositionProvider: () -> Long,
-    lyricFontSize: Float,
-    flowArrangement: Arrangement.Horizontal,
-    activePrimaryColor: Color,
-    activeSecondaryColor: Color
-) {
-    val isLifecycleStarted = rememberIsLifecycleStarted()
-    var sampledPosMs by remember { mutableLongStateOf(lyricPositionProvider()) }
-    LaunchedEffect(initialPositionMs) {
-        sampledPosMs = lyricPositionProvider()
-    }
-    LaunchedEffect(isPlaying, isLifecycleStarted, lyricPositionProvider) {
-        if (isPlaying && isLifecycleStarted) {
-            while (isActive) {
-                withFrameMillis {
-                    sampledPosMs = lyricPositionProvider()
-                }
-            }
-        } else {
-            sampledPosMs = lyricPositionProvider()
-        }
-    }
-    val livePosMs = sampledPosMs
-    val dimColor = Color.White.copy(alpha = 0.40f)
-
-    FlowRow(
-        horizontalArrangement = flowArrangement,
-        verticalArrangement = Arrangement.Center,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        words.forEach { word ->
-            val wordProgress = when {
-                word.durationMs > 0L -> ((livePosMs - word.startTimeMs).toFloat() / word.durationMs.toFloat()).coerceIn(0f, 1f)
-                livePosMs >= word.startTimeMs -> 1f
-                else -> 0f
-            }
-            val isSinging = wordProgress in 0.01f..0.99f
-
-            val annotatedWord = buildAnnotatedString {
-                if (wordProgress <= 0f) {
-                    withStyle(SpanStyle(color = dimColor)) {
-                        append(word.text)
-                    }
-                } else if (wordProgress >= 1f) {
-                    withStyle(SpanStyle(color = activePrimaryColor)) {
-                        append(word.text)
-                    }
-                } else {
-                    val leftStop = (wordProgress - 0.14f).coerceAtLeast(0f)
-                    val rightStop = (wordProgress + 0.14f).coerceAtMost(1f)
-                    withStyle(
-                        SpanStyle(
-                            brush = Brush.horizontalGradient(
-                                0.0f to activePrimaryColor,
-                                leftStop to activeSecondaryColor,
-                                rightStop to dimColor,
-                                1.0f to dimColor
-                            )
-                        )
-                    ) {
-                        append(word.text)
-                    }
-                }
-            }
-
-            val wave = if (isSinging) sin(wordProgress * PI.toFloat()) else 0f
-            val isLongNote = word.durationMs >= 700L && isSinging
-            val shimmer = if (isLongNote) 0.85f + 0.15f * sin(wordProgress * PI.toFloat() * 3f) else 1f
-
-            Text(
-                text = annotatedWord,
-                style = MaterialTheme.typography.headlineSmall.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = lyricFontSize.sp,
-                    lineHeight = (lyricFontSize + 9f).sp,
-                    shadow = if (isLongNote) {
-                        Shadow(
-                            color = activePrimaryColor.copy(alpha = (0.82f * wave * shimmer).coerceIn(0f, 1f)),
-                            offset = Offset.Zero,
-                            blurRadius = (20f * wave * shimmer + 6f).coerceAtLeast(1f)
-                        )
-                    } else null
-                ),
-                modifier = Modifier.graphicsLayer {
-                    translationY = -3.4f * wave * shimmer
-                    val s = 1f + 0.038f * wave * shimmer
-                    scaleX = s
-                    scaleY = s
-                }
-            )
-        }
-    }
-}
-
-/**
- * 基于酷狗 KRC 精确时间戳的「无框三点流光呼吸指示器 (LyricInterludeBreathingIndicator)」：
- * - 利用 `LyricData.getInterludeProgressAt` 精准探测前奏（≥3s）及行间器乐间奏（≥4s）；
- * - 不使用任何胶囊背景框、不显示剩余秒数，直接悬浮于背景之上，采用与 KRC 逐字歌词完全一致的渲染管线：
- *   按间奏进度 [0 -> 1] 从左至右依次流光染色点亮、叠加柔光霓虹辉光，并伴随正弦波弹性呼吸上浮跳动。
- */
-@Composable
-internal fun LyricInterludeBreathingIndicator(
-    lyricData: LyricData,
-    lineIndex: Int,
-    initialPositionMs: Long,
-    isPlaying: Boolean,
-    lyricPositionProvider: () -> Long,
-    lyricFontSize: Float = 24f,
-    accentPrimary: Color,
-    accentSecondary: Color,
-    horizontalAlignment: Alignment.Horizontal = Alignment.Start,
-    modifier: Modifier = Modifier
-) {
-    val isLifecycleStarted = rememberIsLifecycleStarted()
-    val hasCandidate = remember(lyricData, lineIndex) {
-        lyricData.hasInterludeCandidateAt(lineIndex)
-    }
-    var sampledPosMs by remember(lyricData, lineIndex) { mutableLongStateOf(lyricPositionProvider()) }
-    LaunchedEffect(initialPositionMs) {
-        sampledPosMs = lyricPositionProvider()
-    }
-    LaunchedEffect(isPlaying, isLifecycleStarted, hasCandidate, lyricData, lineIndex, lyricPositionProvider) {
-        if (isPlaying && isLifecycleStarted && hasCandidate) {
-            while (isActive) {
-                withFrameMillis {
-                    sampledPosMs = lyricPositionProvider()
-                }
-            }
-        } else {
-            sampledPosMs = lyricPositionProvider()
-        }
-    }
-
-    val progress = if (hasCandidate) {
-        lyricData.getInterludeProgressAt(sampledPosMs, lineIndex)
-    } else -1f
-    val visible = progress >= 0f
-
-    androidx.compose.animation.AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(tween(240)) + scaleIn(initialScale = 0.86f, animationSpec = ConceptMotion.expressiveSpring()),
-        exit = fadeOut(tween(180)) + scaleOut(targetScale = 0.86f, animationSpec = tween(180)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = modifier.fillMaxWidth(),
-            horizontalAlignment = horizontalAlignment
-        ) {
-            LyricFloatingBreathingDots(
-                progress = progress.coerceIn(0f, 1f),
-                isPlaying = isPlaying,
-                dotFontSizeSp = (lyricFontSize * 0.68f).coerceIn(14f, 22f),
-                activePrimaryColor = accentPrimary,
-                activeSecondaryColor = accentSecondary
-            )
-        }
-    }
-}
-
-/**
- * 与 KRC 歌词同源渲染的「无框悬浮三点流光呼吸组件 (LyricFloatingBreathingDots)」：
- * - 无任何背景框与文字标签，直接悬浮在播放背景上；
- * - 每个圆点采用与 `DedicatedActiveKaraokeWords` 完全一致的 `SpanStyle(Brush.horizontalGradient)` 逐点扫光染色、
- *   `Shadow` 柔光辉光以及 `graphicsLayer` 正弦呼吸上浮与弹性缩放。
- */
-@Composable
-internal fun LyricFloatingBreathingDots(
-    progress: Float,
-    isPlaying: Boolean = true,
-    dotFontSizeSp: Float = 16f,
-    activePrimaryColor: Color,
-    activeSecondaryColor: Color
-) {
-    val breathPhase: Float
-    if (isPlaying) {
-        val infiniteTransition = rememberInfiniteTransition(label = "lyricFloatingDotsBreath")
-        val animatedPhase by infiniteTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = (2.0 * PI).toFloat(),
-            animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = 1280, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "lyricFloatingDotsWavePhase"
-        )
-        breathPhase = animatedPhase
-    } else {
-        breathPhase = 0f
-    }
-
-    val dimColor = Color.White.copy(alpha = 0.40f)
-    val spacingDp = (dotFontSizeSp * 0.42f).coerceIn(6f, 11f).dp
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(spacingDp)
-    ) {
-        for (i in 0 until 3) {
-            val dotProgress = ((progress * 3f) - i).coerceIn(0f, 1f)
-            val isLighting = dotProgress in 0.01f..0.99f
-            val isLit = dotProgress >= 1f
-
-            val annotatedDot = buildAnnotatedString {
-                if (dotProgress <= 0f) {
-                    withStyle(SpanStyle(color = dimColor)) {
-                        append("●")
-                    }
-                } else if (isLit) {
-                    withStyle(SpanStyle(color = activePrimaryColor)) {
-                        append("●")
-                    }
-                } else {
-                    val leftStop = (dotProgress - 0.18f).coerceAtLeast(0f)
-                    val rightStop = (dotProgress + 0.18f).coerceAtMost(1f)
-                    withStyle(
-                        SpanStyle(
-                            brush = Brush.horizontalGradient(
-                                0.0f to activePrimaryColor,
-                                leftStop to activeSecondaryColor,
-                                rightStop to dimColor,
-                                1.0f to dimColor
-                            )
-                        )
-                    ) {
-                        append("●")
-                    }
-                }
-            }
-
-            // 正弦呼吸相位 + 点亮瞬间的弹性波峰，与 KRC 歌词单字上浮缩放完全同构
-            val phaseSin = sin(breathPhase - i * 0.92f)
-            val breathWave = (phaseSin + 1f) * 0.5f
-            val activeArc = if (isLighting) sin(dotProgress * PI.toFloat()) else 0f
-            val glowStrength = (activeArc * 0.75f + dotProgress * (0.35f + 0.55f * breathWave)).coerceIn(0f, 1f)
-
-            Text(
-                text = annotatedDot,
-                style = MaterialTheme.typography.headlineSmall.copy(
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = dotFontSizeSp.sp,
-                    lineHeight = (dotFontSizeSp + 4f).sp,
-                    shadow = if (glowStrength > 0.04f) {
-                        Shadow(
-                            color = activePrimaryColor.copy(alpha = (0.82f * glowStrength).coerceIn(0f, 1f)),
-                            offset = Offset.Zero,
-                            blurRadius = (18f * glowStrength + 5f).coerceAtLeast(1f)
-                        )
-                    } else null
-                ),
-                modifier = Modifier.graphicsLayer {
-                    val floatWave = (0.35f + 0.65f * dotProgress) * phaseSin
-                    translationY = -3.2f * activeArc - 2.2f * floatWave
-                    val s = 0.90f + 0.14f * dotProgress + 0.10f * activeArc + 0.06f * breathWave * dotProgress
-                    scaleX = s
-                    scaleY = s
-                }
-            )
-        }
-    }
-}
-
-/**
- * 歌词页右侧悬浮无边框磨砂胶囊按钮（已彻底移除 `.border(...)` 边框线，采用柔和磨砂填充）
- */
-@Composable
-private fun LyricRightDockGlassButton(
-    active: Boolean,
-    activeColor: Color,
-    buttonSize: androidx.compose.ui.unit.Dp = 42.dp,
-    onClick: () -> Unit,
-    content: @Composable BoxScope.() -> Unit
-) {
-    val bgColor by animateColorAsState(
-        targetValue = if (active) activeColor.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.11f),
-        animationSpec = tween(200),
-        label = "lyricDockGlassBg"
-    )
-    Surface(
-        shape = RoundedCornerShape(if (buttonSize >= 46.dp) 18.dp else 16.dp),
-        color = bgColor,
-        contentColor = Color.White,
-        modifier = Modifier
-            .size(buttonSize)
-            .softClickable(
-                pressScale = 0.86f,
-                onClick = onClick
-            )
-    ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            content = content
-        )
-    }
-}
-
-/**
- * 零死区无极丝滑水平进度手势引擎 (Zero-Slop Stepless Scrubbing Gesture):
- * - 使用单一 pointerInput(awaitEachGesture) 统一处理点按直达与水平无极微调滑动，消除双 pointerInput 竞争；
- * - 按下瞬间 (awaitFirstDown) 立即进入交互态，绕过系统 18px touchSlop 死区，实现 120Hz 亚像素跟手滑动。
- */
-internal fun Modifier.steplessHorizontalScrubGesture(
-    onScrubStart: (Float) -> Unit,
-    onScrubMove: (Float) -> Unit,
-    onScrubEnd: () -> Unit,
-    onScrubCancel: () -> Unit
-): Modifier = this.pointerInput(Unit) {
-    awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
-        down.consume()
-        val widthPx = size.width.toFloat().coerceAtLeast(1f)
-        val initialFraction = (down.position.x / widthPx).coerceIn(0f, 1f)
-        onScrubStart(initialFraction)
-
-        var pointerId = down.id
-        var finishedNormally = false
-        while (true) {
-            val event = awaitPointerEvent()
-            val change = event.changes.firstOrNull { it.id == pointerId }
-                ?: event.changes.firstOrNull()
-                ?: break
-            pointerId = change.id
-            if (!change.pressed) {
-                change.consume()
-                finishedNormally = true
-                break
-            }
-            val nextFraction = (change.position.x / widthPx).coerceIn(0f, 1f)
-            change.consume()
-            onScrubMove(nextFraction)
-        }
-        if (finishedNormally) {
-            onScrubEnd()
-        } else {
-            onScrubCancel()
-        }
-    }
-}
-
-/**
- * 歌词页专属底部极简控播栏（已去除播放按钮的 `.border(...)` 边框线，并采用圆润饱满自定义播放/暂停矢量图形）
- */
-@Composable
-private fun LyricPageMinimalBottomBar(
-    currentPositionMs: Long,
-    positionProvider: () -> Long = { currentPositionMs },
-    durationMs: Long,
-    isPlaying: Boolean,
-    accentColor: Color,
-    onTogglePlay: () -> Unit,
-    onSeekTo: (Long) -> Unit
-) {
-    var isDragging by remember { mutableStateOf(false) }
-    var dragFraction by remember { mutableFloatStateOf(0f) }
-    val latestDurationMs by rememberUpdatedState(durationMs)
-    val latestOnSeekTo by rememberUpdatedState(onSeekTo)
-    var settledSeekTargetMs by remember { mutableLongStateOf(-1L) }
-    var settledSeekTimestampMs by remember { mutableLongStateOf(0L) }
-
-    fun sampleWithSeekHold(): Long {
-        val rawPos = positionProvider()
-        val nowElapsed = android.os.SystemClock.elapsedRealtime()
-        return if (settledSeekTargetMs >= 0L && nowElapsed - settledSeekTimestampMs in 0L..550L) {
-            if (kotlin.math.abs(rawPos - settledSeekTargetMs) <= 800L) {
-                settledSeekTargetMs = -1L
-                rawPos
-            } else {
-                settledSeekTargetMs
-            }
-        } else {
-            settledSeekTargetMs = -1L
-            rawPos
-        }
-    }
-
-    var sampledPositionMs by remember { mutableLongStateOf(sampleWithSeekHold()) }
-
-    LaunchedEffect(currentPositionMs) {
-        if (!isDragging) {
-            sampledPositionMs = sampleWithSeekHold()
-        }
-    }
-    val isLifecycleStarted = rememberIsLifecycleStarted()
-    LaunchedEffect(isPlaying, isLifecycleStarted, isDragging, positionProvider) {
-        if (isPlaying && isLifecycleStarted && !isDragging) {
-            while (isActive) {
-                sampledPositionMs = sampleWithSeekHold()
-                kotlinx.coroutines.delay(66L)
-            }
-        } else if (!isDragging) {
-            sampledPositionMs = sampleWithSeekHold()
-        }
-    }
-
-    val livePositionMs = sampledPositionMs
-    val currentFraction = if (durationMs > 0L) {
-        (livePositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-    } else 0f
-
-    val effectiveFraction = if (isDragging) dragFraction else currentFraction
-    val displayTimeMs = if (isDragging) (dragFraction * durationMs).toLong() else livePositionMs
-
-    val railHeightDp by animateDpAsState(
-        targetValue = if (isDragging) 7.dp else 3.5.dp,
-        animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMedium),
-        label = "lyricSilkRailHeight"
-    )
-    val cursorWidthDp by animateDpAsState(
-        targetValue = if (isDragging) 14.dp else 9.dp,
-        animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMedium),
-        label = "lyricSilkCursorW"
-    )
-    val cursorHeightDp by animateDpAsState(
-        targetValue = if (isDragging) 9.dp else 5.dp,
-        animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMedium),
-        label = "lyricSilkCursorH"
-    )
-    val morphProgress by animateFloatAsState(
-        targetValue = if (isPlaying) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.72f, stiffness = Spring.StiffnessMedium),
-        label = "lyricBarPlayPauseMorph"
-    )
-
-    val isLargeScreen = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current.isLargeScreenDevice
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 6.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // 左侧：无边框柔光圆润播放/暂停按钮（彻底移除 border 线条）
-        Surface(
-            shape = CircleShape,
-            color = accentColor.copy(alpha = 0.26f),
-            contentColor = Color.White,
-            modifier = Modifier
-                .size(if (isLargeScreen) 52.dp else 46.dp)
-                .softClickable(
-                    pressScale = 0.86f,
-                    onClick = onTogglePlay
-                )
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                val safeMorph = morphProgress.coerceIn(0f, 1f)
-                Canvas(
-                    modifier = Modifier
-                        .size(if (isLargeScreen) 23.dp else 20.dp)
-                        .graphicsLayer {
-                            val bounce = (1f - 0.08f * sin(safeMorph * PI.toFloat())).coerceIn(0.88f, 1.10f)
-                            scaleX = bounce
-                            scaleY = bounce
-                        }
-                ) {
-                    drawContinuousPlayPauseMorph(
-                        morphProgress = safeMorph,
-                        color = Color.White
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.width(14.dp))
-
-        Column(
-            modifier = Modifier.weight(1f)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 2.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = formatDuration(displayTimeMs),
-                    color = if (isDragging) accentColor.readableOnDarkSurface(0.46f) else Color.White.copy(alpha = 0.56f),
-                    fontSize = 10.5.sp,
-                    fontWeight = if (isDragging) FontWeight.Bold else FontWeight.Medium
-                )
-                Text(
-                    text = formatDuration(durationMs),
-                    color = Color.White.copy(alpha = 0.42f),
-                    fontSize = 10.5.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(26.dp)
-                    .steplessHorizontalScrubGesture(
-                        onScrubStart = { startF ->
-                            isDragging = true
-                            dragFraction = startF
-                        },
-                        onScrubMove = { moveF ->
-                            dragFraction = moveF
-                        },
-                        onScrubEnd = {
-                            val targetMs = (dragFraction * latestDurationMs).toLong().coerceIn(0L, latestDurationMs.coerceAtLeast(0L))
-                            settledSeekTargetMs = targetMs
-                            settledSeekTimestampMs = android.os.SystemClock.elapsedRealtime()
-                            sampledPositionMs = targetMs
-                            latestOnSeekTo(targetMs)
-                            isDragging = false
-                        },
-                        onScrubCancel = {
-                            isDragging = false
-                        }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Canvas(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(18.dp)
-                ) {
-                    val w = size.width
-                    val h = size.height
-                    if (w <= 2f || h <= 2f) return@Canvas
-                    val cy = h / 2f
-                    val railH = railHeightDp.toPx().coerceIn(1f, h)
-                    val r = CornerRadius(railH / 2f, railH / 2f)
-
-                    drawRoundRect(
-                        color = Color.White.copy(alpha = 0.14f),
-                        topLeft = Offset(0f, cy - railH / 2f),
-                        size = Size(w, railH),
-                        cornerRadius = r
-                    )
-
-                    val activeW = (w * effectiveFraction.coerceIn(0f, 1f)).coerceIn(0f, w)
-                    if (activeW > 1f) {
-                        drawRoundRect(
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(
-                                    accentColor.copy(alpha = 0.45f),
-                                    accentColor,
-                                    Color.White
-                                ),
-                                startX = 0f,
-                                endX = activeW.coerceAtLeast(1f)
-                            ),
-                            topLeft = Offset(0f, cy - railH / 2f),
-                            size = Size(activeW, railH),
-                            cornerRadius = r
-                        )
-                    }
-
-                    val cursorW = cursorWidthDp.toPx()
-                    val cursorH = cursorHeightDp.toPx()
-                    val cursorLeft = (activeW - cursorW / 2f).coerceIn(0f, (w - cursorW).coerceAtLeast(0f))
-                    drawRoundRect(
-                        color = Color.White,
-                        topLeft = Offset(cursorLeft, cy - cursorH / 2f),
-                        size = Size(cursorW, cursorH),
-                        cornerRadius = CornerRadius(cursorH / 2f, cursorH / 2f)
-                    )
-                }
-            }
-        }
-    }
-}
-
 internal data class CoverExtractedPalette(
     val meshPrimary: Color,
     val meshSecondary: Color,
@@ -6621,34 +3100,3 @@ internal suspend fun extractCoverMeshColors(
     }
 }
 
-private fun formatDuration(ms: Long): String {
-    val totalSeconds = (ms / 1000).coerceAtLeast(0)
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return String.format(Locale.getDefault(), "%02d:%02d", minutes, seconds)
-}
-
-private fun detectAudioOutputRouteLabel(context: Context): String {
-    return runCatching {
-        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return "内置扬声器"
-        val devices = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        val bt = devices.firstOrNull {
-            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
-        }
-        val usb = devices.firstOrNull {
-            it.type == AudioDeviceInfo.TYPE_USB_HEADSET || it.type == AudioDeviceInfo.TYPE_USB_DEVICE
-        }
-        val wired = devices.firstOrNull {
-            it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES || it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET
-        }
-        when {
-            bt != null -> {
-                val name = bt.productName?.toString()?.takeIf { it.isNotBlank() } ?: "蓝牙音频"
-                "蓝牙 · ${name.take(12)}"
-            }
-            usb != null -> "USB DAC · 高解析独占"
-            wired != null -> "Hi-Fi 有线耳机"
-            else -> "立体声扬声器"
-        }
-    }.getOrDefault("立体声扬声器")
-}
