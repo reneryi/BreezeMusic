@@ -444,20 +444,21 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
     private val hpfFilter = BiquadStereoFilter()
     private val lpfFilter = BiquadStereoFilter()
 
+    // 纯线性 LTI 低频与瞬态滤波器组（零谐波失真 THD = 0，彻底根除一切非线性波形畸变造成的电流滋滋声）
     private val bassShelfFilter = BiquadStereoFilter()
     private val bassPunchFilter = BiquadStereoFilter()
     private val bassCleanDipFilter = BiquadStereoFilter()
-    private val subIsoLowpassFilter = BiquadStereoFilter()
-    private val subPostLowpassFilter = BiquadStereoFilter()
+    private val transientPresenceFilter = BiquadStereoFilter()
 
+    // 纯线性 LTI 人声精修与空气感滤波器组
     private val vocalMudCutFilter = BiquadStereoFilter()
     private val vocalPresenceFilter = BiquadStereoFilter()
     private val deEsserFilter = BiquadStereoFilter()
     private val vocalAirShelfFilter = BiquadStereoFilter()
 
+    // 纯线性 LTI 黑胶与黄金胆机温润度滤波器组（中低频饱满度 + 极高频柔顺丝滑度）
     private val warmthBodyFilter = BiquadStereoFilter()
-    private val warmthBandpassFilter = BiquadStereoFilter()
-    private val warmthPostLowpassFilter = BiquadStereoFilter()
+    private val warmthLowMidFilter = BiquadStereoFilter()
 
     private val reverbInputHpf = BiquadStereoFilter()
     private val reverbInputLpf = BiquadStereoFilter()
@@ -473,20 +474,6 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
 
     // 双声道耦合包络峰值限制器状态 (True Envelope Peak Limiter)
     private var limiterEnvelope = 0f
-
-    // 瞬态微动态包络检测器状态
-    private var transientFastEnv = 0f
-    private var transientSlowEnv = 0f
-
-    // DC 偏置消除器状态（用于谐波合成后的直流阻断）
-    private var subDcPrevInL = 0f
-    private var subDcPrevOutL = 0f
-    private var subDcPrevInR = 0f
-    private var subDcPrevOutR = 0f
-    private var warmthDcPrevInL = 0f
-    private var warmthDcPrevOutL = 0f
-    private var warmthDcPrevInR = 0f
-    private var warmthDcPrevOutR = 0f
 
     // M/S 侧声道低频锚定与 Bauer 交叉馈送低通状态
     private var sideLowpass = 0f
@@ -529,12 +516,9 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
     private val allpassEffectiveLenR = IntArray(2) { 579 }
 
     private var cachedLinearPreampAndLoudnessGain = 1.0f
-    private var cachedSubHarmonicDrive = 0f
     private var cachedSideLowpassAlpha = 0.018f
     private var cachedCrossfeedAlpha = 0.08f
     private var cachedCrossfeedMix = 0f
-    private var cachedWarmthDrive = 0f
-    private var cachedTransientDrive = 0f
     private var cachedWidthFactor = 0f
     private var cachedHaasCrossMix = 0f
     private var cachedDepthMix = 0f
@@ -557,17 +541,6 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
     private var telBeatImpulse = 0f
     private val telBinsScratch = FloatArray(10)
 
-    // 极轻量级 LCG 伪随机数发生器（用于 TPDF 三角概率密度抖动，零对象分配）
-    private var ditherSeed: Int = 0x6D2B79F5
-
-    private fun nextTpdfDither(): Float {
-        ditherSeed = ditherSeed * 1664525 + 1013904223
-        val r1 = (ditherSeed ushr 8).toFloat() * (1f / 16777216f)
-        ditherSeed = ditherSeed * 1664525 + 1013904223
-        val r2 = (ditherSeed ushr 8).toFloat() * (1f / 16777216f)
-        return (r1 - r2) * 0.5f
-    }
-
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         val validEncoding = inputAudioFormat.encoding == C.ENCODING_PCM_16BIT ||
             inputAudioFormat.encoding == C.ENCODING_PCM_24BIT ||
@@ -589,10 +562,6 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         smoothLeftGain = 1.0f
         smoothRightGain = 1.0f
         limiterEnvelope = 0f
-        transientFastEnv = 0f
-        transientSlowEnv = 0f
-        subDcPrevInL = 0f; subDcPrevOutL = 0f; subDcPrevInR = 0f; subDcPrevOutR = 0f
-        warmthDcPrevInL = 0f; warmthDcPrevOutL = 0f; warmthDcPrevInR = 0f; warmthDcPrevOutR = 0f
         sideLowpass = 0f
         crossfeedLpL = 0f
         crossfeedLpR = 0f
@@ -607,15 +576,13 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         bassShelfFilter.resetState()
         bassPunchFilter.resetState()
         bassCleanDipFilter.resetState()
-        subIsoLowpassFilter.resetState()
-        subPostLowpassFilter.resetState()
+        transientPresenceFilter.resetState()
         vocalMudCutFilter.resetState()
         vocalPresenceFilter.resetState()
         deEsserFilter.resetState()
         vocalAirShelfFilter.resetState()
         warmthBodyFilter.resetState()
-        warmthBandpassFilter.resetState()
-        warmthPostLowpassFilter.resetState()
+        warmthLowMidFilter.resetState()
         reverbInputHpf.resetState()
         reverbInputLpf.resetState()
         clearReverbBuffers()
@@ -662,21 +629,16 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             bassShelfFilter.setBypass()
             bassPunchFilter.setBypass()
             bassCleanDipFilter.setBypass()
-            subIsoLowpassFilter.setBypass()
-            subPostLowpassFilter.setBypass()
+            transientPresenceFilter.setBypass()
             vocalMudCutFilter.setBypass()
             vocalPresenceFilter.setBypass()
             deEsserFilter.setBypass()
             vocalAirShelfFilter.setBypass()
             warmthBodyFilter.setBypass()
-            warmthBandpassFilter.setBypass()
-            warmthPostLowpassFilter.setBypass()
+            warmthLowMidFilter.setBypass()
             reverbInputHpf.setBypass()
             reverbInputLpf.setBypass()
             cachedLinearPreampAndLoudnessGain = 1.0f
-            cachedSubHarmonicDrive = 0f
-            cachedWarmthDrive = 0f
-            cachedTransientDrive = 0f
             cachedWidthFactor = 0f
             cachedHaasCrossMix = 0f
             cachedCrossfeedMix = 0f
@@ -716,7 +678,7 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             }
         }
 
-        // 高通 (HPF) 与低通 (LPF) 滤波器配置
+        // 高通 (HPF) 与低通 (LPF) 边界滤波器配置
         if (dspActive && state.highPassCutoffHz in 20..120) {
             hpfFilter.configureHighPass(state.highPassCutoffHz.toDouble(), sr, q = 0.7071)
         } else {
@@ -728,72 +690,70 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             lpfFilter.setBypass()
         }
 
-        // 2. 配置纯净分频重低音引擎：低架下潜 + 独立瞬态冲击 + 235Hz 防浑浊自动净空 + 二阶低通隔离泛音合成
+        // 计算当前 10 段 EQ 在低频/中高频已有的增益，防止预设同时开启 10 段 EQ 与声场调音时产生双重叠加过载
+        val existingLowEqDb = if (dspActive && tenBands.size >= 2) {
+            maxOf(0.0, ((tenBands[0] + tenBands[1]) / 200.0))
+        } else 0.0
+        val existingVocalEqDb = if (dspActive && tenBands.size >= 8) {
+            maxOf(0.0, ((tenBands[6] + tenBands[7]) / 200.0))
+        } else 0.0
+        val existingHighEqDb = if (dspActive && tenBands.size >= 10) {
+            maxOf(0.0, ((tenBands[8] + tenBands[9]) / 200.0))
+        } else 0.0
+
+        val lowOverlapScale = (1.0 - (existingLowEqDb / 14.0)).coerceIn(0.48, 1.0)
+        val vocalOverlapScale = (1.0 - (existingVocalEqDb / 14.0)).coerceIn(0.50, 1.0)
+        val highOverlapScale = (1.0 - (existingHighEqDb / 14.0)).coerceIn(0.50, 1.0)
+
+        // 2. 配置纯线性 LTI 分频重低音与瞬态引擎：低架下潜 + 瞬态冲击 + 235Hz 防浑浊净空 + 3.15kHz 瞬态咬字清晰度
         val bassNorm = if (dspActive) (state.bassBoostStrength / 1000.0).coerceIn(0.0, 1.0) else 0.0
         val punchNorm = if (dspActive) (state.bassPunchStrength / 1000.0).coerceIn(0.0, 1.0) else 0.0
+        val transientNorm = if (dspActive) (state.transientAttackStrength / 1000.0).coerceIn(0.0, 1.0) else 0.0
         val cutoffHz = state.bassCutoffHz.coerceIn(40, 120).toDouble()
-        val loudnessLowDb = if (state.equalLoudnessCompensation) 3.6 else 0.0
+        val loudnessLowDb = if (state.equalLoudnessCompensation) 3.0 else 0.0
 
-        val shelfGainDb = bassNorm * (if (cutoffHz <= 50.0) 6.5 else if (cutoffHz <= 65.0) 5.8 else 5.0) + loudnessLowDb
-        val punchGainDb = (punchNorm * 3.8) + (bassNorm * 1.4)
-        val punchFreq = (cutoffHz * 1.28).coerceIn(48.0, 135.0)
-        val cleanMudCutDb = -((bassNorm * 1.5) + (punchNorm * 0.9)).coerceIn(0.0, 2.2)
+        val shelfGainDb = (bassNorm * (if (cutoffHz <= 50.0) 5.2 else if (cutoffHz <= 65.0) 4.6 else 4.0) * lowOverlapScale) + loudnessLowDb
+        val punchGainDb = ((punchNorm * 3.2 + bassNorm * 0.9 + transientNorm * 1.1) * lowOverlapScale)
+        val punchFreq = (cutoffHz * 1.32).coerceIn(52.0, 138.0)
+        val cleanMudCutDb = -((bassNorm * 1.3) + (punchNorm * 0.8)).coerceIn(0.0, 1.9)
 
-        bassShelfFilter.configureLowShelf(cutoffHz * 1.08, sr, shelfGainDb, slope = 0.94)
-        bassPunchFilter.configurePeaking(punchFreq, sr, punchGainDb, q = 1.35)
-        bassCleanDipFilter.configurePeaking(235.0, sr, cleanMudCutDb, q = 1.45)
-
-        cachedSubHarmonicDrive = (bassNorm * 0.16).toFloat()
-        if (cachedSubHarmonicDrive > 0.003f) {
-            subIsoLowpassFilter.configureLowPass(cutoffHz * 1.05, sr, q = 0.7071)
-            subPostLowpassFilter.configureLowPass(cutoffHz * 1.65, sr, q = 0.7071)
-        } else {
-            subIsoLowpassFilter.setBypass()
-            subPostLowpassFilter.setBypass()
-        }
+        bassShelfFilter.configureLowShelf(cutoffHz * 1.05, sr, shelfGainDb, slope = 0.88)
+        bassPunchFilter.configurePeaking(punchFreq, sr, punchGainDb, q = 1.28)
+        bassCleanDipFilter.configurePeaking(235.0, sr, cleanMudCutDb, q = 1.40)
+        transientPresenceFilter.configurePeaking(3150.0, sr, transientNorm * 2.4 * vocalOverlapScale, q = 1.45)
 
         cachedSideLowpassAlpha = ((2.0 * PI * 140.0) / sr).coerceIn(0.005, 0.06).toFloat()
         cachedCrossfeedAlpha = ((2.0 * PI * 720.0) / sr).coerceIn(0.02, 0.18).toFloat()
 
-        // 3. 配置人声通透度、齿音抑制 (De-Esser) 与极高频空气泛音 (Air Exciter)
+        // 3. 配置纯线性 LTI 人声通透度、齿音柔化 (De-Esser) 与极高频空气泛音 (Air Shelf)
         val clarityNorm = if (dspActive) (state.vocalClarityStrength / 1000.0).coerceIn(0.0, 1.0) else 0.0
         val deEsserNorm = if (dspActive) (state.deEsserStrength / 1000.0).coerceIn(0.0, 1.0) else 0.0
         val airNorm = if (dspActive) (state.trebleAirStrength / 1000.0).coerceIn(0.0, 1.0) else 0.0
         val warmthNorm = if (dspActive) (state.analogWarmthStrength / 1000.0).coerceIn(0.0, 1.0) else 0.0
-        val loudnessHighDb = if (state.equalLoudnessCompensation) 2.8 else 0.0
+        val loudnessHighDb = if (state.equalLoudnessCompensation) 2.4 else 0.0
 
-        vocalMudCutFilter.configurePeaking(265.0, sr, -clarityNorm * 2.2, q = 1.20)
-        vocalPresenceFilter.configurePeaking(2750.0, sr, clarityNorm * 4.6, q = 1.10)
-        // 6.2kHz 齿音柔化抑制：消除高解析人声与音效提亮后的 s/sh/ch 刺耳毛刺
-        val netDeEssDb = -(deEsserNorm * 3.8 + clarityNorm * 0.8).coerceIn(0.0, 4.6)
-        deEsserFilter.configurePeaking(6200.0, sr, netDeEssDb, q = 2.40)
+        vocalMudCutFilter.configurePeaking(265.0, sr, -clarityNorm * 1.6, q = 1.20)
+        val vocalPresenceDb = clarityNorm * 3.6 * vocalOverlapScale
+        vocalPresenceFilter.configurePeaking(2750.0, sr, vocalPresenceDb, q = 1.08)
+        val netDeEssDb = -(deEsserNorm * 3.4 + clarityNorm * 0.6).coerceIn(0.0, 4.0)
+        deEsserFilter.configurePeaking(6200.0, sr, netDeEssDb, q = 2.20)
 
-        val netAirShelfDb = (clarityNorm * 3.2) + (airNorm * 5.2) + loudnessHighDb - (warmthNorm * 2.4)
-        vocalAirShelfFilter.configureHighShelf(11500.0, sr, netAirShelfDb, slope = 0.82)
+        val netAirShelfDb = ((clarityNorm * 2.2 + airNorm * 4.2) * highOverlapScale) + loudnessHighDb - (warmthNorm * 1.8)
+        vocalAirShelfFilter.configureHighShelf(11500.0, sr, netAirShelfDb, slope = 0.80)
 
-        // 4. 配置带通隔离的黑胶与黄金胆机温暖度（彻底消除高频互调失真与过零点电流滋滋声）
-        warmthBodyFilter.configurePeaking(175.0, sr, warmthNorm * 3.8, q = 0.90)
-        cachedWarmthDrive = (warmthNorm * 0.22).toFloat()
-        if (cachedWarmthDrive > 0.003f) {
-            warmthBandpassFilter.configureBandPass(240.0, sr, q = 0.75)
-            warmthPostLowpassFilter.configureLowPass(850.0, sr, q = 0.7071)
-        } else {
-            warmthBandpassFilter.setBypass()
-            warmthPostLowpassFilter.setBypass()
-        }
+        // 4. 配置纯线性 LTI 黑胶与黄金胆机温暖度（170Hz 饱满醇厚基音 + 350Hz 丝绒中低频润色，100% 零非线性失真）
+        warmthBodyFilter.configurePeaking(170.0, sr, warmthNorm * 2.8 * lowOverlapScale, q = 0.85)
+        warmthLowMidFilter.configurePeaking(350.0, sr, warmthNorm * 1.8, q = 1.05)
 
-        // 5. 配置瞬态微动态、3D 环绕声场宽度、Bauer 交叉馈送与舞台纵深
-        val transientNorm = if (dspActive) (state.transientAttackStrength / 1000f).coerceIn(0f, 1f) else 0f
-        cachedTransientDrive = transientNorm * 0.45f
-
+        // 5. 配置 3D 环绕声场宽度、Bauer 交叉馈送与舞台纵深
         val virtNorm = if (dspActive) (state.virtualizerStrength / 1000f).coerceIn(0f, 1f) else 0f
         val depthNorm = if (dspActive) (state.soundstageDepthStrength / 1000f).coerceIn(0f, 1f) else 0f
         val crossfeedNorm = if (dspActive) (state.crossfeedStrength / 1000f).coerceIn(0f, 1f) else 0f
 
-        cachedWidthFactor = virtNorm * 1.15f
-        cachedHaasCrossMix = virtNorm * 0.24f
-        cachedCrossfeedMix = crossfeedNorm * 0.30f
-        cachedDepthMix = depthNorm * 0.22f
+        cachedWidthFactor = virtNorm * 1.05f
+        cachedHaasCrossMix = virtNorm * 0.20f
+        cachedCrossfeedMix = crossfeedNorm * 0.28f
+        cachedDepthMix = depthNorm * 0.20f
 
         activeHaasDelay = ((0.00058f * sr).toInt()).coerceIn(12, maxHaasSamples - 4)
         activeCrossfeedDelay = ((0.00028f * sr).toInt()).coerceIn(6, maxHaasSamples - 4)
@@ -826,7 +786,7 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             reverbInputHpf.configureHighPass(185.0, sr, q = 0.7071)
             reverbInputLpf.configureLowPass(6200.0, sr, q = 0.7071)
             val userWet = (state.reverbWetMix / 1000f).coerceIn(0f, 1f)
-            cachedReverbWet = (newReverb.wetMix * 0.55f + userWet * 0.45f).coerceIn(0.04f, 0.52f)
+            cachedReverbWet = (newReverb.wetMix * 0.55f + userWet * 0.45f).coerceIn(0.04f, 0.48f)
             val userDamp = (state.reverbDamping / 1000f).coerceIn(0.05f, 0.90f)
             cachedReverbDamping = (newReverb.damping * 0.4f + userDamp * 0.6f).coerceIn(0.10f, 0.85f)
             val preDelaySamples = ((state.reverbPreDelayMs.coerceIn(0, 80) / 1000f) * sr).toInt()
@@ -837,51 +797,48 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             cachedReverbWet = 0f
         }
 
-        // 7. 基于真实频响曲线峰值增益计算防削波动态预衰减 (True Peak Frequency-Domain Auto-Headroom)
-        // 彻底解决低频调节超过 10% 后峰值顶满限幅器导致人声凹陷与失真的问题
+        // 7. 智能动态余量校准 (Smart Transparent Headroom Calibration)：
+        // 仅在频段综合增益超出安全阈值时执行温和预衰减（最高不超过 -3.2 dB），既避免低频满载破音，又绝不造成预设音量骤降
         val probeFreqs = doubleArrayOf(31.5, 45.0, 63.0, 90.0, 125.0, 175.0, 250.0, 500.0, 1000.0, 2750.0, 4000.0, 8000.0, 12500.0, 16000.0)
-        var maxpeqBoostDb = 0.0
+        var maxCascadeBoostDb = 0.0
         if (dspActive) {
             for (pf in probeFreqs) {
                 val peqDb = AudioEffectManager.evaluatePeqMagnitudeDbAtFrequency(pf, state, sr.toDouble()).toDouble()
-                val extraBassDb = if (pf <= 110.0) (shelfGainDb * 0.85 + punchGainDb * 0.65) else 0.0
-                val extraVocalDb = if (pf in 2000.0..4500.0) (clarityNorm * 4.2) else if (pf >= 9000.0) maxOf(0.0, netAirShelfDb * 0.8) else 0.0
-                val extraWarmthDb = if (pf in 120.0..260.0) (warmthNorm * 3.5) else 0.0
+                val extraBassDb = if (pf <= 110.0) (shelfGainDb * 0.70 + punchGainDb * 0.55) else 0.0
+                val extraVocalDb = if (pf in 2000.0..4500.0) (vocalPresenceDb * 0.75) else if (pf >= 9000.0) maxOf(0.0, netAirShelfDb * 0.65) else 0.0
+                val extraWarmthDb = if (pf in 120.0..380.0) (warmthNorm * 2.2) else 0.0
                 val combinedDb = peqDb + extraBassDb + extraVocalDb + extraWarmthDb
-                if (combinedDb > maxpeqBoostDb) {
-                    maxpeqBoostDb = combinedDb
+                if (combinedDb > maxCascadeBoostDb) {
+                    maxCascadeBoostDb = combinedDb
                 }
             }
         } else if (state.equalLoudnessCompensation) {
-            maxpeqBoostDb = 3.6
+            maxCascadeBoostDb = 3.0
         }
 
         val preampDb = if (dspActive) state.preampGainDb.toDouble() else 0.0
-        val loudnessDb = if (dspActive) (state.loudnessGainMb / 100.0).coerceIn(0.0, 15.0) * 0.55 else 0.0
-        val totalBoostPeakDb = maxpeqBoostDb + maxOf(0.0, preampDb) + loudnessDb
-        val headroomPadDb = if (state.antiClippingEnabled && totalBoostPeakDb > 1.2) {
-            // 为低频与 EQ 增益留出充足线性净空，确保低频大动态鼓点绝不挤压人声
-            -((totalBoostPeakDb - 1.2) * 0.78).coerceAtMost(11.5)
+        val loudnessDb = if (dspActive) (state.loudnessGainMb / 100.0).coerceIn(0.0, 15.0) * 0.45 else 0.0
+        val totalBoostPeakDb = maxCascadeBoostDb + maxOf(0.0, preampDb)
+        val headroomPadDb = if (state.antiClippingEnabled && totalBoostPeakDb > 3.2) {
+            -((totalBoostPeakDb - 3.2) * 0.36).coerceIn(0.0, 3.2)
         } else 0.0
         AudioRhythmTelemetry.headroomGainDb = headroomPadDb.toFloat()
 
-        val netGainDb = (preampDb + loudnessDb + headroomPadDb).coerceIn(-14.0, 10.0)
+        val netGainDb = (preampDb + loudnessDb + headroomPadDb).coerceIn(-12.0, 9.0)
         cachedLinearPreampAndLoudnessGain = (10.0.pow(netGainDb / 20.0)).toFloat()
 
         hasActiveEqBands = eqFilters.any { !it.isBypass }
         hasActiveHpfLpf = !hpfFilter.isBypass || !lpfFilter.isBypass
-        hasActiveBassFilter = !bassShelfFilter.isBypass || !bassPunchFilter.isBypass || !bassCleanDipFilter.isBypass || cachedSubHarmonicDrive > 0.003f
+        hasActiveBassFilter = !bassShelfFilter.isBypass || !bassPunchFilter.isBypass || !bassCleanDipFilter.isBypass || !transientPresenceFilter.isBypass
         hasActiveVocalFilter = !vocalMudCutFilter.isBypass || !vocalPresenceFilter.isBypass || !deEsserFilter.isBypass || !vocalAirShelfFilter.isBypass
-        hasActiveWarmthFilter = !warmthBodyFilter.isBypass || cachedWarmthDrive > 0.003f
+        hasActiveWarmthFilter = !warmthBodyFilter.isBypass || !warmthLowMidFilter.isBypass
     }
 
     private fun processStereoReverb(inL: Float, inR: Float, mode: ReverbMode, outPair: FloatArray) {
-        // 先经过 185Hz~6.2kHz 带通净化，消除低频浑浊驻波与高频齿音金属反射
         val cleanL = reverbInputLpf.processLeft(reverbInputHpf.processLeft(inL))
         val cleanR = reverbInputLpf.processRight(reverbInputHpf.processRight(inR))
         val rawMono = (cleanL + cleanR) * 0.24f
 
-        // 经过独立预延迟环状缓冲 (Pre-Delay)，使干声人声清晰居前，混响空间自然铺展在后方
         val preDelayReadIdx = (preDelayWriteIdx - activePreDelaySamples + maxPreDelaySamples) % maxPreDelaySamples
         val inputMono = preDelayBuffer[preDelayReadIdx]
         preDelayBuffer[preDelayWriteIdx] = rawMono
@@ -940,7 +897,7 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         }
 
         val wet = cachedReverbWet
-        val dry = 1f - wet * 0.24f
+        val dry = 1f - wet * 0.22f
         outPair[0] = inL * dry + revL * wet
         outPair[1] = inR * dry + revR * wet
     }
@@ -1020,7 +977,6 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             AudioRhythmTelemetry.beatImpulse = telBeatImpulse
             AudioRhythmTelemetry.lastUpdateMs = System.currentTimeMillis()
 
-            // 生成 10 段频谱包络供参量均衡器实时频谱显示
             telBinsScratch[0] = (telSmoothBass * 0.95f + telBeatImpulse * 0.15f).coerceIn(0f, 1f)
             telBinsScratch[1] = (telSmoothBass * 1.02f + telBeatImpulse * 0.12f).coerceIn(0f, 1f)
             telBinsScratch[2] = (telSmoothBass * 0.72f + telSmoothMid * 0.32f).coerceIn(0f, 1f)
@@ -1044,7 +1000,7 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         val encoding = inputAudioFormat.encoding
         val channels = inputAudioFormat.channelCount
 
-        // 非破坏性只读采样当前音频帧频谱能量，使「律动光晕」背景与 PEQ 频谱在任意音效状态（含 OFF 直通）下都能同频律动
+        // 非破坏性只读采样当前音频帧频谱能量，使「律动光晕」背景在任意音效状态（含 OFF 直通）下都能同频律动
         sampleRhythmTelemetryFromBuffer(inputBuffer, encoding, channels, sampleRate)
 
         val state = AudioEffectManager.state.value
@@ -1074,12 +1030,9 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         val rotSpeed = if (dspActive) state.surroundRotationSpeed else 0
         val phaseStep = if (rotSpeed > 0) (2.0 * PI * (0.20 + rotSpeed * 0.016)) / sampleRate else 0.0
 
-        val subDrive = cachedSubHarmonicDrive
         val sideLpAlpha = cachedSideLowpassAlpha
         val crossfeedAlpha = cachedCrossfeedAlpha
         val crossfeedMix = cachedCrossfeedMix
-        val warmthDrive = cachedWarmthDrive
-        val transientDrive = cachedTransientDrive
         val widthFactor = cachedWidthFactor
         val haasMix = cachedHaasCrossMix
         val depthMix = cachedDepthMix
@@ -1089,10 +1042,10 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
         val depthDelayR = activeDepthDelayR
         val reverbMode = cachedReverbMode
 
-        // 双声道耦合真包络限制器时间常数（Attack 0.4ms 快速捕峰，Release 85ms 丝滑恢复，绝不产生波形削顶电流声）
-        val limAttackCoeff = (1.0 - kotlin.math.exp(-1.0 / (0.0004 * sampleRate))).toFloat().coerceIn(0.01f, 0.5f)
-        val limReleaseCoeff = (1.0 - kotlin.math.exp(-1.0 / (0.085 * sampleRate))).toFloat().coerceIn(0.0001f, 0.01f)
-        val limThreshold = 0.93f
+        // 双声道耦合真包络限制器时间常数（Attack 0.8ms，Release 110ms，仅在真实峰值接近 0dBFS 时平滑控峰，零谐波失真）
+        val limAttackCoeff = (1.0 - kotlin.math.exp(-1.0 / (0.0008 * sampleRate))).toFloat().coerceIn(0.005f, 0.35f)
+        val limReleaseCoeff = (1.0 - kotlin.math.exp(-1.0 / (0.110 * sampleRate))).toFloat().coerceIn(0.00008f, 0.008f)
+        val limThreshold = 0.955f
 
         val bytesPerSample = when (encoding) {
             C.ENCODING_PCM_16BIT -> 2
@@ -1107,9 +1060,9 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
             val rawL = readNormalizedSample(inputBuffer, encoding)
             val rawR = if (channels == 2) readNormalizedSample(inputBuffer, encoding) else rawL
 
-            // 平滑增益过渡（时间常数 ~4ms），消除切换预设或拖动滑杆时的阶跃爆音
-            smoothLeftGain += (targetLeftGain - smoothLeftGain) * 0.006f
-            smoothRightGain += (targetRightGain - smoothRightGain) * 0.006f
+            // 平滑增益过渡（消除切换预设或拖动滑杆时的阶跃爆音）
+            smoothLeftGain += (targetLeftGain - smoothLeftGain) * 0.005f
+            smoothRightGain += (targetRightGain - smoothRightGain) * 0.005f
 
             val normGain = if (volNorm) {
                 val frameEnergy = (abs(rawL) + abs(rawR)) * 0.5f
@@ -1117,8 +1070,8 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
                     val alpha = if (frameEnergy > smoothedEnvelope) 0.0004f else 0.00012f
                     smoothedEnvelope += alpha * (frameEnergy - smoothedEnvelope)
                     val targetEnv = 0.24f
-                    val minClamp = if (dspActive) 0.94f else 0.85f
-                    val desiredGain = (targetEnv / smoothedEnvelope.coerceAtLeast(0.06f)).coerceIn(minClamp, 1.16f)
+                    val minClamp = if (dspActive) 0.96f else 0.88f
+                    val desiredGain = (targetEnv / smoothedEnvelope.coerceAtLeast(0.06f)).coerceIn(minClamp, 1.14f)
                     currentNormGain += 0.0003f * (desiredGain - currentNormGain)
                 }
                 currentNormGain
@@ -1140,7 +1093,7 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
                     }
                 }
 
-                // 1. 10段 Biquad 参量均衡滤波级联（当 10 段均为 0dB 平直时直接整组短路跳过）
+                // 1. 10段 64-bit Biquad 参量均衡滤波级联（当 10 段均为 0dB 平直时直接整组短路跳过）
                 if (hasActiveEqBands) {
                     for (b in 0 until 10) {
                         val f = eqFilters[b]
@@ -1151,32 +1104,25 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
                     }
                 }
 
-                // 2. 纯净分频重低音引擎：低架下潜 + 瞬态冲击 + 235Hz 自动去浑浊 + 带通隔离偶/奇次亚低频泛音
+                // 2. 纯线性 LTI 重低音与瞬态滤波：低架下潜 + 瞬态弹性冲击 + 235Hz 防浑浊净空 + 3.15kHz 瞬态清晰度
                 if (hasActiveBassFilter) {
-                    sL = bassCleanDipFilter.processLeft(bassPunchFilter.processLeft(bassShelfFilter.processLeft(sL)))
-                    sR = bassCleanDipFilter.processRight(bassPunchFilter.processRight(bassShelfFilter.processRight(sR)))
-                    if (subDrive > 0.003f) {
-                        // 严格二阶低通提取基频，经 C∞ 平滑软饱和生成谐波后再次经过二阶低通与 DC 阻断，100% 杜绝高频串扰杂音
-                        val isoSubL = subIsoLowpassFilter.processLeft(sL)
-                        val isoSubR = subIsoLowpassFilter.processRight(sR)
-                        val shapedSubL = kotlin.math.tanh((isoSubL * 1.85f).toDouble()).toFloat() - isoSubL * 0.85f
-                        val shapedSubR = kotlin.math.tanh((isoSubR * 1.85f).toDouble()).toFloat() - isoSubR * 0.85f
-                        val cleanSubL = subPostLowpassFilter.processLeft(shapedSubL)
-                        val cleanSubR = subPostLowpassFilter.processRight(shapedSubR)
-                        // 20Hz 一阶高通直流阻断 (DC Blocker)
-                        val dcBlockedL = cleanSubL - subDcPrevInL + 0.9965f * subDcPrevOutL
-                        subDcPrevInL = cleanSubL
-                        subDcPrevOutL = dcBlockedL
-                        val dcBlockedR = cleanSubR - subDcPrevInR + 0.9965f * subDcPrevOutR
-                        subDcPrevInR = cleanSubR
-                        subDcPrevOutR = dcBlockedR
-
-                        sL += dcBlockedL * subDrive
-                        sR += dcBlockedR * subDrive
-                    }
+                    sL = transientPresenceFilter.processLeft(
+                        bassCleanDipFilter.processLeft(
+                            bassPunchFilter.processLeft(
+                                bassShelfFilter.processLeft(sL)
+                            )
+                        )
+                    )
+                    sR = transientPresenceFilter.processRight(
+                        bassCleanDipFilter.processRight(
+                            bassPunchFilter.processRight(
+                                bassShelfFilter.processRight(sR)
+                            )
+                        )
+                    )
                 }
 
-                // 3. 人声通透去浊 (265Hz)、贴耳存在感 (2.75kHz)、齿音柔化 (6.2kHz De-Esser) 与极高频空气泛音 (11.5kHz)
+                // 3. 纯线性 LTI 人声通透去浊 (265Hz)、贴耳存在感 (2.75kHz)、齿音柔化 (6.2kHz De-Esser) 与极高频空气泛音 (11.5kHz)
                 if (hasActiveVocalFilter) {
                     sL = vocalAirShelfFilter.processLeft(
                         deEsserFilter.processLeft(
@@ -1194,60 +1140,27 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
                     )
                 }
 
-                // 4. 带通隔离黑胶与黄金胆机温暖度（仅在 110Hz~680Hz 中低频段生成平滑偶次谐波并经 850Hz 低通回混，消除高频互调电流滋滋声）
+                // 4. 纯线性 LTI 黑胶与黄金胆机温暖度（170Hz + 350Hz 双二阶丰满度润色，100% 零谐波失真）
                 if (hasActiveWarmthFilter) {
-                    sL = warmthBodyFilter.processLeft(sL)
-                    sR = warmthBodyFilter.processRight(sR)
-                    if (warmthDrive > 0.003f) {
-                        val midBandL = warmthBandpassFilter.processLeft(sL)
-                        val midBandR = warmthBandpassFilter.processRight(sR)
-                        // C∞ 平滑非对称三极管传递函数，无任何分段拐点
-                        val tubeL = (midBandL + 0.24f * midBandL * midBandL) / (1f + 0.45f * abs(midBandL))
-                        val tubeR = (midBandR + 0.24f * midBandR * midBandR) / (1f + 0.45f * abs(midBandR))
-                        val dcL = tubeL - warmthDcPrevInL + 0.995f * warmthDcPrevOutL
-                        warmthDcPrevInL = tubeL
-                        warmthDcPrevOutL = dcL
-                        val dcR = tubeR - warmthDcPrevInR + 0.995f * warmthDcPrevOutR
-                        warmthDcPrevInR = tubeR
-                        warmthDcPrevOutR = dcR
-
-                        val warmFilteredL = warmthPostLowpassFilter.processLeft(dcL)
-                        val warmFilteredR = warmthPostLowpassFilter.processRight(dcR)
-                        sL += warmFilteredL * warmthDrive
-                        sR += warmFilteredR * warmthDrive
-                    }
+                    sL = warmthLowMidFilter.processLeft(warmthBodyFilter.processLeft(sL))
+                    sR = warmthLowMidFilter.processRight(warmthBodyFilter.processRight(sR))
                 }
 
-                // 5. 瞬态微动态包络增强器 (Transient Attack Enhancer)
-                if (transientDrive > 0.005f) {
-                    val absPeak = maxOf(abs(sL), abs(sR))
-                    val fastAlpha = if (absPeak > transientFastEnv) 0.12f else 0.004f
-                    val slowAlpha = if (absPeak > transientSlowEnv) 0.008f else 0.0015f
-                    transientFastEnv += fastAlpha * (absPeak - transientFastEnv)
-                    transientSlowEnv += slowAlpha * (absPeak - transientSlowEnv)
-                    val attackDiff = (transientFastEnv - transientSlowEnv).coerceIn(0f, 0.35f)
-                    val attackBoost = 1f + attackDiff * transientDrive * 1.4f
-                    sL *= attackBoost
-                    sR *= attackBoost
-                }
-
-                // 6. 全维空间声场处理 (M/S 低频锚定拓宽 + Haas 微延迟 + Bauer 耳机交叉馈送 + 舞台纵深早期反射)
+                // 5. 全维空间声场处理 (M/S 低频锚定拓宽 + Haas 微延迟 + Bauer 耳机交叉馈送 + 舞台纵深早期反射)
                 if (channels == 2 && (widthFactor > 0.01f || crossfeedMix > 0.01f || depthMix > 0.01f)) {
                     haasBufferL[haasWriteIdx] = sL
                     haasBufferR[haasWriteIdx] = sR
 
-                    // 6a. Bauer 耳机交叉馈送 (Crossfeed)：将对侧声道 720Hz 以下中低频延迟 280μs 馈入本侧，消除耳机头中效应
                     if (crossfeedMix > 0.01f) {
                         val cfIdx = (haasWriteIdx - crossDelay + maxHaasSamples) % maxHaasSamples
                         crossfeedLpL += crossfeedAlpha * (haasBufferL[cfIdx] - crossfeedLpL)
                         crossfeedLpR += crossfeedAlpha * (haasBufferR[cfIdx] - crossfeedLpR)
-                        val nextL = sL * (1f - crossfeedMix * 0.28f) + crossfeedLpR * crossfeedMix
-                        val nextR = sR * (1f - crossfeedMix * 0.28f) + crossfeedLpL * crossfeedMix
+                        val nextL = sL * (1f - crossfeedMix * 0.26f) + crossfeedLpR * crossfeedMix
+                        val nextR = sR * (1f - crossfeedMix * 0.26f) + crossfeedLpL * crossfeedMix
                         sL = nextL
                         sR = nextR
                     }
 
-                    // 6b. 3D M/S 声场拓宽（140Hz 以下低频严格锁定居中，仅拓宽中高频立体声边信号）
                     if (widthFactor > 0.01f) {
                         val readIdx = (haasWriteIdx - haasDelay + maxHaasSamples) % maxHaasSamples
                         val delayedL = haasBufferL[readIdx]
@@ -1259,35 +1172,34 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
                         val highSide = rawSide - sideLowpass
                         val haasDiff = (delayedL - delayedR) * 0.5f * haasMix
                         val expandedSide = sideLowpass + highSide * (1f + widthFactor) + haasDiff
-                        val energyComp = 1f / sqrt(1f + widthFactor * 0.28f)
+                        val energyComp = 1f / sqrt(1f + widthFactor * 0.25f)
                         sL = (mid + expandedSide) * energyComp
                         sR = (mid - expandedSide) * energyComp
                     }
 
-                    // 6c. 舞台纵深感早期反射 (Stage Depth Early Reflections)
                     if (depthMix > 0.01f) {
                         val dIdxL = (haasWriteIdx - depthDelayL + maxHaasSamples) % maxHaasSamples
                         val dIdxR = (haasWriteIdx - depthDelayR + maxHaasSamples) % maxHaasSamples
                         val earlyL = haasBufferL[dIdxL] * 0.65f - haasBufferR[dIdxR] * 0.35f
                         val earlyR = haasBufferR[dIdxR] * 0.65f - haasBufferL[dIdxL] * 0.35f
-                        sL = sL * (1f - depthMix * 0.18f) + earlyL * depthMix
-                        sR = sR * (1f - depthMix * 0.18f) + earlyR * depthMix
+                        sL = sL * (1f - depthMix * 0.16f) + earlyL * depthMix
+                        sR = sR * (1f - depthMix * 0.16f) + earlyR * depthMix
                     }
 
                     haasWriteIdx = (haasWriteIdx + 1) % maxHaasSamples
                 }
 
-                // 7. 360° 动态轨迹声场旋转 (恒功率正弦/余弦声像摆位)
+                // 6. 360° 动态轨迹声场旋转
                 if (phaseStep > 0.0 && channels == 2) {
                     rotationPhase += phaseStep
                     if (rotationPhase > 2.0 * PI) rotationPhase -= 2.0 * PI
-                    val pan = sin(rotationPhase).toFloat() * 0.38f
-                    val depthMod = (0.94f + 0.06f * cos(rotationPhase).toFloat())
+                    val pan = sin(rotationPhase).toFloat() * 0.35f
+                    val depthMod = (0.95f + 0.05f * cos(rotationPhase).toFloat())
                     sL *= (1f - pan.coerceAtLeast(0f)) * depthMod
                     sR *= (1f + pan.coerceAtMost(0f)) * depthMod
                 }
 
-                // 8. 立体声空间混响（含带通净化与独立 Pre-Delay）
+                // 7. 立体声空间混响（含带通净化与独立 Pre-Delay）
                 if (reverbMode != ReverbMode.NONE && cachedReverbWet > 0.01f) {
                     processStereoReverb(sL, sR, reverbMode, reverbScratchPair)
                     sL = reverbScratchPair[0]
@@ -1295,8 +1207,7 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
                 }
             }
 
-            // 9. 双声道耦合真包络峰值限制器 (True Stereo-Linked Envelope Peak Limiter)
-            // 取代旧版逐采样硬折返 waveshaper，在保护不削波的同时 100% 保持正弦波光滑度与人声细节
+            // 8. 双声道耦合真包络峰值限制器 (True Stereo-Linked Envelope Peak Limiter)
             var outL = sL
             var outR = sR
             if (antiClip || dspActive || volNorm) {
@@ -1304,14 +1215,13 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
                 val coeff = if (peak > limiterEnvelope) limAttackCoeff else limReleaseCoeff
                 limiterEnvelope += coeff * (peak - limiterEnvelope)
                 if (limiterEnvelope > limThreshold) {
-                    val envGain = (limThreshold / limiterEnvelope).coerceIn(0.25f, 1.0f)
+                    val envGain = (limThreshold / limiterEnvelope).coerceIn(0.35f, 1.0f)
                     if (envGain < maxGainReductionLinear) {
                         maxGainReductionLinear = envGain
                     }
                     outL *= envGain
                     outR *= envGain
                 }
-                // 终极安全软天花板 (仅在极端瞬态 > 0.95f 时柔和收敛至 0.994f)
                 outL = softLimit(outL)
                 outR = softLimit(outR)
             } else {
@@ -1353,29 +1263,26 @@ class ConceptMasteringAudioProcessor : BaseAudioProcessor() {
     }
 
     private fun writeNormalizedSample(out: ByteBuffer, sample: Float, encoding: Int) {
+        val clamped = sample.coerceIn(-1f, 1f)
         when (encoding) {
             C.ENCODING_PCM_16BIT -> {
-                // 加入 TPDF 三角概率密度抖动与四舍五入，彻底消除 16-bit 截断造成的微弱数字颗粒底噪
-                val dithered = sample * 32767f + nextTpdfDither()
-                out.putShort(dithered.roundToInt().coerceIn(-32768, 32767).toShort())
+                out.putShort((clamped * 32767f).roundToInt().coerceIn(-32768, 32767).toShort())
             }
             C.ENCODING_PCM_24BIT -> {
-                val dithered = sample * 8388607f + nextTpdfDither() * 0.5f
-                val v = dithered.roundToInt().coerceIn(-8388608, 8388607)
+                val v = (clamped * 8388607f).roundToInt().coerceIn(-8388608, 8388607)
                 out.put((v and 0xFF).toByte())
                 out.put(((v shr 8) and 0xFF).toByte())
                 out.put(((v shr 16) and 0xFF).toByte())
             }
             C.ENCODING_PCM_32BIT -> {
-                val v = (sample.toDouble() * 2147483647.0).roundToInt().coerceIn(Int.MIN_VALUE, Int.MAX_VALUE)
+                val v = (clamped.toDouble() * 2147483647.0).roundToInt().coerceIn(Int.MIN_VALUE, Int.MAX_VALUE)
                 out.putInt(v)
             }
             C.ENCODING_PCM_FLOAT -> {
-                out.putFloat(sample.coerceIn(-1f, 1f))
+                out.putFloat(clamped)
             }
             else -> {
-                val dithered = sample * 32767f + nextTpdfDither()
-                out.putShort(dithered.roundToInt().coerceIn(-32768, 32767).toShort())
+                out.putShort((clamped * 32767f).roundToInt().coerceIn(-32768, 32767).toShort())
             }
         }
     }

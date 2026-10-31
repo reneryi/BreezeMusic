@@ -451,7 +451,7 @@ private fun ViperPresetLibraryTab(
 }
 
 /**
- * 专区二：声场调音（扩展专业声场控制项：独立低频下潜与瞬态冲击、5档分频点、瞬态微动态、舞台纵深、Bauer耳机交叉馈送、360°环绕速率、混响干湿比/预延迟/高频阻尼、人声通透/齿音柔化/极高频空气泛音与带通胆机温暖度）
+ * 专区二：声场调音（重新设计清爽专业调音台 UI：自适应双行六列分频频点矩阵、无换行单行参数滑杆、独立分区卡片）
  */
 @Composable
 private fun AcousticFieldTuningTab(
@@ -482,44 +482,70 @@ private fun AcousticFieldTuningTab(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Rounded.Speaker,
-                                contentDescription = null,
-                                tint = ConceptCoralAccent,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(ConceptCoralAccent.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Speaker,
+                                    contentDescription = null,
+                                    tint = ConceptCoralAccent,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text(
                                     text = "低频下潜与瞬态动态",
                                     color = primaryText,
                                     fontSize = 15.sp,
-                                    fontWeight = FontWeight.ExtraBold
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "二阶分频隔离 + 235Hz 防浑浊净空补偿，大动态不伤人声",
+                                    text = "64-Bit 线性低架滤波 · 235Hz 防浑浊净空补偿",
                                     color = subText,
-                                    fontSize = 10.5.sp
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
 
-                        TextButton(
-                            onClick = {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = ConceptPrimary.copy(alpha = 0.14f),
+                            modifier = Modifier.softCardClickable(shape = RoundedCornerShape(10.dp)) {
                                 AudioEffectManager.resetCurrentPresetToDefault()
                                 Toast.makeText(context, "已恢复当前预设默认声场参数", Toast.LENGTH_SHORT).show()
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            }
                         ) {
-                            Text("恢复默认", fontSize = 12.sp, color = ConceptPrimary, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "恢复默认",
+                                fontSize = 11.5.sp,
+                                color = ConceptPrimary,
+                                fontWeight = FontWeight.ExtraBold,
+                                softWrap = false,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                            )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     ParameterSliderItem(
-                        title = "超重低音下潜 (Sub-Bass)",
+                        title = "超重低音下潜",
                         valueText = "${state.bassBoostStrength / 10}% · ${state.bassCutoffHz}Hz",
                         value = state.bassBoostStrength.toFloat(),
                         valueRange = 0f..1000f,
@@ -529,7 +555,7 @@ private fun AcousticFieldTuningTab(
                     )
 
                     ParameterSliderItem(
-                        title = "低频瞬态弹性冲击 (Bass Punch)",
+                        title = "低频瞬态弹性冲击",
                         valueText = "${state.bassPunchStrength / 10}%",
                         value = state.bassPunchStrength.toFloat(),
                         valueRange = 0f..1000f,
@@ -538,51 +564,85 @@ private fun AcousticFieldTuningTab(
                         onValueChange = { AudioEffectManager.setBassPunchStrength(it.toInt()) }
                     )
 
-                    Text(
-                        text = "低频分频谐振中心频点",
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = subText,
-                        modifier = Modifier.padding(top = 2.dp, bottom = 6.dp)
-                    )
-                    LazyRow(
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            .padding(top = 4.dp, bottom = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        val cutoffOptions = listOf(
-                            40 to "40Hz 极深潜",
-                            55 to "55Hz 影院",
-                            60 to "60Hz 黄金",
-                            75 to "75Hz 流行",
-                            95 to "95Hz 紧凑",
-                            110 to "110Hz 暖厚"
+                        Text(
+                            text = "低频分频谐振中心频点",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = subText,
+                            maxLines = 1
                         )
-                        items(cutoffOptions) { (hz, label) ->
+                        Text(
+                            text = "当前 ${state.bassCutoffHz} Hz",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = ConceptCoralAccent,
+                            softWrap = false,
+                            maxLines = 1
+                        )
+                    }
+
+                    // 六档等宽分频频点网格（一屏完整展示，彻底消除右侧截断）
+                    val cutoffOptions = remember {
+                        listOf(
+                            Triple(40, "40Hz", "极深潜"),
+                            Triple(55, "55Hz", "影院"),
+                            Triple(60, "60Hz", "黄金"),
+                            Triple(75, "75Hz", "流行"),
+                            Triple(95, "95Hz", "紧凑"),
+                            Triple(110, "110Hz", "暖厚")
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        cutoffOptions.forEach { (hz, hzText, tagText) ->
                             val selected = state.bassCutoffHz == hz
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (selected) ConceptCoralAccent.copy(alpha = 0.20f) else elevatedBg,
-                                contentColor = if (selected) ConceptCoralAccent else subText,
-                                modifier = Modifier.softCardClickable(enabled = true) {
-                                    AudioEffectManager.setBassCutoffHz(hz)
-                                }
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .softCardClickable(enabled = true, shape = RoundedCornerShape(10.dp)) {
+                                        AudioEffectManager.setBassCutoffHz(hz)
+                                    }
                             ) {
-                                Text(
-                                    text = label,
-                                    color = if (selected) ConceptCoralAccent else subText,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.5.dp)
-                                )
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp)
+                                ) {
+                                    Text(
+                                        text = hzText,
+                                        color = if (selected) ConceptCoralAccent else primaryText,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        softWrap = false,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        text = tagText,
+                                        color = if (selected) ConceptCoralAccent else subText,
+                                        fontSize = 9.5.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                        softWrap = false,
+                                        maxLines = 1
+                                    )
+                                }
                             }
                         }
                     }
 
                     ParameterSliderItem(
-                        title = "瞬态微动态与鼓点包络 (Transient Attack)",
+                        title = "瞬态微动态与鼓点清晰度",
                         valueText = "${state.transientAttackStrength / 10}%",
                         value = state.transientAttackStrength.toFloat(),
                         valueRange = 0f..1000f,
@@ -604,32 +664,44 @@ private fun AcousticFieldTuningTab(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Rounded.SurroundSound,
-                            contentDescription = null,
-                            tint = ConceptCyanAccent,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(ConceptCyanAccent.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.SurroundSound,
+                                contentDescription = null,
+                                tint = ConceptCyanAccent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
                                 text = "全息声场与双耳渲染",
                                 color = primaryText,
                                 fontSize = 15.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "140Hz 低频锚定居中 M/S 拓宽 + Bauer 双耳交叉馈送",
+                                text = "140Hz 低频锚定居中 M/S 拓宽 · Bauer 双耳交叉馈送",
                                 color = subText,
-                                fontSize = 10.5.sp
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     ParameterSliderItem(
-                        title = "3D 环绕声场宽度 (Stereo Width)",
+                        title = "3D 环绕声场宽度",
                         valueText = "${state.virtualizerStrength / 10}%",
                         value = state.virtualizerStrength.toFloat(),
                         valueRange = 0f..1000f,
@@ -639,7 +711,7 @@ private fun AcousticFieldTuningTab(
                     )
 
                     ParameterSliderItem(
-                        title = "舞台纵深与前后层次 (Stage Depth)",
+                        title = "舞台纵深与前后距离感",
                         valueText = "${state.soundstageDepthStrength / 10}%",
                         value = state.soundstageDepthStrength.toFloat(),
                         valueRange = 0f..1000f,
@@ -649,7 +721,7 @@ private fun AcousticFieldTuningTab(
                     )
 
                     ParameterSliderItem(
-                        title = "耳机交叉馈送 (Crossfeed · 消除头中效应)",
+                        title = "Bauer 耳机交叉馈送 (消除头中效应)",
                         valueText = "${state.crossfeedStrength / 10}%",
                         value = state.crossfeedStrength.toFloat(),
                         valueRange = 0f..1000f,
@@ -681,29 +753,41 @@ private fun AcousticFieldTuningTab(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Rounded.Stadium,
-                            contentDescription = null,
-                            tint = ConceptVioletAccent,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(ConceptVioletAccent.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Stadium,
+                                contentDescription = null,
+                                tint = ConceptVioletAccent,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
                                 text = "空间声学混响矩阵",
                                 color = primaryText,
                                 fontSize = 15.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "185Hz-6.2kHz 频带净化 + 独立 Pre-Delay 预延迟防人声浑浊",
+                                text = "185Hz-6.2kHz 频带净化 · 独立预延迟防人声浑浊",
                                 color = subText,
-                                fontSize = 10.5.sp
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -726,6 +810,8 @@ private fun AcousticFieldTuningTab(
                                     color = if (isSelected) Color.White else subText,
                                     fontSize = 12.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    softWrap = false,
+                                    maxLines = 1,
                                     modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp)
                                 )
                             }
@@ -735,7 +821,7 @@ private fun AcousticFieldTuningTab(
                     AnimatedVisibility(visible = state.reverbMode != ReverbMode.NONE) {
                         Column(modifier = Modifier.padding(top = 12.dp)) {
                             ParameterSliderItem(
-                                title = "混响空间干湿比 (Wet Mix)",
+                                title = "混响空间干湿比",
                                 valueText = "${state.reverbWetMix / 10}%",
                                 value = state.reverbWetMix.toFloat(),
                                 valueRange = 0f..1000f,
@@ -745,7 +831,7 @@ private fun AcousticFieldTuningTab(
                             )
 
                             ParameterSliderItem(
-                                title = "混响预延迟 (Pre-Delay · 人声前置分离)",
+                                title = "混响预延迟 (人声前置分离)",
                                 valueText = "${state.reverbPreDelayMs} ms",
                                 value = state.reverbPreDelayMs.toFloat(),
                                 valueRange = 0f..80f,
@@ -755,7 +841,7 @@ private fun AcousticFieldTuningTab(
                             )
 
                             ParameterSliderItem(
-                                title = "空间高频吸收阻尼 (HF Damping)",
+                                title = "空间高频吸收阻尼",
                                 valueText = "${state.reverbDamping / 10}%",
                                 value = state.reverbDamping.toFloat(),
                                 valueRange = 50f..900f,
@@ -779,32 +865,44 @@ private fun AcousticFieldTuningTab(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Rounded.AutoAwesome,
-                            contentDescription = null,
-                            tint = VipGold,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(VipGold.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.AutoAwesome,
+                                contentDescription = null,
+                                tint = VipGold,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
                                 text = "人声精修与模拟胆机母带",
                                 color = primaryText,
                                 fontSize = 15.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "中低频带通隔离三极管偶次谐波 · 6.2kHz 齿音柔化抑制",
+                                text = "2.75kHz 贴耳人声 · 6.2kHz 齿音柔化 · 胆机线性温润滤波",
                                 color = subText,
-                                fontSize = 10.5.sp
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     ParameterSliderItem(
-                        title = "人声通透与贴耳存在感 (2.75kHz)",
+                        title = "人声通透与贴耳存在感",
                         valueText = "${state.vocalClarityStrength / 10}%",
                         value = state.vocalClarityStrength.toFloat(),
                         valueRange = 0f..1000f,
@@ -814,7 +912,7 @@ private fun AcousticFieldTuningTab(
                     )
 
                     ParameterSliderItem(
-                        title = "人声齿音柔化抑制 (6.2kHz De-Esser)",
+                        title = "人声齿音柔化抑制 (6.2kHz)",
                         valueText = "${state.deEsserStrength / 10}%",
                         value = state.deEsserStrength.toFloat(),
                         valueRange = 0f..1000f,
@@ -824,7 +922,7 @@ private fun AcousticFieldTuningTab(
                     )
 
                     ParameterSliderItem(
-                        title = "极高频空气泛音激励 (12kHz+ Air Exciter)",
+                        title = "极高频空气泛音 (12kHz+)",
                         valueText = "${state.trebleAirStrength / 10}%",
                         value = state.trebleAirStrength.toFloat(),
                         valueRange = 0f..1000f,
@@ -834,7 +932,7 @@ private fun AcousticFieldTuningTab(
                     )
 
                     ParameterSliderItem(
-                        title = "黑胶与黄金胆机温暖度 (Band-Isolated Tube)",
+                        title = "黑胶与黄金胆机温暖度",
                         valueText = "${state.analogWarmthStrength / 10}%",
                         value = state.analogWarmthStrength.toFloat(),
                         valueRange = 0f..1000f,
@@ -844,7 +942,7 @@ private fun AcousticFieldTuningTab(
                     )
 
                     ParameterSliderItem(
-                        title = "动态响度增益 (Loudness Boost)",
+                        title = "动态响度增益",
                         valueText = String.format(Locale.getDefault(), "+%.1f dB", state.loudnessGainMb / 100f),
                         value = state.loudnessGainMb.toFloat(),
                         valueRange = 0f..1500f,
@@ -863,17 +961,25 @@ private fun AcousticFieldTuningTab(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 12.dp)
+                        ) {
                             Text(
                                 text = "夜间小音量等响度补偿",
                                 color = primaryText,
                                 fontSize = 13.5.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = "低音量聆听时自动补偿高低频细节 (Fletcher-Munson)",
                                 color = subText,
-                                fontSize = 11.sp
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                         Switch(
@@ -909,8 +1015,8 @@ private fun AcousticMetricMiniBar(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(text = label, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(text = "$percent%", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = color)
+            Text(text = label, fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Text(text = "$percent%", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = color, softWrap = false, maxLines = 1)
         }
         Spacer(modifier = Modifier.height(4.dp))
         Canvas(
@@ -958,13 +1064,20 @@ private fun ParameterSliderItem(
                 text = title,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
             )
             Text(
                 text = valueText,
                 color = accentColor,
                 fontWeight = FontWeight.Bold,
-                fontSize = 12.sp
+                fontSize = 12.sp,
+                softWrap = false,
+                maxLines = 1
             )
         }
         Slider(
@@ -1059,6 +1172,8 @@ private fun ViperEffectPresetCard(
                             color = Color(0xFF0A1018),
                             fontSize = 9.5.sp,
                             fontWeight = FontWeight.ExtraBold,
+                            softWrap = false,
+                            maxLines = 1,
                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                         )
                     }
@@ -1074,6 +1189,8 @@ private fun ViperEffectPresetCard(
                                     color = catAccent,
                                     fontSize = 9.5.sp,
                                     fontWeight = FontWeight.SemiBold,
+                                    softWrap = false,
+                                    maxLines = 1,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
@@ -1106,9 +1223,7 @@ private fun ViperEffectPresetCard(
 
 /**
  * 专区三：发烧级全能参量均衡器 (Audiophile 10-Band Parametric Equalizer)：
- * - 支持 10 段独立调节增益 (-10dB ~ +10dB, 0.1dB 步进微调)、中心频率 (20Hz ~ 20kHz 连续微调)、品质因数 Q 值 (0.30 ~ 8.00) 与 5 种滤波器拓扑 (Peak / Low-Shelf / High-Shelf / Notch / Band-Pass)；
- * - 支持真实双二阶 Biquad 传递函数 |H(e^jw)| 频响曲线绘制与 10 段实时频谱叠加；
- * - 支持哈曼曲线 / 弥散场 / 人声丝绒 / HiFi深潜 等发烧目标曲线、3 个自定义调音槽位 (A/B/C)、高低通边界滤波 (HPF/LPF) 与一键 A/B 原音对比。
+ * 重新设计 UI 布局，彻底解决徽章竖排挤压、频谱绿柱杂乱、副标题双行碰撞与 0.1dB 微调按钮换行问题。
  */
 @Composable
 private fun ProfessionalEqualizerPage(
@@ -1151,7 +1266,7 @@ private fun ProfessionalEqualizerPage(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 1. 实时 Biquad 传递函数频响曲线 + A/B 原音对比 + 实时频谱分析仪
+        // 1. 实时 Biquad 传递函数频响曲线 + A/B 原音对比
         item {
             Surface(
                 shape = RoundedCornerShape(22.dp),
@@ -1165,39 +1280,35 @@ private fun ProfessionalEqualizerPage(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
+                        ) {
+                            Text(
+                                text = "参量均衡频响曲线",
+                                color = primaryText,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (state.isAbBypassActive) ConceptAmberAccent.copy(alpha = 0.20f) else ConceptCyanAccent.copy(alpha = 0.16f)
                             ) {
                                 Text(
-                                    text = "64-Bit Biquad 参量频响曲线",
-                                    color = primaryText,
+                                    text = if (state.isAbBypassActive) "原音直通" else "实时生效",
+                                    color = if (state.isAbBypassActive) ConceptAmberAccent else ConceptCyanAccent,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 14.5.sp
+                                    softWrap = false,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
                                 )
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (state.isAbBypassActive) ConceptAmberAccent.copy(alpha = 0.20f) else ConceptCyanAccent.copy(alpha = 0.16f)
-                                ) {
-                                    Text(
-                                        text = if (state.isAbBypassActive) "原音直通对比中" else "PEQ 实时生效",
-                                        color = if (state.isAbBypassActive) ConceptAmberAccent else ConceptCyanAccent,
-                                        fontSize = 9.5.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
                             }
-                            val headroomDb = com.concept.music.service.AudioRhythmTelemetry.headroomGainDb
-                            val headroomText = if (headroomDb < -0.1f) {
-                                String.format(Locale.getDefault(), " · 自动防削波余量 %.1f dB", headroomDb)
-                            } else ""
-                            Text(
-                                text = "${state.currentPreset.label} · 前置 ${String.format(Locale.getDefault(), "%+.1f dB", state.preampGainDb)}$headroomText",
-                                color = subText,
-                                fontSize = 11.sp
-                            )
                         }
 
                         Row(
@@ -1216,21 +1327,44 @@ private fun ProfessionalEqualizerPage(
                                     color = if (state.isAbBypassActive) Color(0xFF0A1018) else primaryText,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.ExtraBold,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    softWrap = false,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.5.dp)
                                 )
                             }
 
-                            TextButton(
-                                onClick = {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = ConceptPrimary.copy(alpha = 0.14f),
+                                modifier = Modifier.softCardClickable(shape = RoundedCornerShape(10.dp)) {
                                     AudioEffectManager.resetCurrentPresetToDefault()
                                     Toast.makeText(context, "已重置参量均衡器全部参数", Toast.LENGTH_SHORT).show()
-                                },
-                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                }
                             ) {
-                                Text("归零", color = ConceptPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = "归零",
+                                    color = ConceptPrimary,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    softWrap = false,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.5.dp)
+                                )
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    val hpfInfo = if (state.highPassCutoffHz >= 20) " · HPF ${state.highPassCutoffHz}Hz" else ""
+                    val lpfInfo = if (state.lowPassCutoffHz < 19500) String.format(Locale.getDefault(), " · LPF %.1fkHz", state.lowPassCutoffHz / 1000f) else ""
+                    Text(
+                        text = "${state.currentPreset.label} · 前置增益 ${String.format(Locale.getDefault(), "%+.1f dB", state.preampGainDb)}$hpfInfo$lpfInfo",
+                        color = subText,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
@@ -1254,22 +1388,27 @@ private fun ProfessionalEqualizerPage(
                 contentColor = primaryText,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "发烧目标曲线与自定义存档槽",
+                            text = "目标参考曲线与自定义存档",
                             color = primaryText,
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 13.5.sp
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
                         Text(
-                            text = "一键载入哈曼/弥散场参考或保存私人曲线",
+                            text = "哈曼 / 弥散场 / 记忆槽",
                             color = subText,
-                            fontSize = 10.5.sp
+                            fontSize = 11.sp,
+                            softWrap = false,
+                            maxLines = 1
                         )
                     }
 
@@ -1304,7 +1443,9 @@ private fun ProfessionalEqualizerPage(
                                         text = target.label,
                                         color = if (isMatched) VipGold else primaryText,
                                         fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
+                                        fontWeight = FontWeight.Bold,
+                                        softWrap = false,
+                                        maxLines = 1
                                     )
                                 }
                             }
@@ -1332,6 +1473,8 @@ private fun ProfessionalEqualizerPage(
                                     color = if (isSelected) Color.White else primaryText,
                                     fontSize = 12.sp,
                                     fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                    softWrap = false,
+                                    maxLines = 1,
                                     modifier = Modifier.padding(horizontal = 13.dp, vertical = 7.dp)
                                 )
                             }
@@ -1375,12 +1518,16 @@ private fun ProfessionalEqualizerPage(
                                             text = "记忆槽 $slotChar",
                                             fontSize = 11.5.sp,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = if (savedSlot != null) ConceptPrimary else primaryText
+                                            color = if (savedSlot != null) ConceptPrimary else primaryText,
+                                            softWrap = false,
+                                            maxLines = 1
                                         )
                                         Text(
-                                            text = if (savedSlot != null) "点击载入" else "空 · 点击存入",
+                                            text = if (savedSlot != null) "点击载入" else "点击存入",
                                             fontSize = 9.5.sp,
-                                            color = subText
+                                            color = subText,
+                                            softWrap = false,
+                                            maxLines = 1
                                         )
                                     }
                                     IconButton(
@@ -1388,13 +1535,13 @@ private fun ProfessionalEqualizerPage(
                                             AudioEffectManager.saveCustomPeqSlot(slotIdx)
                                             Toast.makeText(context, "已覆盖保存当前 PEQ 至记忆槽 $slotChar", Toast.LENGTH_SHORT).show()
                                         },
-                                        modifier = Modifier.size(26.dp)
+                                        modifier = Modifier.size(24.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Rounded.Save,
                                             contentDescription = "保存到槽位 $slotChar",
                                             tint = ConceptPrimary,
-                                            modifier = Modifier.size(15.dp)
+                                            modifier = Modifier.size(14.dp)
                                         )
                                     }
                                 }
@@ -1422,16 +1569,20 @@ private fun ProfessionalEqualizerPage(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "10段参量推杆 (-10dB ~ +10dB)",
+                            text = "10段参量均衡推杆",
                             color = primaryText,
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 14.sp
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f)
                         )
                         Text(
-                            text = "点击任意频段下方精调 Q 值与频点",
+                            text = "点击频段精调 Q 值与频点",
                             color = ConceptPrimary,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
+                            fontSize = 11.sp,
+                            softWrap = false,
+                            maxLines = 1
                         )
                     }
 
@@ -1465,6 +1616,7 @@ private fun ProfessionalEqualizerPage(
                                     color = if (isBandSelected) bandAccent else if (level != 0) ConceptPrimary else subText,
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.ExtraBold,
+                                    softWrap = false,
                                     maxLines = 1
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -1505,13 +1657,17 @@ private fun ProfessionalEqualizerPage(
                                     text = AudioEffectManager.TEN_BAND_FREQUENCIES.getOrElse(index) { "" },
                                     color = if (isBandSelected) bandAccent else subText,
                                     fontSize = 9.5.sp,
-                                    fontWeight = if (isBandSelected) FontWeight.ExtraBold else FontWeight.SemiBold
+                                    fontWeight = if (isBandSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                    softWrap = false,
+                                    maxLines = 1
                                 )
                                 Text(
                                     text = bandType.shortTag,
                                     color = if (isBandSelected) bandAccent else subText.copy(alpha = 0.65f),
                                     fontSize = 8.5.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    softWrap = false,
+                                    maxLines = 1
                                 )
                             }
                         }
@@ -1536,7 +1692,12 @@ private fun ProfessionalEqualizerPage(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(end = 6.dp)
+                                ) {
                                     Surface(
                                         shape = RoundedCornerShape(8.dp),
                                         color = ConceptCyanAccent.copy(alpha = 0.18f)
@@ -1544,26 +1705,31 @@ private fun ProfessionalEqualizerPage(
                                         Text(
                                             text = "BAND ${selectedBandIdx + 1}",
                                             color = ConceptCyanAccent,
-                                            fontSize = 11.sp,
+                                            fontSize = 10.5.sp,
                                             fontWeight = FontWeight.ExtraBold,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            softWrap = false,
+                                            maxLines = 1,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                                         )
                                     }
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
                                     val freqLabel = if (selectedBandHz >= 1000f) {
-                                        String.format(Locale.getDefault(), "%.2f kHz", selectedBandHz / 1000f)
+                                        String.format(Locale.getDefault(), "%.2fkHz", selectedBandHz / 1000f)
                                     } else {
-                                        String.format(Locale.getDefault(), "%.1f Hz", selectedBandHz)
+                                        String.format(Locale.getDefault(), "%.0fHz", selectedBandHz)
                                     }
                                     Text(
                                         text = "$freqLabel · Q=${String.format(Locale.getDefault(), "%.2f", selectedBandQ)}",
                                         color = primaryText,
                                         fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 13.sp
+                                        fontSize = 12.5.sp,
+                                        softWrap = false,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
 
-                                // 0.1dB 精密增益步进器
+                                // 0.1dB 精密增益步进器（紧凑不换行）
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -1576,19 +1742,23 @@ private fun ProfessionalEqualizerPage(
                                         }
                                     ) {
                                         Text(
-                                            text = "-0.1dB",
+                                            text = "-0.1",
                                             color = primaryText,
                                             fontSize = 10.5.sp,
                                             fontWeight = FontWeight.Bold,
+                                            softWrap = false,
+                                            maxLines = 1,
                                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
                                         )
                                     }
                                     Text(
-                                        text = String.format(Locale.getDefault(), "%+.1f dB", selectedBandLevelMb / 100f),
+                                        text = String.format(Locale.getDefault(), "%+.1fdB", selectedBandLevelMb / 100f),
                                         color = ConceptCyanAccent,
-                                        fontSize = 12.sp,
+                                        fontSize = 11.5.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        modifier = Modifier.padding(horizontal = 4.dp)
+                                        softWrap = false,
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(horizontal = 2.dp)
                                     )
                                     Surface(
                                         shape = RoundedCornerShape(8.dp),
@@ -1598,10 +1768,12 @@ private fun ProfessionalEqualizerPage(
                                         }
                                     ) {
                                         Text(
-                                            text = "+0.1dB",
+                                            text = "+0.1",
                                             color = primaryText,
                                             fontSize = 10.5.sp,
                                             fontWeight = FontWeight.Bold,
+                                            softWrap = false,
+                                            maxLines = 1,
                                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
                                         )
                                     }
@@ -1627,6 +1799,8 @@ private fun ProfessionalEqualizerPage(
                                             color = if (selected) Color.White else subText,
                                             fontSize = 11.sp,
                                             fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                            softWrap = false,
+                                            maxLines = 1,
                                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                         )
                                     }
@@ -1638,7 +1812,7 @@ private fun ProfessionalEqualizerPage(
                             val minFreq = (nominalHz * 0.55f).coerceAtLeast(20f)
                             val maxFreq = (nominalHz * 1.80f).coerceAtMost(20000f)
                             ParameterSliderItem(
-                                title = "中心频点微调 (Center Frequency)",
+                                title = "中心频点微调",
                                 valueText = if (selectedBandHz >= 1000f) String.format(Locale.getDefault(), "%.2f kHz", selectedBandHz / 1000f)
                                 else String.format(Locale.getDefault(), "%.1f Hz", selectedBandHz),
                                 value = selectedBandHz.coerceIn(minFreq, maxFreq),
@@ -1650,8 +1824,8 @@ private fun ProfessionalEqualizerPage(
 
                             // 品质因数 Q 值滑杆与快捷档位
                             ParameterSliderItem(
-                                title = "品质因数 / 频带宽度 (Q-Factor)",
-                                valueText = String.format(Locale.getDefault(), "Q = %.2f (%s)", selectedBandQ, when {
+                                title = "品质因数 Q (频带宽度)",
+                                valueText = String.format(Locale.getDefault(), "Q = %.2f · %s", selectedBandQ, when {
                                     selectedBandQ < 0.85f -> "宽频柔顺"
                                     selectedBandQ <= 1.8f -> "标准均衡"
                                     selectedBandQ <= 3.5f -> "窄带聚焦"
@@ -1669,10 +1843,10 @@ private fun ProfessionalEqualizerPage(
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 listOf(
-                                    0.71f to "Q 0.71 巴特沃斯",
-                                    1.20f to "Q 1.20 标准",
-                                    2.50f to "Q 2.50 窄带",
-                                    5.00f to "Q 5.00 极窄"
+                                    0.71f to "0.71 宽频",
+                                    1.20f to "1.20 标准",
+                                    2.50f to "2.50 窄带",
+                                    5.00f to "5.00 极窄"
                                 ).forEach { (qPreset, qLabel) ->
                                     val isQSelected = abs(selectedBandQ - qPreset) < 0.08f
                                     Surface(
@@ -1690,7 +1864,9 @@ private fun ProfessionalEqualizerPage(
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
                                             textAlign = TextAlign.Center,
-                                            modifier = Modifier.padding(vertical = 5.dp)
+                                            softWrap = false,
+                                            maxLines = 1,
+                                            modifier = Modifier.padding(vertical = 5.5.dp, horizontal = 2.dp)
                                         )
                                     }
                                 }
@@ -1719,27 +1895,39 @@ private fun ProfessionalEqualizerPage(
                             text = "高低通滤波与母带增益控制",
                             color = primaryText,
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 15.sp
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
                         if (abs(state.channelBalance) > 0.02f || abs(state.preampGainDb) > 0.05f || state.highPassCutoffHz > 0 || state.lowPassCutoffHz < 20000) {
-                            TextButton(
-                                onClick = {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = ConceptPrimary.copy(alpha = 0.14f),
+                                modifier = Modifier.softCardClickable(shape = RoundedCornerShape(10.dp)) {
                                     AudioEffectManager.setPreampGainDb(0f)
                                     AudioEffectManager.setChannelBalance(0f)
                                     AudioEffectManager.setHighPassCutoffHz(0)
                                     AudioEffectManager.setLowPassCutoffHz(20000)
-                                },
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                }
                             ) {
-                                Text("全部归零", color = ConceptPrimary, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = "全部归零",
+                                    color = ConceptPrimary,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    softWrap = false,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     ParameterSliderItem(
-                        title = "高通亚音速切除滤波 (HPF · 滤除超低频箱体轰鸣)",
-                        valueText = if (state.highPassCutoffHz < 20) "关闭 (全频直通)" else "${state.highPassCutoffHz} Hz (-12dB/oct)",
+                        title = "高通亚音速滤波 (HPF)",
+                        valueText = if (state.highPassCutoffHz < 20) "关闭 · 全频直通" else "${state.highPassCutoffHz} Hz (-12dB/oct)",
                         value = state.highPassCutoffHz.toFloat(),
                         valueRange = 0f..100f,
                         enabled = true,
@@ -1748,8 +1936,8 @@ private fun ProfessionalEqualizerPage(
                     )
 
                     ParameterSliderItem(
-                        title = "低通极高频滚降滤波 (LPF · 柔化数码毛刺)",
-                        valueText = if (state.lowPassCutoffHz >= 19500) "20.0 kHz (全频直通)" else String.format(Locale.getDefault(), "%.1f kHz (-12dB/oct)", state.lowPassCutoffHz / 1000f),
+                        title = "低通极高频滚降 (LPF)",
+                        valueText = if (state.lowPassCutoffHz >= 19500) "20.0 kHz · 全频直通" else String.format(Locale.getDefault(), "%.1f kHz (-12dB/oct)", state.lowPassCutoffHz / 1000f),
                         value = state.lowPassCutoffHz.toFloat(),
                         valueRange = 8000f..20000f,
                         enabled = true,
@@ -1758,7 +1946,7 @@ private fun ProfessionalEqualizerPage(
                     )
 
                     ParameterSliderItem(
-                        title = "前置放大增益 (Preamp Gain)",
+                        title = "前置放大增益 (Preamp)",
                         valueText = String.format(Locale.getDefault(), "%+.1f dB", state.preampGainDb),
                         value = state.preampGainDb,
                         valueRange = -12f..12f,
@@ -1774,7 +1962,7 @@ private fun ProfessionalEqualizerPage(
                         else -> "偏右 R $balPercent%"
                     }
                     ParameterSliderItem(
-                        title = "左右声道平衡 (Channel Balance)",
+                        title = "左右声道平衡 (Balance)",
                         valueText = balLabel,
                         value = state.channelBalance,
                         valueRange = -1f..1f,
@@ -1793,17 +1981,25 @@ private fun ProfessionalEqualizerPage(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        ) {
                             Text(
-                                text = "双声道耦合真包络防削波限幅器",
+                                text = "双声道耦合真包络防削波保护",
                                 color = primaryText,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 13.5.sp
+                                fontSize = 13.5.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "基于全频段 Biquad 峰值增益自动预留净空 + 0.4ms/85ms 真包络限幅，彻底杜绝破音与电流声",
+                                text = "智能峰值余量校准 + 双声道平滑包络控峰，彻底杜绝破音",
                                 color = subText,
-                                fontSize = 11.sp
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                         Switch(
@@ -1834,21 +2030,10 @@ private fun EqFrequencyResponseCurveCanvas(
     val lineColor = if (enabled) ConceptPrimary else Color.Gray
     val glowColor = if (enabled) ConceptCyanAccent else Color.Gray
 
-    // 实时订阅音频频谱包络以在频响曲线背景绘制 10 段动态频谱柱
-    var spectrumTick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(enabled) {
-        while (true) {
-            kotlinx.coroutines.delay(45L)
-            if (com.concept.music.service.AudioRhythmTelemetry.isActive()) {
-                spectrumTick = (spectrumTick + 1) % 10000
-            }
-        }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(142.dp)
+            .height(144.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(elevatedBg)
             .padding(horizontal = 12.dp, vertical = 10.dp)
@@ -1857,49 +2042,34 @@ private fun EqFrequencyResponseCurveCanvas(
             val w = size.width
             val h = size.height
             val midY = h / 2f
-            val tickRead = spectrumTick // 触发频谱重绘
 
-            // 1. 绘制 +12dB / 0dB / -12dB 参考网格线
+            // 1. 绘制 +10dB / 0dB / -10dB 水平参考网格线与十段频点垂直参考虚线
             listOf(0.14f, 0.5f, 0.86f).forEach { frac ->
                 val y = h * frac
                 drawLine(
-                    color = Color.White.copy(alpha = if (frac == 0.5f) 0.20f else 0.07f),
+                    color = Color.White.copy(alpha = if (frac == 0.5f) 0.22f else 0.07f),
                     start = Offset(0f, y),
                     end = Offset(w, y),
                     strokeWidth = if (frac == 0.5f) 1.2.dp.toPx() else 0.8.dp.toPx()
                 )
             }
 
-            // 2. 绘制 10 段实时音频频谱背景能量柱
-            if (tickRead >= 0) {
-                val barSlotW = w / 10f
-                val barW = barSlotW * 0.46f
-                for (b in 0 until 10) {
-                    val binVal = com.concept.music.service.AudioRhythmTelemetry.readBin(b).coerceIn(0f, 1f)
-                    if (binVal > 0.02f) {
-                        val barH = h * 0.78f * binVal
-                        val bx = b * barSlotW + (barSlotW - barW) * 0.5f
-                        drawRoundRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    glowColor.copy(alpha = 0.24f),
-                                    lineColor.copy(alpha = 0.06f)
-                                ),
-                                startY = h - barH,
-                                endY = h
-                            ),
-                            topLeft = Offset(bx, h - barH),
-                            size = Size(barW, barH),
-                            cornerRadius = CornerRadius(4.dp.toPx(), 4.dp.toPx())
-                        )
-                    }
-                }
-            }
-
-            // 3. 计算 96 个对数频率采样点 (20Hz ~ 20kHz) 上的真实 Biquad 传递函数幅频响应 |H(e^jw)|
-            val sampleCount = 96
             val minLogF = kotlin.math.ln(20.0)
             val maxLogF = kotlin.math.ln(20000.0)
+            for (idx in 0 until 10) {
+                val fc = AudioEffectManager.DEFAULT_TEN_BAND_HZ[idx].toDouble()
+                val xFrac = ((kotlin.math.ln(fc) - minLogF) / (maxLogF - minLogF)).toFloat().coerceIn(0.02f, 0.98f)
+                val gx = w * xFrac
+                drawLine(
+                    color = if (idx == selectedBandIndex) ConceptCyanAccent.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.05f),
+                    start = Offset(gx, 0f),
+                    end = Offset(gx, h),
+                    strokeWidth = if (idx == selectedBandIndex) 1.2.dp.toPx() else 0.7.dp.toPx()
+                )
+            }
+
+            // 2. 计算 96 个对数频率采样点 (20Hz ~ 20kHz) 上的真实 Biquad 传递函数幅频响应 |H(e^jw)|
+            val sampleCount = 96
             val strokePath = Path()
             for (i in 0 until sampleCount) {
                 val frac = i.toFloat() / (sampleCount - 1)
@@ -1928,7 +2098,7 @@ private fun EqFrequencyResponseCurveCanvas(
                 path = fillPath,
                 brush = Brush.verticalGradient(
                     colors = listOf(
-                        lineColor.copy(alpha = 0.30f),
+                        lineColor.copy(alpha = 0.28f),
                         glowColor.copy(alpha = 0.08f),
                         Color.Transparent
                     )
@@ -1941,7 +2111,7 @@ private fun EqFrequencyResponseCurveCanvas(
                 style = Stroke(width = 2.6.dp.toPx(), cap = StrokeCap.Round)
             )
 
-            // 4. 绘制 10 个频段的控制锚点（高亮当前选中的精调频段）
+            // 3. 绘制 10 个频段的控制锚点（高亮当前选中的精调频段）
             val bands = if (tenBandLevels.size == 10) tenBandLevels else List(10) { 0 }
             for (idx in 0 until 10) {
                 val fc = state.tenBandCenterHz.getOrElse(idx) { AudioEffectManager.DEFAULT_TEN_BAND_HZ[idx] }.toDouble().coerceIn(20.0, 20000.0)

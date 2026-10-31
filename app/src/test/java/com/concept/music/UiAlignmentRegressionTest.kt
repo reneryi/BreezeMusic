@@ -2003,8 +2003,12 @@ class UiAlignmentRegressionTest {
         assertTrue("每日推荐页面应包含定位当前播放歌曲按钮 playingDailySongIndex", homeCode.contains("playingDailySongIndex"))
 
         val npCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/NowPlayingSheet.kt").readText(Charsets.UTF_8)
-        assertTrue("播放页封面虚化应使用独立 SoftCoverDiffusionBlurTransformation 防止缓存污染", npCode.contains("SoftCoverDiffusionBlurTransformation"))
-        assertTrue("封面取色应支持三色提取 tertiaryAccent", npCode.contains("val tertiaryAccent: Color"))
+        assertFalse("播放页封面虚化应回退原版设计并移除过度模糊的 SoftCoverDiffusionBlurTransformation", npCode.contains("SoftCoverDiffusionBlurTransformation"))
+        assertTrue("播放页封面虚化应统一使用 .size(400, 400) 彻底修复切歌后 24x24 缓存未命中变糊 BUG", npCode.contains(".size(400, 400)"))
         assertTrue("律动光晕应读取实时音频遥测 AudioRhythmTelemetry", npCode.contains("AudioRhythmTelemetry"))
+
+        val focusPodCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/FocusPodBottomSheet.kt").readText(Charsets.UTF_8)
+        assertFalse("心流舱竖屏抽屉不应硬编码 fillMaxHeight(0.86f) 造成底部大片空白", focusPodCode.contains("fillMaxHeight(0.86f)"))
+        assertTrue("心流舱竖屏抽屉应使用 wrapContentHeight 自适应包裹内容", focusPodCode.contains("wrapContentHeight().heightIn(max = 640.dp)"))
     }
 }

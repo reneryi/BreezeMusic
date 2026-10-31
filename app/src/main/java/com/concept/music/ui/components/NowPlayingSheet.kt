@@ -1304,100 +1304,6 @@ fun NowPlayingSheet(
     }
 }
 
-private object SoftCoverDiffusionBlurTransformation : coil.transform.Transformation {
-    override val cacheKey: String = "soft_cover_diffusion_blur_v3"
-
-    override suspend fun transform(
-        input: android.graphics.Bitmap,
-        size: coil.size.Size
-    ): android.graphics.Bitmap {
-        val targetW = 96
-        val targetH = 96
-        val scaled = android.graphics.Bitmap.createScaledBitmap(input, targetW, targetH, true)
-        val working = scaled.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
-        if (scaled !== input && scaled !== working) {
-            scaled.recycle()
-        }
-
-        val w = working.width
-        val h = working.height
-        val pixels = IntArray(w * h)
-        val temp = IntArray(w * h)
-        working.getPixels(pixels, 0, w, 0, 0, w, h)
-
-        // 先对像素做色彩柔化与高光压制，彻底消除封面上的文字、锐利线条与刺眼白斑，转化为温润的弥散色块
-        val hsv = FloatArray(3)
-        for (i in pixels.indices) {
-            val c = pixels[i]
-            val r = (c shr 16) and 0xFF
-            val g = (c shr 8) and 0xFF
-            val b = c and 0xFF
-            android.graphics.Color.RGBToHSV(r, g, b, hsv)
-            if (hsv[1] > 0.08f) {
-                hsv[1] = (hsv[1] * 1.18f).coerceIn(0.28f, 0.82f)
-            }
-            hsv[2] = (hsv[2] * 0.72f + 0.08f).coerceIn(0.14f, 0.66f)
-            pixels[i] = android.graphics.Color.HSVToColor(0xFF, hsv)
-        }
-
-        // 3 遍大半径双向均值卷积（等效高斯模糊 sigma ≈ 18），保证任何歌曲切歌或首次进入都具备 100% 均匀丝滑的弥散模糊
-        val radius = 16
-        val div = 2 * radius + 1
-        repeat(3) {
-            // Horizontal pass
-            for (y in 0 until h) {
-                var rSum = 0
-                var gSum = 0
-                var bSum = 0
-                val rowOffset = y * w
-                for (k in -radius..radius) {
-                    val x = k.coerceIn(0, w - 1)
-                    val p = pixels[rowOffset + x]
-                    rSum += (p shr 16) and 0xFF
-                    gSum += (p shr 8) and 0xFF
-                    bSum += p and 0xFF
-                }
-                for (x in 0 until w) {
-                    temp[rowOffset + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val leftX = (x - radius).coerceIn(0, w - 1)
-                    val rightX = (x + radius + 1).coerceIn(0, w - 1)
-                    val pOut = pixels[rowOffset + leftX]
-                    val pIn = pixels[rowOffset + rightX]
-                    rSum += ((pIn shr 16) and 0xFF) - ((pOut shr 16) and 0xFF)
-                    gSum += ((pIn shr 8) and 0xFF) - ((pOut shr 8) and 0xFF)
-                    bSum += (pIn and 0xFF) - (pOut and 0xFF)
-                }
-            }
-            // Vertical pass
-            for (x in 0 until w) {
-                var rSum = 0
-                var gSum = 0
-                var bSum = 0
-                for (k in -radius..radius) {
-                    val y = k.coerceIn(0, h - 1)
-                    val p = temp[y * w + x]
-                    rSum += (p shr 16) and 0xFF
-                    gSum += (p shr 8) and 0xFF
-                    bSum += p and 0xFF
-                }
-                for (y in 0 until h) {
-                    pixels[y * w + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val topY = (y - radius).coerceIn(0, h - 1)
-                    val botY = (y + radius + 1).coerceIn(0, h - 1)
-                    val pOut = temp[topY * w + x]
-                    val pIn = temp[botY * w + x]
-                    rSum += ((pIn shr 16) and 0xFF) - ((pOut shr 16) and 0xFF)
-                    gSum += ((pIn shr 8) and 0xFF) - ((pOut shr 8) and 0xFF)
-                    bSum += (pIn and 0xFF) - (pOut and 0xFF)
-                }
-            }
-        }
-
-        working.setPixels(pixels, 0, w, 0, 0, w, h)
-        return working
-    }
-}
-
 @Composable
 private fun NowPlayingSelectableBackground(
     coverUrl: String,
@@ -1446,75 +1352,63 @@ private fun NowPlayingSelectableBackground(
     val secPhase = if (isPlaying) animatedSecondaryPhase else 1.45f
     val pulse = if (isPlaying) animatedPulse else 0.96f
 
-    // 律动光晕模式专用的 60fps 实时音频能量追踪状态（直接读取 ConceptMasteringAudioProcessor 实时计算的低/中/高频与鼓点脉冲）
-    var liveBassEnergy by remember { mutableFloatStateOf(0.18f) }
-    var liveMidEnergy by remember { mutableFloatStateOf(0.16f) }
-    var liveHighEnergy by remember { mutableFloatStateOf(0.14f) }
+    // 律动光晕模式专用的 60fps 实时音频能量追踪状态（读取 ConceptMasteringAudioProcessor 实时计算的歌曲低/中/高频与节拍脉冲）
+    var liveBassEnergy by remember { mutableFloatStateOf(0.14f) }
+    var liveMidEnergy by remember { mutableFloatStateOf(0.12f) }
+    var liveHighEnergy by remember { mutableFloatStateOf(0.10f) }
     var liveBeatImpulse by remember { mutableFloatStateOf(0f) }
-    var liveWaveTime by remember { mutableFloatStateOf(0f) }
-    val liveSpectrumBins = remember { FloatArray(10) { 0.15f } }
 
     LaunchedEffect(backgroundStyle, isPlaying) {
         if (backgroundStyle == PlayerBackgroundStyle.RHYTHM_HALO && isPlaying) {
+            var waveClock = 0f
             var lastNanos = 0L
             while (isActive) {
                 withFrameNanos { nanos ->
                     val dt = if (lastNanos == 0L) 0.016f else ((nanos - lastNanos) / 1_000_000_000f).coerceIn(0.004f, 0.05f)
                     lastNanos = nanos
+                    waveClock = (waveClock + dt) % 628.318f
                     val telemetryActive = com.concept.music.service.AudioRhythmTelemetry.isActive()
                     val targetBass = if (telemetryActive) {
                         com.concept.music.service.AudioRhythmTelemetry.bassEnergy
                     } else {
-                        0.28f + 0.16f * abs(sin(liveWaveTime * 2.4f))
+                        0.24f + 0.14f * abs(sin(waveClock * 2.2f))
                     }
                     val targetMid = if (telemetryActive) {
                         com.concept.music.service.AudioRhythmTelemetry.midEnergy
                     } else {
-                        0.24f + 0.14f * abs(cos(liveWaveTime * 1.9f + 0.8f))
+                        0.20f + 0.12f * abs(cos(waveClock * 1.8f + 0.7f))
                     }
                     val targetHigh = if (telemetryActive) {
                         com.concept.music.service.AudioRhythmTelemetry.highEnergy
                     } else {
-                        0.20f + 0.12f * abs(sin(liveWaveTime * 3.1f + 1.7f))
+                        0.16f + 0.10f * abs(sin(waveClock * 2.9f + 1.4f))
                     }
                     val targetBeat = if (telemetryActive) {
                         com.concept.music.service.AudioRhythmTelemetry.beatImpulse
                     } else {
-                        0.15f * abs(sin(liveWaveTime * 2.8f)).pow(3)
+                        0.12f * abs(sin(waveClock * 2.6f)).pow(3)
                     }
 
-                    liveBassEnergy += (targetBass - liveBassEnergy) * (if (targetBass > liveBassEnergy) 0.36f else 0.14f)
-                    liveMidEnergy += (targetMid - liveMidEnergy) * (if (targetMid > liveMidEnergy) 0.32f else 0.15f)
-                    liveHighEnergy += (targetHigh - liveHighEnergy) * (if (targetHigh > liveHighEnergy) 0.38f else 0.18f)
-                    liveBeatImpulse += (targetBeat - liveBeatImpulse) * (if (targetBeat > liveBeatImpulse) 0.48f else 0.16f)
-
-                    for (b in 0 until 10) {
-                        val rawBin = if (telemetryActive) {
-                            com.concept.music.service.AudioRhythmTelemetry.readBin(b)
-                        } else {
-                            0.18f + 0.12f * abs(sin(liveWaveTime * (1.5f + b * 0.22f) + b))
-                        }
-                        liveSpectrumBins[b] += (rawBin - liveSpectrumBins[b]) * 0.28f
-                    }
-
-                    val speedFactor = 1.0f + liveBassEnergy * 1.8f + liveBeatImpulse * 2.2f
-                    liveWaveTime = (liveWaveTime + dt * speedFactor) % 628.318f
+                    liveBassEnergy += (targetBass - liveBassEnergy) * (if (targetBass > liveBassEnergy) 0.34f else 0.14f)
+                    liveMidEnergy += (targetMid - liveMidEnergy) * (if (targetMid > liveMidEnergy) 0.30f else 0.15f)
+                    liveHighEnergy += (targetHigh - liveHighEnergy) * (if (targetHigh > liveHighEnergy) 0.35f else 0.16f)
+                    liveBeatImpulse += (targetBeat - liveBeatImpulse) * (if (targetBeat > liveBeatImpulse) 0.44f else 0.15f)
                 }
             }
         } else {
-            liveBassEnergy = 0.12f
-            liveMidEnergy = 0.10f
-            liveHighEnergy = 0.08f
+            liveBassEnergy = 0.10f
+            liveMidEnergy = 0.08f
+            liveHighEnergy = 0.06f
             liveBeatImpulse = 0f
         }
     }
 
-    // 采用 AnimatedContent 包裹五种背景预设，彻底消除切歌或切换预设时的图层残留与光晕叠加 BUG
+    // 采用 AnimatedContent 包裹五种背景预设，确保切换背景或切歌时图层独立无残留
     AnimatedContent(
         targetState = backgroundStyle,
         transitionSpec = {
-            fadeIn(animationSpec = tween(durationMillis = 460, easing = FastOutSlowInEasing))
-                .togetherWith(fadeOut(animationSpec = tween(durationMillis = 460, easing = FastOutSlowInEasing)))
+            fadeIn(animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing))
+                .togetherWith(fadeOut(animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing)))
         },
         modifier = Modifier.fillMaxSize(),
         label = "NowPlayingBackgroundStyleTransition"
@@ -1522,349 +1416,153 @@ private fun NowPlayingSelectableBackground(
         Box(modifier = Modifier.fillMaxSize()) {
             when (activeStyle) {
                 PlayerBackgroundStyle.COVER_BLUR -> {
-                    // 预设 1：封面虚化（独立缓存 Key + 三遍堆栈高斯弥散 + 柔和三色呼吸色彩晕染，彻底解决切歌光晕突变与原图未模糊 BUG）
-                    androidx.compose.animation.Crossfade(
-                        targetState = coverUrl,
-                        animationSpec = tween(durationMillis = 620, easing = FastOutSlowInEasing),
-                        modifier = Modifier.fillMaxSize(),
-                        label = "CoverBlurCrossfade"
-                    ) { currentUrl ->
-                        if (currentUrl.isNotEmpty()) {
-                            val bgImageModel = remember(currentUrl) {
-                                ImageRequest.Builder(context)
-                                    .data(currentUrl)
-                                    .size(96, 96)
-                                    .precision(coil.size.Precision.EXACT)
-                                    .memoryCacheKey("${currentUrl}#cover_blur_diffusion_v3")
-                                    .transformations(SoftCoverDiffusionBlurTransformation)
-                                    .allowHardware(false)
-                                    .crossfade(false)
-                                    .build()
-                            }
-                            AsyncImage(
-                                model = bgImageModel,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                filterQuality = FilterQuality.Medium,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .graphicsLayer {
-                                        // 缓慢呼吸微缩放以避免边缘裁切并赋予柔和生命力
-                                        val s = 1.08f + 0.03f * sin(phase)
-                                        scaleX = s
-                                        scaleY = s
-                                    }
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color(0xFF0A101D))
-                            )
+                    // 还原原版封面虚化视觉，同时将请求尺寸与黑胶唱盘统一为 400x400，彻底修复原版切歌时因 24x24 缓存未命中导致莫名变糊的 BUG
+                    if (coverUrl.isNotEmpty()) {
+                        val bgImageModel = remember(coverUrl) {
+                            ImageRequest.Builder(context)
+                                .data(coverUrl)
+                                .size(400, 400)
+                                .allowHardware(false)
+                                .crossfade(true)
+                                .build()
                         }
+                        AsyncImage(
+                            model = bgImageModel,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            filterQuality = FilterQuality.High,
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
-
-                    // 柔和三色流光弥散叠加层（按实际屏幕宽高比例自适应分布，消除硬编码像素坐标偏移）
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val w = size.width
-                        val h = size.height
-                        val minDim = minOf(w, h).coerceAtLeast(1f)
-                        val maxDim = maxOf(w, h).coerceAtLeast(1f)
-
-                        // 基础丝绒暗色底衬（平衡封面明暗对比，确保前景白色歌词与控件极佳可读性）
-                        val baseOverlayAlpha = if (showLyricView) {
-                            (dimAlpha * 0.78f).coerceIn(0.46f, 0.84f)
-                        } else {
-                            0.52f
-                        }
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    Color(0xFF070B14).copy(alpha = (baseOverlayAlpha - 0.06f).coerceAtLeast(0.36f)),
-                                    Color(0xFF0A111E).copy(alpha = baseOverlayAlpha),
-                                    Color(0xFF050810).copy(alpha = (baseOverlayAlpha + 0.14f).coerceAtMost(0.92f))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color(0xFF070B12).copy(alpha = dimAlpha),
+                                        Color(0xFF0D1422).copy(alpha = (dimAlpha + 0.06f).coerceAtMost(0.95f)),
+                                        Color(0xFF060910).copy(alpha = (dimAlpha + 0.12f).coerceAtMost(0.97f))
+                                    )
                                 )
                             )
-                        )
-
-                        // 三色柔和色彩弥散云团 (Soft Color Diffusion Blooms)
-                        val bloomAlphaScale = if (showLyricView) 0.72f else 1.0f
-                        val c1Center = Offset(
-                            x = w * (0.24f + 0.08f * cos(phase)),
-                            y = h * (0.26f + 0.06f * sin(phase))
-                        )
-                        val c2Center = Offset(
-                            x = w * (0.76f + 0.08f * sin(phase * 0.85f + 1.2f)),
-                            y = h * (0.68f + 0.07f * cos(phase * 0.85f + 0.9f))
-                        )
-                        val c3Center = Offset(
-                            x = w * (0.48f + 0.10f * sin(secPhase + 2.1f)),
-                            y = h * (0.44f + 0.06f * cos(secPhase + 1.5f))
-                        )
-
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentPrimary.copy(alpha = 0.26f * bloomAlphaScale),
-                                    meshColorPrimary.copy(alpha = 0.34f * bloomAlphaScale),
-                                    Color.Transparent
-                                ),
-                                center = c1Center,
-                                radius = maxDim * 0.68f
-                            ),
-                            center = c1Center,
-                            radius = maxDim * 0.68f
-                        )
-
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentSecondary.copy(alpha = 0.22f * bloomAlphaScale),
-                                    meshColorSecondary.copy(alpha = 0.30f * bloomAlphaScale),
-                                    Color.Transparent
-                                ),
-                                center = c2Center,
-                                radius = maxDim * 0.72f
-                            ),
-                            center = c2Center,
-                            radius = maxDim * 0.72f
-                        )
-
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentTertiary.copy(alpha = 0.18f * bloomAlphaScale),
-                                    meshColorTertiary.copy(alpha = 0.24f * bloomAlphaScale),
-                                    Color.Transparent
-                                ),
-                                center = c3Center,
-                                radius = minDim * 0.82f
-                            ),
-                            center = c3Center,
-                            radius = minDim * 0.82f
-                        )
-                    }
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        meshColorPrimary.copy(alpha = if (showLyricView) 0.44f else 0.56f),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(240f, 360f),
+                                    radius = 980f
+                                )
+                            )
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        meshColorSecondary.copy(alpha = if (showLyricView) 0.38f else 0.48f),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(820f, 1420f),
+                                    radius = 1080f
+                                )
+                            )
+                    )
                 }
 
                 PlayerBackgroundStyle.FLUID_AURORA -> {
-                    // 预设 2：流体极光（完全移除封面残影，提取封面主色/副色/第三色共 3 种色彩，采用多频李萨如轨迹与贝塞尔极光绸带丝滑流动）
+                    // 100% 还原原版流体极光实现（请求尺寸同步为 400x400 防止污染封面缓存）
+                    if (coverUrl.isNotEmpty()) {
+                        val bgImageModel = remember(coverUrl) {
+                            ImageRequest.Builder(context)
+                                .data(coverUrl)
+                                .size(400, 400)
+                                .allowHardware(false)
+                                .crossfade(true)
+                                .build()
+                        }
+                        AsyncImage(
+                            model = bgImageModel,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            filterQuality = FilterQuality.High,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { alpha = 0.42f }
+                        )
+                    }
                     Canvas(modifier = Modifier.fillMaxSize()) {
+                        drawRect(color = Color(0xFF070B14).copy(alpha = 0.88f))
                         val w = size.width
                         val h = size.height
-                        val maxDim = maxOf(w, h).coerceAtLeast(1f)
-
-                        // 纯净深邃极夜天幕底色（100% 不渲染任何专辑封面纹理）
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    Color(0xFF050812),
-                                    meshColorPrimary.copy(alpha = 0.88f),
-                                    meshColorSecondary.copy(alpha = 0.82f),
-                                    Color(0xFF04070E)
-                                )
-                            )
-                        )
-
-                        // 第一层：三色李萨如流体光晕团 (Lissajous Fluid Color Orbs)
-                        val orb1 = Offset(
-                            w * (0.24f + 0.22f * cos(phase) + 0.06f * sin(secPhase)),
-                            h * (0.25f + 0.15f * sin(phase * 1.2f))
-                        )
-                        val orb2 = Offset(
-                            w * (0.76f - 0.20f * sin(phase * 0.9f + 1.1f)),
-                            h * (0.48f + 0.18f * cos(secPhase * 0.8f + 0.6f))
-                        )
-                        val orb3 = Offset(
-                            w * (0.45f + 0.24f * sin(secPhase + 2.2f)),
-                            h * (0.76f - 0.14f * cos(phase + 1.7f))
-                        )
-                        val orb4 = Offset(
-                            w * (0.62f + 0.18f * cos(phase + 3.1f)),
-                            h * (0.22f + 0.14f * sin(secPhase + 2.8f))
-                        )
+                        val orb1 = Offset(w * (0.28f + 0.22f * cos(phase)), h * (0.24f + 0.14f * sin(phase)))
+                        val orb2 = Offset(w * (0.74f + 0.20f * sin(phase * 0.8f + 1.2f)), h * (0.50f + 0.16f * cos(phase * 0.9f)))
+                        val orb3 = Offset(w * (0.42f + 0.24f * sin(phase * 1.1f + 2.4f)), h * (0.78f + 0.12f * cos(phase * 0.7f)))
 
                         drawCircle(
                             brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentPrimary.copy(alpha = 0.44f),
-                                    accentPrimary.copy(alpha = 0.16f),
-                                    Color.Transparent
-                                ),
+                                colors = listOf(accentPrimary.copy(alpha = 0.38f), Color.Transparent),
                                 center = orb1,
-                                radius = maxDim * 0.62f * pulse
+                                radius = w * 0.75f * pulse
                             ),
                             center = orb1,
-                            radius = maxDim * 0.62f * pulse
+                            radius = w * 0.75f * pulse
                         )
-
                         drawCircle(
                             brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentSecondary.copy(alpha = 0.40f),
-                                    accentSecondary.copy(alpha = 0.14f),
-                                    Color.Transparent
-                                ),
+                                colors = listOf(accentSecondary.copy(alpha = 0.32f), Color.Transparent),
                                 center = orb2,
-                                radius = maxDim * 0.60f * (2.02f - pulse)
+                                radius = w * 0.70f
                             ),
                             center = orb2,
-                            radius = maxDim * 0.60f * (2.02f - pulse)
+                            radius = w * 0.70f
                         )
-
                         drawCircle(
                             brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentTertiary.copy(alpha = 0.38f),
-                                    meshColorTertiary.copy(alpha = 0.22f),
-                                    Color.Transparent
-                                ),
+                                colors = listOf(meshColorPrimary.copy(alpha = 0.55f), Color.Transparent),
                                 center = orb3,
-                                radius = maxDim * 0.66f * pulse
+                                radius = w * 0.82f
                             ),
                             center = orb3,
-                            radius = maxDim * 0.66f * pulse
+                            radius = w * 0.82f
                         )
-
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentSecondary.copy(alpha = 0.24f),
-                                    accentTertiary.copy(alpha = 0.12f),
-                                    Color.Transparent
-                                ),
-                                center = orb4,
-                                radius = maxDim * 0.50f
-                            ),
-                            center = orb4,
-                            radius = maxDim * 0.50f
-                        )
-
-                        // 第二层：三色流体极光丝带 (Bezier Aurora Curtains)
-                        for (band in 0 until 3) {
-                            val bandOffset = band * 1.9f
-                            val yBase = h * (0.28f + band * 0.21f)
-                            val waveAmp = h * (0.085f + band * 0.018f)
-                            val y0 = yBase + waveAmp * sin(phase + bandOffset)
-                            val y1 = yBase + waveAmp * cos(secPhase + bandOffset + 0.9f)
-                            val y2 = yBase - waveAmp * sin(phase * 1.2f + bandOffset + 1.8f)
-                            val y3 = yBase + waveAmp * cos(phase + secPhase * 0.5f + bandOffset)
-                            val thickness = h * (0.16f + 0.03f * sin(secPhase + band))
-
-                            val ribbonPath = Path().apply {
-                                moveTo(-w * 0.05f, y0)
-                                cubicTo(
-                                    w * 0.30f, y1,
-                                    w * 0.68f, y2,
-                                    w * 1.05f, y3
-                                )
-                                lineTo(w * 1.05f, y3 + thickness)
-                                cubicTo(
-                                    w * 0.68f, y2 + thickness * 1.1f,
-                                    w * 0.30f, y1 + thickness * 0.9f,
-                                    -w * 0.05f, y0 + thickness
-                                )
-                                close()
-                            }
-
-                            val ribbonColors = when (band) {
-                                0 -> listOf(
-                                    Color.Transparent,
-                                    accentPrimary.copy(alpha = 0.24f),
-                                    accentSecondary.copy(alpha = 0.22f),
-                                    Color.Transparent
-                                )
-                                1 -> listOf(
-                                    Color.Transparent,
-                                    accentSecondary.copy(alpha = 0.22f),
-                                    accentTertiary.copy(alpha = 0.26f),
-                                    Color.Transparent
-                                )
-                                else -> listOf(
-                                    Color.Transparent,
-                                    accentTertiary.copy(alpha = 0.20f),
-                                    accentPrimary.copy(alpha = 0.22f),
-                                    Color.Transparent
-                                )
-                            }
-
-                            drawPath(
-                                path = ribbonPath,
-                                brush = Brush.horizontalGradient(colors = ribbonColors)
-                            )
-                        }
-
                         if (showLyricView) {
-                            drawRect(color = Color(0xFF050811).copy(alpha = (dimAlpha * 0.52f).coerceIn(0.20f, 0.76f)))
+                            drawRect(color = Color(0xFF060911).copy(alpha = (dimAlpha * 0.55f).coerceIn(0.20f, 0.78f)))
                         }
                     }
                 }
 
                 PlayerBackgroundStyle.RHYTHM_HALO -> {
-                    // 预设 3：律动光晕（实时读取当前播放歌曲的低频/中频/高频与节拍脉冲能量，驱动光晕波纹与极坐标声波环同频律动）
+                    // 还原原版三层同心圆光晕视觉，同时保留根据当前播放歌曲真实音频能量同频律动
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val w = size.width
-                        val h = size.height
-                        val minDim = minOf(w, h).coerceAtLeast(1f)
-
                         drawRect(
                             brush = Brush.verticalGradient(
                                 colors = listOf(
-                                    meshColorPrimary.copy(alpha = 0.88f),
-                                    Color(0xFF070C17),
-                                    meshColorSecondary.copy(alpha = 0.65f),
-                                    Color(0xFF04070D)
+                                    meshColorPrimary.copy(alpha = 0.85f),
+                                    Color(0xFF080D18),
+                                    Color(0xFF05080F)
                                 )
                             )
                         )
-
-                        val center = Offset(
-                            x = w * 0.5f,
-                            y = if (w > h * 1.15f) h * 0.48f else h * 0.39f
-                        )
-                        val baseR = minDim * 0.32f
-                        val bassBoost = liveBassEnergy
-                        val midBoost = liveMidEnergy
-                        val highBoost = liveHighEnergy
-                        val beatKick = liveBeatImpulse
-
-                        // 底层环境低频呼吸大光晕（随歌曲低频能量与鼓点冲击实时扩张）
-                        val ambientR = baseR * (1.85f + bassBoost * 0.65f + beatKick * 0.38f)
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    accentPrimary.copy(alpha = (0.24f + bassBoost * 0.22f).coerceAtMost(0.55f)),
-                                    accentSecondary.copy(alpha = (0.14f + midBoost * 0.16f).coerceAtMost(0.38f)),
-                                    accentTertiary.copy(alpha = (0.08f + highBoost * 0.12f).coerceAtMost(0.28f)),
-                                    Color.Transparent
-                                ),
-                                center = center,
-                                radius = ambientR
-                            ),
-                            center = center,
-                            radius = ambientR
-                        )
-
-                        // 多层同频律动光晕环（外圈响应重低音与鼓点脉冲，中圈响应人声中频，内圈响应高频泛音）
-                        for (ring in 4 downTo 1) {
-                            val ringFreqEnergy = when (ring) {
-                                4 -> bassBoost * 0.85f + beatKick * 0.55f
-                                3 -> bassBoost * 0.50f + midBoost * 0.65f + beatKick * 0.35f
-                                2 -> midBoost * 0.80f + highBoost * 0.40f
-                                else -> highBoost * 0.85f + beatKick * 0.30f
+                        val center = Offset(size.width * 0.5f, size.height * 0.40f)
+                        val baseR = size.width * 0.36f
+                        for (ring in 3 downTo 1) {
+                            val ringEnergy = when (ring) {
+                                3 -> liveBassEnergy * 0.55f + liveBeatImpulse * 0.35f
+                                2 -> liveMidEnergy * 0.50f + liveBassEnergy * 0.25f + liveBeatImpulse * 0.25f
+                                else -> liveHighEnergy * 0.45f + liveMidEnergy * 0.30f + liveBeatImpulse * 0.22f
                             }
-                            val r = baseR * (0.86f + ring * 0.24f + ringFreqEnergy * (0.18f + ring * 0.05f))
-                            val ringColor = when (ring) {
-                                4 -> accentPrimary
-                                3 -> accentSecondary
-                                2 -> accentTertiary
-                                else -> accentPrimary
+                            val dynamicPulse = if (isPlaying) {
+                                (0.94f + ringEnergy * 0.34f).coerceIn(0.90f, 1.32f)
+                            } else {
+                                pulse
                             }
-                            val fillAlpha = ((0.14f + ringFreqEnergy * 0.18f) / ring).coerceIn(0.03f, 0.32f)
+                            val r = baseR * (1f + ring * 0.24f) * dynamicPulse
+                            val alphaBoost = 1f + ringEnergy * 0.55f
                             drawCircle(
                                 brush = Brush.radialGradient(
                                     colors = listOf(
-                                        ringColor.copy(alpha = fillAlpha * 0.6f),
-                                        ringColor.copy(alpha = fillAlpha),
+                                        accentPrimary.copy(alpha = ((0.22f * alphaBoost) / ring).coerceAtMost(0.42f)),
+                                        accentSecondary.copy(alpha = ((0.12f * alphaBoost) / ring).coerceAtMost(0.26f)),
                                         Color.Transparent
                                     ),
                                     center = center,
@@ -1874,64 +1572,12 @@ private fun NowPlayingSelectableBackground(
                                 radius = r
                             )
                             drawCircle(
-                                color = ringColor.copy(alpha = ((0.18f + ringFreqEnergy * 0.35f) / ring).coerceIn(0.05f, 0.45f)),
+                                color = accentPrimary.copy(alpha = ((0.15f * alphaBoost) / ring).coerceAtMost(0.32f)),
                                 center = center,
-                                radius = r * 0.84f,
-                                style = Stroke(width = (1.2f + ringFreqEnergy * 2.2f).dp.toPx())
+                                radius = r * 0.78f,
+                                style = Stroke(width = 1.4.dp.toPx())
                             )
                         }
-
-                        // 极坐标音频频谱律动光波环 (Audio-Reactive Harmonic Polar Wave Ring)
-                        val wavePoints = 48
-                        val wavePath = Path()
-                        val innerWavePath = Path()
-                        for (i in 0..wavePoints) {
-                            val idx = i % wavePoints
-                            val angle = (idx.toFloat() / wavePoints) * (2f * PI.toFloat())
-                            val binIdx = (idx % 10)
-                            val binEnergy = liveSpectrumBins[binIdx]
-                            val harmonic1 = sin(angle * 3f + liveWaveTime * 1.4f) * (0.04f + bassBoost * 0.08f)
-                            val harmonic2 = cos(angle * 5f - liveWaveTime * 2.1f) * (0.03f + midBoost * 0.07f)
-                            val harmonic3 = sin(angle * 8f + liveWaveTime * 3.0f) * (0.02f + highBoost * 0.06f)
-                            val rMod = baseR * (1.16f + binEnergy * 0.22f + beatKick * 0.12f + harmonic1 + harmonic2 + harmonic3)
-                            val rInnerMod = baseR * (0.96f + binEnergy * 0.14f - harmonic1 * 0.7f + harmonic2 * 0.8f)
-
-                            val px = center.x + rMod * cos(angle)
-                            val py = center.y + rMod * sin(angle)
-                            val ix = center.x + rInnerMod * cos(angle)
-                            val iy = center.y + rInnerMod * sin(angle)
-
-                            if (i == 0) {
-                                wavePath.moveTo(px, py)
-                                innerWavePath.moveTo(ix, iy)
-                            } else {
-                                wavePath.lineTo(px, py)
-                                innerWavePath.lineTo(ix, iy)
-                            }
-                        }
-                        wavePath.close()
-                        innerWavePath.close()
-
-                        drawPath(
-                            path = wavePath,
-                            brush = Brush.sweepGradient(
-                                colors = listOf(
-                                    accentPrimary.copy(alpha = (0.34f + beatKick * 0.30f).coerceAtMost(0.70f)),
-                                    accentSecondary.copy(alpha = (0.30f + midBoost * 0.28f).coerceAtMost(0.65f)),
-                                    accentTertiary.copy(alpha = (0.32f + highBoost * 0.28f).coerceAtMost(0.65f)),
-                                    accentPrimary.copy(alpha = (0.34f + beatKick * 0.30f).coerceAtMost(0.70f))
-                                ),
-                                center = center
-                            ),
-                            style = Stroke(width = (1.8f + beatKick * 2.4f).dp.toPx())
-                        )
-
-                        drawPath(
-                            path = innerWavePath,
-                            color = accentSecondary.copy(alpha = (0.20f + highBoost * 0.25f).coerceAtMost(0.50f)),
-                            style = Stroke(width = 1.2.dp.toPx())
-                        )
-
                         if (showLyricView) {
                             drawRect(color = Color(0xFF050811).copy(alpha = (dimAlpha * 0.55f).coerceIn(0.20f, 0.78f)))
                         }
@@ -1939,25 +1585,23 @@ private fun NowPlayingSelectableBackground(
                 }
 
                 PlayerBackgroundStyle.STARLIGHT_NEBULA -> {
-                    // 预设 4：暗夜星尘（升级深空三色旋转星云、三层景深视差星尘、十字衍射星芒与柔光流星轨迹）
+                    // 保留深空星云与柔和圆点星尘美化，彻底去掉十字星芒线条与流星线条
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val w = size.width
                         val h = size.height
                         val maxDim = maxOf(w, h).coerceAtLeast(1f)
 
-                        // 深空天鹅绒渐变底幕
                         drawRect(
                             brush = Brush.verticalGradient(
                                 colors = listOf(
                                     Color(0xFF040711),
-                                    meshColorPrimary.copy(alpha = 0.82f),
-                                    meshColorTertiary.copy(alpha = 0.72f),
+                                    meshColorPrimary.copy(alpha = 0.80f),
+                                    meshColorTertiary.copy(alpha = 0.68f),
                                     Color(0xFF03050B)
                                 )
                             )
                         )
 
-                        // 三团缓慢呼吸旋转的深空星云 (Deep Space Nebula Clouds)
                         val neb1 = Offset(
                             w * (0.28f + 0.08f * cos(phase)),
                             h * (0.30f + 0.06f * sin(phase))
@@ -1974,8 +1618,8 @@ private fun NowPlayingSelectableBackground(
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    accentPrimary.copy(alpha = 0.26f * pulse),
-                                    meshColorPrimary.copy(alpha = 0.18f),
+                                    accentPrimary.copy(alpha = 0.25f * pulse),
+                                    meshColorPrimary.copy(alpha = 0.16f),
                                     Color.Transparent
                                 ),
                                 center = neb1,
@@ -1987,8 +1631,8 @@ private fun NowPlayingSelectableBackground(
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    accentSecondary.copy(alpha = 0.22f),
-                                    meshColorSecondary.copy(alpha = 0.15f),
+                                    accentSecondary.copy(alpha = 0.20f),
+                                    meshColorSecondary.copy(alpha = 0.14f),
                                     Color.Transparent
                                 ),
                                 center = neb2,
@@ -2000,7 +1644,7 @@ private fun NowPlayingSelectableBackground(
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    accentTertiary.copy(alpha = 0.20f),
+                                    accentTertiary.copy(alpha = 0.18f),
                                     Color.Transparent
                                 ),
                                 center = neb3,
@@ -2010,27 +1654,27 @@ private fun NowPlayingSelectableBackground(
                             radius = maxDim * 0.46f * pulse
                         )
 
-                        // 三层视差星尘与十字星芒 (56 颗远/中/近景星辰)
+                        // 柔和圆点星尘（无十字星芒线条）
                         val normPhase = phase / (2f * PI.toFloat())
-                        for (i in 0 until 56) {
-                            val layer = i % 3 // 0=远景微尘, 1=中景星辰, 2=近景亮星
+                        for (i in 0 until 48) {
+                            val layer = i % 3
                             val seedX = ((i * 73 + 19) % 97) / 97f
                             val seedY = ((i * 41 + 11) % 89) / 89f
                             val speed = when (layer) {
                                 0 -> 0.08f
-                                1 -> 0.16f
-                                else -> 0.24f
+                                1 -> 0.14f
+                                else -> 0.20f
                             }
                             val driftY = (seedY - normPhase * speed + 1f) % 1f
-                            val driftX = (seedX + 0.025f * sin(phase + i * 0.7f)).coerceIn(0.03f, 0.97f)
-                            val twinkle = (0.30f + 0.70f * abs(sin(secPhase * (0.9f + (i % 5) * 0.28f) + i * 1.3f))).coerceIn(0.18f, 1f)
+                            val driftX = (seedX + 0.02f * sin(phase + i * 0.7f)).coerceIn(0.03f, 0.97f)
+                            val twinkle = (0.32f + 0.68f * abs(sin(secPhase * (0.9f + (i % 4) * 0.26f) + i * 1.3f))).coerceIn(0.18f, 1f)
 
                             val sx = w * driftX
                             val sy = h * driftY
                             val sr = when (layer) {
-                                0 -> 0.9f.dp.toPx()
-                                1 -> 1.45f.dp.toPx()
-                                else -> 2.15f.dp.toPx()
+                                0 -> 1.0f.dp.toPx()
+                                1 -> 1.5f.dp.toPx()
+                                else -> 2.1f.dp.toPx()
                             }
                             val starColor = when (i % 5) {
                                 0 -> accentPrimary
@@ -2040,70 +1684,25 @@ private fun NowPlayingSelectableBackground(
                                 else -> Color.White
                             }
 
-                            // 星晕
                             if (layer >= 1) {
                                 drawCircle(
                                     brush = Brush.radialGradient(
                                         colors = listOf(
-                                            starColor.copy(alpha = 0.32f * twinkle),
+                                            starColor.copy(alpha = 0.28f * twinkle),
                                             Color.Transparent
                                         ),
                                         center = Offset(sx, sy),
-                                        radius = sr * 3.6f
+                                        radius = sr * 3.2f
                                     ),
                                     center = Offset(sx, sy),
-                                    radius = sr * 3.6f
+                                    radius = sr * 3.2f
                                 )
                             }
 
-                            // 星核
                             drawCircle(
-                                color = starColor.copy(alpha = (0.45f + layer * 0.22f).coerceAtMost(0.95f) * twinkle),
+                                color = starColor.copy(alpha = (0.42f + layer * 0.20f).coerceAtMost(0.90f) * twinkle),
                                 radius = sr,
                                 center = Offset(sx, sy)
-                            )
-
-                            // 近景亮星绘制十字衍射星芒 (4-Point Star Gleam)
-                            if (layer == 2 && i % 6 == 2 && twinkle > 0.62f) {
-                                val gleamLen = sr * (4.2f + twinkle * 2.5f)
-                                val gleamAlpha = (twinkle - 0.45f).coerceIn(0.1f, 0.65f)
-                                drawLine(
-                                    color = Color.White.copy(alpha = gleamAlpha),
-                                    start = Offset(sx - gleamLen, sy),
-                                    end = Offset(sx + gleamLen, sy),
-                                    strokeWidth = 0.9.dp.toPx()
-                                )
-                                drawLine(
-                                    color = Color.White.copy(alpha = gleamAlpha),
-                                    start = Offset(sx, sy - gleamLen),
-                                    end = Offset(sx, sy + gleamLen),
-                                    strokeWidth = 0.9.dp.toPx()
-                                )
-                            }
-                        }
-
-                        // 周期性柔光流星划过轨迹 (Gentle Shooting Star Trail)
-                        val meteorCycle = (secPhase / (2f * PI.toFloat()))
-                        if (meteorCycle in 0.15f..0.45f) {
-                            val mp = ((meteorCycle - 0.15f) / 0.30f).coerceIn(0f, 1f)
-                            val headX = w * (0.82f - mp * 0.52f)
-                            val headY = h * (0.14f + mp * 0.28f)
-                            val tailX = headX + w * 0.11f
-                            val tailY = headY - h * 0.06f
-                            val meteorAlpha = sin(mp * PI.toFloat()).coerceIn(0f, 1f) * 0.65f
-                            drawLine(
-                                brush = Brush.linearGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = meteorAlpha),
-                                        accentSecondary.copy(alpha = meteorAlpha * 0.5f),
-                                        Color.Transparent
-                                    ),
-                                    start = Offset(headX, headY),
-                                    end = Offset(tailX, tailY)
-                                ),
-                                start = Offset(headX, headY),
-                                end = Offset(tailX, tailY),
-                                strokeWidth = 1.6.dp.toPx()
                             )
                         }
 

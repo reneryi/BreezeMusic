@@ -132,7 +132,10 @@ fun FocusPodBottomSheet(
                         if (inLibraryPageCardMode) {
                             Modifier.wrapContentHeight().padding(horizontal = 18.dp, vertical = 10.dp)
                         } else {
-                            Modifier.fillMaxHeight(0.86f).padding(horizontal = 20.dp).navigationBarsPadding()
+                            Modifier
+                                .wrapContentHeight().heightIn(max = 640.dp)
+                                .padding(horizontal = 20.dp)
+                                .navigationBarsPadding()
                         }
                     )
             ) {
@@ -280,7 +283,7 @@ fun FocusPodBottomSheet(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f)
+                    .weight(1f, fill = false)
                     .horizontalCategorySwipe(
                         currentIndex = selectedSection,
                         itemCount = 2,
@@ -290,10 +293,11 @@ fun FocusPodBottomSheet(
             ) { activeSection ->
                 Column(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillMaxWidth()
+                        .wrapContentHeight()
                         .verticalScroll(rememberScrollState())
-                        .padding(bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                        .padding(bottom = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     if (activeSection == 0) {
                     // 模块一：心流专注计时与场景预设
@@ -394,10 +398,11 @@ fun FocusPodBottomSheet(
                                         color = if (selected) podAccent else primaryText
                                     )
                                     Text(
-                                        text = preset.title.substringBefore(" ("),
+                                        text = preset.title.substringAfter("· ").substringBefore(" (").trim(),
                                         fontSize = 11.sp,
                                         color = if (selected) podAccent.copy(alpha = 0.85f) else subText,
-                                        maxLines = 1
+                                        maxLines = 1,
+                                        softWrap = false
                                     )
                                 }
                             }
