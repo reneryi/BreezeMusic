@@ -91,6 +91,8 @@ fun LibraryScreen(
     onOpenArtist: (String) -> Unit = {},
     onOpenAlbum: (String) -> Unit = {},
     onPlaySong: (Song, List<Song>) -> Unit = { _, _ -> },
+    isOverlayOpen: Boolean = false,
+    onSubSheetOpenChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -125,7 +127,31 @@ fun LibraryScreen(
     var importRawText by remember { mutableStateOf("") }
     var showVipCenterSheet by remember { mutableStateOf(false) }
     var showFocusPodSheet by remember { mutableStateOf(false) }
+    var isLibrarySubSheetDismissing by remember { mutableStateOf(false) }
+    var playlistPendingUncollect by remember { mutableStateOf<com.concept.music.data.model.Playlist?>(null) }
     val focusPodState by FocusPodManager.state.collectAsState()
+
+    LaunchedEffect(isOverlayOpen) {
+        if (isOverlayOpen) {
+            showFocusPodSheet = false
+            showVipCenterSheet = false
+            isLibrarySubSheetDismissing = false
+        }
+    }
+
+    LaunchedEffect(showFocusPodSheet, showVipCenterSheet) {
+        if (showFocusPodSheet || showVipCenterSheet) {
+            isLibrarySubSheetDismissing = false
+        }
+    }
+
+    val anyLibrarySubSheetOpen = (showFocusPodSheet || showVipCenterSheet) && !isOverlayOpen && !isLibrarySubSheetDismissing
+    LaunchedEffect(anyLibrarySubSheetOpen) {
+        onSubSheetOpenChanged(anyLibrarySubSheetOpen)
+    }
+    DisposableEffect(Unit) {
+        onDispose { onSubSheetOpenChanged(false) }
+    }
 
     val listState = rememberLazyListState()
     val pullRefreshState = rememberPullToRefreshState()
@@ -503,9 +529,13 @@ fun LibraryScreen(
                             key = { idx, pl -> "pl_list_${pl.id}_${pl.listId}_$idx" },
                             contentType = { _, _ -> "playlist_list_item" }
                         ) { _, pl ->
+                            val targetNavId = pl.id.ifBlank { pl.globalCollectionId.ifBlank { pl.listCreateGid } }
                             PlaylistListItem(
                                 playlist = pl,
-                                onClick = { onOpenPlaylist(pl.id) }
+                                onClick = { if (targetNavId.isNotBlank()) onOpenPlaylist(targetNavId) },
+                                onUncollectClick = if (selectedTab == 1 && pl.isFavorite && !pl.isCreatedByMe) {
+                                    { playlistPendingUncollect = pl }
+                                } else null
                             )
                         }
                     } else {
@@ -522,9 +552,13 @@ fun LibraryScreen(
                                 horizontalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
                                 rowItems.forEach { pl ->
+                                    val targetNavId = pl.id.ifBlank { pl.globalCollectionId.ifBlank { pl.listCreateGid } }
                                     PlaylistGridItem(
                                         playlist = pl,
-                                        onClick = { onOpenPlaylist(pl.id) },
+                                        onClick = { if (targetNavId.isNotBlank()) onOpenPlaylist(targetNavId) },
+                                        onUncollectClick = if (selectedTab == 1 && pl.isFavorite && !pl.isCreatedByMe) {
+                                            { playlistPendingUncollect = pl }
+                                        } else null,
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
@@ -1030,9 +1064,10 @@ fun LibraryScreen(
         }
 
         // 心流舱置于「我的」页容器内部展示（平板横屏双栏平铺下严格限定在右侧「我的」页区域内显示，避免跨全屏铺满）
-        if (showFocusPodSheet) {
+        if (showFocusPodSheet && !isOverlayOpen) {
             FocusPodBottomSheet(
                 onDismiss = { showFocusPodSheet = false },
+                onDismissStart = { isLibrarySubSheetDismissing = true },
                 onPlaySceneMusic = { sceneId ->
                     coroutineScope.launch {
                         val songs = runCatching { VipManager.music.sceneRecommendSongs(sceneId, size = 20) }.getOrDefault(emptyList())
@@ -1044,21 +1079,49 @@ fun LibraryScreen(
             )
         }
 
-        if (showVipCenterSheet) {
+        if (showVipCenterSheet && !isOverlayOpen) {
             VipCenterBottomSheet(
                 state = vip,
                 loggedIn = isLoggedIn,
                 autoClaim = account.current?.autoClaim ?: false,
                 onDismiss = { showVipCenterSheet = false },
+                onDismissStart = { isLibrarySubSheetDismissing = true },
                 onClaim = { viewModel.claimVip() },
                 onAutoChange = { viewModel.setAuto(it) },
                 onRefresh = { viewModel.refreshAccount() },
                 onLogin = {
+                    isLibrarySubSheetDismissing = true
                     showVipCenterSheet = false
                     onLogin()
                 }
             )
         }
+    }
+
+    playlistPendingUncollect?.let { targetPl ->
+        AlertDialog(
+            onDismissRequest = { playlistPendingUncollect = null },
+            title = { Text("取消收藏歌单", fontWeight = FontWeight.Bold) },
+            text = { Text("确定要从我的收藏中移除「${targetPl.title}」吗？") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val plToRemove = targetPl
+                        playlistPendingUncollect = null
+                        viewModel.deletePlaylist(plToRemove) { _, msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) {
+                    Text("取消收藏", color = ConceptCoralAccent, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { playlistPendingUncollect = null }) {
+                    Text("保留")
+                }
+            }
+        )
     }
 
     if (showCreateDialog) {

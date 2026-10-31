@@ -1958,4 +1958,53 @@ class UiAlignmentRegressionTest {
         val repoCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/data/kugou/MusicRepository.kt").readText(Charsets.UTF_8)
         assertTrue("unfollowArtist 应使用 KugouSigner.rsaPkcs1 对齐 MakcRe/KuGouMusicApi", repoCode.contains("KugouSigner.rsaPkcs1("))
     }
+
+    @Test
+    fun `六大核心体验与声学优化回归验证`() {
+        // 1. 验证歌单多源身份标识匹配 (specialId / global_collection_id / list_create_gid / 标题)
+        val searchedPl = Playlist(
+            id = "5201314",
+            title = "鹿晗生日快乐 | 以音符为箭矢，直达你心跳的靶心",
+            coverUrl = "https://imge.kugou.com/stdmusic/400/2026/luhan.jpg",
+            trackCount = 26,
+            isCreatedByMe = false,
+            isFavorite = false,
+            listCreateListid = "5201314"
+        )
+        val cloudCollectedPl = Playlist(
+            id = "collection_3_888999_5201314_0",
+            title = "鹿晗生日快乐 | 以音符为箭矢，直达你心跳的靶心",
+            isCreatedByMe = false,
+            isFavorite = true,
+            listId = 990011L,
+            globalCollectionId = "collection_3_888999_5201314_0",
+            listCreateGid = "collection_3_888999_5201314_0"
+        )
+        assertTrue("云端 GID 歌单应能直接匹配数字 specialId", cloudCollectedPl.matchesIdentifier("5201314"))
+        assertTrue("搜索歌单与云端已收藏歌单应识别为同一歌单", searchedPl.isSamePlaylistAs(cloudCollectedPl))
+
+        val projectRoot = java.io.File(".").canonicalFile.let { dir ->
+            if (java.io.File(dir, "app/src/main").exists()) dir else dir.parentFile
+        }
+
+        // 2. 验证抽屉弹窗与悬浮播放条/底栏丝滑联动架构
+        val motionCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/theme/MotionTokens.kt").readText(Charsets.UTF_8)
+        assertTrue("ConceptAnimatedOverlaySheet 应支持 onDismissStart 同步退场回调", motionCode.contains("onDismissStart: () -> Unit"))
+
+        val mainCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/MainActivity.kt").readText(Charsets.UTF_8)
+        assertFalse("MainActivity Scaffold 不得使用跳变 zIndex(40f) 遮挡播放条动画", mainCode.contains("zIndex(if (isHomeSubSheetOpen) 40f else 0f)"))
+        assertTrue("MainActivity 应统一汇总发现页与我的页抽屉状态 isMainSubSheetOpen", mainCode.contains("val isMainSubSheetOpen = isHomeSubSheetOpen || isLibrarySubSheetOpen"))
+
+        // 3. 验证歌词设置 2x3 配色网格、日推定位按钮与播放页四款背景增强
+        val dialogsCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/NowPlayingDialogs.kt").readText(Charsets.UTF_8)
+        assertTrue("歌词设置高亮样式应采用 chunked(3) 双行三列布局防止四字截断", dialogsCode.contains("LyricHighlightTheme.entries.chunked(3)"))
+
+        val homeCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/home/HomeScreen.kt").readText(Charsets.UTF_8)
+        assertTrue("每日推荐页面应包含定位当前播放歌曲按钮 playingDailySongIndex", homeCode.contains("playingDailySongIndex"))
+
+        val npCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/NowPlayingSheet.kt").readText(Charsets.UTF_8)
+        assertTrue("播放页封面虚化应使用独立 SoftCoverDiffusionBlurTransformation 防止缓存污染", npCode.contains("SoftCoverDiffusionBlurTransformation"))
+        assertTrue("封面取色应支持三色提取 tertiaryAccent", npCode.contains("val tertiaryAccent: Color"))
+        assertTrue("律动光晕应读取实时音频遥测 AudioRhythmTelemetry", npCode.contains("AudioRhythmTelemetry"))
+    }
 }

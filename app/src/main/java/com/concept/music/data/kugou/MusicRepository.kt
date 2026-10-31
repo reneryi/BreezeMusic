@@ -51,6 +51,47 @@ class MusicApiRepository(
     private val albumPublishDateCache = ConcurrentHashMap<String, String>()
     private val albumCompanyCache = ConcurrentHashMap<String, String>()
     private val albumNameCache = ConcurrentHashMap<String, String>()
+    private val collectedPlaylistMetaCache = ConcurrentHashMap<String, Playlist>()
+
+    fun cacheCollectedPlaylistMeta(playlist: Playlist) {
+        val prev = playlist.candidateIdentityKeys().asSequence()
+            .mapNotNull { collectedPlaylistMetaCache[it] }
+            .firstOrNull()
+        val merged = if (prev != null) {
+            playlist.copy(
+                coverUrl = playlist.coverUrl.ifBlank { prev.coverUrl },
+                trackCount = if (playlist.trackCount > 0) playlist.trackCount else prev.trackCount,
+                playCount = playlist.playCount.ifBlank { prev.playCount },
+                description = playlist.description.ifBlank { prev.description },
+                creatorName = playlist.creatorName.ifBlank { prev.creatorName },
+                listId = if (playlist.listId > 0L) playlist.listId else prev.listId,
+                globalCollectionId = playlist.globalCollectionId.ifBlank { prev.globalCollectionId },
+                listCreateUserid = playlist.listCreateUserid.ifBlank { prev.listCreateUserid },
+                listCreateListid = playlist.listCreateListid.ifBlank { prev.listCreateListid },
+                listCreateGid = playlist.listCreateGid.ifBlank { prev.listCreateGid }
+            )
+        } else {
+            playlist
+        }
+        merged.candidateIdentityKeys().forEach { key ->
+            collectedPlaylistMetaCache[key] = merged
+        }
+        val cleanTitle = merged.title.trim()
+        if (cleanTitle.isNotEmpty() && cleanTitle != "精选歌单" && cleanTitle != "未命名歌单") {
+            collectedPlaylistMetaCache["title:${cleanTitle.lowercase()}"] = merged
+        }
+    }
+
+    fun peekCollectedPlaylistMeta(playlist: Playlist): Playlist? {
+        for (k in playlist.candidateIdentityKeys()) {
+            collectedPlaylistMetaCache[k]?.let { return it }
+        }
+        val cleanTitle = playlist.title.trim()
+        if (cleanTitle.isNotEmpty() && cleanTitle != "精选歌单" && cleanTitle != "未命名歌单") {
+            collectedPlaylistMetaCache["title:${cleanTitle.lowercase()}"]?.let { return it }
+        }
+        return null
+    }
 
     internal fun cleanResolvedAlbumName(raw: String?): String {
         if (raw.isNullOrBlank()) return ""
@@ -472,18 +513,19 @@ class MusicApiRepository(
         response.data.objects("info").map { item ->
             val name = item.text("name") ?: item.text("listname") ?: "未命名歌单"
             val listId = item.text("listid")?.toLongOrNull() ?: 0L
-            val global = item.text("global_collection_id") ?: item.text("list_create_gid") ?: ""
-            val isDefault = item.number("is_def") == 2 || name == "我喜欢"
             val listCreateUserid = item.text("list_create_userid") ?: ""
             val listCreateListid = item.text("list_create_listid") ?: ""
             val listCreateGid = item.text("list_create_gid") ?: ""
-            Playlist(
-                id = global.ifBlank { listId.toString() },
+            val global = (item.text("global_collection_id") ?: "").ifBlank { listCreateGid }
+            val isDefault = item.number("is_def") == 2 || name == "我喜欢"
+            val isFav = item.text("type") == "1"
+            val basePl = Playlist(
+                id = global.ifBlank { listCreateListid.ifBlank { listId.toString() } },
                 title = name,
                 coverUrl = imageUrl(item.text("pic") ?: item.text("cover")),
                 trackCount = item.number("count") ?: 0,
-                isCreatedByMe = item.text("type") != "1",
-                isFavorite = item.text("type") == "1",
+                isCreatedByMe = !isFav,
+                isFavorite = isFav,
                 isLiked = isDefault,
                 listId = listId,
                 globalCollectionId = global,
@@ -492,6 +534,28 @@ class MusicApiRepository(
                 listCreateListid = listCreateListid,
                 listCreateGid = listCreateGid
             )
+            if (!isFav) {
+                basePl
+            } else {
+                val cachedMeta = peekCollectedPlaylistMeta(basePl)
+                val merged = if (cachedMeta != null) {
+                    basePl.copy(
+                        coverUrl = basePl.coverUrl.ifBlank { cachedMeta.coverUrl },
+                        trackCount = if (basePl.trackCount > 0) basePl.trackCount else cachedMeta.trackCount,
+                        playCount = basePl.playCount.ifBlank { cachedMeta.playCount },
+                        description = basePl.description.ifBlank { cachedMeta.description },
+                        creatorName = basePl.creatorName.ifBlank { cachedMeta.creatorName },
+                        globalCollectionId = basePl.globalCollectionId.ifBlank { cachedMeta.globalCollectionId },
+                        listCreateGid = basePl.listCreateGid.ifBlank { cachedMeta.listCreateGid },
+                        listCreateListid = basePl.listCreateListid.ifBlank { cachedMeta.listCreateListid },
+                        listCreateUserid = basePl.listCreateUserid.ifBlank { cachedMeta.listCreateUserid }
+                    )
+                } else {
+                    basePl
+                }
+                cacheCollectedPlaylistMeta(merged)
+                merged
+            }
         }
     }
 
@@ -547,15 +611,30 @@ class MusicApiRepository(
     suspend fun collectPlaylist(playlist: Playlist): Boolean = auth { ctx ->
         val session = ctx.session
         val clientTime = System.currentTimeMillis() / 1000
+        cacheCollectedPlaylistMeta(playlist.copy(isFavorite = true, isCreatedByMe = false))
         var authorUid = playlist.listCreateUserid.ifBlank { "0" }
         var authorListId = playlist.listCreateListid.ifBlank { "0" }
-        var gid = playlist.globalCollectionId.ifBlank { playlist.id }
+        var gid = playlist.globalCollectionId.ifBlank { playlist.listCreateGid.ifBlank { playlist.id } }
         if (!gid.contains("_") && gid.all { it.isDigit() }) {
             runCatching {
                 playlistInfo(gid)?.let { resolved ->
                     if (resolved.globalCollectionId.isNotBlank()) gid = resolved.globalCollectionId
                     if (resolved.listCreateUserid.isNotBlank()) authorUid = resolved.listCreateUserid
                     if (resolved.listCreateListid.isNotBlank()) authorListId = resolved.listCreateListid
+                    cacheCollectedPlaylistMeta(
+                        playlist.copy(
+                            isFavorite = true,
+                            isCreatedByMe = false,
+                            globalCollectionId = gid,
+                            listCreateGid = gid,
+                            listCreateUserid = authorUid,
+                            listCreateListid = authorListId,
+                            coverUrl = playlist.coverUrl.ifBlank { resolved.coverUrl },
+                            trackCount = if (playlist.trackCount > 0) playlist.trackCount else resolved.trackCount,
+                            creatorName = playlist.creatorName.ifBlank { resolved.creatorName },
+                            description = playlist.description.ifBlank { resolved.description }
+                        )
+                    )
                 }
             }
         }
@@ -585,6 +664,7 @@ class MusicApiRepository(
             "userid" to session.userId,
             "token" to session.token
         )
+        var assignedListId = 0L
         val primaryOk = runCatching {
             val response = transport.call(
                 path = "/cloudlist.service/v5/add_list",
@@ -593,11 +673,27 @@ class MusicApiRepository(
                 body = body,
                 method = "POST"
             )
+            assignedListId = response.data.text("listid")?.toLongOrNull()
+                ?: response.data.obj("info")?.text("listid")?.toLongOrNull()
+                ?: 0L
             response.status == 1 || response.code == 0
         }.getOrDefault(false)
-        if (primaryOk) return@auth true
+        if (primaryOk) {
+            cacheCollectedPlaylistMeta(
+                playlist.copy(
+                    isFavorite = true,
+                    isCreatedByMe = false,
+                    listId = if (assignedListId > 0L) assignedListId else playlist.listId,
+                    globalCollectionId = gid,
+                    listCreateGid = gid,
+                    listCreateUserid = authorUid,
+                    listCreateListid = authorListId
+                )
+            )
+            return@auth true
+        }
 
-        runCatching {
+        val fallbackOk = runCatching {
             val response = transport.call(
                 path = "/v5/add_list",
                 session = session,
@@ -606,14 +702,44 @@ class MusicApiRepository(
                 headers = mapOf("x-router" to "cloudlist.service.kugou.com"),
                 method = "POST"
             )
+            assignedListId = response.data.text("listid")?.toLongOrNull()
+                ?: response.data.obj("info")?.text("listid")?.toLongOrNull()
+                ?: assignedListId
             response.status == 1 || response.code == 0
         }.getOrDefault(false)
+        if (fallbackOk) {
+            cacheCollectedPlaylistMeta(
+                playlist.copy(
+                    isFavorite = true,
+                    isCreatedByMe = false,
+                    listId = if (assignedListId > 0L) assignedListId else playlist.listId,
+                    globalCollectionId = gid,
+                    listCreateGid = gid,
+                    listCreateUserid = authorUid,
+                    listCreateListid = authorListId
+                )
+            )
+        }
+        fallbackOk
     }
 
     // 取消收藏或删除自建歌单
     suspend fun deleteOrUncollectPlaylist(playlist: Playlist): Boolean = auth { ctx ->
         val session = ctx.session
-        val listId = playlist.listId.takeIf { it > 0 }
+        var resolvedListId = playlist.listId.takeIf { it > 0L }
+            ?: peekCollectedPlaylistMeta(playlist)?.listId?.takeIf { it > 0L }
+            ?: 0L
+        if (resolvedListId <= 0L && !playlist.isCreatedByMe) {
+            // 取消收藏外部歌单时，若当前对象仅持有 specialId 或 global_collection_id，自动从云端歌单列表反查用户专属的 listId
+            val cloudLists = runCatching { userPlaylists() }.getOrDefault(emptyList())
+            val matchedCloud = cloudLists.firstOrNull { cloudPl ->
+                cloudPl.isFavorite && cloudPl.isSamePlaylistAs(playlist)
+            }
+            if (matchedCloud != null && matchedCloud.listId > 0L) {
+                resolvedListId = matchedCloud.listId
+            }
+        }
+        val listId = resolvedListId.takeIf { it > 0L }
             ?: playlist.listCreateListid.toLongOrNull()
             ?: playlist.id.toLongOrNull()
             ?: 0L
@@ -1135,6 +1261,7 @@ class MusicApiRepository(
                 val gid = infoObj.text("global_collection_id") ?: infoObj.text("gid") ?: playlistId
                 val desc = infoObj.text("intro") ?: ""
                 val playCnt = infoObj.text("playcount") ?: ""
+                val createUid = infoObj.text("suid") ?: infoObj.text("userid") ?: infoObj.text("uid") ?: ""
                 val creator = infoObj.text("nickname") ?: infoObj.text("username") ?: infoObj.text("user_name") ?: ""
                 Playlist(
                     id = gid.ifBlank { playlistId },
@@ -1148,21 +1275,29 @@ class MusicApiRepository(
                     isFavorite = false,
                     isLiked = false,
                     globalCollectionId = gid.ifBlank { playlistId },
+                    listCreateUserid = createUid,
                     listCreateListid = numericSpecialId,
                     listCreateGid = gid.ifBlank { playlistId }
                 )
             }.getOrNull()
             if (cdnPlaylist != null) {
-                return if (gatewayPlaylist != null) {
+                val mergedCdn = if (gatewayPlaylist != null) {
                     gatewayPlaylist.copy(
                         description = gatewayPlaylist.description.ifBlank { cdnPlaylist.description },
                         coverUrl = gatewayPlaylist.coverUrl.ifBlank { cdnPlaylist.coverUrl },
-                        trackCount = if (gatewayPlaylist.trackCount > 0) gatewayPlaylist.trackCount else cdnPlaylist.trackCount
+                        trackCount = if (gatewayPlaylist.trackCount > 0) gatewayPlaylist.trackCount else cdnPlaylist.trackCount,
+                        listCreateUserid = gatewayPlaylist.listCreateUserid.ifBlank { cdnPlaylist.listCreateUserid },
+                        listCreateListid = gatewayPlaylist.listCreateListid.ifBlank { cdnPlaylist.listCreateListid }
                     )
                 } else cdnPlaylist
+                cacheCollectedPlaylistMeta(mergedCdn)
+                return mergedCdn
             }
         }
 
+        if (gatewayPlaylist != null) {
+            cacheCollectedPlaylistMeta(gatewayPlaylist)
+        }
         return gatewayPlaylist
     }
 
@@ -3378,10 +3513,28 @@ class MusicApiRepository(
                 .replace("<em>", "").replace("</em>", "").trim()
             val intro = (o.text("intro") ?: o.text("description") ?: "")
                 .replace("<em>", "").replace("</em>", "").trim()
+            val resolvedCover = imageUrl(coverRaw)
+            cacheCollectedPlaylistMeta(
+                Playlist(
+                    id = id,
+                    title = name,
+                    coverUrl = resolvedCover,
+                    trackCount = trackCount,
+                    playCount = if (playCount > 0L) playCount.toString() else "",
+                    description = intro,
+                    creatorName = creator,
+                    isCreatedByMe = false,
+                    isFavorite = false,
+                    globalCollectionId = gid.ifBlank { id },
+                    listCreateUserid = o.text("suid") ?: o.text("userid") ?: "",
+                    listCreateListid = specialId,
+                    listCreateGid = gid.ifBlank { id }
+                )
+            )
             PlaylistItem(
                 id = id,
                 name = name,
-                coverUrl = imageUrl(coverRaw),
+                coverUrl = resolvedCover,
                 playCount = playCount,
                 trackCount = trackCount,
                 creatorName = creator,

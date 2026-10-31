@@ -210,6 +210,7 @@ class ConceptOverlaySheetScope internal constructor(
  *   1. 零独立 DialogWindow 创建开销，消除打开/关闭首帧卡顿；
  *   2. 所有动画进度与手势位移 100% 延迟至 `Modifier.graphicsLayer` GPU 绘制阶段读取，过渡全程 0 次内容重组；
  *   3. 闭环退场动画 (`triggerAnimatedDismiss`)，点击遮罩、返回键或关闭按钮时先完整播放丝滑退出动画再卸载；
+ *   4. 支持 `onDismissStart` 回调，在退出动画启动瞬间立即通知外层宿主（如悬浮播放条与底部导航栏）同步开启丝滑回显动画；
  * - 升级弹性灵动物理表现：
  *   - 竖屏抽屉模式 (`!isLandscape`)：采用 `ConceptMotion.spatialSheetSpring()` 弹性升起；当弹簧产生轻微过冲 (`rawP > 1f`) 时，
  *     以底部中心 `TransformOrigin(0.5f, 1.0f)` 转化为轻微纵向弹性舒展，底部边缘 100% 贴合屏幕底边绝不露白；并支持向上轻拉弹性阻尼与向下跟手关闭；
@@ -225,6 +226,7 @@ fun ConceptAnimatedOverlaySheet(
     zIndex: Float = 85f,
     dismissDragThresholdPx: Float = 115f,
     contentAlignment: Alignment = if (isLandscape) Alignment.Center else Alignment.BottomCenter,
+    onDismissStart: () -> Unit = {},
     content: @Composable ConceptOverlaySheetScope.() -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -232,10 +234,11 @@ fun ConceptAnimatedOverlaySheet(
     val dragOffsetY = remember { Animatable(0f) }
     var isDismissing by remember { mutableStateOf(false) }
 
-    val triggerAnimatedDismiss: () -> Unit = remember(scope, onDismiss, isLandscape) {
+    val triggerAnimatedDismiss: () -> Unit = remember(scope, onDismiss, onDismissStart, isLandscape) {
         {
             if (!isDismissing) {
                 isDismissing = true
+                onDismissStart()
                 scope.launch {
                     progress.animateTo(
                         targetValue = 0f,
@@ -265,6 +268,7 @@ fun ConceptAnimatedOverlaySheet(
             }
         } else if (!visible && !isDismissing) {
             isDismissing = true
+            onDismissStart()
             progress.animateTo(
                 targetValue = 0f,
                 animationSpec = tween(
@@ -280,7 +284,7 @@ fun ConceptAnimatedOverlaySheet(
         triggerAnimatedDismiss()
     }
 
-    val sheetScope = remember(isLandscape, dismissDragThresholdPx, triggerAnimatedDismiss) {
+    val sheetScope = remember(isLandscape, dismissDragThresholdPx, triggerAnimatedDismiss, onDismissStart) {
         ConceptOverlaySheetScope(
             requestDismiss = triggerAnimatedDismiss,
             onDragDelta = { delta ->
@@ -301,6 +305,7 @@ fun ConceptAnimatedOverlaySheet(
                 if (!isLandscape && !isDismissing) {
                     if (dragOffsetY.value > dismissDragThresholdPx) {
                         isDismissing = true
+                        onDismissStart()
                         scope.launch {
                             coroutineScope {
                                 launch {

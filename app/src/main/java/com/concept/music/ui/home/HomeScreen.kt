@@ -172,16 +172,26 @@ fun HomeScreen(
     var showRankGridSheet by remember { mutableStateOf(false) }
     var selectedRankCategory by remember { mutableStateOf("全部") }
 
+    // 标记抽屉是否已进入退出动画阶段，使悬浮播放条与底栏在抽屉开始收起瞬间即同步丝滑浮现
+    var isHomeSubSheetDismissing by remember { mutableStateOf(false) }
+
     // 当打开歌曲评论页、全屏播放页或二级页面时，立即关闭首页内的子抽屉
     LaunchedEffect(isOverlayOpen) {
         if (isOverlayOpen) {
             showPersonalFmSheet = false
             quickFmStation = null
             showRankGridSheet = false
+            isHomeSubSheetDismissing = false
         }
     }
 
-    val anyHomeSubSheetOpen = (showPersonalFmSheet || quickFmStation != null || showRankGridSheet) && !isOverlayOpen
+    LaunchedEffect(showPersonalFmSheet, quickFmStation, showRankGridSheet) {
+        if (showPersonalFmSheet || quickFmStation != null || showRankGridSheet) {
+            isHomeSubSheetDismissing = false
+        }
+    }
+
+    val anyHomeSubSheetOpen = (showPersonalFmSheet || quickFmStation != null || showRankGridSheet) && !isOverlayOpen && !isHomeSubSheetDismissing
     LaunchedEffect(anyHomeSubSheetOpen) {
         onSubSheetOpenChanged(anyHomeSubSheetOpen)
     }
@@ -671,9 +681,11 @@ fun HomeScreen(
             ranks = ranks,
             selectedRankId = null,
             onSelectRank = { chosenId ->
+                isHomeSubSheetDismissing = true
                 showRankGridSheet = false
                 onOpenRank(chosenId)
             },
+            onDismissStart = { isHomeSubSheetDismissing = true },
             onDismiss = { showRankGridSheet = false }
         )
     }
@@ -694,6 +706,7 @@ fun HomeScreen(
         // 采用应用主窗口内 ConceptAnimatedOverlaySheet (zIndex = 80f)，彻底解决 ModalBottomSheet 独立系统 DialogWindow 遮挡上层 SongActionBottomSheet (zIndex = 88f) 的层级问题
         ConceptAnimatedOverlaySheet(
             onDismiss = { showPersonalFmSheet = false },
+            onDismissStart = { isHomeSubSheetDismissing = true },
             isLandscape = useCenteredFmPanel,
             zIndex = 80f
         ) {
@@ -838,7 +851,7 @@ fun HomeScreen(
                             onClick = {
                                 if (fmPool.isNotEmpty()) {
                                     onSongClick(fmPool.first(), fmPool)
-                                    showPersonalFmSheet = false
+                                    requestDismiss()
                                 }
                             },
                             enabled = fmPool.isNotEmpty(),
@@ -905,7 +918,7 @@ fun HomeScreen(
                                 onClick = {
                                     viewModel.setPersonalFmIndex(index)
                                     onSongClick(song, latestFmPool)
-                                    showPersonalFmSheet = false
+                                    requestDismiss()
                                 },
                                 onMoreClick = { onSongMoreClick(song) }
                             )
@@ -926,6 +939,7 @@ fun HomeScreen(
         val qfmShape = if (useCenteredQfmPanel) RoundedCornerShape(26.dp) else RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
         ConceptAnimatedOverlaySheet(
             onDismiss = { quickFmStation = null },
+            onDismissStart = { isHomeSubSheetDismissing = true },
             isLandscape = useCenteredQfmPanel,
             zIndex = 80f
         ) {
@@ -1039,6 +1053,7 @@ fun HomeScreen(
                     TextButton(
                         onClick = {
                             val targetId = station.id
+                            isHomeSubSheetDismissing = true
                             quickFmStation = null
                             onOpenRadio(targetId)
                         }
@@ -1057,7 +1072,7 @@ fun HomeScreen(
                         onClick = {
                             if (quickFmSongs.isNotEmpty()) {
                                 onSongClick(quickFmSongs.first(), quickFmSongs)
-                                quickFmStation = null
+                                requestDismiss()
                             }
                         },
                         enabled = quickFmSongs.isNotEmpty() && !quickFmLoading,
@@ -1156,7 +1171,7 @@ fun HomeScreen(
                                 isPlaying = curId != null && (curId == song.id || (curHash.isNotEmpty() && curHash.equals(song.hash, ignoreCase = true))),
                                 onClick = {
                                     onSongClick(song, latestQuickFmSongs)
-                                    quickFmStation = null
+                                    requestDismiss()
                                 },
                                 onMoreClick = { onSongMoreClick(song) }
                             )
@@ -2415,7 +2430,8 @@ fun RankDetailScreen(
     onBack: () -> Unit,
     onSongClick: (Song, List<Song>) -> Unit,
     currentSong: Song? = null,
-    onSongMoreClick: (Song) -> Unit = {}
+    onSongMoreClick: (Song) -> Unit = {},
+    onSubSheetOpenChanged: (Boolean) -> Unit = {}
 ) {
     val ranks by viewModel.ranks.collectAsState()
     val coroutineScope = rememberCoroutineScope()
@@ -2424,6 +2440,18 @@ fun RankDetailScreen(
     var loading by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
     var showRankGridSheet by remember { mutableStateOf(false) }
+    var isRankSubSheetDismissing by remember { mutableStateOf(false) }
+
+    LaunchedEffect(showRankGridSheet) {
+        if (showRankGridSheet) isRankSubSheetDismissing = false
+    }
+    val rankSheetActive = showRankGridSheet && !isRankSubSheetDismissing
+    LaunchedEffect(rankSheetActive) {
+        onSubSheetOpenChanged(rankSheetActive)
+    }
+    DisposableEffect(Unit) {
+        onDispose { onSubSheetOpenChanged(false) }
+    }
 
     val currentRank = remember(ranks, selectedRankId) {
         ranks.firstOrNull { it.rankId == selectedRankId }
@@ -3096,9 +3124,11 @@ fun RankDetailScreen(
             ranks = ranks,
             selectedRankId = currentRank.rankId,
             onSelectRank = { chosenId ->
+                isRankSubSheetDismissing = true
                 selectedRankId = chosenId
                 showRankGridSheet = false
             },
+            onDismissStart = { isRankSubSheetDismissing = true },
             onDismiss = { showRankGridSheet = false }
         )
     }
@@ -3113,39 +3143,76 @@ private fun RankGridPickerSheet(
     ranks: List<RankItem>,
     selectedRankId: Int?,
     onSelectRank: (Int) -> Unit,
+    onDismissStart: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val isDark = LocalIsDarkTheme.current
-    val scope = rememberCoroutineScope()
     var selectedCategory by remember { mutableStateOf("全部") }
     val categories = remember(ranks) {
         listOf("全部") + ranks.map { it.category.ifBlank { "热门" } }.distinct()
     }
-
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val smoothDismiss: (() -> Unit) -> Unit = { actionAfterHide ->
-        scope.launch {
-            runCatching { sheetState.hide() }
-        }.invokeOnCompletion {
-            actionAfterHide()
-        }
+    val rankAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+    val useCenteredRankPanel = rankAdaptive.isLargeScreenDevice && rankAdaptive.isLandscapeWindow
+    val rankSheetShape = if (useCenteredRankPanel) {
+        RoundedCornerShape(26.dp)
+    } else {
+        RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     }
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = conceptSheetContainerColor(),
-        windowInsets = WindowInsets(0, 0, 0, 0),
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    ConceptAnimatedOverlaySheet(
+        onDismiss = onDismiss,
+        onDismissStart = onDismissStart,
+        isLandscape = useCenteredRankPanel,
+        zIndex = 80f
     ) {
+        val dismissSheet = requestDismiss
+        Surface(
+            shape = rankSheetShape,
+            color = conceptSheetContainerColor(),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shadowElevation = 24.dp,
+            modifier = (if (useCenteredRankPanel) {
+                Modifier
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
+                    .widthIn(max = 600.dp)
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+            } else {
+                Modifier
+                    .widthIn(max = 620.dp)
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+            }).clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+                onClick = {}
+            )
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .navigationBarsPadding()
         ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .sheetVerticalDragGesture()
+                    .padding(top = 6.dp, bottom = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(4.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f)
+                ) {}
+            }
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .sheetVerticalDragGesture(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -3156,7 +3223,7 @@ private fun RankGridPickerSheet(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 )
-                IconButton(onClick = { smoothDismiss(onDismiss) }) {
+                IconButton(onClick = dismissSheet) {
                     Icon(Icons.Rounded.Close, contentDescription = "关闭")
                 }
             }
@@ -3253,7 +3320,8 @@ private fun RankGridPickerSheet(
                                             scaleY = selectedScale
                                         }
                                         .softCardClickable(shape = RoundedCornerShape(18.dp)) {
-                                            smoothDismiss { onSelectRank(item.rankId) }
+                                            onDismissStart()
+                                            onSelectRank(item.rankId)
                                         }
                                 ) {
                                     Row(
@@ -3338,6 +3406,7 @@ private fun RankGridPickerSheet(
                 }
             }
         }
+        }
     }
 }
 
@@ -3406,12 +3475,19 @@ fun DailyRecommendScreen(
                 sourceSongs = dailySongs,
                 listState = dailyListState,
                 resetKey = "daily_recommend",
-                initialBatchSize = 15,
-                microBatchSize = 10
+                initialBatchSize = 40,
+                microBatchSize = 15
             )
             val latestDailySongs by rememberUpdatedState(dailySongs)
             val curDailyPlayingId = currentSong?.id
             val curDailyPlayingHash = currentSong?.hash.orEmpty()
+            val playingDailySongIndex = remember(dailySongs, curDailyPlayingId, curDailyPlayingHash) {
+                if (curDailyPlayingId == null && curDailyPlayingHash.isEmpty()) -1
+                else dailySongs.indexOfFirst { s ->
+                    (curDailyPlayingId != null && s.id == curDailyPlayingId) ||
+                        (curDailyPlayingHash.isNotEmpty() && s.hash.equals(curDailyPlayingHash, ignoreCase = true))
+                }
+            }
             val showDailyScrollTop by remember(dailySongs.size) {
                 derivedStateOf {
                     dailyListState.firstVisibleItemIndex > 2 ||
@@ -3689,19 +3765,63 @@ fun DailyRecommendScreen(
             }
             }
 
-            FloatingScrollToTopButton(
-                visible = showDailyScrollTop,
-                accentColor = ConceptCoralAccent,
-                onClick = {
-                    dailyScope.launch {
-                        dailyListState.smoothFastScrollToItem(0)
-                    }
-                },
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .navigationBarsPadding()
-                    .padding(end = 18.dp, bottom = 104.dp)
-            )
+                    .padding(end = 18.dp, bottom = 104.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                FloatingScrollToTopButton(
+                    visible = showDailyScrollTop,
+                    accentColor = ConceptCoralAccent,
+                    onClick = {
+                        dailyScope.launch {
+                            dailyListState.smoothFastScrollToItem(0)
+                        }
+                    }
+                )
+
+                AnimatedVisibility(
+                    visible = playingDailySongIndex >= 0,
+                    enter = fadeIn() + scaleIn(initialScale = 0.85f),
+                    exit = fadeOut() + scaleOut(targetScale = 0.85f)
+                ) {
+                    FilledIconButton(
+                        onClick = {
+                            if (playingDailySongIndex >= 0) {
+                                dailyScope.launch {
+                                    val targetLazyIndex = when {
+                                        dailyAdaptive.useTwoPaneDetailLayout ->
+                                            (1 + playingDailySongIndex / 2 - 1).coerceAtLeast(0)
+                                        dailyAdaptive.useTwoColumnSongOrCardGrid ->
+                                            (2 + playingDailySongIndex / 2 - 1).coerceAtLeast(0)
+                                        else ->
+                                            (2 + playingDailySongIndex - 2).coerceAtLeast(0)
+                                    }
+                                    dailyListState.smoothFastScrollToItem(targetLazyIndex)
+                                }
+                            }
+                        },
+                        shape = CircleShape,
+                        colors = IconButtonDefaults.filledIconButtonColors(
+                            containerColor = ConceptCoralAccent,
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .size(42.dp)
+                            .shadow(8.dp, CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MyLocation,
+                            contentDescription = "定位当前播放歌曲",
+                            tint = Color.White,
+                            modifier = Modifier.size(19.dp)
+                        )
+                    }
+                }
+            }
             }
         }
     }

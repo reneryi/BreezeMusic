@@ -158,14 +158,18 @@ fun VipCenterBottomSheet(
     loggedIn: Boolean,
     autoClaim: Boolean,
     onDismiss: () -> Unit,
+    onDismissStart: () -> Unit = {},
     onClaim: () -> Unit,
     onAutoChange: (Boolean) -> Unit,
     onRefresh: () -> Unit,
     onLogin: () -> Unit
 ) {
+    val vipAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+    val useCenteredVipPanel = vipAdaptive.isLargeScreenDevice && vipAdaptive.isLandscapeWindow
     ConceptAnimatedOverlaySheet(
         onDismiss = onDismiss,
-        isLandscape = false,
+        onDismissStart = onDismissStart,
+        isLandscape = useCenteredVipPanel,
         zIndex = 88f
     ) {
         Surface(

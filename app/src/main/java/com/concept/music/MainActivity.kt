@@ -254,6 +254,8 @@ fun MainContent(
     var songToDownload by remember { mutableStateOf<Song?>(null) }
     var multiArtistPickerSong by remember { mutableStateOf<Song?>(null) }
     var isHomeSubSheetOpen by remember { mutableStateOf(false) }
+    var isLibrarySubSheetOpen by remember { mutableStateOf(false) }
+    val isMainSubSheetOpen = isHomeSubSheetOpen || isLibrarySubSheetOpen
     val mainScope = rememberCoroutineScope()
 
     val openSubRouteFromContext: (String) -> Unit = { targetRoute ->
@@ -476,9 +478,7 @@ fun MainContent(
             .background(MaterialTheme.colorScheme.background)
     ) {
         Scaffold(
-            modifier = Modifier
-                .fillMaxSize()
-                .zIndex(if (isHomeSubSheetOpen) 40f else 0f),
+            modifier = Modifier.fillMaxSize(),
             contentWindowInsets = WindowInsets(0, 0, 0, 0)
         ) { innerPadding ->
             androidx.compose.foundation.layout.Row(
@@ -694,6 +694,8 @@ fun MainContent(
                                 onPlaySong = { song, list ->
                                     musicPlayerViewModel.playSong(song, list)
                                 },
+                                isOverlayOpen = showCommentsScreen || showNowPlaying || showViperEffectOverlay || isSubDetail,
+                                onSubSheetOpenChanged = { isLibrarySubSheetOpen = it },
                                 modifier = Modifier
                                     .weight(0.47f)
                                     .fillMaxSize()
@@ -781,7 +783,8 @@ fun MainContent(
                         onSongMoreClick = { song ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = null
-                        }
+                        },
+                        onSubSheetOpenChanged = { isHomeSubSheetOpen = it }
                     )
                 }
 
@@ -831,7 +834,9 @@ fun MainContent(
                         },
                         onPlaySong = { song, list ->
                             musicPlayerViewModel.playSong(song, list)
-                        }
+                        },
+                        isOverlayOpen = showCommentsScreen || showNowPlaying || showViperEffectOverlay || isSubDetail,
+                        onSubSheetOpenChanged = { isLibrarySubSheetOpen = it }
                     )
                 }
 
@@ -973,30 +978,31 @@ fun MainContent(
         }
 
         // 「发现 / 我的」主导航栏：平板竖屏/分屏悬浮于左侧垂直居中 (Alignment.CenterStart)，手机端贴底展示 (Alignment.BottomCenter)
+        // 当发现页三大抽屉（猜你喜欢、全部榜单、电台）或我的页心流舱打开时，导航栏与悬浮播放条同步丝滑退场；退出抽屉瞬间同步丝滑浮现
         AnimatedVisibility(
-            visible = showBottomNavBar && !isHomeSubSheetOpen,
+            visible = showBottomNavBar && !isMainSubSheetOpen,
             modifier = Modifier.align(if (adaptiveInfo.isLargeScreenDevice) Alignment.CenterStart else Alignment.BottomCenter),
             enter = if (adaptiveInfo.isLargeScreenDevice) {
                 slideInHorizontally(
                     initialOffsetX = { -it },
-                    animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
-                ) + fadeIn(animationSpec = tween(durationMillis = 320, easing = ConceptMotion.GentleSpatialEnterEasing))
+                    animationSpec = ConceptMotion.spatialSheetSpring()
+                ) + fadeIn(animationSpec = tween(durationMillis = 280, easing = ConceptMotion.GentleSpatialEnterEasing))
             } else {
                 slideInVertically(
                     initialOffsetY = { it },
-                    animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
-                ) + fadeIn(animationSpec = tween(durationMillis = 320, easing = ConceptMotion.GentleSpatialEnterEasing))
+                    animationSpec = ConceptMotion.spatialSheetSpring()
+                ) + fadeIn(animationSpec = tween(durationMillis = 280, easing = ConceptMotion.GentleSpatialEnterEasing))
             },
             exit = if (adaptiveInfo.isLargeScreenDevice) {
                 slideOutHorizontally(
                     targetOffsetX = { -it },
-                    animationSpec = tween(durationMillis = 300, easing = ConceptMotion.GentleSpatialExitEasing)
-                ) + fadeOut(animationSpec = tween(durationMillis = 240, easing = ConceptMotion.GentleSpatialExitEasing))
+                    animationSpec = tween(durationMillis = 260, easing = ConceptMotion.GentleSpatialExitEasing)
+                ) + fadeOut(animationSpec = tween(durationMillis = 210, easing = ConceptMotion.GentleSpatialExitEasing))
             } else {
                 slideOutVertically(
                     targetOffsetY = { it },
-                    animationSpec = tween(durationMillis = 300, easing = ConceptMotion.GentleSpatialExitEasing)
-                ) + fadeOut(animationSpec = tween(durationMillis = 240, easing = ConceptMotion.GentleSpatialExitEasing))
+                    animationSpec = tween(durationMillis = 260, easing = ConceptMotion.GentleSpatialExitEasing)
+                ) + fadeOut(animationSpec = tween(durationMillis = 210, easing = ConceptMotion.GentleSpatialExitEasing))
             }
         ) {
             BottomNavBar(
@@ -1022,7 +1028,7 @@ fun MainContent(
             navMode == com.concept.music.ui.theme.ConceptNavigationMode.BOTTOM_BAR
         val miniBarOffsetYState = animateFloatAsState(
             targetValue = if (shouldAvoidBottomNav) navBarAvoidOffsetPx else 0f,
-            animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing),
+            animationSpec = ConceptMotion.spatialSheetSpring(),
             label = "miniBarOffsetY"
         )
 
@@ -1048,17 +1054,17 @@ fun MainContent(
                     )
                 }
 
-                // 控制条进出播放页：移除引发抖动与阴影白边的 scaleIn/scaleOut 与欠阻尼弹簧，改用平滑升降渐隐
+                // 控制条进出播放页及抽屉弹窗：统一纳入 !isMainSubSheetOpen，采用 spatialSheetSpring 丝滑升降渐隐，彻底杜绝退出抽屉时的生硬跳变
                 AnimatedVisibility(
-                    visible = currentSong != null && !showNowPlaying && !showViperEffectOverlay,
+                    visible = currentSong != null && !showNowPlaying && !showViperEffectOverlay && !isMainSubSheetOpen,
                     enter = slideInVertically(
-                        initialOffsetY = { (it * 0.65f).toInt() },
-                        animationSpec = tween(durationMillis = 380, easing = ConceptMotion.GentleSpatialEnterEasing)
-                    ) + fadeIn(tween(durationMillis = 320, easing = ConceptMotion.GentleSpatialEnterEasing)),
+                        initialOffsetY = { (it * 0.85f).toInt() },
+                        animationSpec = ConceptMotion.spatialSheetSpring()
+                    ) + fadeIn(tween(durationMillis = 280, easing = ConceptMotion.GentleSpatialEnterEasing)),
                     exit = slideOutVertically(
-                        targetOffsetY = { (it * 0.55f).toInt() },
-                        animationSpec = tween(durationMillis = 280, easing = ConceptMotion.GentleSpatialExitEasing)
-                    ) + fadeOut(tween(durationMillis = 220, easing = ConceptMotion.GentleSpatialExitEasing))
+                        targetOffsetY = { (it * 0.85f).toInt() },
+                        animationSpec = tween(durationMillis = 250, easing = ConceptMotion.GentleSpatialExitEasing)
+                    ) + fadeOut(tween(durationMillis = 200, easing = ConceptMotion.GentleSpatialExitEasing))
                 ) {
                     IsolatedMiniPlayerBarHost(
                         viewModel = musicPlayerViewModel,

@@ -459,54 +459,63 @@ private fun LyricThemeAndAlignCompactCard(
             ),
             verticalArrangement = Arrangement.spacedBy(if (isTablet) 15.dp else 10.dp)
         ) {
-            // 1. 流光配色胶囊矩阵（等分自适应宽度，平板端放大字号与内边距）
-            Row(
+            // 1. 流光配色胶囊矩阵（2行 × 3列等宽网格，彻底杜绝单行 6 项拥挤导致四字样式名称第 4 字被截断的问题）
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(if (isTablet) 8.dp else 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(if (isTablet) 8.dp else 6.5.dp)
             ) {
-                LyricHighlightTheme.entries.forEach { theme ->
-                    val selected = highlightTheme == theme
-                    val swatchColor = if (theme == LyricHighlightTheme.DYNAMIC_COVER) {
-                        dynamicAccentColor
-                    } else {
-                        Color(theme.primaryHex)
-                    }
-                    val swatchRoles = rememberCoverColorRoles(swatchColor)
-                    val chipShape = RoundedCornerShape(if (isTablet) 13.dp else 11.dp)
-                    Surface(
-                        shape = chipShape,
-                        color = if (selected) swatchRoles.primaryContainer else sheetBg,
-                        contentColor = textPrimary,
-                        modifier = Modifier
-                            .weight(1f)
-                            .softCardClickable(shape = chipShape) {
-                                onSetHighlightTheme(theme)
-                            }
+                val themeRows = remember { LyricHighlightTheme.entries.chunked(3) }
+                themeRows.forEach { rowThemes ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(if (isTablet) 8.dp else 6.5.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                            modifier = Modifier.padding(
-                                horizontal = if (isTablet) 8.dp else 6.dp,
-                                vertical = if (isTablet) 10.dp else 7.5.dp
-                            )
-                        ) {
-                            Box(
+                        rowThemes.forEach { theme ->
+                            val selected = highlightTheme == theme
+                            val swatchColor = if (theme == LyricHighlightTheme.DYNAMIC_COVER) {
+                                dynamicAccentColor
+                            } else {
+                                Color(theme.primaryHex)
+                            }
+                            val swatchRoles = rememberCoverColorRoles(swatchColor)
+                            val chipShape = RoundedCornerShape(if (isTablet) 13.dp else 11.dp)
+                            Surface(
+                                shape = chipShape,
+                                color = if (selected) swatchRoles.primaryContainer else sheetBg,
+                                contentColor = textPrimary,
                                 modifier = Modifier
-                                    .size(if (isTablet) 9.5.dp else 8.dp)
-                                    .clip(CircleShape)
-                                    .background(if (selected) swatchRoles.primary else swatchColor)
-                            )
-                            Spacer(modifier = Modifier.width(if (isTablet) 7.dp else 6.dp))
-                            Text(
-                                text = theme.label,
-                                color = if (selected) swatchRoles.onPrimaryContainer else textPrimary,
-                                fontSize = if (isTablet) 13.sp else 11.5.sp,
-                                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
-                                maxLines = 1,
-                                softWrap = false
-                            )
+                                    .weight(1f)
+                                    .softCardClickable(shape = chipShape) {
+                                        onSetHighlightTheme(theme)
+                                    }
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier.padding(
+                                        horizontal = if (isTablet) 10.dp else 8.dp,
+                                        vertical = if (isTablet) 10.dp else 8.dp
+                                    )
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(if (isTablet) 9.5.dp else 8.dp)
+                                            .clip(CircleShape)
+                                            .background(if (selected) swatchRoles.primary else swatchColor)
+                                    )
+                                    Spacer(modifier = Modifier.width(if (isTablet) 7.dp else 6.dp))
+                                    Text(
+                                        text = theme.label,
+                                        color = if (selected) swatchRoles.onPrimaryContainer else textPrimary,
+                                        fontSize = if (isTablet) 13.sp else 12.sp,
+                                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Visible
+                                    )
+                                }
+                            }
                         }
                     }
                 }

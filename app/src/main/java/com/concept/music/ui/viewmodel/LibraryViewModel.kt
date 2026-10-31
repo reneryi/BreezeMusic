@@ -293,9 +293,7 @@ class LibraryViewModel(
                             }
                         } else emptyList()
                     }
-                    val selected = lists.firstOrNull {
-                        it.id == targetPlaylistId || it.globalCollectionId == targetPlaylistId || it.listCreateListid == targetPlaylistId
-                    }
+                    val selected = lists.firstOrNull { it.matchesIdentifier(targetPlaylistId) }
                     val extInfoDef = async { runCatching { VipManager.music.playlistInfo(targetPlaylistId) }.getOrNull() }
                     val progressCallback: (List<Song>) -> Unit = { partial ->
                         if (partial.isNotEmpty()) {
@@ -318,20 +316,21 @@ class LibraryViewModel(
                         _librarySongs.value = finalTracks
                         VipManager.discoverCache.savePlaylistSongs(targetPlaylistId, finalTracks, allowEmpty = true)
                         val extInfo = extInfoDef.await()
-                        if (extInfo != null && (selected.description.isBlank() || selected.coverUrl.isBlank())) {
-                            val enriched = selected.copy(
-                                description = selected.description.ifBlank { extInfo.description },
-                                coverUrl = selected.coverUrl.ifBlank { extInfo.coverUrl.ifBlank { finalTracks.firstOrNull()?.coverUrl.orEmpty() } },
-                                trackCount = if (finalTracks.isNotEmpty()) finalTracks.size else selected.trackCount
-                            )
-                            _playlists.value = _playlists.value.map { if (it.id == selected.id) enriched else it }
-                        }
+                        val enriched = selected.copy(
+                            description = selected.description.ifBlank { extInfo?.description.orEmpty() },
+                            coverUrl = selected.coverUrl.ifBlank { extInfo?.coverUrl?.ifBlank { finalTracks.firstOrNull()?.coverUrl.orEmpty() } ?: finalTracks.firstOrNull()?.coverUrl.orEmpty() },
+                            creatorName = selected.creatorName.ifBlank { extInfo?.creatorName.orEmpty() },
+                            trackCount = if (finalTracks.isNotEmpty()) finalTracks.size else if (selected.trackCount > 0) selected.trackCount else (extInfo?.trackCount ?: 0)
+                        )
+                        VipManager.music.cacheCollectedPlaylistMeta(enriched)
+                        _playlists.value = _playlists.value.map { if (it.isSamePlaylistAs(selected)) enriched else it }
+                        VipManager.discoverCache.saveUserPlaylists(userId, _playlists.value)
                     } else {
                         val trackList = runCatching {
                             VipManager.music.fetchPlaylistSongsAll(targetPlaylistId, onProgress = progressCallback)
                         }.getOrDefault(emptyList())
                         val extPlaylist = extInfoDef.await()
-                        val resolvedPl = (extPlaylist ?: Playlist(
+                        val baseResolved = (extPlaylist ?: Playlist(
                             id = targetPlaylistId,
                             title = "精选歌单",
                             isCreatedByMe = false,
@@ -343,9 +342,38 @@ class LibraryViewModel(
                                 listCreateListid = pl.listCreateListid.ifBlank { targetPlaylistId }
                             )
                         }
-                        _playlists.value = (_playlists.value.filterNot {
-                            it.id == targetPlaylistId || it.id == resolvedPl.id || it.globalCollectionId == targetPlaylistId
-                        } + resolvedPl)
+                        val matchedFavorite = _playlists.value.firstOrNull { it.isFavorite && it.isSamePlaylistAs(baseResolved) }
+                        val resolvedPl = if (matchedFavorite != null) {
+                            baseResolved.copy(
+                                isFavorite = true,
+                                isCreatedByMe = false,
+                                listId = if (matchedFavorite.listId > 0L) matchedFavorite.listId else baseResolved.listId
+                            )
+                        } else {
+                            baseResolved
+                        }
+                        VipManager.music.cacheCollectedPlaylistMeta(resolvedPl)
+                        _playlists.value = if (matchedFavorite != null) {
+                            _playlists.value.map {
+                                if (it.isSamePlaylistAs(resolvedPl)) {
+                                    it.copy(
+                                        isFavorite = true,
+                                        coverUrl = it.coverUrl.ifBlank { resolvedPl.coverUrl },
+                                        trackCount = if (resolvedPl.trackCount > 0) resolvedPl.trackCount else it.trackCount,
+                                        description = it.description.ifBlank { resolvedPl.description },
+                                        creatorName = it.creatorName.ifBlank { resolvedPl.creatorName },
+                                        globalCollectionId = it.globalCollectionId.ifBlank { resolvedPl.globalCollectionId },
+                                        listCreateGid = it.listCreateGid.ifBlank { resolvedPl.listCreateGid },
+                                        listCreateListid = it.listCreateListid.ifBlank { resolvedPl.listCreateListid },
+                                        listCreateUserid = it.listCreateUserid.ifBlank { resolvedPl.listCreateUserid }
+                                    )
+                                } else it
+                            }
+                        } else {
+                            _playlists.value.filterNot {
+                                it.matchesIdentifier(targetPlaylistId) || it.isSamePlaylistAs(resolvedPl)
+                            } + resolvedPl
+                        }
                         _librarySongs.value = trackList
                         VipManager.discoverCache.savePlaylistSongs(targetPlaylistId, trackList, allowEmpty = true)
                     }
@@ -620,7 +648,7 @@ class LibraryViewModel(
                     "我创建的歌单" -> null
                     "收藏的歌单" -> null
                     else -> targetPlaylistId?.let { id ->
-                        lists.firstOrNull { it.id == id || it.globalCollectionId == id || it.listCreateListid == id }
+                        lists.firstOrNull { it.matchesIdentifier(id) }
                     }
                 }
                 when (section) {
@@ -632,18 +660,18 @@ class LibraryViewModel(
                             val finalTracks = tracks.ifEmpty { extSongsDef?.await().orEmpty() }
                             _librarySongs.value = finalTracks
                             val extInfo = extInfoDef?.await()
-                            if (extInfo != null && (selected.description.isBlank() || selected.coverUrl.isBlank())) {
-                                val enriched = selected.copy(
-                                    description = selected.description.ifBlank { extInfo.description },
-                                    coverUrl = selected.coverUrl.ifBlank { extInfo.coverUrl.ifBlank { finalTracks.firstOrNull()?.coverUrl.orEmpty() } },
-                                    trackCount = if (finalTracks.isNotEmpty()) finalTracks.size else selected.trackCount
-                                )
-                                _playlists.value = _playlists.value.map { if (it.id == selected.id) enriched else it }
-                            }
+                            val enriched = selected.copy(
+                                description = selected.description.ifBlank { extInfo?.description.orEmpty() },
+                                coverUrl = selected.coverUrl.ifBlank { extInfo?.coverUrl?.ifBlank { finalTracks.firstOrNull()?.coverUrl.orEmpty() } ?: finalTracks.firstOrNull()?.coverUrl.orEmpty() },
+                                creatorName = selected.creatorName.ifBlank { extInfo?.creatorName.orEmpty() },
+                                trackCount = if (finalTracks.isNotEmpty()) finalTracks.size else if (selected.trackCount > 0) selected.trackCount else (extInfo?.trackCount ?: 0)
+                            )
+                            VipManager.music.cacheCollectedPlaylistMeta(enriched)
+                            _playlists.value = _playlists.value.map { if (it.isSamePlaylistAs(selected)) enriched else it }
                         } else if (targetPlaylistId != null) {
                             val extPlaylist = extInfoDef?.await()
                             val trackList = extSongsDef?.await().orEmpty()
-                            val resolvedPl = (extPlaylist ?: Playlist(
+                            val baseResolved = (extPlaylist ?: Playlist(
                                 id = targetPlaylistId,
                                 title = "精选歌单",
                                 isCreatedByMe = false,
@@ -655,9 +683,34 @@ class LibraryViewModel(
                                     listCreateListid = pl.listCreateListid.ifBlank { targetPlaylistId }
                                 )
                             }
-                            _playlists.value = (_playlists.value.filterNot {
-                                it.id == targetPlaylistId || it.id == resolvedPl.id || it.globalCollectionId == targetPlaylistId
-                            } + resolvedPl)
+                            val matchedFavorite = lists.firstOrNull { it.isFavorite && it.isSamePlaylistAs(baseResolved) }
+                            val resolvedPl = if (matchedFavorite != null) {
+                                baseResolved.copy(
+                                    isFavorite = true,
+                                    isCreatedByMe = false,
+                                    listId = if (matchedFavorite.listId > 0L) matchedFavorite.listId else baseResolved.listId
+                                )
+                            } else {
+                                baseResolved
+                            }
+                            VipManager.music.cacheCollectedPlaylistMeta(resolvedPl)
+                            _playlists.value = if (matchedFavorite != null) {
+                                _playlists.value.map {
+                                    if (it.isSamePlaylistAs(resolvedPl)) {
+                                        it.copy(
+                                            isFavorite = true,
+                                            coverUrl = it.coverUrl.ifBlank { resolvedPl.coverUrl },
+                                            trackCount = if (resolvedPl.trackCount > 0) resolvedPl.trackCount else it.trackCount,
+                                            description = it.description.ifBlank { resolvedPl.description },
+                                            creatorName = it.creatorName.ifBlank { resolvedPl.creatorName }
+                                        )
+                                    } else it
+                                }
+                            } else {
+                                _playlists.value.filterNot {
+                                    it.matchesIdentifier(targetPlaylistId) || it.isSamePlaylistAs(resolvedPl)
+                                } + resolvedPl
+                            }
                             _librarySongs.value = trackList
                         }
                     }
@@ -723,26 +776,123 @@ class LibraryViewModel(
     }
 
     fun collectPlaylist(playlist: Playlist, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        if (accountState.value.auth != AuthState.READY) {
+            onResult(false, "请先登录酷狗账号")
+            return
+        }
+        val prevList = _playlists.value
+        val optimisticPl = playlist.copy(
+            isFavorite = true,
+            isCreatedByMe = false,
+            trackCount = if (playlist.trackCount > 0) playlist.trackCount else _librarySongs.value.size
+        )
+        VipManager.music.cacheCollectedPlaylistMeta(optimisticPl)
+        // 乐观即时更新：点击收藏瞬间切换为「已收藏」状态，且绝不清空当前详情页正在展示的歌曲列表 _librarySongs
+        val hadMatch = prevList.any { it.isSamePlaylistAs(optimisticPl) }
+        _playlists.value = if (hadMatch) {
+            prevList.map { existing ->
+                if (existing.isSamePlaylistAs(optimisticPl)) {
+                    existing.copy(
+                        isFavorite = true,
+                        isCreatedByMe = false,
+                        coverUrl = existing.coverUrl.ifBlank { optimisticPl.coverUrl },
+                        trackCount = if (existing.trackCount > 0) existing.trackCount else optimisticPl.trackCount,
+                        description = existing.description.ifBlank { optimisticPl.description },
+                        creatorName = existing.creatorName.ifBlank { optimisticPl.creatorName }
+                    )
+                } else existing
+            }
+        } else {
+            prevList + optimisticPl
+        }
+
         viewModelScope.launch {
-            val success = runCatching { VipManager.music.collectPlaylist(playlist) }.getOrDefault(false)
+            val success = runCatching { VipManager.music.collectPlaylist(optimisticPl) }.getOrDefault(false)
             if (success) {
-                loadMusicLibrary()
                 onResult(true, "已成功收藏歌单")
+                // 后台静默同步云端最新 listId 与歌单列表，保持当前详情页已收藏标记与曲目稳定不闪烁
+                val userId = accountState.value.currentId
+                val cloudLists = runCatching { VipManager.music.userPlaylists() }.getOrDefault(emptyList())
+                if (cloudLists.isNotEmpty() && accounts.state.value.currentId == userId) {
+                    val cloudMatched = cloudLists.firstOrNull { it.isFavorite && it.isSamePlaylistAs(optimisticPl) }
+                    val mergedCloud = if (cloudMatched != null) {
+                        cloudLists.map { item ->
+                            if (item.isSamePlaylistAs(optimisticPl)) {
+                                item.copy(
+                                    isFavorite = true,
+                                    isCreatedByMe = false,
+                                    coverUrl = item.coverUrl.ifBlank { optimisticPl.coverUrl },
+                                    trackCount = if (item.trackCount > 0) item.trackCount else optimisticPl.trackCount,
+                                    description = item.description.ifBlank { optimisticPl.description },
+                                    creatorName = item.creatorName.ifBlank { optimisticPl.creatorName }
+                                )
+                            } else item
+                        }
+                    } else {
+                        cloudLists + optimisticPl
+                    }
+                    _playlists.value = mergedCloud
+                    VipManager.discoverCache.saveUserPlaylists(userId, mergedCloud)
+                }
             } else {
+                _playlists.value = prevList
                 onResult(false, "收藏歌单失败，请稍后重试")
             }
         }
     }
 
     fun deletePlaylist(playlist: Playlist, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        if (accountState.value.auth != AuthState.READY) {
+            onResult(false, "请先登录酷狗账号")
+            return
+        }
+        val prevList = _playlists.value
+        val currentSection = _librarySection.value
+        val activeDetailId = if (currentSection.startsWith("歌单:")) currentSection.removePrefix("歌单:") else null
+        val isViewingThisExternalPlaylist = !playlist.isCreatedByMe &&
+            activeDetailId != null &&
+            playlist.matchesIdentifier(activeDetailId)
+
+        // 乐观更新：若当前正在外部歌单详情页内点击「已收藏」取消收藏，立即将状态切回未收藏（isFavorite = false），同时保留详情头部信息与曲目列表
+        if (!playlist.isCreatedByMe) {
+            _playlists.value = if (isViewingThisExternalPlaylist) {
+                prevList.map { existing ->
+                    if (existing.isSamePlaylistAs(playlist)) {
+                        existing.copy(isFavorite = false, listId = 0L)
+                    } else existing
+                }
+            } else {
+                prevList.filterNot { it.isSamePlaylistAs(playlist) }
+            }
+        }
+
         viewModelScope.launch {
             val success = runCatching { VipManager.music.deleteOrUncollectPlaylist(playlist) }.getOrDefault(false)
             if (success) {
-                _playlists.value = _playlists.value.filterNot { it.id == playlist.id || it.listId == playlist.listId }
-                loadMusicLibrary()
-                onResult(true, if (playlist.isCreatedByMe) "歌单已删除" else "已取消收藏")
+                val userId = accountState.value.currentId
+                if (playlist.isCreatedByMe) {
+                    _playlists.value = prevList.filterNot { it.isSamePlaylistAs(playlist) }
+                    VipManager.discoverCache.saveUserPlaylists(userId, _playlists.value)
+                    onResult(true, "歌单已删除")
+                } else {
+                    VipManager.music.cacheCollectedPlaylistMeta(playlist.copy(isFavorite = false, listId = 0L))
+                    onResult(true, "已取消收藏歌单")
+                    val cloudLists = runCatching { VipManager.music.userPlaylists() }.getOrDefault(emptyList())
+                    if (cloudLists.isNotEmpty() && accounts.state.value.currentId == userId) {
+                        val cleanedCloud = cloudLists.filterNot { it.isFavorite && it.isSamePlaylistAs(playlist) }
+                        _playlists.value = if (isViewingThisExternalPlaylist) {
+                            cleanedCloud + playlist.copy(isFavorite = false, isCreatedByMe = false, listId = 0L)
+                        } else {
+                            cleanedCloud
+                        }
+                        VipManager.discoverCache.saveUserPlaylists(userId, cleanedCloud)
+                    } else {
+                        VipManager.discoverCache.saveUserPlaylists(userId, _playlists.value.filter { it.isCreatedByMe || it.isFavorite })
+                    }
+                }
             } else {
-                onResult(false, "操作失败，请稍后重试")
+                _playlists.value = prevList
+                onResult(false, if (playlist.isCreatedByMe) "删除歌单失败，请稍后重试" else "取消收藏失败，请稍后重试")
             }
         }
     }

@@ -596,4 +596,87 @@ class AudioEnhancementTest {
             manager.setChannelBalance(0f)
         }
     }
+
+    @Test
+    fun testAudiophilePeqAndExpandedAcousticFieldTuningAndRhythmTelemetry() {
+        val manager = com.concept.music.service.AudioEffectManager
+        try {
+            manager.resetCurrentPresetToDefault()
+            // 1. 验证发烧级目标曲线一键加载（哈曼曲线）
+            manager.applyAudiophileTargetCurve(com.concept.music.service.AudiophileTargetCurve.HARMAN_IE_2019)
+            assertTrue(manager.state.value.isEnabled)
+            assertEquals(EffectPreset.CUSTOM, manager.state.value.currentPreset)
+            assertEquals(com.concept.music.service.PeqFilterType.LOW_SHELF, manager.state.value.tenBandFilterTypes[0])
+            assertEquals(com.concept.music.service.PeqFilterType.HIGH_SHELF, manager.state.value.tenBandFilterTypes[9])
+
+            // 2. 验证单频段 Q 值、中心频率、陷波滤波器类型与高低通滤波器
+            manager.setTenBandQFactor(3, 3.5f)
+            assertEquals(3.5f, manager.state.value.tenBandQFactors[3], 0.06f)
+            manager.setTenBandCenterFrequency(3, 280f)
+            assertEquals(280f, manager.state.value.tenBandCenterHz[3], 0.5f)
+            manager.setTenBandFilterType(7, com.concept.music.service.PeqFilterType.NOTCH)
+            assertEquals(com.concept.music.service.PeqFilterType.NOTCH, manager.state.value.tenBandFilterTypes[7])
+            manager.setHighPassCutoffHz(35)
+            manager.setLowPassCutoffHz(16000)
+            assertEquals(35, manager.state.value.highPassCutoffHz)
+            assertEquals(16000, manager.state.value.lowPassCutoffHz)
+
+            // 3. 验证 Biquad 传递函数幅频响应计算与自定义槽位存取
+            val magAt4k = manager.evaluatePeqMagnitudeDbAtFrequency(4000.0, manager.state.value, 48000.0)
+            assertTrue("4kHz 挂载 NOTCH 陷波后幅频响应应显著衰减 (< -3dB): $magAt4k", magAt4k < -3.0f)
+
+            manager.saveCustomPeqSlot(0, "发烧人声槽A")
+            manager.setPreset(EffectPreset.FLAT)
+            assertTrue(manager.loadCustomPeqSlot(0))
+            assertEquals(35, manager.state.value.highPassCutoffHz)
+            assertEquals(com.concept.music.service.PeqFilterType.NOTCH, manager.state.value.tenBandFilterTypes[7])
+
+            // 4. 验证声场调音新增详细控制项
+            manager.setBassPunchStrength(650)
+            manager.setSoundstageDepthStrength(480)
+            manager.setCrossfeedStrength(360)
+            manager.setDeEsserStrength(420)
+            manager.setTrebleAirStrength(550)
+            manager.setTransientAttackStrength(400)
+            manager.setReverbMode(ReverbMode.MEDIUM_HALL)
+            manager.setReverbWetMix(320)
+            manager.setReverbPreDelayMs(28)
+            manager.setReverbDamping(450)
+            assertEquals(650, manager.state.value.bassPunchStrength)
+            assertEquals(480, manager.state.value.soundstageDepthStrength)
+            assertEquals(360, manager.state.value.crossfeedStrength)
+            assertEquals(420, manager.state.value.deEsserStrength)
+            assertEquals(550, manager.state.value.trebleAirStrength)
+            assertEquals(400, manager.state.value.transientAttackStrength)
+            assertEquals(320, manager.state.value.reverbWetMix)
+            assertEquals(28, manager.state.value.reverbPreDelayMs)
+            assertEquals(450, manager.state.value.reverbDamping)
+
+            // 5. 验证重低音超 10% (如 80%) 下自动防削波净空预衰减与实时律动遥测正常更新
+            manager.setBassBoostStrength(800)
+            val processor = com.concept.music.service.ConceptMasteringAudioProcessor()
+            val format = androidx.media3.common.audio.AudioProcessor.AudioFormat(48000, 2, androidx.media3.common.C.ENCODING_PCM_16BIT)
+            processor.configure(format)
+            processor.flush()
+
+            val frames = 512
+            val buf = java.nio.ByteBuffer.allocate(frames * 4).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            for (i in 0 until frames) {
+                val bassWave = kotlin.math.sin(2.0 * kotlin.math.PI * 55.0 * i / 48000.0) * 18000.0
+                val vocalWave = kotlin.math.sin(2.0 * kotlin.math.PI * 1200.0 * i / 48000.0) * 6000.0
+                val s = (bassWave + vocalWave).toInt().coerceIn(-32767, 32767).toShort()
+                buf.putShort(s)
+                buf.putShort(s)
+            }
+            buf.flip()
+            processor.queueInput(buf)
+            val out = processor.output.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            assertEquals(frames * 4, out.remaining())
+            assertTrue("重低音 80% 时应自动启用负向防削波余量补偿", com.concept.music.service.AudioRhythmTelemetry.headroomGainDb < -0.5f)
+            assertTrue("实时音频律动遥测应捕获低频能量", com.concept.music.service.AudioRhythmTelemetry.bassEnergy > 0.02f)
+        } finally {
+            manager.resetCurrentPresetToDefault()
+            manager.setEnabled(false)
+        }
+    }
 }

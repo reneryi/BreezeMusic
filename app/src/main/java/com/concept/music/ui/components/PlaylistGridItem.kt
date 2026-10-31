@@ -3,9 +3,12 @@ package com.concept.music.ui.components
 import com.concept.music.ui.theme.softCardClickable
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material3.*
@@ -30,12 +33,13 @@ import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import kotlin.math.abs
 
 /**
- * 歌单网格项 (画廊式无外框设计：仅歌单封面为圆角，下方歌单名最多两行超出省略号，去除重复的曲目数副标题)
+ * 歌单网格项 (画廊式无外框设计：仅歌单封面为圆角，下方歌单名最多两行超出省略号，支持已收藏快捷取消徽标)
  */
 @Composable
 fun PlaylistGridItem(
     playlist: Playlist,
     onClick: () -> Unit,
+    onUncollectClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val accentColor = when (abs(playlist.title.hashCode()) % 4) {
@@ -83,7 +87,32 @@ fun PlaylistGridItem(
                 )
             }
 
-            if (playlist.playCount.isNotEmpty()) {
+            if (onUncollectClick != null && playlist.isFavorite && !playlist.isCreatedByMe) {
+                Surface(
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.48f),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onUncollectClick)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Rounded.BookmarkAdded,
+                            contentDescription = "取消收藏",
+                            tint = Color.White,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
+            }
+
+            val badgeText = playlist.playCount.ifBlank {
+                if (playlist.trackCount > 0) "${playlist.trackCount}首" else ""
+            }
+            if (badgeText.isNotEmpty()) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -97,14 +126,14 @@ fun PlaylistGridItem(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Rounded.Headphones,
+                            imageVector = if (playlist.playCount.isNotEmpty()) Icons.Rounded.Headphones else Icons.Rounded.LibraryMusic,
                             contentDescription = null,
                             tint = Color.White.copy(alpha = 0.9f),
                             modifier = Modifier.size(11.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = playlist.playCount,
+                            text = badgeText,
                             color = Color.White.copy(alpha = 0.95f),
                             fontSize = 10.5.sp,
                             fontWeight = FontWeight.SemiBold

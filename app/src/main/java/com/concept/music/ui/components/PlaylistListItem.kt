@@ -5,9 +5,11 @@ import com.concept.music.ui.theme.softClickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material3.*
@@ -38,6 +40,7 @@ import kotlin.math.abs
 fun PlaylistListItem(
     playlist: Playlist,
     onClick: () -> Unit,
+    onUncollectClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val accentColor = when {
@@ -122,8 +125,14 @@ fun PlaylistListItem(
                             .background(accentColor.copy(alpha = 0.75f))
                     )
                     Spacer(modifier = Modifier.width(6.dp))
+                    val countPart = if (playlist.trackCount > 0) "${playlist.trackCount} 首歌曲" else "精选歌单"
+                    val creatorPart = if (!playlist.isCreatedByMe && playlist.creatorName.isNotBlank() && playlist.creatorName != "未知") {
+                        " · ${playlist.creatorName}"
+                    } else {
+                        ""
+                    }
                     Text(
-                        text = "${playlist.trackCount} 首歌曲",
+                        text = countPart + creatorPart,
                         style = MaterialTheme.typography.bodySmall.copy(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 12.sp
@@ -134,12 +143,41 @@ fun PlaylistListItem(
                 }
             }
 
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                modifier = Modifier.size(18.dp)
-            )
+            if (onUncollectClick != null && playlist.isFavorite && !playlist.isCreatedByMe) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = accentColor.copy(alpha = 0.14f),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable(onClick = onUncollectClick)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.BookmarkAdded,
+                            contentDescription = "已收藏（点击取消收藏）",
+                            tint = accentColor,
+                            modifier = Modifier.size(13.5.dp)
+                        )
+                        Text(
+                            text = "已收藏",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accentColor
+                        )
+                    }
+                }
+            } else {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
 
         HorizontalDivider(

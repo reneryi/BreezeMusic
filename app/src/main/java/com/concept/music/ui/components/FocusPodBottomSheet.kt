@@ -59,6 +59,7 @@ import com.concept.music.ui.theme.softClickable
 @Composable
 fun FocusPodBottomSheet(
     onDismiss: () -> Unit,
+    onDismissStart: () -> Unit = {},
     onPlaySceneMusic: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -102,6 +103,7 @@ fun FocusPodBottomSheet(
 
     ConceptAnimatedOverlaySheet(
         onDismiss = onDismiss,
+        onDismissStart = onDismissStart,
         isLandscape = inLibraryPageCardMode,
         contentAlignment = if (inLibraryPageCardMode) Alignment.Center else Alignment.BottomCenter,
         zIndex = 88f

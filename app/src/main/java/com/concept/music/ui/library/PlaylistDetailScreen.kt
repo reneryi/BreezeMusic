@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -139,9 +140,23 @@ fun PlaylistDetailScreen(
         val matched = when (playlistId) {
             "like" -> playlists.firstOrNull { it.isLiked } ?: Playlist("like", "我喜欢的音乐", isLiked = true)
             "history" -> Playlist("history", "最近播放")
-            else -> playlists.firstOrNull {
-                it.id == playlistId || it.globalCollectionId == playlistId || it.listCreateListid == playlistId
-            } ?: lastKnownPlaylist?.copy(isFavorite = false)
+            else -> {
+                val directMatch = playlists.firstOrNull { it.matchesIdentifier(playlistId) }
+                val fallbackMatch = if (directMatch == null && lastKnownPlaylist != null) {
+                    playlists.firstOrNull { it.isSamePlaylistAs(lastKnownPlaylist) }
+                } else null
+                val chosen = directMatch ?: fallbackMatch
+                if (chosen != null && lastKnownPlaylist != null) {
+                    chosen.copy(
+                        coverUrl = chosen.coverUrl.ifBlank { lastKnownPlaylist!!.coverUrl },
+                        description = chosen.description.ifBlank { lastKnownPlaylist!!.description },
+                        creatorName = chosen.creatorName.ifBlank { lastKnownPlaylist!!.creatorName },
+                        trackCount = if (chosen.trackCount > 0) chosen.trackCount else lastKnownPlaylist!!.trackCount
+                    )
+                } else {
+                    chosen ?: lastKnownPlaylist?.copy(isFavorite = false)
+                }
+            }
         }
         if (matched != null && matched.coverUrl.isBlank() && songs.isNotEmpty()) {
             matched.copy(coverUrl = songs.firstOrNull()?.coverUrl.orEmpty())
@@ -150,7 +165,7 @@ fun PlaylistDetailScreen(
         }
     }
     LaunchedEffect(currentPlaylist) {
-        if (currentPlaylist != null && (lastKnownPlaylist == null || currentPlaylist.isFavorite)) {
+        if (currentPlaylist != null) {
             lastKnownPlaylist = currentPlaylist
         }
     }
@@ -275,11 +290,14 @@ fun PlaylistDetailScreen(
                 val curPlaylistPlayingHash = currentSong?.hash.orEmpty()
 
                 val onCollectToggle: () -> Unit = {
-                    if (currentPlaylist != null) {
-                        if (currentPlaylist.isFavorite) {
-                            showUncollectPlaylistDialog = true
+                    val targetPl = currentPlaylist
+                    if (targetPl != null) {
+                        if (targetPl.isFavorite) {
+                            viewModel.deletePlaylist(targetPl) { _, msg ->
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            }
                         } else {
-                            viewModel.collectPlaylist(currentPlaylist) { _, msg ->
+                            viewModel.collectPlaylist(targetPl) { _, msg ->
                                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                             }
                         }
@@ -1332,12 +1350,21 @@ private fun PlaylistSideHeroPane(
             if (isExternal && playlist != null) {
                 Spacer(modifier = Modifier.height(10.dp))
                 val isFavorite = playlist.isFavorite
+                val favScale by androidx.compose.animation.core.animateFloatAsState(
+                    targetValue = if (isFavorite) 1.02f else 1f,
+                    animationSpec = com.concept.music.ui.theme.ConceptMotion.expressiveSpring(),
+                    label = "sideHeroCollectScale"
+                )
                 Surface(
                     shape = RoundedCornerShape(18.dp),
-                    color = if (isFavorite) accentColor.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                    color = if (isFavorite) accentColor.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(38.dp)
+                        .height(40.dp)
+                        .graphicsLayer {
+                            scaleX = favScale
+                            scaleY = favScale
+                        }
                         .softCardClickable(
                             shape = RoundedCornerShape(18.dp),
                             onClick = onCollectClick
@@ -1350,15 +1377,15 @@ private fun PlaylistSideHeroPane(
                     ) {
                         Icon(
                             imageVector = if (isFavorite) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd,
-                            contentDescription = null,
+                            contentDescription = if (isFavorite) "已收藏（再次点击取消收藏）" else "收藏歌单",
                             tint = if (isFavorite) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(17.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isFavorite) "已收藏歌单" else "收藏歌单",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
+                            text = if (isFavorite) "已收藏" else "收藏",
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
                             color = if (isFavorite) accentColor else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -1512,25 +1539,46 @@ private fun PlaylistHeaderCard(
 
                     if (isExternal && playlist != null) {
                         val isFavorite = playlist.isFavorite
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                        val favScale by androidx.compose.animation.core.animateFloatAsState(
+                            targetValue = if (isFavorite) 1.04f else 1f,
+                            animationSpec = com.concept.music.ui.theme.ConceptMotion.expressiveSpring(),
+                            label = "headerCollectScale"
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(18.dp),
+                            color = if (isFavorite) {
+                                accentColor.copy(alpha = 0.18f)
+                            } else {
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                            },
                             modifier = Modifier
-                                .softClickable(onClick = onCollectClick)
-                                .padding(horizontal = 6.dp, vertical = 4.dp)
+                                .graphicsLayer {
+                                    scaleX = favScale
+                                    scaleY = favScale
+                                }
+                                .softCardClickable(
+                                    shape = RoundedCornerShape(18.dp),
+                                    onClick = onCollectClick
+                                )
                         ) {
-                            Icon(
-                                imageVector = if (isFavorite) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd,
-                                contentDescription = null,
-                                tint = if (isFavorite) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(17.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (isFavorite) "已收藏" else "收藏",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isFavorite) accentColor else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isFavorite) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd,
+                                    contentDescription = if (isFavorite) "已收藏（再次点击取消收藏）" else "收藏歌单",
+                                    tint = if (isFavorite) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.5.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = if (isFavorite) "已收藏" else "收藏",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isFavorite) accentColor else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
