@@ -1,6 +1,7 @@
 package com.concept.music.ui.library
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -60,6 +61,7 @@ import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.ConceptVioletAccent
 import com.concept.music.ui.theme.LocalIsDarkTheme
 import com.concept.music.ui.theme.VipGold
+import com.concept.music.ui.theme.conceptCategoryContentTransition
 import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.softCardClickable
@@ -67,7 +69,6 @@ import com.concept.music.ui.theme.ConceptCategoryTabItem
 import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.horizontalCategorySwipe
-import com.concept.music.ui.theme.rememberCategorySwitchGraphicModifier
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.LibraryViewModel
 import kotlinx.coroutines.launch
@@ -76,7 +77,8 @@ import kotlinx.coroutines.launch
  * 酷狗概念版第三方 - 我的页
  * - 将用户头像账号信息与「听歌等级与累计时长」深度融合为一张立体饱满的一体式数字身份名片卡
  * - 集成「概念胶囊工作台 · Focus Pod」（心流番茄钟 × 4路白噪音混音 × 心流场景伴音）
- * - 修复「已购」胶囊标签在小屏下被截断显示不全的问题
+ * - 移除收藏歌单列表项多余的「已收藏」按钮（收藏/取消收藏统一在歌单独立详情页内操作）
+ * - 将「自建 / 收藏 / 关注 / 已购」标题切换时下方内容的动画统一为与搜索结果页、新歌速递独立页面一致的 `conceptCategoryContentTransition` + `horizontalCategorySwipe` 效果，并保留左右横滑切换功能
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -128,7 +130,6 @@ fun LibraryScreen(
     var showVipCenterSheet by remember { mutableStateOf(false) }
     var showFocusPodSheet by remember { mutableStateOf(false) }
     var isLibrarySubSheetDismissing by remember { mutableStateOf(false) }
-    var playlistPendingUncollect by remember { mutableStateOf<com.concept.music.data.model.Playlist?>(null) }
     val focusPodState by FocusPodManager.state.collectAsState()
 
     LaunchedEffect(isOverlayOpen) {
@@ -189,6 +190,16 @@ fun LibraryScreen(
     val profile = account.profile
     val isLoggedIn = account.auth == AuthState.READY
     val elevatedColor = conceptElevatedSurfaceColor()
+
+    val switchAssetTab: (Int) -> Unit = { idx ->
+        val clamped = idx.coerceIn(0, 3)
+        viewModel.setSelectedAssetTab(clamped)
+        if (clamped == 2 && isLoggedIn && followedArtists.isEmpty()) {
+            viewModel.refreshFollowedArtists()
+        } else if (clamped == 3 && isLoggedIn && purchasedSongs.isEmpty() && purchasedAlbums.isEmpty()) {
+            viewModel.refreshPurchasedAssets()
+        }
+    }
 
     ConceptStageBackground(
         modifier = modifier
@@ -393,12 +404,7 @@ fun LibraryScreen(
                         selectedKey = selectedTab.toString(),
                         onSelectTab = { keyStr ->
                             val idx = keyStr.toIntOrNull() ?: 0
-                            viewModel.setSelectedAssetTab(idx)
-                            if (idx == 2 && isLoggedIn && followedArtists.isEmpty()) {
-                                viewModel.refreshFollowedArtists()
-                            } else if (idx == 3 && isLoggedIn && purchasedSongs.isEmpty() && purchasedAlbums.isEmpty()) {
-                                viewModel.refreshPurchasedAssets()
-                            }
+                            switchAssetTab(idx)
                         },
                         itemSpacing = 20.dp,
                         fontSize = 15.5.sp,
@@ -484,433 +490,418 @@ fun LibraryScreen(
             }
 
             // 6. 开放式无框音乐资产内容流 (自建歌单 / 收藏歌单 / 关注歌手 / 已购资产)
-            when (selectedTab) {
-                0, 1 -> {
-                    val currentDisplayPlaylists = if (selectedTab == 0) myPlaylists else favoritePlaylists
-                    if (currentDisplayPlaylists.isEmpty()) {
-                        item {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 40.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = if (selectedTab == 0) "暂未创建自定义歌单" else "暂无收藏的歌单",
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                )
-                                if (selectedTab == 0) {
-                                    Spacer(modifier = Modifier.height(14.dp))
-                                    TextButton(onClick = {
-                                        if (account.currentId == null) {
-                                            Toast.makeText(context, "请先登录酷狗账号", Toast.LENGTH_SHORT).show()
-                                            onLogin()
-                                        } else {
-                                            showCreateDialog = true
+            // 与搜索结果页（SearchScreen）及新歌速递独立页统一：采用 AnimatedContent + conceptCategoryContentTransition + horizontalCategorySwipe
+            item(key = "lib_asset_content_stage", contentType = "lib_asset_content_stage") {
+                AnimatedContent(
+                    targetState = selectedTab,
+                    transitionSpec = {
+                        val direction = if (targetState >= initialState) 1 else -1
+                        conceptCategoryContentTransition(direction)
+                    },
+                    label = "libraryAssetTabContentTransition",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalCategorySwipe(
+                            currentIndex = selectedTab,
+                            itemCount = 4,
+                            onSelectIndex = { nextIdx -> switchAssetTab(nextIdx) }
+                        )
+                ) { activeTab ->
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        when (activeTab) {
+                            0, 1 -> {
+                                val currentDisplayPlaylists = if (activeTab == 0) myPlaylists else favoritePlaylists
+                                if (currentDisplayPlaylists.isEmpty()) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 40.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(
+                                            text = if (activeTab == 0) "暂未创建自定义歌单" else "暂无收藏的歌单",
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        )
+                                        if (activeTab == 0) {
+                                            Spacer(modifier = Modifier.height(14.dp))
+                                            TextButton(onClick = {
+                                                if (account.currentId == null) {
+                                                    Toast.makeText(context, "请先登录酷狗账号", Toast.LENGTH_SHORT).show()
+                                                    onLogin()
+                                                } else {
+                                                    showCreateDialog = true
+                                                }
+                                            }) {
+                                                Icon(
+                                                    imageVector = Icons.Rounded.Add,
+                                                    contentDescription = null,
+                                                    tint = ConceptPrimary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text("新建歌单", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = ConceptPrimary)
+                                            }
                                         }
-                                    }) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Add,
-                                            contentDescription = null,
-                                            tint = ConceptPrimary,
-                                            modifier = Modifier.size(16.dp)
+                                    }
+                                } else if (!isGridView) {
+                                    currentDisplayPlaylists.forEach { pl ->
+                                        val targetNavId = pl.id.ifBlank { pl.globalCollectionId.ifBlank { pl.listCreateGid } }
+                                        PlaylistListItem(
+                                            playlist = pl,
+                                            onClick = { if (targetNavId.isNotBlank()) onOpenPlaylist(targetNavId) }
                                         )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text("新建歌单", fontSize = 13.5.sp, fontWeight = FontWeight.Bold, color = ConceptPrimary)
                                     }
-                                }
-                            }
-                        }
-                    } else if (!isGridView) {
-                        itemsIndexed(
-                            items = currentDisplayPlaylists,
-                            key = { idx, pl -> "pl_list_${pl.id}_${pl.listId}_$idx" },
-                            contentType = { _, _ -> "playlist_list_item" }
-                        ) { _, pl ->
-                            val targetNavId = pl.id.ifBlank { pl.globalCollectionId.ifBlank { pl.listCreateGid } }
-                            PlaylistListItem(
-                                playlist = pl,
-                                onClick = { if (targetNavId.isNotBlank()) onOpenPlaylist(targetNavId) },
-                                onUncollectClick = if (selectedTab == 1 && pl.isFavorite && !pl.isCreatedByMe) {
-                                    { playlistPendingUncollect = pl }
-                                } else null
-                            )
-                        }
-                    } else {
-                        val chunked = currentDisplayPlaylists.chunked(2)
-                        itemsIndexed(
-                            items = chunked,
-                            key = { idx, row -> "pl_grid_${row.first().id}_$idx" },
-                            contentType = { _, _ -> "playlist_grid_row" }
-                        ) { _, rowItems ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 6.dp),
-                                horizontalArrangement = Arrangement.spacedBy(14.dp)
-                            ) {
-                                rowItems.forEach { pl ->
-                                    val targetNavId = pl.id.ifBlank { pl.globalCollectionId.ifBlank { pl.listCreateGid } }
-                                    PlaylistGridItem(
-                                        playlist = pl,
-                                        onClick = { if (targetNavId.isNotBlank()) onOpenPlaylist(targetNavId) },
-                                        onUncollectClick = if (selectedTab == 1 && pl.isFavorite && !pl.isCreatedByMe) {
-                                            { playlistPendingUncollect = pl }
-                                        } else null,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                                if (rowItems.size == 1) {
-                                    Spacer(modifier = Modifier.weight(1f))
-                                }
-                            }
-                        }
-                    }
-                }
-                2 -> {
-                    // 关注歌手列表（无外框开放式行排版 + 极光薄荷绿点缀）
-                    if (followedArtists.isEmpty()) {
-                        item {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 40.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Text(
-                                    text = if (isLoggedIn) "暂未获取到已关注的歌手" else "请先登录同步关注的歌手",
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                )
-                                if (isLoggedIn) {
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    var followSyncSpin by remember { mutableIntStateOf(0) }
-                                    TextButton(onClick = {
-                                        followSyncSpin += 1
-                                        viewModel.refreshFollowedArtists()
-                                    }) {
-                                        ConceptFluidRefreshIcon(
-                                            tint = ConceptMintAccent,
-                                            isRefreshing = libraryLoading,
-                                            spinTrigger = followSyncSpin,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("重新同步", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ConceptMintAccent)
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        itemsIndexed(
-                            items = followedArtists,
-                            key = { idx, a -> "artist_${a.id}_${a.name}_$idx" },
-                            contentType = { _, _ -> "followed_artist_item" }
-                        ) { _, artist ->
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .softClickable {
-                                        if (artist.id.isNotBlank()) onOpenArtist(artist.id)
-                                    }
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 10.dp, horizontal = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    val artistAvatarModel = rememberOptimizedAsyncImageModel(rawUrl = artist.avatarUrl, sizePx = 156, targetCdnSize = "150")
-                                    if (artistAvatarModel != null) {
-                                        AsyncImage(
-                                            model = artistAvatarModel,
-                                            contentDescription = artist.name,
-                                            contentScale = ContentScale.Crop,
-                                            filterQuality = FilterQuality.Low,
+                                } else {
+                                    val chunked = currentDisplayPlaylists.chunked(2)
+                                    chunked.forEach { rowItems ->
+                                        Row(
                                             modifier = Modifier
-                                                .size(54.dp)
-                                                .clip(CircleShape)
-                                                .background(elevatedColor)
-                                        )
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(54.dp)
-                                                .clip(CircleShape)
-                                                .background(ConceptMintAccent.copy(alpha = 0.16f)),
-                                            contentAlignment = Alignment.Center
+                                                .fillMaxWidth()
+                                                .padding(vertical = 6.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(14.dp)
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Rounded.Person,
-                                                contentDescription = null,
-                                                tint = ConceptMintAccent,
-                                                modifier = Modifier.size(26.dp)
+                                            rowItems.forEach { pl ->
+                                                val targetNavId = pl.id.ifBlank { pl.globalCollectionId.ifBlank { pl.listCreateGid } }
+                                                PlaylistGridItem(
+                                                    playlist = pl,
+                                                    onClick = { if (targetNavId.isNotBlank()) onOpenPlaylist(targetNavId) },
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                            }
+                                            if (rowItems.size == 1) {
+                                                Spacer(modifier = Modifier.weight(1f))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            2 -> {
+                                // 关注歌手列表（无外框开放式行排版 + 极光薄荷绿点缀）
+                                if (followedArtists.isEmpty()) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 40.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(
+                                            text = if (isLoggedIn) "暂未获取到已关注的歌手" else "请先登录同步关注的歌手",
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        )
+                                        if (isLoggedIn) {
+                                            Spacer(modifier = Modifier.height(10.dp))
+                                            var followSyncSpin by remember { mutableIntStateOf(0) }
+                                            TextButton(onClick = {
+                                                followSyncSpin += 1
+                                                viewModel.refreshFollowedArtists()
+                                            }) {
+                                                ConceptFluidRefreshIcon(
+                                                    tint = ConceptMintAccent,
+                                                    isRefreshing = libraryLoading,
+                                                    spinTrigger = followSyncSpin,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text("重新同步", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ConceptMintAccent)
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    followedArtists.forEach { artist ->
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .softClickable {
+                                                    if (artist.id.isNotBlank()) onOpenArtist(artist.id)
+                                                }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 10.dp, horizontal = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                val artistAvatarModel = rememberOptimizedAsyncImageModel(rawUrl = artist.avatarUrl, sizePx = 156, targetCdnSize = "150")
+                                                if (artistAvatarModel != null) {
+                                                    AsyncImage(
+                                                        model = artistAvatarModel,
+                                                        contentDescription = artist.name,
+                                                        contentScale = ContentScale.Crop,
+                                                        filterQuality = FilterQuality.Low,
+                                                        modifier = Modifier
+                                                            .size(54.dp)
+                                                            .clip(CircleShape)
+                                                            .background(elevatedColor)
+                                                    )
+                                                } else {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(54.dp)
+                                                            .clip(CircleShape)
+                                                            .background(ConceptMintAccent.copy(alpha = 0.16f)),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Rounded.Person,
+                                                            contentDescription = null,
+                                                            tint = ConceptMintAccent,
+                                                            modifier = Modifier.size(26.dp)
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.width(14.dp))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = artist.name,
+                                                        color = MaterialTheme.colorScheme.onSurface,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 15.sp,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    val subText = buildList {
+                                                        if (artist.songCount > 0) add("单曲 ${artist.songCount} 首")
+                                                        if (artist.fansCount > 0) add("粉丝 ${artist.fansCount}")
+                                                    }.joinToString(" · ").ifBlank { "已关注歌手" }
+                                                    Spacer(modifier = Modifier.height(3.dp))
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(5.dp)
+                                                                .clip(CircleShape)
+                                                                .background(ConceptMintAccent)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text(
+                                                            text = subText,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            fontSize = 12.sp
+                                                        )
+                                                    }
+                                                }
+                                                Icon(
+                                                    imageVector = Icons.Rounded.ChevronRight,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                            HorizontalDivider(
+                                                modifier = Modifier.padding(start = 72.dp, end = 4.dp),
+                                                thickness = 0.5.dp,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
                                             )
                                         }
                                     }
-                                    Spacer(modifier = Modifier.width(14.dp))
-                                    Column(modifier = Modifier.weight(1f)) {
+                                }
+                            }
+                            3 -> {
+                                // 已购专辑与单曲列表（无外框开放式行排版 + 琥珀金点缀）
+                                if (purchasedAlbums.isEmpty() && purchasedSongs.isEmpty()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 40.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
                                         Text(
-                                            text = artist.name,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 15.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            text = if (isLoggedIn) "暂无已购数字专辑或单曲" else "请先登录同步已购音乐资产",
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         )
-                                        val subText = buildList {
-                                            if (artist.songCount > 0) add("单曲 ${artist.songCount} 首")
-                                            if (artist.fansCount > 0) add("粉丝 ${artist.fansCount}")
-                                        }.joinToString(" · ").ifBlank { "已关注歌手" }
-                                        Spacer(modifier = Modifier.height(3.dp))
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                    }
+                                } else {
+                                    if (purchasedAlbums.isNotEmpty()) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp, start = 4.dp)
+                                        ) {
                                             Box(
                                                 modifier = Modifier
-                                                    .size(5.dp)
+                                                    .width(3.dp)
+                                                    .height(13.dp)
                                                     .clip(CircleShape)
-                                                    .background(ConceptMintAccent)
+                                                    .background(VipGold)
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = subText,
+                                                text = "数字专辑 · ${purchasedAlbums.size}",
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                fontSize = 12.sp
-                                            )
-                                        }
-                                    }
-                                    Icon(
-                                        imageVector = Icons.Rounded.ChevronRight,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(start = 72.dp, end = 4.dp),
-                                    thickness = 0.5.dp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
-                                )
-                            }
-                        }
-                    }
-                }
-                3 -> {
-                    // 已购专辑与单曲列表（无外框开放式行排版 + 琥珀金点缀）
-                    if (purchasedAlbums.isEmpty() && purchasedSongs.isEmpty()) {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 40.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = if (isLoggedIn) "暂无已购数字专辑或单曲" else "请先登录同步已购音乐资产",
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                )
-                            }
-                        }
-                    } else {
-                        if (purchasedAlbums.isNotEmpty()) {
-                            item {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp, start = 4.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(3.dp)
-                                            .height(13.dp)
-                                            .clip(CircleShape)
-                                            .background(VipGold)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "数字专辑 · ${purchasedAlbums.size}",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                            itemsIndexed(
-                                items = purchasedAlbums,
-                                key = { idx, a -> "album_${a.albumId}_$idx" },
-                                contentType = { _, _ -> "purchased_album_item" }
-                            ) { _, album ->
-                                val albumThumbModel = rememberOptimizedAsyncImageModel(rawUrl = album.coverUrl, sizePx = 156, targetCdnSize = "150")
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .softClickable {
-                                            if (album.albumId.isNotBlank()) onOpenAlbum(album.albumId)
-                                        }
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 10.dp, horizontal = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        AsyncImage(
-                                            model = albumThumbModel ?: album.coverUrl,
-                                            contentDescription = album.albumName,
-                                            contentScale = ContentScale.Crop,
-                                            filterQuality = FilterQuality.Low,
-                                            modifier = Modifier
-                                                .size(56.dp)
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(elevatedColor)
-                                        )
-                                        Spacer(modifier = Modifier.width(14.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = album.albumName,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 15.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Spacer(modifier = Modifier.height(3.dp))
-                                            val countSuffix = if (album.songCount > 0) " · ${album.songCount} 首" else ""
-                                            Text(
-                                                text = "${album.singerName}$countSuffix",
-                                                color = if (isDark) VipGold else Color(0xFFB87900),
                                                 fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium
+                                                fontWeight = FontWeight.Bold
                                             )
                                         }
-                                        Icon(
-                                            imageVector = Icons.Rounded.ChevronRight,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(start = 74.dp, end = 4.dp),
-                                        thickness = 0.5.dp,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
-                                    )
-                                }
-                            }
-                        }
-
-                        if (purchasedSongs.isNotEmpty()) {
-                            item {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp, start = 4.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(3.dp)
-                                            .height(13.dp)
-                                            .clip(CircleShape)
-                                            .background(ConceptPrimary)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "已购单曲 · ${purchasedSongs.size}",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                            val allPurchasedSongs = purchasedSongs.mapNotNull { it.song }
-                            itemsIndexed(
-                                items = purchasedSongs,
-                                key = { idx, s -> "song_${s.songId}_${s.songName}_$idx" },
-                                contentType = { _, _ -> "purchased_song_item" }
-                            ) { _, item ->
-                                val s = item.song
-                                val songThumbModel = rememberOptimizedAsyncImageModel(rawUrl = s?.coverUrl, sizePx = 144, targetCdnSize = "150")
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .softClickable {
-                                            s?.let { songObj ->
-                                                onPlaySong(songObj, allPurchasedSongs.ifEmpty { listOf(songObj) })
+                                        purchasedAlbums.forEach { album ->
+                                            val albumThumbModel = rememberOptimizedAsyncImageModel(rawUrl = album.coverUrl, sizePx = 156, targetCdnSize = "150")
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .softClickable {
+                                                        if (album.albumId.isNotBlank()) onOpenAlbum(album.albumId)
+                                                    }
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 10.dp, horizontal = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    AsyncImage(
+                                                        model = albumThumbModel ?: album.coverUrl,
+                                                        contentDescription = album.albumName,
+                                                        contentScale = ContentScale.Crop,
+                                                        filterQuality = FilterQuality.Low,
+                                                        modifier = Modifier
+                                                            .size(56.dp)
+                                                            .clip(RoundedCornerShape(14.dp))
+                                                            .background(elevatedColor)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(14.dp))
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = album.albumName,
+                                                            color = MaterialTheme.colorScheme.onSurface,
+                                                            fontWeight = FontWeight.Bold,
+                                                            fontSize = 15.sp,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Spacer(modifier = Modifier.height(3.dp))
+                                                        val countSuffix = if (album.songCount > 0) " · ${album.songCount} 首" else ""
+                                                        Text(
+                                                            text = "${album.singerName}$countSuffix",
+                                                            color = if (isDark) VipGold else Color(0xFFB87900),
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Medium
+                                                        )
+                                                    }
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.ChevronRight,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                                HorizontalDivider(
+                                                    modifier = Modifier.padding(start = 74.dp, end = 4.dp),
+                                                    thickness = 0.5.dp,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                                                )
                                             }
                                         }
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 10.dp, horizontal = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        if (songThumbModel != null) {
-                                            AsyncImage(
-                                                model = songThumbModel,
-                                                contentDescription = item.songName,
-                                                contentScale = ContentScale.Crop,
-                                                filterQuality = FilterQuality.Low,
-                                                modifier = Modifier
-                                                    .size(50.dp)
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .background(elevatedColor)
-                                            )
-                                        } else {
+                                    }
+
+                                    if (purchasedSongs.isNotEmpty()) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(top = 12.dp, bottom = 4.dp, start = 4.dp)
+                                        ) {
                                             Box(
                                                 modifier = Modifier
-                                                    .size(50.dp)
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .background(ConceptPrimary.copy(alpha = 0.14f)),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Rounded.MusicNote,
-                                                    contentDescription = null,
-                                                    tint = ConceptPrimary,
-                                                    modifier = Modifier.size(22.dp)
-                                                )
-                                            }
-                                        }
-                                        Spacer(modifier = Modifier.width(14.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = item.songName,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 14.5.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                    .width(3.dp)
+                                                    .height(13.dp)
+                                                    .clip(CircleShape)
+                                                    .background(ConceptPrimary)
                                             )
-                                            Spacer(modifier = Modifier.height(3.dp))
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                if (s?.isHiRes == true) {
-                                                    BadgeTag(text = "Hi-Res", color = VipGold)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                } else if (s?.isLossless == true) {
-                                                    BadgeTag(text = "SQ", color = ConceptPrimary)
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                } else if (s?.quality == "320") {
-                                                    BadgeTag(text = "HQ", color = ConceptPrimary.copy(alpha = 0.85f))
-                                                    Spacer(modifier = Modifier.width(4.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "已购单曲 · ${purchasedSongs.size}",
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        val allPurchasedSongs = purchasedSongs.mapNotNull { it.song }
+                                        purchasedSongs.forEach { item ->
+                                            val s = item.song
+                                            val songThumbModel = rememberOptimizedAsyncImageModel(rawUrl = s?.coverUrl, sizePx = 144, targetCdnSize = "150")
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .softClickable {
+                                                        s?.let { songObj ->
+                                                            onPlaySong(songObj, allPurchasedSongs.ifEmpty { listOf(songObj) })
+                                                        }
+                                                    }
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 10.dp, horizontal = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    if (songThumbModel != null) {
+                                                        AsyncImage(
+                                                            model = songThumbModel,
+                                                            contentDescription = item.songName,
+                                                            contentScale = ContentScale.Crop,
+                                                            filterQuality = FilterQuality.Low,
+                                                            modifier = Modifier
+                                                                .size(50.dp)
+                                                                .clip(RoundedCornerShape(12.dp))
+                                                                .background(elevatedColor)
+                                                        )
+                                                    } else {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(50.dp)
+                                                                .clip(RoundedCornerShape(12.dp))
+                                                                .background(ConceptPrimary.copy(alpha = 0.14f)),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Rounded.MusicNote,
+                                                                contentDescription = null,
+                                                                tint = ConceptPrimary,
+                                                                modifier = Modifier.size(22.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                    Spacer(modifier = Modifier.width(14.dp))
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = item.songName,
+                                                            color = MaterialTheme.colorScheme.onSurface,
+                                                            fontWeight = FontWeight.Bold,
+                                                            fontSize = 14.5.sp,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Spacer(modifier = Modifier.height(3.dp))
+                                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                            if (s?.isHiRes == true) {
+                                                                BadgeTag(text = "Hi-Res", color = VipGold)
+                                                                Spacer(modifier = Modifier.width(4.dp))
+                                                            } else if (s?.isLossless == true) {
+                                                                BadgeTag(text = "SQ", color = ConceptPrimary)
+                                                                Spacer(modifier = Modifier.width(4.dp))
+                                                            } else if (s?.quality == "320") {
+                                                                BadgeTag(text = "HQ", color = ConceptPrimary.copy(alpha = 0.85f))
+                                                                Spacer(modifier = Modifier.width(4.dp))
+                                                            }
+                                                            Text(
+                                                                text = item.singerName,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                                fontSize = 12.sp,
+                                                                maxLines = 1,
+                                                                overflow = TextOverflow.Ellipsis
+                                                            )
+                                                        }
+                                                    }
                                                 }
-                                                Text(
-                                                    text = item.singerName,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    fontSize = 12.sp,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
+                                                HorizontalDivider(
+                                                    modifier = Modifier.padding(start = 68.dp, end = 4.dp),
+                                                    thickness = 0.5.dp,
+                                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
                                                 )
                                             }
                                         }
                                     }
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(start = 68.dp, end = 4.dp),
-                                        thickness = 0.5.dp,
-                                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
-                                    )
                                 }
                             }
                         }
@@ -1096,32 +1087,6 @@ fun LibraryScreen(
                 }
             )
         }
-    }
-
-    playlistPendingUncollect?.let { targetPl ->
-        AlertDialog(
-            onDismissRequest = { playlistPendingUncollect = null },
-            title = { Text("取消收藏歌单", fontWeight = FontWeight.Bold) },
-            text = { Text("确定要从我的收藏中移除「${targetPl.title}」吗？") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val plToRemove = targetPl
-                        playlistPendingUncollect = null
-                        viewModel.deletePlaylist(plToRemove) { _, msg ->
-                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                ) {
-                    Text("取消收藏", color = ConceptCoralAccent, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { playlistPendingUncollect = null }) {
-                    Text("保留")
-                }
-            }
-        )
     }
 
     if (showCreateDialog) {

@@ -64,7 +64,7 @@ import com.concept.music.ui.theme.ConceptStageBackground
 import com.concept.music.ui.theme.LocalConceptAdaptiveInfo
 import com.concept.music.ui.theme.conceptFloatingCardColor
 import com.concept.music.ui.theme.conceptSheetContainerColor
-import com.concept.music.ui.theme.horizontalCategorySwipe
+import com.concept.music.ui.theme.rememberCategorySwitchGraphicModifier
 import com.concept.music.ui.theme.softCardClickable
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.LibraryViewModel
@@ -288,6 +288,7 @@ fun PlaylistDetailScreen(
                 val latestFilteredAndSortedSongs by rememberUpdatedState(filteredAndSortedSongs)
                 val curPlaylistPlayingId = currentSong?.id
                 val curPlaylistPlayingHash = currentSong?.hash.orEmpty()
+                val sortSwitchAnimMod = rememberCategorySwitchGraphicModifier(sortMode.ordinal)
 
                 val onCollectToggle: () -> Unit = {
                     val targetPl = currentPlaylist
@@ -392,6 +393,7 @@ fun PlaylistDetailScreen(
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
+                                            .then(sortSwitchAnimMod)
                                             .padding(vertical = 48.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -430,7 +432,9 @@ fun PlaylistDetailScreen(
                                 if (isMultiSelectMode) {
                                     val songKey = song.selectionKey()
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .then(sortSwitchAnimMod),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Checkbox(
@@ -462,15 +466,17 @@ fun PlaylistDetailScreen(
                                         }
                                     }
                                 } else {
-                                    SongItemRow(
-                                        song = song,
-                                        orderIndex = index + 1,
-                                        isPlaying = isCurrentTrack,
-                                        onClick = {
-                                            onSongClick(song, latestFilteredAndSortedSongs)
-                                        },
-                                        onMoreClick = handleMore
-                                    )
+                                    Box(modifier = sortSwitchAnimMod) {
+                                        SongItemRow(
+                                            song = song,
+                                            orderIndex = index + 1,
+                                            isPlaying = isCurrentTrack,
+                                            onClick = {
+                                                onSongClick(song, latestFilteredAndSortedSongs)
+                                            },
+                                            onMoreClick = handleMore
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -571,6 +577,7 @@ fun PlaylistDetailScreen(
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
+                                            .then(sortSwitchAnimMod)
                                             .padding(vertical = 40.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
@@ -610,7 +617,9 @@ fun PlaylistDetailScreen(
                                 if (isMultiSelectMode) {
                                     val songKey = song.selectionKey()
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .then(sortSwitchAnimMod),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Checkbox(
@@ -642,15 +651,17 @@ fun PlaylistDetailScreen(
                                         }
                                     }
                                 } else {
-                                    SongItemRow(
-                                        song = song,
-                                        orderIndex = index + 1,
-                                        isPlaying = isCurrentTrack,
-                                        onClick = {
-                                            onSongClick(song, latestFilteredAndSortedSongs)
-                                        },
-                                        onMoreClick = handleMore
-                                    )
+                                    Box(modifier = sortSwitchAnimMod) {
+                                        SongItemRow(
+                                            song = song,
+                                            orderIndex = index + 1,
+                                            isPlaying = isCurrentTrack,
+                                            onClick = {
+                                                onSongClick(song, latestFilteredAndSortedSongs)
+                                            },
+                                            onMoreClick = handleMore
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1110,14 +1121,7 @@ private fun PlaylistToolbarSection(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 2.dp)
-                .horizontalCategorySwipe(
-                    currentIndex = sortMode.ordinal,
-                    itemCount = PlaylistSortMode.entries.size,
-                    onSelectIndex = { nextIdx ->
-                        PlaylistSortMode.entries.getOrNull(nextIdx)?.let { onSortModeChange(it) }
-                    }
-                ),
+                .padding(horizontal = 4.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {

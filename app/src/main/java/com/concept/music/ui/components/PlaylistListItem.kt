@@ -3,13 +3,10 @@ package com.concept.music.ui.components
 import com.concept.music.ui.theme.softClickable
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material3.*
@@ -18,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,13 +30,14 @@ import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import kotlin.math.abs
 
 /**
- * 歌单列表项 (开放式无框通透排版：去除独立圆角长方形卡片外壳，以留白、多彩微渐变封面与极细分割线营造开阔呼吸感)
+ * 歌单列表项 (开放式无框通透排版：去除独立圆角长方形卡片外壳，以留白、多彩微渐变封面与极细分割线营造开阔呼吸感；
+ * 列表项右侧统一显示轻量导航箭头，不显示冗余的「已收藏」按钮，收藏与取消收藏统一在歌单独立详情页内完成)
  */
 @Composable
 fun PlaylistListItem(
     playlist: Playlist,
     onClick: () -> Unit,
-    onUncollectClick: (() -> Unit)? = null,
+    @Suppress("UNUSED_PARAMETER") onUncollectClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val accentColor = when {
@@ -143,41 +140,12 @@ fun PlaylistListItem(
                 }
             }
 
-            if (onUncollectClick != null && playlist.isFavorite && !playlist.isCreatedByMe) {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = accentColor.copy(alpha = 0.14f),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(14.dp))
-                        .clickable(onClick = onUncollectClick)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.BookmarkAdded,
-                            contentDescription = "已收藏（点击取消收藏）",
-                            tint = accentColor,
-                            modifier = Modifier.size(13.5.dp)
-                        )
-                        Text(
-                            text = "已收藏",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = accentColor
-                        )
-                    }
-                }
-            } else {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                    modifier = Modifier.size(18.dp)
-                )
-            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                modifier = Modifier.size(18.dp)
+            )
         }
 
         HorizontalDivider(

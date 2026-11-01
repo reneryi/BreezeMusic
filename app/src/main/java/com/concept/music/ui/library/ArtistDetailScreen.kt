@@ -364,6 +364,13 @@ fun ArtistDetailScreen(
                 val latestFilteredArtistSongs by rememberUpdatedState(filteredSongs)
                 val curArtistPlayingId = currentSong?.id
                 val curArtistPlayingHash = currentSong?.hash.orEmpty()
+                val artistSongsAnimMod = rememberCategorySwitchGraphicModifier(
+                    selectedIndex = selectedTab * 10 + (if (sortMethod == "new") 1 else 0)
+                )
+                val artistAlbumsAnimMod = rememberCategorySwitchGraphicModifier(
+                    selectedIndex = selectedTab,
+                    applyMotionBlur = false
+                )
                 val showScrollToTop by remember(selectedTab, filteredSongs.size) {
                     derivedStateOf {
                         selectedTab == 0 && (
@@ -638,13 +645,15 @@ fun ArtistDetailScreen(
                                                 key = { idx, s -> "${s.id}_${s.hash}_$idx" },
                                                 contentType = { _, _ -> "song_row" }
                                             ) { index, song ->
-                                                SongItemRow(
-                                                    song = song,
-                                                    orderIndex = index + 1,
-                                                    isPlaying = curArtistPlayingId != null && (curArtistPlayingId == song.id || (curArtistPlayingHash.isNotEmpty() && curArtistPlayingHash.equals(song.hash, ignoreCase = true))),
-                                                    onClick = { onSongClick(song, latestFilteredArtistSongs) },
-                                                    onMoreClick = { onSongMoreClick(song) }
-                                                )
+                                                Box(modifier = artistSongsAnimMod) {
+                                                    SongItemRow(
+                                                        song = song,
+                                                        orderIndex = index + 1,
+                                                        isPlaying = curArtistPlayingId != null && (curArtistPlayingId == song.id || (curArtistPlayingHash.isNotEmpty() && curArtistPlayingHash.equals(song.hash, ignoreCase = true))),
+                                                        onClick = { onSongClick(song, latestFilteredArtistSongs) },
+                                                        onMoreClick = { onSongMoreClick(song) }
+                                                    )
+                                                }
                                             }
                                         }
                                         1 -> {
@@ -929,13 +938,15 @@ fun ArtistDetailScreen(
                                             key = { idx, s -> "${s.id}_${s.hash}_$idx" },
                                             contentType = { _, _ -> "song_row" }
                                         ) { index, song ->
-                                            SongItemRow(
-                                                song = song,
-                                                orderIndex = index + 1,
-                                                isPlaying = curArtistPlayingId != null && (curArtistPlayingId == song.id || (curArtistPlayingHash.isNotEmpty() && curArtistPlayingHash.equals(song.hash, ignoreCase = true))),
-                                                onClick = { onSongClick(song, latestFilteredArtistSongs) },
-                                                onMoreClick = { onSongMoreClick(song) }
-                                            )
+                                            Box(modifier = artistSongsAnimMod) {
+                                                SongItemRow(
+                                                    song = song,
+                                                    orderIndex = index + 1,
+                                                    isPlaying = curArtistPlayingId != null && (curArtistPlayingId == song.id || (curArtistPlayingHash.isNotEmpty() && curArtistPlayingHash.equals(song.hash, ignoreCase = true))),
+                                                    onClick = { onSongClick(song, latestFilteredArtistSongs) },
+                                                    onMoreClick = { onSongMoreClick(song) }
+                                                )
+                                            }
                                         }
                                     }
                                 }

@@ -3,12 +3,9 @@ package com.concept.music.ui.components
 import com.concept.music.ui.theme.softCardClickable
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material3.*
@@ -33,13 +30,13 @@ import com.concept.music.ui.theme.conceptElevatedSurfaceColor
 import kotlin.math.abs
 
 /**
- * 歌单网格项 (画廊式无外框设计：仅歌单封面为圆角，下方歌单名最多两行超出省略号，支持已收藏快捷取消徽标)
+ * 歌单网格项 (画廊式无外框设计：仅歌单封面为圆角，下方歌单名最多两行超出省略号，去除冗余已收藏按钮)
  */
 @Composable
 fun PlaylistGridItem(
     playlist: Playlist,
     onClick: () -> Unit,
-    onUncollectClick: (() -> Unit)? = null,
+    @Suppress("UNUSED_PARAMETER") onUncollectClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val accentColor = when (abs(playlist.title.hashCode()) % 4) {
@@ -85,28 +82,6 @@ fun PlaylistGridItem(
                     tint = accentColor,
                     modifier = Modifier.size(38.dp)
                 )
-            }
-
-            if (onUncollectClick != null && playlist.isFavorite && !playlist.isCreatedByMe) {
-                Surface(
-                    shape = CircleShape,
-                    color = Color.Black.copy(alpha = 0.48f),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .clickable(onClick = onUncollectClick)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Rounded.BookmarkAdded,
-                            contentDescription = "取消收藏",
-                            tint = Color.White,
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-                }
             }
 
             val badgeText = playlist.playCount.ifBlank {

@@ -132,9 +132,100 @@ data class ChangelogVersionItem(
     val moduleGroups: List<ChangelogModuleGroup> = emptyList()
 )
 
+/**
+ * 全量版本更新日志静态归档表（按发布版本号从新到旧显式固化）：
+ * - 严禁将任何历史条目硬编码为动态 `"v${BuildConfig.VERSION_NAME}"`，防止升级版本号时直接覆盖替换上一版本日志；
+ * - 每次发布新版本均在此列表顶部追加新的固定版本条目，完整保留 v1.0.0 起每一个历史版本的更新记录。
+ */
 internal val PROJECT_CHANGELOG_HISTORY = listOf(
     ChangelogVersionItem(
-        version = "v${BuildConfig.VERSION_NAME}",
+        version = "v1.3.2",
+        date = "2026-11-01",
+        tag = "正式版 · 我的页歌单与切换动效打磨、全量更新日志归档与极速检查更新",
+        summary = "移除「我的」页收藏歌单列表项与网格项冗余的「已收藏」按钮；将「我的」页分类标题切换与歌单详情页排序切换时下方内容的动画效果统一对齐「新歌速递」独立页和「搜索结果页」（「我的」页保留左右横滑切换分类，歌单页排序标题仅点击切换无左右横滑）；根除更新日志覆写旧版本的缺陷并补齐 v1.0.0 ~ v1.3.2 全量 8 个历史版本记录；重构检查更新为多通道并发竞速且仅精简展示新版本号",
+        highlights = listOf(
+            "「我的」页收藏歌单列表逻辑精简：移除「我的 -> 收藏」歌单列表项与网格项右侧多余的「已收藏」按钮（该分类下均为已收藏歌单，无需重复展示状态按钮），统一采用简洁右侧导航箭头，歌单收藏与取消收藏统一收敛于歌单独立详情页内",
+            "分类与排序标题切换内容动效全站统一：将「我的」页（自建 / 收藏 / 关注 / 已购）切换标题时下方内容的过渡动画统一为「新歌速递」独立页面与「搜索结果页」同款弹性滑移 + 动态虚化效果，并保留左右横滑手势切换分类；将歌单详情页内排序标题（默认顺序 / 歌名 A-Z / 歌手名 / 时长最长）切换时下方曲目列表的过渡动画统一为同款动效，同时移除排序栏的左右滑动切换手势",
+            "更新日志全量归档与防替换机制修复：根除首项绑定 BuildConfig.VERSION_NAME 及 ChangelogSubPageContent 强制覆写 index 0 导致旧版本（如 v1.3.0）被替换消失的缺陷；全量固化 v1.0.0、v1.0.1、v1.0.2、v1.1.0、v1.2.0、v1.3.0、v1.3.1、v1.3.2 共 8 个版本的完整日志，新增 resolveChangelogHistory 增量归档保障并修复日志卡片长标签挤压日期问题",
+            "在线检查更新多通道并发竞速与极简展示：将检查更新由 12 端点串行轮询重构为 supervisorScope + Channel 多源并发竞速（并行探测 GitHub Releases API 镜像、Web 302 重定向与 CDN 版本源，单路超时收敛至 2.2s~2.5s），响应速度大幅提升；发现新版本时仅清爽显示新版本号与下载按钮，不再直接输出原始 Markdown 更新内容"
+        ),
+        moduleGroups = listOf(
+            ChangelogModuleGroup(
+                moduleTitle = "一、「我的」页收藏歌单列表逻辑与视觉精简",
+                points = listOf(
+                    "移除 PlaylistListItem 与 PlaylistGridItem 在「我的 -> 收藏」列表下显示的「已收藏」按钮与二次确认弹窗，消除收藏分类下逐行重复提示「已收藏」的逻辑冗余",
+                    "统一「自建歌单」与「收藏歌单」列表项右侧为轻量导航箭头，收藏与取消收藏操作完全交由已完善的歌单独立详情页（PlaylistDetailScreen）承载"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "二、分类标题与歌单排序切换下方内容动效统一",
+                points = listOf(
+                    "将 LibraryScreen「自建 / 收藏 / 关注 / 已购」下方内容流统一为与 SearchScreen、NewSongExpressScreen 一致的 AnimatedContent + conceptCategoryContentTransition（配合 SizeTransform snap 消除 LazyColumn 高度抖动）+ horizontalCategorySwipe 动效，保留左右滑动切换分类标题功能",
+                    "为歌单详情页（PlaylistDetailScreen）「默认顺序 / 歌名 A-Z / 歌手名 / 时长最长」排序栏下方曲目列表接入同款 rememberCategorySwitchGraphicModifier 水平弹性滑移、缩放与动态虚化过渡，并移除排序栏上的 horizontalCategorySwipe 左右横滑手势"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "三、全版本更新日志防覆盖归档与卡片排版修复",
+                points = listOf(
+                    "移除 PROJECT_CHANGELOG_HISTORY 首项对 BuildConfig.VERSION_NAME 的动态引用及 ChangelogSubPageContent 对首项版本号的强制覆写，杜绝发版时新版本替换前一版本日志",
+                    "完整收录并恢复 v1.3.0、v1.3.1 及本次 v1.3.2 在内的全部 8 个历史发布版本日志，并提供 resolveChangelogHistory 增量前置兜底机制",
+                    "优化 ChangelogVersionAccordionCard 顶部标题栏布局，使版本号、发布日期与版本标签各自独立舒展展示，彻底解决长标签将日期挤出屏幕的问题"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "四、检查更新多源并发竞速与极简版本号呈现",
+                points = listOf(
+                    "重构 checkGitHubLatestRelease 为并行协程竞速模型，同时发起 GitHub API 镜像、Web /releases/latest 302 Location 头部探测与 Raw/jsDelivr 通道，任一通道命中更新或权威通道确认最新即刻取消其余慢速请求并火速返回",
+                    "精简 AboutAppSectionContent 中 UpdateCheckResult.HasUpdate 的展示卡片，仅显示「发现新版本：vX.Y.Z」与「前往下载更新」按钮，不再直接渲染冗长的原始 Markdown 文本"
+                )
+            )
+        )
+    ),
+    ChangelogVersionItem(
+        version = "v1.3.1",
+        date = "2026-10-31",
+        tag = "正式版 · 歌单双向收藏同步、64-bit 纯线性母带 DSP 与五款动态背景打磨",
+        summary = "深度对齐 KuGouMusicApi 实现歌单多源 ID 匹配与双向实时收藏/取消收藏同步；重构 64-bit 纯线性时不变 (Pure LTI Biquad) 母带级 DSP 消除开启音效电流声并支持参量均衡记忆槽单槽删除/全清；升级五款播放页动态背景（三色无封面流体极光、实时音频遥测律动光晕、播放↔暂停连续动量过渡）；完善抽屉与悬浮播放条/底栏丝滑退场联动及全项目模块化拆分",
+        highlights = listOf(
+            "歌单多源身份标识匹配与双向实时收藏同步：打通 specialId、global_collection_id、list_create_gid 与歌单标题多维标识匹配（matchesIdentifier / isSamePlaylistAs），深度对齐 KuGouMusicApi 的 /v2/collect_song_list 与 /v2/delete_song_list 接口，实现搜索歌单、推荐歌单与「我的」页收藏歌单的即时双向状态同步",
+            "64-bit 纯线性 LTI Biquad 母带级 DSP 与参量均衡记忆槽管理：重构 ConceptMasteringAudioProcessor 为零谐波失真（THD = 0.000%）纯线性双二阶滤波器网络与防重叠增益协同，彻底根除开启音效后的电流杂音与音量骤降；10 段参量均衡器（PEQ）自定义记忆槽新增单槽独立删除/重置（deleteCustomPeqSlot）与一键清空全部槽位（clearAllCustomPeqSlots）",
+            "播放页五款高定动态背景打磨与连续动量过渡：封面虚化统一采用 400×400 缓存规格彻底修复切歌时命中 24×24 小图变糊 BUG；流体极光升级为无封面残影的 24-bin 三色（accentTertiary）有机极光；律动光晕接入 AudioRhythmTelemetry 实时三频能量与节拍脉冲；引入 playMomentum 连续相位积分器实现播放与暂停切换时的平滑减速停驻与柔和加速恢复",
+            "抽屉弹窗与悬浮播放条/底栏丝滑联动及心流舱紧凑布局：ConceptAnimatedOverlaySheet 新增 onDismissStart 退场同步回调，配合 MainActivity 统一的 isMainSubSheetOpen 状态汇总与无跳变渲染层级，使打开/关闭抽屉时悬浮播放条与底部导航栏同步丝滑退场与浮现；心流舱竖屏抽屉改为 wrapContentHeight 自适应紧凑高度",
+            "歌词设置 2×3 主题网格、日推当前播放定位与模块化架构拆分：歌词高亮配色采用 chunked(3) 双行三列自适应网格防止四字主题名截断；每日推荐页新增「定位当前播放歌曲」平滑居中按钮；按高内聚低耦合原则将 DSP 处理器、播放页子组件、设置中心子页、榜单与新歌页拆分为独立模块文件"
+        ),
+        moduleGroups = listOf(
+            ChangelogModuleGroup(
+                moduleTitle = "一、歌单多源身份匹配与双向收藏/取消收藏同步",
+                points = listOf(
+                    "在 Playlist 模型中构建 matchesIdentifier 与 isSamePlaylistAs 多维身份识别算法，兼容酷狗搜索、推荐与云端曲库返回的多种 ID 格式",
+                    "LibraryViewModel 支持在外部歌单详情页点击「收藏 / 已收藏」时乐观即时切换状态并后台静默同步云端 listId，绝不清空当前详情页曲目列表"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "二、64-bit 纯线性 LTI 母带 DSP 与 PEQ 记忆槽增强",
+                points = listOf(
+                    "独立拆分 ConceptMasteringAudioProcessor，全链路采用 64-bit Direct Form I 线性双二阶滤波器与温和峰值余量校准，消除非线性谐波畸变器导致的滋滋电流声",
+                    "在 AudioEffectManager 与 AudioEffectDialog 中新增 deleteCustomPeqSlot 与 clearAllCustomPeqSlots，支持对 A / B / C 三个自定义均衡记忆槽独立删除或一键全清"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "三、五款动态播放背景升级与播放↔暂停连续动量",
+                points = listOf(
+                    "封面虚化（COVER_BLUR）统一使用 .size(400, 400) 封面请求，根除切歌瞬间模糊跳变；流体极光（FLUID_AURORA）提取主色、副色、第三色渲染纯粹三色流体极光",
+                    "律动光晕（RHYTHM_HALO）实时读取 AudioRhythmTelemetry 低中高三频能量同频律动；三大动态背景接入 playMomentum (880ms FastOutSlowInEasing) 实现暂停时平滑减速驻留"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "四、抽屉联动架构、界面细节精修与模块化拆分",
+                points = listOf(
+                    "ConceptAnimatedOverlaySheet 支持 onDismissStart 回调，MainActivity 汇总 isMainSubSheetOpen 驱动 MiniPlayerBar 与底栏同步退场/回显动画；心流舱采用 wrapContentHeight().heightIn(max = 640.dp) 消除底部留白",
+                    "歌词显示设置高亮样式改为 2×3 网格完整显示六大四字主题名；每日推荐页新增 playingDailySongIndex 浮动定位按钮；完成全项目 8 大核心模块文件解耦拆分"
+                )
+            )
+        )
+    ),
+    ChangelogVersionItem(
+        version = "v1.3.0",
         date = "2026-10-31",
         tag = "正式版 · 平板竖屏/横屏深度打磨与双端体验升级",
         summary = "平板端悬浮导航栏移至左侧垂直居中、电台预览双行大图排版、修复我的页歌单列表/网格切换与平板竖屏点击横屏播放 90° 全屏翻转；双端新增多歌手选择悬浮窗（播放页动态取色毛玻璃适配）、音效页复刻心流舱灵动滑动标题切换动画、新歌速递日期分组物理弹簧丝滑收折、修复随心听抽屉内更多弹窗层级遮挡及关注歌手取关 PKCS#1 加密报错",
@@ -248,7 +339,7 @@ internal val PROJECT_CHANGELOG_HISTORY = listOf(
             ChangelogModuleGroup(
                 moduleTitle = "二、全局 120fps 欠阻尼弹性物理动效与方向性运动虚化",
                 points = listOf(
-                    "基于播放队列抽屉丝滑范式提炼 ConceptMotion 五维物理弹簧体系（coplanarTabSpring / spatialPageSpring / spatialSheetSpring / categoryContentSpring / floatingPopupSpring，阻尼比 ζ = 0.75~0.82）",
+                    "基于播放队列抽屉丝滑范式提炼 ConceptMotion 五维物理弹簧体系（coplanarTabSpring / spatialPageSpring / spatialSheetSpring / categoryContentSpring / floatingPopupSpring，阻尼比 ζ = 0.72~0.82）",
                     "底部「发现 ↔ 我的」主页面切换重构为与底栏滑块同向的 100% 同平面左右弹性滑动，并在 Android 12+ 绘制期实时施加 RenderEffect 水平方向性运动虚化（applyDirectionalMotionBlur）",
                     "全项目 8 大底部抽屉与弹窗（歌曲菜单、技术参数、VIP 中心、专注舱、加入歌单、新建歌单、单曲下载、2K 歌词海报）全面接入零重组 ConceptAnimatedOverlaySheet 架构，通过 graphicsLayer 闭包实现满帧率弹性入场、跟手下拉阻尼与平滑退出",
                     "二级独立页面卡片进出升级为带微妙景深缩放的弹性推入与底层 -12% 视差联动；同平面分类标题下方内容流（新歌速递、排行榜、我的资产、歌手详情、搜索页）支持顺向弹性滑移与左右运动虚化；播放页倍速变调与睡眠定时悬浮面板接入三轴弹性展开"
@@ -396,6 +487,38 @@ internal val PROJECT_CHANGELOG_HISTORY = listOf(
         )
     )
 )
+
+/**
+ * 解析全版本更新日志列表（防覆盖增量归档机制）：
+ * - 绝不修改或替换 `PROJECT_CHANGELOG_HISTORY` 中已有的任何历史版本条目（修复此前 `index == 0` 强制 `copy(version = ...)` 导致旧版本日志被替换消失的问题）；
+ * - 若运行期传入的 [appVersionInfo] 版本号已存在于 `PROJECT_CHANGELOG_HISTORY` 中，直接原样返回全量历史列表；
+ * - 若未来新增发布版本号尚未写入静态表，则自动在列表最前方追加（prepend）新版本条目，同时 100% 保留此前所有历史版本记录。
+ */
+internal fun resolveChangelogHistory(
+    appVersionInfo: com.concept.music.ui.components.AppVersionInfo? = null
+): List<ChangelogVersionItem> {
+    if (appVersionInfo == null || PROJECT_CHANGELOG_HISTORY.isEmpty()) {
+        return PROJECT_CHANGELOG_HISTORY
+    }
+    val targetClean = extractCleanSemverString(appVersionInfo.displayVersion)
+    if (targetClean.isBlank()) {
+        return PROJECT_CHANGELOG_HISTORY
+    }
+    val alreadyRecorded = PROJECT_CHANGELOG_HISTORY.any { item ->
+        extractCleanSemverString(item.version) == targetClean
+    }
+    if (alreadyRecorded) {
+        return PROJECT_CHANGELOG_HISTORY
+    }
+    val prependedItem = ChangelogVersionItem(
+        version = "v$targetClean",
+        date = PROJECT_CHANGELOG_HISTORY.first().date,
+        tag = "正式版 · 常规体验优化与问题修复",
+        summary = "BreezeMusic v$targetClean 正式版发布，包含客户端体验打磨与稳定性提升。",
+        highlights = listOf("常规体验优化与已知问题修复，完整保留全部历史版本更新记录。")
+    )
+    return listOf(prependedItem) + PROJECT_CHANGELOG_HISTORY
+}
 
 
 /**
@@ -1057,7 +1180,7 @@ internal fun AboutAppSectionContent(
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
-                                        text = "查看 ${appVersionInfo.displayVersion} 版本更新内容与发版记录",
+                                        text = "查看 ${appVersionInfo.displayVersion} 及全部历史版本发版记录",
                                         style = MaterialTheme.typography.bodySmall,
                                         fontSize = 11.8.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1110,13 +1233,13 @@ internal fun AboutAppSectionContent(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (updateState is UpdateCheckResult.Checking) "正在连接 GitHub 检查更新..." else "检查更新",
+                            text = if (updateState is UpdateCheckResult.Checking) "正在快速检查更新..." else "检查更新",
                             fontSize = 13.5.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
 
-                    // 检查更新结果内联反馈
+                    // 检查更新结果内联反馈（发现新版本时仅显示新版本号与下载按钮，不再直接输出 Markdown 更新内容）
                     when (updateState) {
                         is UpdateCheckResult.Idle -> {}
                         is UpdateCheckResult.Checking -> {
@@ -1134,36 +1257,40 @@ internal fun AboutAppSectionContent(
                                 color = ConceptMintAccent.copy(alpha = 0.14f),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
                                     ) {
-                                        Text(
-                                            text = "发现新版本：${updateState.latestVersion}",
-                                            fontWeight = FontWeight.ExtraBold,
-                                            fontSize = 13.5.sp,
-                                            color = ConceptMintAccent
+                                        Icon(
+                                            imageVector = Icons.Rounded.SystemUpdateAlt,
+                                            contentDescription = null,
+                                            tint = ConceptMintAccent,
+                                            modifier = Modifier.size(18.dp)
                                         )
-                                        if (updateState.publishedAt.isNotBlank()) {
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column {
                                             Text(
-                                                text = updateState.publishedAt,
-                                                fontSize = 11.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                text = "发现新版本：${updateState.latestVersion}",
+                                                fontWeight = FontWeight.ExtraBold,
+                                                fontSize = 13.5.sp,
+                                                color = ConceptMintAccent
                                             )
+                                            if (updateState.publishedAt.isNotBlank()) {
+                                                Text(
+                                                    text = "发布日期：${updateState.publishedAt}",
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
                                         }
                                     }
-                                    Text(
-                                        text = updateState.releaseNotes,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontSize = 11.5.sp,
-                                        lineHeight = 17.sp
-                                    )
                                     Button(
                                         onClick = { openExternalUrl(context, updateState.downloadUrl) },
                                         shape = RoundedCornerShape(10.dp),
@@ -1171,7 +1298,7 @@ internal fun AboutAppSectionContent(
                                             containerColor = ConceptMintAccent,
                                             contentColor = Color.White
                                         ),
-                                        modifier = Modifier.align(Alignment.End)
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                                     ) {
                                         Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(15.dp))
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -1339,27 +1466,21 @@ internal fun AboutAppSectionContent(
 /**
  * 更新日志独立二级页面：
  * 按版本号分类归档展示，每个版本卡片均支持点击展开和收起详情。
- * 首个正式版 v1.0.0 汇总项目的全部核心架构与功能模块，后续随版本迭代按版本号追加。
+ * 采用 resolveChangelogHistory 确保每次发版都完整展示从 v1.0.0 到最新版本的全部历史更新日志，绝不覆盖替换旧版本。
  */
 @Composable
 internal fun ChangelogSubPageContent(
     appVersionInfo: com.concept.music.ui.components.AppVersionInfo? = null
 ) {
     val changelogItems = remember(appVersionInfo) {
-        if (appVersionInfo != null && PROJECT_CHANGELOG_HISTORY.isNotEmpty()) {
-            PROJECT_CHANGELOG_HISTORY.mapIndexed { index, item ->
-                if (index == 0) item.copy(version = appVersionInfo.displayVersion) else item
-            }
-        } else {
-            PROJECT_CHANGELOG_HISTORY
-        }
+        resolveChangelogHistory(appVersionInfo)
     }
     var expandedVersions by rememberSaveable(appVersionInfo?.displayVersion) {
         mutableStateOf(listOf(changelogItems.firstOrNull()?.version ?: "v${BuildConfig.VERSION_NAME}"))
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // 按版本号分类的可折叠版本卡片列表（移除顶部冗余横条介绍，直接呈现版本卡片）
+        // 按版本号分类的可折叠版本卡片列表（完整保留并展示所有历史版本）
         changelogItems.forEachIndexed { idx, item ->
             val isExpanded = expandedVersions.contains(item.version)
             ChangelogVersionAccordionCard(
@@ -1412,25 +1533,17 @@ private fun ChangelogVersionAccordionCard(
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 17.sp
                         ),
-                        color = if (isLatest) ConceptPrimary else MaterialTheme.colorScheme.onSurface
+                        color = if (isLatest) ConceptPrimary else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        softWrap = false
                     )
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = if (isLatest) ConceptPrimary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Text(
-                            text = item.tag,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isLatest) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.5.dp)
-                        )
-                    }
                     Text(
                         text = item.date,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp
+                        fontSize = 11.5.sp,
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
 
@@ -1460,6 +1573,21 @@ private fun ChangelogVersionAccordionCard(
             }
 
             Spacer(modifier = Modifier.height(6.dp))
+
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = if (isLatest) ConceptPrimary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Text(
+                    text = item.tag,
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isLatest) ConceptPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             Text(
                 text = item.summary,
@@ -1570,4 +1698,3 @@ private fun DisclaimerClauseBlock(title: String, content: String) {
         )
     }
 }
-

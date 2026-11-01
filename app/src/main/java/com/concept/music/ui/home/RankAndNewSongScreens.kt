@@ -86,6 +86,7 @@ import com.concept.music.ui.theme.ConceptCategoryTabItem
 import com.concept.music.ui.theme.ConceptFluidRefreshIcon
 import com.concept.music.ui.theme.conceptCategoryContentTransition
 import com.concept.music.ui.theme.horizontalCategorySwipe
+import com.concept.music.ui.theme.rememberCategorySwitchGraphicModifier
 import com.concept.music.ui.theme.ConceptSlidingCategoryTabs
 import com.concept.music.ui.theme.softClickable
 import com.concept.music.ui.viewmodel.HomeViewModel
@@ -226,6 +227,10 @@ fun NewSongExpressScreen(
                     .padding(innerPadding)
             ) {
             val nsAdaptive = com.concept.music.ui.theme.LocalConceptAdaptiveInfo.current
+            val periodSwitchAnimMod = rememberCategorySwitchGraphicModifier(
+                selectedIndex = curPeriodIdx,
+                applyMotionBlur = false
+            )
             LazyColumn(
                 state = newSongListState,
                 modifier = Modifier
@@ -278,6 +283,7 @@ fun NewSongExpressScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .then(periodSwitchAnimMod)
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -355,6 +361,7 @@ fun NewSongExpressScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .then(periodSwitchAnimMod)
                                 .softClickable { collapsedDates[pubDate] = !isCollapsed }
                                 .padding(horizontal = 16.dp)
                         ) {
@@ -430,7 +437,11 @@ fun NewSongExpressScreen(
                                 animationSpec = tween(durationMillis = 180, easing = ConceptMotion.EmphasizedAccelerate)
                             )
                         ) {
-                            Column(modifier = Modifier.fillMaxWidth()) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(periodSwitchAnimMod)
+                            ) {
                                 if (nsAdaptive.useTwoColumnSongOrCardGrid) {
                                     val pairs = remember(group.indexedSongs) { group.indexedSongs.chunked(2) }
                                     pairs.forEach { pair ->

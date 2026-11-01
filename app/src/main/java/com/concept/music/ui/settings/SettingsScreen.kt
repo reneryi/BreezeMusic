@@ -75,7 +75,10 @@ import com.concept.music.ui.viewmodel.MusicPlayerViewModel
 import com.concept.music.ui.viewmodel.PlayerBackgroundStyle
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.util.Locale
@@ -94,9 +97,9 @@ object ProjectLinks {
     const val GITHUB_RELEASES_URL = "https://github.com/reneryi/breezemusic/releases"
     const val GITHUB_LATEST_RELEASE_WEB_URL = "https://github.com/reneryi/breezemusic/releases/latest"
     const val GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/reneryi/breezemusic/releases/latest"
-    const val GITHUB_RELEASES_LIST_API = "https://api.github.com/repos/reneryi/breezemusic/releases?per_page=5"
+    const val GITHUB_RELEASES_LIST_API = "https://api.github.com/repos/reneryi/breezemusic/releases?per_page=1"
     const val GHPROXY_LATEST_RELEASE_API = "https://ghfast.top/https://api.github.com/repos/reneryi/breezemusic/releases/latest"
-    const val GHPROXY_RELEASES_LIST_API = "https://ghfast.top/https://api.github.com/repos/reneryi/breezemusic/releases?per_page=5"
+    const val GHPROXY_RELEASES_LIST_API = "https://ghfast.top/https://api.github.com/repos/reneryi/breezemusic/releases?per_page=1"
     const val GHPROXY_MIRROR_LATEST_RELEASE_API = "https://gh-proxy.com/https://api.github.com/repos/reneryi/breezemusic/releases/latest"
     const val GHPROXY_RAW_GRADLE_MAIN_URL = "https://ghfast.top/https://raw.githubusercontent.com/reneryi/breezemusic/main/app/build.gradle.kts"
     const val GHPROXY_RAW_GRADLE_MASTER_URL = "https://ghfast.top/https://raw.githubusercontent.com/reneryi/breezemusic/master/app/build.gradle.kts"
@@ -370,7 +373,7 @@ internal fun resolveUpdateCheckFromApiOrRedirect(
                     UpdateCheckResult.HasUpdate(
                         latestVersion = normalizedTag,
                         title = releaseTitle.ifBlank { normalizedTag },
-                        releaseNotes = releaseNotes.ifBlank { "包含体验优化与问题修复，建议更新至最新版本。" },
+                        releaseNotes = "",
                         downloadUrl = apkDownloadUrl,
                         publishedAt = publishedAt
                     )
@@ -402,7 +405,7 @@ internal fun resolveUpdateCheckFromApiOrRedirect(
             return UpdateCheckResult.HasUpdate(
                 latestVersion = normalizedTag,
                 title = "BreezeMusic $normalizedTag",
-                releaseNotes = "发现新版本 $normalizedTag，点击下方按钮可前往 GitHub Releases 查看更新详情并下载安装包。",
+                releaseNotes = "",
                 downloadUrl = redirectFinalUrl,
                 publishedAt = ""
             )
@@ -461,6 +464,18 @@ internal fun extractLatestVersionFromJsDelivrPackageJson(jsonText: String?): Str
     }.getOrNull()
 }
 
+private data class UpdateProbeOutcome(
+    val isAuthoritativeReleaseSource: Boolean,
+    val result: UpdateCheckResult?
+)
+
+/**
+ * 多通道并发竞速检查更新（Concurrent Racing Update Check）：
+ * - 告别此前 12 个端点逐一串行阻塞等待（耗时 8s~30s）的慢速轮询，采用 `supervisorScope` + `Channel` 并行发起探测；
+ * - 单通道连接/读取超时收敛至 2.2s/2.5s，优先通过零响应体的 Web 302 `Location` 重定向与轻量 Releases API 竞速探测；
+ * - 任一通道发现新版本（`HasUpdate`）立即取消其余全部慢速请求并毫秒级返回；
+ * - 任一权威 Release 通道确认已是最新（`UpToDate`）且完成双通道交叉核验后立即取消慢速尾请求并返回，大幅缩短检查更新等待时间。
+ */
 private suspend fun checkGitHubLatestRelease(
     localVersionName: String = BuildConfig.VERSION_NAME
 ): UpdateCheckResult = withContext(Dispatchers.IO) {
@@ -471,120 +486,147 @@ private suspend fun checkGitHubLatestRelease(
         extractCleanSemverString(BuildConfig.VERSION_NAME)
     }
     val fastClient = NetworkClientProvider.baseClient.newBuilder()
-        .connectTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
-        .callTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+        .connectTimeout(2200, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .readTimeout(2500, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .callTimeout(2800, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .build()
+    val noRedirectClient = fastClient.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
         .build()
 
-    var confirmedUpToDate: UpdateCheckResult.UpToDate? = null
     val cacheBuster = System.currentTimeMillis() / 15000L
 
-    // 1. 优先请求实时性最高的 GitHub Releases API（含国内免 VPN 加速镜像 + 官方直连 + Releases 列表接口）
-    // 关键修复：若某个镜像因缓存滞后返回 UpToDate 或 404，绝不提前短路退出，而是继续核实后续实时通道，只有发现 HasUpdate 时才立即返回！
-    val releaseApiEndpoints = listOf(
-        "${ProjectLinks.GHPROXY_LATEST_RELEASE_API}?_t=$cacheBuster",
-        "${ProjectLinks.GHPROXY_MIRROR_LATEST_RELEASE_API}?_t=$cacheBuster",
-        "${ProjectLinks.GITHUB_LATEST_RELEASE_API}?_t=$cacheBuster",
-        "${ProjectLinks.GHPROXY_RELEASES_LIST_API}&_t=$cacheBuster",
-        "${ProjectLinks.GITHUB_RELEASES_LIST_API}&_t=$cacheBuster"
-    )
-    for (apiEndpoint in releaseApiEndpoints) {
-        val result = runCatching {
-            val req = Request.Builder()
-                .url(apiEndpoint)
-                .header("Accept", "application/vnd.github+json, application/json")
-                .header("Cache-Control", "no-cache, no-store, max-age=0")
-                .header("Pragma", "no-cache")
-                .header("User-Agent", "BreezeMusic-Android/${BuildConfig.VERSION_NAME}")
-                .get()
-                .build()
-            fastClient.newCall(req).execute().use { resp ->
-                val code = resp.code
-                val body = if (resp.isSuccessful) resp.body?.string() else null
-                if (code in 200..299 && !body.isNullOrBlank()) {
-                    resolveUpdateCheckFromApiOrRedirect(
-                        localVersionName = cleanLocal,
-                        apiHttpCode = code,
-                        apiBodyJson = body,
-                        redirectFinalUrl = null
-                    )
-                } else {
-                    null
-                }
-            }
-        }.getOrNull()
-        if (result is UpdateCheckResult.HasUpdate) return@withContext result
-        if (result is UpdateCheckResult.UpToDate && confirmedUpToDate == null) {
-            confirmedUpToDate = result
+    fun probeReleaseApi(apiEndpoint: String): UpdateCheckResult? = runCatching {
+        val req = Request.Builder()
+            .url(apiEndpoint)
+            .header("Accept", "application/vnd.github+json, application/json")
+            .header("Cache-Control", "no-cache, no-store, max-age=0")
+            .header("Pragma", "no-cache")
+            .header("User-Agent", "BreezeMusic-Android/${BuildConfig.VERSION_NAME}")
+            .get()
+            .build()
+        fastClient.newCall(req).execute().use { resp ->
+            val code = resp.code
+            val body = if (resp.isSuccessful) resp.body?.string() else null
+            if (code in 200..299 && !body.isNullOrBlank()) {
+                resolveUpdateCheckFromApiOrRedirect(
+                    localVersionName = cleanLocal,
+                    apiHttpCode = code,
+                    apiBodyJson = body,
+                    redirectFinalUrl = null
+                )
+            } else null
         }
-    }
+    }.getOrNull()
 
-    // 2. 尝试 GitHub Web /releases/latest 实时 302 Location 重定向探测（零 API 限流、零 CDN 缓存延迟）
-    val noRedirectClient = fastClient.newBuilder().followRedirects(false).followSslRedirects(false).build()
-    for (webUrl in listOf(
-        "https://ghfast.top/${ProjectLinks.GITHUB_LATEST_RELEASE_WEB_URL}",
-        ProjectLinks.GITHUB_LATEST_RELEASE_WEB_URL
-    )) {
-        val webResult = runCatching {
-            val webReq = Request.Builder()
-                .url("$webUrl?_t=$cacheBuster")
-                .header("Accept", "text/html,application/xhtml+xml")
-                .header("Cache-Control", "no-cache")
-                .header("User-Agent", "Mozilla/5.0 (Linux; Android 15) BreezeMusic/${BuildConfig.VERSION_NAME}")
-                .get()
-                .build()
-            noRedirectClient.newCall(webReq).execute().use { webResp ->
-                val loc = webResp.header("Location").orEmpty()
-                val targetUrl = if (loc.contains("/releases/tag/")) loc else webResp.request.url.toString()
-                if (targetUrl.contains("/releases/tag/")) {
-                    resolveUpdateCheckFromApiOrRedirect(
-                        localVersionName = cleanLocal,
-                        apiHttpCode = 200,
-                        apiBodyJson = null,
-                        redirectFinalUrl = targetUrl
-                    )
-                } else null
-            }
-        }.getOrNull()
-        if (webResult is UpdateCheckResult.HasUpdate) return@withContext webResult
-        if (webResult is UpdateCheckResult.UpToDate && confirmedUpToDate == null) {
-            confirmedUpToDate = webResult
+    fun probeWebRedirect(webUrl: String): UpdateCheckResult? = runCatching {
+        val webReq = Request.Builder()
+            .url("$webUrl?_t=$cacheBuster")
+            .header("Accept", "text/html,application/xhtml+xml")
+            .header("Cache-Control", "no-cache")
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 15) BreezeMusic/${BuildConfig.VERSION_NAME}")
+            .get()
+            .build()
+        noRedirectClient.newCall(webReq).execute().use { webResp ->
+            val loc = webResp.header("Location").orEmpty()
+            val targetUrl = if (loc.contains("/releases/tag/")) loc else webResp.request.url.toString()
+            if (targetUrl.contains("/releases/tag/")) {
+                resolveUpdateCheckFromApiOrRedirect(
+                    localVersionName = cleanLocal,
+                    apiHttpCode = 200,
+                    apiBodyJson = null,
+                    redirectFinalUrl = targetUrl
+                )
+            } else null
         }
-    }
+    }.getOrNull()
 
-    // 3. 尝试国内免 VPN 直连的 GitHub Raw 镜像与 GCore / Fastly jsDelivr 源码分支 app/build.gradle.kts 版本号比对
-    for (cdnGradleUrl in listOf(
-        "${ProjectLinks.GHPROXY_RAW_GRADLE_MAIN_URL}?_t=$cacheBuster",
-        "${ProjectLinks.GHPROXY_RAW_GRADLE_MASTER_URL}?_t=$cacheBuster",
-        ProjectLinks.GCORE_JSDELIVR_GRADLE_URL,
-        ProjectLinks.FASTLY_JSDELIVR_GRADLE_URL
-    )) {
-        val cdnVer = runCatching {
-            val req = Request.Builder()
-                .url(cdnGradleUrl)
-                .header("Cache-Control", "no-cache")
-                .header("User-Agent", "BreezeMusic-Android/${BuildConfig.VERSION_NAME}")
-                .get()
-                .build()
-            fastClient.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) extractVersionFromGradleText(resp.body?.string()) else null
-            }
-        }.getOrNull()
+    fun probeRemoteGradle(cdnGradleUrl: String): UpdateCheckResult? = runCatching {
+        val req = Request.Builder()
+            .url(cdnGradleUrl)
+            .header("Cache-Control", "no-cache")
+            .header("User-Agent", "BreezeMusic-Android/${BuildConfig.VERSION_NAME}")
+            .get()
+            .build()
+        val cdnVer = fastClient.newCall(req).execute().use { resp ->
+            if (resp.isSuccessful) extractVersionFromGradleText(resp.body?.string()) else null
+        }
         if (!cdnVer.isNullOrBlank()) {
-            val gradleResult = resolveUpdateCheckFromApiOrRedirect(
+            resolveUpdateCheckFromApiOrRedirect(
                 localVersionName = cleanLocal,
                 apiHttpCode = 200,
                 apiBodyJson = null,
                 redirectFinalUrl = "${ProjectLinks.GITHUB_REPO_URL}/releases/tag/v${extractCleanSemverString(cdnVer)}"
             )
-            if (gradleResult is UpdateCheckResult.HasUpdate) return@withContext gradleResult
-            if (gradleResult is UpdateCheckResult.UpToDate && confirmedUpToDate == null) {
-                confirmedUpToDate = gradleResult
+        } else null
+    }.getOrNull()
+
+    var confirmedUpToDate: UpdateCheckResult.UpToDate? = null
+
+    val racedResult: UpdateCheckResult? = supervisorScope {
+        val channel = Channel<UpdateProbeOutcome>(Channel.UNLIMITED)
+        val probeSpecs = listOf<Pair<Boolean, () -> UpdateCheckResult?>>(
+            true to { probeWebRedirect("https://ghfast.top/${ProjectLinks.GITHUB_LATEST_RELEASE_WEB_URL}") },
+            true to { probeWebRedirect(ProjectLinks.GITHUB_LATEST_RELEASE_WEB_URL) },
+            true to { probeReleaseApi("${ProjectLinks.GHPROXY_LATEST_RELEASE_API}?_t=$cacheBuster") },
+            true to { probeReleaseApi("${ProjectLinks.GHPROXY_MIRROR_LATEST_RELEASE_API}?_t=$cacheBuster") },
+            true to { probeReleaseApi("${ProjectLinks.GITHUB_LATEST_RELEASE_API}?_t=$cacheBuster") },
+            false to { probeRemoteGradle("${ProjectLinks.GHPROXY_RAW_GRADLE_MAIN_URL}?_t=$cacheBuster") },
+            false to { probeRemoteGradle(ProjectLinks.GCORE_JSDELIVR_GRADLE_URL) }
+        )
+
+        val jobs = probeSpecs.map { (isAuthoritative, block) ->
+            async(Dispatchers.IO) {
+                val res = runCatching { block() }.getOrNull()
+                channel.trySend(UpdateProbeOutcome(isAuthoritativeReleaseSource = isAuthoritative, result = res))
             }
         }
+
+        var authoritativeUpToDateCount = 0
+        var validSuccessCount = 0
+        var immediateHasUpdate: UpdateCheckResult.HasUpdate? = null
+
+        for (i in 0 until probeSpecs.size) {
+            val outcome = channel.receive()
+            when (val r = outcome.result) {
+                is UpdateCheckResult.HasUpdate -> {
+                    immediateHasUpdate = r
+                    break
+                }
+                is UpdateCheckResult.UpToDate -> {
+                    if (confirmedUpToDate == null) confirmedUpToDate = r
+                    validSuccessCount++
+                    if (outcome.isAuthoritativeReleaseSource) {
+                        authoritativeUpToDateCount++
+                    }
+                    // 当至少有 1 个权威 Release 通道确认 UpToDate 且已有 2 个通道返回一致结果时，立即提前结束无需等待慢速节点超时
+                    if (authoritativeUpToDateCount >= 1 && validSuccessCount >= 2) {
+                        break
+                    }
+                }
+                else -> {}
+            }
+        }
+
+        jobs.forEach { it.cancel() }
+        channel.close()
+        immediateHasUpdate
     }
 
-    // 4. 兜底查询 jsDelivr Package 元数据接口（置于末尾，防止其 CDN 缓存延迟屏蔽刚发布的 GitHub Release）
+    if (racedResult is UpdateCheckResult.HasUpdate) return@withContext racedResult
+    if (confirmedUpToDate != null) return@withContext confirmedUpToDate!!
+
+    // 兜底查询 Releases 列表与 jsDelivr Package 元数据接口（仅当首批并发通道全部因极端网络受阻时触发）
+    for (fallbackApi in listOf(
+        "${ProjectLinks.GHPROXY_RELEASES_LIST_API}&_t=$cacheBuster",
+        "${ProjectLinks.GITHUB_RELEASES_LIST_API}&_t=$cacheBuster"
+    )) {
+        val listRes = probeReleaseApi(fallbackApi)
+        if (listRes is UpdateCheckResult.HasUpdate) return@withContext listRes
+        if (listRes is UpdateCheckResult.UpToDate) return@withContext listRes
+    }
+
     val jsdResult = runCatching {
         val req = Request.Builder()
             .url("${ProjectLinks.JSDELIVR_PACKAGE_API}?_t=$cacheBuster")
@@ -609,11 +651,9 @@ private suspend fun checkGitHubLatestRelease(
         }
     }.getOrNull()
     if (jsdResult is UpdateCheckResult.HasUpdate) return@withContext jsdResult
-    if (jsdResult is UpdateCheckResult.UpToDate && confirmedUpToDate == null) {
-        confirmedUpToDate = jsdResult
-    }
+    if (jsdResult is UpdateCheckResult.UpToDate) return@withContext jsdResult
 
-    confirmedUpToDate ?: UpdateCheckResult.UpToDate(
+    UpdateCheckResult.UpToDate(
         versionText = "v$cleanLocal",
         message = "您正在使用最新正式版，暂无可用更新"
     )

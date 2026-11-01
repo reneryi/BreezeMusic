@@ -6,11 +6,13 @@ import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.os.Build
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -578,19 +580,16 @@ fun Modifier.softCardClickable(
 }
 
 /**
- * 灵动多维分类内容切换过渡动画（入场与退场统一采用物理弹簧配速 + 顺向惯性微滑出 + 景深微缩放）：
- * 消除原本入场弹簧、退场 150ms 短促线性硬切造成的物理节奏割裂。
- */
-/**
  * 同平面灵动分类内容切换过渡动画（入场与退场统一采用欠阻尼弹性物理弹簧 `categoryContentSpring` + 同平面左右滑入滑出）：
- * 两个分类内容处于同一水平面，根据切换到左侧或右侧标题产生顺向弹性滑移与景深微缩放。
+ * 两个分类内容处于同一水平面，根据切换到左侧或右侧标题产生顺向弹性滑移与景深微缩放；
+ * 通过 `SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> snap() })` 避免在 `LazyColumn` 内引发高度弹簧震荡。
  */
 fun conceptCategoryContentTransition(direction: Int): ContentTransform {
     val dir = if (direction >= 0) 1 else -1
     val enterOrigin = TransformOrigin(if (dir >= 0) 0.72f else 0.28f, 0.50f)
     val exitOrigin = TransformOrigin(if (dir >= 0) 0.28f else 0.72f, 0.50f)
-    return (
-        slideInHorizontally(
+    return ContentTransform(
+        targetContentEnter = slideInHorizontally(
             animationSpec = ConceptMotion.categoryContentSpring()
         ) { fullWidth -> dir * (fullWidth / 4) } +
             scaleIn(
@@ -598,9 +597,8 @@ fun conceptCategoryContentTransition(direction: Int): ContentTransform {
                 transformOrigin = enterOrigin,
                 animationSpec = ConceptMotion.categoryContentSpring()
             ) +
-            fadeIn(animationSpec = tween(durationMillis = 220, easing = ConceptMotion.EmphasizedDecelerate))
-        ) togetherWith (
-        slideOutHorizontally(
+            fadeIn(animationSpec = tween(durationMillis = 220, easing = ConceptMotion.EmphasizedDecelerate)),
+        initialContentExit = slideOutHorizontally(
             animationSpec = ConceptMotion.categoryContentSpring()
         ) { fullWidth -> -dir * (fullWidth / 5) } +
             scaleOut(
@@ -608,21 +606,37 @@ fun conceptCategoryContentTransition(direction: Int): ContentTransform {
                 transformOrigin = exitOrigin,
                 animationSpec = ConceptMotion.categoryContentSpring()
             ) +
-            fadeOut(animationSpec = tween(durationMillis = 190, easing = ConceptMotion.EmphasizedAccelerate))
+            fadeOut(animationSpec = tween(durationMillis = 190, easing = ConceptMotion.EmphasizedAccelerate)),
+        sizeTransform = SizeTransform(
+            clip = false,
+            sizeAnimationSpec = { _, _ -> snap() }
         )
+    )
 }
 
 /**
- * 针对同平面分类内容流的 120fps GPU 弹性灵动切换 + 左右方向性运动虚化修饰符：
+ * 针对同平面分类内容流的 120fps GPU 弹性灵动切换 + 左右方向性运动虚化修饰符（与搜索结果页、新歌速递独立页同款动效）：
+ * - 同步首帧状态检测 (`selectedIndex != prevIndex`)，消除 `LaunchedEffect` 启动前的 1 帧闪烁；
  * - 将 `anim.value` 的读取严格封装在 `Modifier.graphicsLayer { ... }` 内部，切换分类时 0 次宿主重组；
- * - 使用 `ConceptMotion.categoryContentSpring()` 赋予同平面左右切换的弹性回弹灵动感；
- * - 根据左右切换速度实时通过 `applyDirectionalMotionBlur` 施加水平运动虚化，定格后自动归零。
+ * - 采用与 `conceptCategoryContentTransition` 完全一致的水平位移 (`dir * (fullWidth / 4)`)、水平缩放 (`0.94f -> 1f`)、
+ *   焦点中心 (`TransformOrigin(0.72f / 0.28f, 0.50f)`) 及 `ConceptMotion.categoryContentSpring()` 弹性配速；
+ * - 保持 `scaleY = 1f` 与 `translationY = 0f`，使 `LazyColumn` 内多行条目切换时严丝合缝如单一整体平面般同步滑移，绝不产生行间裂隙；
+ * - 根据切换进度实时通过 `applyDirectionalMotionBlur` 施加与 `horizontalCategorySwipe` 完全一致的水平方向运动虚化 (`14f * density`)，定格后自动归零。
  */
 @Composable
-fun rememberCategorySwitchGraphicModifier(selectedIndex: Int): Modifier {
+fun rememberCategorySwitchGraphicModifier(
+    selectedIndex: Int,
+    applyMotionBlur: Boolean = true
+): Modifier {
     var prevIndex by remember { mutableIntStateOf(selectedIndex) }
     var direction by remember { mutableIntStateOf(1) }
     val anim = remember { Animatable(1f) }
+    val isPendingSwitch = selectedIndex != prevIndex
+    val currentDir = if (isPendingSwitch) {
+        if (selectedIndex >= prevIndex) 1 else -1
+    } else {
+        direction
+    }
 
     LaunchedEffect(selectedIndex) {
         if (selectedIndex != prevIndex) {
@@ -637,20 +651,25 @@ fun rememberCategorySwitchGraphicModifier(selectedIndex: Int): Modifier {
     }
 
     return Modifier.graphicsLayer {
-        val rawP = anim.value
+        val rawP = if (selectedIndex != prevIndex) 0f else anim.value
         val clampedP = rawP.coerceIn(0f, 1f)
-        val dir = direction
+        val dir = currentDir
         val inv = 1f - rawP
         if (abs(inv) > 0.002f) {
-            translationX = dir * inv * 72f * (density / 2.75f).coerceAtLeast(0.8f)
+            val fullW = size.width.takeIf { it > 0f } ?: (360f * density)
+            translationX = dir * inv * (fullW * 0.25f)
             translationY = 0f
-            val s = (0.945f + 0.055f * rawP).coerceIn(0.88f, 1.035f)
+            val s = (0.94f + 0.06f * rawP).coerceIn(0.88f, 1.035f)
             scaleX = s
-            scaleY = s
-            alpha = (0.28f + 0.72f * clampedP).coerceIn(0f, 1f)
-            transformOrigin = TransformOrigin(if (dir >= 0) 0.68f else 0.32f, 0.45f)
-            val motionBlurX = (abs(inv) * 16f * density).coerceIn(0f, 22f)
-            applyDirectionalMotionBlur(blurX = motionBlurX, blurY = motionBlurX * 0.08f)
+            scaleY = 1f
+            alpha = (0.18f + 0.82f * clampedP).coerceIn(0f, 1f)
+            transformOrigin = TransformOrigin(if (dir >= 0) 0.72f else 0.28f, 0.50f)
+            if (applyMotionBlur) {
+                val motionBlurX = (abs(inv) * 14f * density).coerceIn(0f, 22f)
+                applyDirectionalMotionBlur(blurX = motionBlurX, blurY = motionBlurX * 0.08f)
+            } else {
+                applyDirectionalMotionBlur(blurX = 0f, blurY = 0f)
+            }
         } else {
             translationX = 0f
             translationY = 0f

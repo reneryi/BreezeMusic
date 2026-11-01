@@ -1130,10 +1130,10 @@ class UiAlignmentRegressionTest {
         assertTrue(issueTemplate.contains("### 复现步骤 (Steps to Reproduce)"))
         assertTrue(issueTemplate.contains("BreezeMusic v1.0.0 (Build 1)"))
 
-        assertEquals(6, com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.size)
+        assertEquals(8, com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.size)
         val latestRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.first()
         val initialRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.last()
-        assertEquals("v${BuildConfig.VERSION_NAME}", latestRelease.version)
+        assertEquals("v${BuildConfig.VERSION_NAME.removeSuffix("-tablet")}", latestRelease.version)
         assertEquals("v1.0.0", initialRelease.version)
         assertTrue(latestRelease.moduleGroups.size >= 4)
         assertTrue(initialRelease.moduleGroups.size >= 4)
@@ -1605,9 +1605,9 @@ class UiAlignmentRegressionTest {
         assertEquals("v2.1.0 正式版 · Build 12", customVer.fullBadgeText)
 
         val history = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY
-        assertEquals("更新日志完整记录全部 6 个发布版本 (v1.0.0 ~ v1.3.0)", 6, history.size)
+        assertEquals("更新日志完整记录全部 8 个发布版本 (v1.0.0 ~ v1.3.2)", 8, history.size)
         val latest = history.first()
-        assertEquals("v${BuildConfig.VERSION_NAME}", latest.version)
+        assertEquals("v${BuildConfig.VERSION_NAME.removeSuffix("-tablet")}", latest.version)
         assertTrue(latest.moduleGroups.size >= 4)
         assertEquals("v1.0.0", history.last().version)
         assertEquals(0L, com.concept.music.ui.components.SPLASH_ICON_HOLD_DURATION_MS)
@@ -1803,14 +1803,14 @@ class UiAlignmentRegressionTest {
         assertTrue("我的页 VIP 权益中心卡片应使用精简无重复的小字文案", vipCardCode.contains("每日签到 · 畅享无损") && vipCardCode.contains("免费领取"))
 
         val gradleCode = java.io.File(projectRoot, "app/build.gradle.kts").readText(Charsets.UTF_8)
-        assertEquals("1.3.1", com.concept.music.ui.settings.extractVersionFromGradleText(gradleCode))
+        assertEquals("1.3.2", com.concept.music.ui.settings.extractVersionFromGradleText(gradleCode))
     }
 
     @Test
     fun `v1_2_0全版本更新日志与KRC歌词HTML实体反转义及高清封面分类验证`() {
         // 1. 验证更新日志完整记录每次发布的版本：v1.2.0, v1.1.0, v1.0.2, v1.0.1, v1.0.0
         val versions = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.map { it.version }
-        assertEquals(listOf("v${BuildConfig.VERSION_NAME}", "v1.2.0", "v1.1.0", "v1.0.2", "v1.0.1", "v1.0.0"), versions)
+        assertEquals(listOf("v1.3.2", "v1.3.1", "v1.3.0", "v1.2.0", "v1.1.0", "v1.0.2", "v1.0.1", "v1.0.0"), versions)
 
         // 2. 验证 KRC / LRC 歌词 HTML 实体（如 &apos;）自动反转义（解决图三 Vibe 英文歌词显示 &apos; 问题）
         val rawKrcLine = "[1000,3000]<0,500,0>And <500,800,0>it&apos;s <1300,700,0>goin&apos; <2000,1000,0>home"
@@ -2030,5 +2030,58 @@ class UiAlignmentRegressionTest {
         modularFiles.forEach { rel ->
             assertTrue("模块化拆分文件 $rel 应存在", java.io.File(projectRoot, rel).exists())
         }
+    }
+
+    @Test
+    fun `v1_3_2收藏歌单列表精简与分类切换弹性虚化动效及全量更新日志和极速检查更新验证`() {
+        val projectRoot = java.io.File(".").canonicalFile.let { dir ->
+            if (java.io.File(dir, "app/src/main").exists()) dir else dir.parentFile
+        }
+
+        // 1. 验证「我的」页收藏歌单列表项与网格项已移除多余的「已收藏」按钮
+        val playlistListItemCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/PlaylistListItem.kt").readText(Charsets.UTF_8)
+        assertFalse("PlaylistListItem 不应再渲染『已收藏』按钮", playlistListItemCode.contains("text = \"已收藏\""))
+
+        val playlistGridItemCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/PlaylistGridItem.kt").readText(Charsets.UTF_8)
+        assertFalse("PlaylistGridItem 不应再渲染取消收藏悬浮按钮", playlistGridItemCode.contains("contentDescription = \"取消收藏\""))
+
+        // 2. 验证「我的」页分类标题切换与歌单页排序切换动画统一对齐新歌速递独立页和搜索结果页（我的页保留左右横滑，歌单排序无左右横滑）
+        val libScreenCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/library/LibraryScreen.kt").readText(Charsets.UTF_8)
+        assertTrue("LibraryScreen 资产分类切换应接入 AnimatedContent 与 conceptCategoryContentTransition", libScreenCode.contains("AnimatedContent(") && libScreenCode.contains("conceptCategoryContentTransition("))
+        assertTrue("LibraryScreen 资产分类切换应保留 horizontalCategorySwipe 左右滑动切换分类标题功能", libScreenCode.contains(".horizontalCategorySwipe("))
+        assertFalse("LibraryScreen 不应在 AnimatedContent 外层重复叠加 rememberCategorySwitchGraphicModifier 造成双重位移", libScreenCode.contains("rememberCategorySwitchGraphicModifier(selectedTab)"))
+
+        val plDetailCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/library/PlaylistDetailScreen.kt").readText(Charsets.UTF_8)
+        assertTrue("PlaylistDetailScreen 切换排序标题时下方曲目列表应挂载 rememberCategorySwitchGraphicModifier(sortMode.ordinal)", plDetailCode.contains("rememberCategorySwitchGraphicModifier(sortMode.ordinal)"))
+        assertFalse("PlaylistDetailScreen 排序标题栏不应带有 horizontalCategorySwipe 左右滑动切换功能", plDetailCode.contains(".horizontalCategorySwipe("))
+
+        // 3. 验证全版本更新日志防覆盖归档机制（完整包含 v1.3.0、v1.3.1、v1.3.2 等全部 8 个版本且未来新版本自动前置不覆盖）
+        val changelogHistory = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY
+        assertEquals(listOf("v1.3.2", "v1.3.1", "v1.3.0", "v1.2.0", "v1.1.0", "v1.0.2", "v1.0.1", "v1.0.0"), changelogHistory.map { it.version })
+        val futureResolved = com.concept.music.ui.settings.resolveChangelogHistory(
+            com.concept.music.ui.components.AppVersionInfo(rawVersionName = "1.4.0", versionCode = 9L)
+        )
+        assertEquals("未来发布新版本时应自动前置追加而不覆盖 v1.3.2 或 v1.3.0", 9, futureResolved.size)
+        assertEquals("v1.4.0", futureResolved[0].version)
+        assertEquals("v1.3.2", futureResolved[1].version)
+        assertTrue("v1.3.0 必须始终保留在历史更新日志中", futureResolved.any { it.version == "v1.3.0" })
+
+        // 4. 验证检查更新多通道并发竞速且 HasUpdate 仅展示新版本号而不直接输出 Markdown 更新内容
+        val settingsCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/settings/SettingsScreen.kt").readText(Charsets.UTF_8)
+        assertTrue("checkGitHubLatestRelease 应采用 supervisorScope + Channel 多通道并发竞速", settingsCode.contains("supervisorScope") && settingsCode.contains("Channel<UpdateProbeOutcome>"))
+
+        val aboutCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/settings/SettingsChangelogAndAbout.kt").readText(Charsets.UTF_8)
+        assertFalse("AboutAppSectionContent 在发现新版本时不应直接输出 updateState.releaseNotes Markdown 内容", aboutCode.contains("text = updateState.releaseNotes"))
+
+        val markdownReleaseJson = "{\"tag_name\":\"v1.3.3\",\"name\":\"BreezeMusic v1.3.3\",\"draft\":false,\"body\":\"## Markdown Heading\\n- item 1\",\"html_url\":\"https://github.com/reneryi/breezemusic/releases/tag/v1.3.3\"}"
+        val updateRes = com.concept.music.ui.settings.resolveUpdateCheckFromApiOrRedirect(
+            localVersionName = "1.3.2",
+            apiHttpCode = 200,
+            apiBodyJson = markdownReleaseJson
+        )
+        assertTrue(updateRes is com.concept.music.ui.settings.UpdateCheckResult.HasUpdate)
+        val hasUpd = updateRes as com.concept.music.ui.settings.UpdateCheckResult.HasUpdate
+        assertEquals("v1.3.3", hasUpd.latestVersion)
+        assertEquals("检查更新结果不再携带与输出 Markdown 更新内容", "", hasUpd.releaseNotes)
     }
 }
