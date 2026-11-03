@@ -501,24 +501,72 @@ class LibraryViewModel(
         }
     }
 
-    // 外部歌单文本批量导入
+    // 外部歌单文本或酷狗歌单分享链接批量导入
     fun importExternalPlaylist(name: String, rawText: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         if (accountState.value.auth != AuthState.READY) {
             onResult(false, "请先登录酷狗账号")
             return
         }
-        val lines = rawText.lines().map { it.trim() }.filter { it.isNotBlank() }
-        if (lines.isEmpty()) {
-            onResult(false, "请输入至少一首歌曲名称（格式：歌名 - 歌手）")
+        val trimmedText = rawText.trim()
+        if (trimmedText.isBlank()) {
+            onResult(false, "请输入酷狗歌单分享链接或曲目列表（歌名 - 歌手）")
             return
         }
         viewModelScope.launch {
+            if (com.concept.music.data.share.KugouShareLinkParser.containsKugouShareSignal(trimmedText)) {
+                val resolved = runCatching { VipManager.music.resolveSharedMusicText(trimmedText) }.getOrNull()
+                when (resolved) {
+                    is com.concept.music.data.share.ResolvedSharedMusicTarget.SharedPlaylist -> {
+                        val pl = resolved.playlist
+                        if (pl != null && name.isBlank()) {
+                            val collected = runCatching { VipManager.music.collectPlaylist(pl) }.getOrDefault(false)
+                            if (collected) {
+                                loadMusicLibrary()
+                                onResult(true, "已成功解析并收藏歌单「${pl.title}」")
+                                return@launch
+                            }
+                        }
+                        val songs = runCatching {
+                            VipManager.music.fetchPlaylistSongsAll(resolved.playlistId)
+                        }.getOrDefault(emptyList()).ifEmpty { resolved.fallbackSongs }
+                        if (songs.isNotEmpty()) {
+                            val targetName = name.ifBlank { pl?.title ?: "导入分享歌单" }
+                            val songLines = songs.map { "${it.title} - ${it.artist}" }
+                            val count = runCatching { VipManager.music.importExternalPlaylist(targetName, songLines) }.getOrDefault(0)
+                            if (count > 0) {
+                                loadMusicLibrary()
+                                onResult(true, "成功从分享链接导入 $count 首歌曲至「$targetName」")
+                                return@launch
+                            }
+                        }
+                    }
+                    is com.concept.music.data.share.ResolvedSharedMusicTarget.SharedSong -> {
+                        val s = resolved.song
+                        val targetName = name.ifBlank { "导入分享歌单" }
+                        val count = runCatching {
+                            VipManager.music.importExternalPlaylist(targetName, listOf("${s.title} - ${s.artist}"))
+                        }.getOrDefault(0)
+                        if (count > 0) {
+                            loadMusicLibrary()
+                            onResult(true, "已将分享单曲《${s.title}》导入至歌单「$targetName」")
+                            return@launch
+                        }
+                    }
+                    null -> {}
+                }
+            }
+
+            val lines = trimmedText.lines().map { it.trim() }.filter { it.isNotBlank() }
+            if (lines.isEmpty()) {
+                onResult(false, "请输入至少一首歌曲名称（格式：歌名 - 歌手）或酷狗分享链接")
+                return@launch
+            }
             val count = runCatching { VipManager.music.importExternalPlaylist(name, lines) }.getOrDefault(0)
             if (count > 0) {
                 loadMusicLibrary()
                 onResult(true, "成功导入 $count 首歌曲至歌单「${name.ifBlank { "导入歌单" }}」")
             } else {
-                onResult(false, "未能匹配或导入歌曲，请检查格式后重试")
+                onResult(false, "未能匹配或导入歌曲，请检查链接或文本格式后重试")
             }
         }
     }

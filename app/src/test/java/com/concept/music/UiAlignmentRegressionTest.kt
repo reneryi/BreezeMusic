@@ -1161,8 +1161,8 @@ class UiAlignmentRegressionTest {
         com.concept.music.service.AppPermissionManager.resetForTest()
         try {
             val initialState = com.concept.music.service.AppPermissionManager.state.value
-            assertEquals(8, initialState.totalCount)
-            assertEquals(7, initialState.enabledCount)
+            assertEquals(9, initialState.totalCount)
+            assertEquals(8, initialState.enabledCount)
             assertFalse(
                 "音乐下载与歌词保存独立开关默认应为关闭状态，需用户手动开启",
                 initialState.isEnabled(com.concept.music.service.AppPermissionType.MUSIC_DOWNLOAD)
@@ -1215,11 +1215,11 @@ class UiAlignmentRegressionTest {
                 com.concept.music.service.AppPermissionType.MOTION_ORIENTATION,
                 false
             )
-            assertEquals(4, com.concept.music.service.AppPermissionManager.state.value.enabledCount)
+            assertEquals(5, com.concept.music.service.AppPermissionManager.state.value.enabledCount)
 
             // 4. 一键恢复开启全部权限
             com.concept.music.service.AppPermissionManager.enableAllPermissions(null)
-            assertEquals(8, com.concept.music.service.AppPermissionManager.state.value.enabledCount)
+            assertEquals(9, com.concept.music.service.AppPermissionManager.state.value.enabledCount)
         } finally {
             com.concept.music.service.AppPermissionManager.resetForTest()
         }
@@ -2014,7 +2014,7 @@ class UiAlignmentRegressionTest {
 
         val focusPodCode = java.io.File(projectRoot, "app/src/main/java/com/concept/music/ui/components/FocusPodBottomSheet.kt").readText(Charsets.UTF_8)
         assertFalse("心流舱竖屏抽屉不应硬编码 fillMaxHeight(0.86f) 造成底部大片空白", focusPodCode.contains("fillMaxHeight(0.86f)"))
-        assertTrue("心流舱竖屏抽屉应使用 wrapContentHeight 自适应包裹内容", focusPodCode.contains("wrapContentHeight().heightIn(max = 640.dp)"))
+        assertTrue("心流舱竖屏抽屉应使用 wrapContentHeight 自适应包裹内容", focusPodCode.contains("wrapContentHeight().heightIn(max = 680.dp)"))
 
         // 4. 验证项目结构模块化拆分文件均已就绪
         val modularFiles = listOf(

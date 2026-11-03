@@ -42,7 +42,7 @@ fun AddToPlaylistDialog(
 ) {
     // 仅保留用户自建的歌单（排除“我喜欢”和历史，排除收藏的他人歌单）
     val customPlaylists = remember(playlists) {
-        playlists.filter { it.isCreatedByMe && !it.isLiked && it.id != "like" && it.id != "history" }
+        playlists.filter { it.isCreatedByMe && !it.isLiked && !it.isDefaultCollect && it.id != "like" && it.id != "history" }
     }
     var selectedPendingPlaylist by remember { mutableStateOf<Playlist?>(null) }
 

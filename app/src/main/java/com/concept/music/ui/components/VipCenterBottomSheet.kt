@@ -915,11 +915,12 @@ private fun copyDeviceValue(context: Context, label: String, value: String) {
         Toast.makeText(context, "$label 尚未生成，请点击刷新设备标识", Toast.LENGTH_SHORT).show()
         return
     }
-    runCatching {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        clipboard?.setPrimaryClip(ClipData.newPlainText(label, value))
-        Toast.makeText(context, "已复制 $label", Toast.LENGTH_SHORT).show()
-    }
+    com.concept.music.service.AppPermissionManager.copyTextToClipboard(
+        context = context,
+        label = label,
+        text = value,
+        toastMessage = "已复制 $label"
+    )
 }
 
 @Composable

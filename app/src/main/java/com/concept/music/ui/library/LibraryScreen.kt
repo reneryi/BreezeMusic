@@ -116,8 +116,8 @@ fun LibraryScreen(
     val selectedTab by viewModel.selectedAssetTab.collectAsState()
     val isGridView by viewModel.isGridView.collectAsState()
 
-    val myPlaylists = remember(playlists) { playlists.filter { it.isCreatedByMe && !it.isLiked } }
-    val favoritePlaylists = remember(playlists) { playlists.filter { it.isFavorite } }
+    val myPlaylists = remember(playlists) { playlists.filter { it.isCreatedByMe && !it.isLiked && !it.isDefaultCollect } }
+    val favoritePlaylists = remember(playlists) { playlists.filter { it.isFavorite && !it.isDefaultCollect } }
     val likedPlaylist = remember(playlists) { playlists.firstOrNull { it.isLiked } }
     val historyVersion by VipManager.history.historyVersion.collectAsState()
     val historyCount = remember(account, historyVersion) { VipManager.history.get(account.currentId).size }
@@ -1123,10 +1123,36 @@ fun LibraryScreen(
                         onValueChange = { importRawText = it },
                         minLines = 4,
                         maxLines = 8,
-                        label = { Text("曲目列表（每行一首：歌名 - 歌手）") },
-                        placeholder = { Text("晴天 - 周杰伦\n江南 - 林俊杰") },
+                        label = { Text("酷狗分享链接 或 曲目列表（歌名 - 歌手）") },
+                        placeholder = { Text("支持直接粘贴酷狗音乐/概念版歌单分享口令链接，或每行一首：晴天 - 周杰伦") },
                         modifier = Modifier.fillMaxWidth()
                     )
+                    TextButton(
+                        onClick = {
+                            val clip = com.concept.music.service.AppPermissionManager.readTextFromClipboard(
+                                context = context,
+                                notifyIfDisabled = true
+                            )
+                            if (!clip.isNullOrBlank()) {
+                                importRawText = clip
+                            } else if (com.concept.music.service.AppPermissionManager.isPermissionEnabled(
+                                    com.concept.music.service.AppPermissionType.CLIPBOARD_ACCESS
+                                )
+                            ) {
+                                Toast.makeText(context, "当前剪贴板为空", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.ContentPaste,
+                            contentDescription = null,
+                            tint = ConceptPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("从剪贴板粘贴分享口令 / 文本", color = ConceptPrimary, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             },
             confirmButton = {

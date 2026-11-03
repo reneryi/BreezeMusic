@@ -370,6 +370,7 @@ fun NowPlayingSheet(
     var showSleepTimerDialog by remember { mutableStateOf(false) }
     var showSpeedPitchDialog by remember { mutableStateOf(false) }
     var showLyricPosterDialog by remember { mutableStateOf(false) }
+    var showShareSongSheet by remember { mutableStateOf(false) }
     var showDoubleTapHeart by remember { mutableStateOf(false) }
     var showMoreControlSheet by remember { mutableStateOf(false) }
     var showDownloadDialog by remember { mutableStateOf(false) }
@@ -422,6 +423,7 @@ fun NowPlayingSheet(
         !showMoreControlSheet &&
         !showLyricSettingsDialog &&
         !showLyricPosterDialog &&
+        !showShareSongSheet &&
         autoRotateSensorEnabled &&
         motionOrientationPermissionEnabled
     val shouldListenOrientationSensor = isLifecycleStarted &&
@@ -957,7 +959,8 @@ fun NowPlayingSheet(
                             onUnlockFullTrack()
                             Toast.makeText(context, "已解锁本曲完整播放", Toast.LENGTH_SHORT).show()
                         },
-                        onOpenSleepTimer = { showSleepTimerDialog = true }
+                        onOpenSleepTimer = { showSleepTimerDialog = true },
+                        onShareClick = { showShareSongSheet = true }
                     )
                 }
 
@@ -1179,6 +1182,18 @@ fun NowPlayingSheet(
             lyricData = lyricData,
             currentLyricIndex = currentLyricIndex,
             onDismiss = { showLyricPosterDialog = false }
+        )
+    }
+
+    // 竖屏播放页右上角分享歌曲弹窗
+    if (showShareSongSheet) {
+        ShareMusicBottomSheet(
+            song = song,
+            onDismiss = { showShareSongSheet = false },
+            onOpenLyricPoster = {
+                showShareSongSheet = false
+                showLyricPosterDialog = true
+            }
         )
     }
 
@@ -1790,7 +1805,8 @@ private fun RedesignedTopHeaderBar(
     onBackOrDismiss: () -> Unit,
     onQualityClick: () -> Unit,
     onUnlockFullTrack: () -> Unit,
-    onOpenSleepTimer: () -> Unit
+    onOpenSleepTimer: () -> Unit,
+    onShareClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var outputRouteLabel by remember { mutableStateOf(detectAudioOutputRouteLabel(context)) }
@@ -1866,6 +1882,20 @@ private fun RedesignedTopHeaderBar(
                     modifier = Modifier
                         .fillMaxWidth()
                         .basicMarquee()
+                )
+            }
+
+            IconButton(
+                onClick = onShareClick,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .size(if (isLargeScreen) 44.dp else 36.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Share,
+                    contentDescription = "分享歌曲",
+                    tint = Color.White.copy(alpha = 0.88f),
+                    modifier = Modifier.size(if (isLargeScreen) 24.dp else 21.dp)
                 )
             }
         }

@@ -15,6 +15,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -1456,7 +1458,7 @@ internal fun PermissionsSectionContent(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(top = 4.dp),
+                                .padding(top = 12.dp),
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -1541,8 +1543,14 @@ private fun PermissionDisclosureCard(
         AppPermissionType.BACKGROUND_GUARDIAN -> Icons.Rounded.BatteryChargingFull to ConceptMintAccent
         AppPermissionType.MOTION_ORIENTATION -> Icons.Rounded.ScreenRotation to ConceptCoralAccent
         AppPermissionType.AUDIO_HARDWARE -> Icons.Rounded.Headphones to ConceptRoseAccent
+        AppPermissionType.CLIPBOARD_ACCESS -> Icons.Rounded.ContentPaste to ConceptPrimary
     }
     var detailsExpanded by rememberSaveable(type.name) { mutableStateOf(false) }
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (detailsExpanded) 180f else 0f,
+        animationSpec = tween(durationMillis = 260, easing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)),
+        label = "permChevronRotation"
+    )
 
     Surface(
         shape = RoundedCornerShape(22.dp),
@@ -1559,8 +1567,8 @@ private fun PermissionDisclosureCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 15.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(horizontal = 16.dp, vertical = 15.dp)
+
         ) {
             // 1. 卡片头部：色阶图标 + 权限标题 + 状态胶囊 + 独立开关
             Row(
@@ -1655,6 +1663,7 @@ private fun PermissionDisclosureCard(
                 )
             }
 
+            Spacer(modifier = Modifier.height(10.dp))
             // 2. 一句话精简摘要（或关闭时的停用提示）+ 右侧展开详情/系统设置无框胶囊
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1666,7 +1675,7 @@ private fun PermissionDisclosureCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else ConceptAmberAccent,
                     fontSize = 12.sp,
-                    maxLines = if (detailsExpanded) 4 else 1,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .weight(1f)
@@ -1726,10 +1735,10 @@ private fun PermissionDisclosureCard(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Icon(
-                                imageVector = if (detailsExpanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                                imageVector = Icons.Rounded.ExpandMore,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(15.dp)
+                                modifier = Modifier.size(15.dp).graphicsLayer { rotationZ = chevronRotation }
                             )
                         }
                     }
@@ -1739,13 +1748,13 @@ private fun PermissionDisclosureCard(
             // 3. 按需展开的技术标识、完整隐私承诺与关闭影响详情（避免默认满屏堆砌长文）
             AnimatedVisibility(
                 visible = detailsExpanded,
-                enter = expandVertically(animationSpec = ConceptMotion.spatialPageSpring()) + fadeIn(tween(180)),
-                exit = shrinkVertically(animationSpec = tween(200)) + fadeOut(tween(150))
+                enter = expandVertically(expandFrom = Alignment.Top, clip = true, animationSpec = tween(durationMillis = 280, easing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f))) + fadeIn(animationSpec = tween(durationMillis = 220, easing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f))),
+                exit = shrinkVertically(shrinkTowards = Alignment.Top, clip = true, animationSpec = tween(durationMillis = 240, easing = CubicBezierEasing(0.32f, 0f, 0.67f, 0f))) + fadeOut(animationSpec = tween(durationMillis = 180))
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 4.dp),
+                        .padding(top = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Surface(
@@ -1785,6 +1794,16 @@ private fun PermissionDisclosureCard(
                             modifier = Modifier.padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            Text(
+                                text = "功能用途：${type.purposeDescription}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                lineHeight = 17.5.sp
+                            )
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)
+                            )
                             Text(
                                 text = "隐私与数据边界：${type.privacyCommitment}",
                                 style = MaterialTheme.typography.bodySmall,

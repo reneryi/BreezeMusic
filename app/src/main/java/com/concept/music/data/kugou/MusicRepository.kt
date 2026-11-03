@@ -510,7 +510,7 @@ class MusicApiRepository(
             headers = mapOf("x-router" to "cloudlist.service.kugou.com")
         ).requireSuccess()
 
-        response.data.objects("info").map { item ->
+        response.data.objects("info").filterNot { item -> item.number("is_def") == 1 || (item.text("name") ?: item.text("listname")).orEmpty().trim() == "默认收藏" }.map { item ->
             val name = item.text("name") ?: item.text("listname") ?: "未命名歌单"
             val listId = item.text("listid")?.toLongOrNull() ?: 0L
             val listCreateUserid = item.text("list_create_userid") ?: ""
@@ -2817,8 +2817,8 @@ class MusicApiRepository(
                 path = "/api/v3/search/hot_tab",
                 query = mapOf(
                     "signature" to "ee44edb9d7155821412d220bcaf509dd",
-                    "appid" to "3116",
-                    "clientver" to "11440",
+                    "appid" to "1005",
+                    "clientver" to "10026",
                     "plat" to "0"
                 ),
                 headers = mapOf("x-router" to "msearch.kugou.com"),
@@ -2829,6 +2829,24 @@ class MusicApiRepository(
             lists.mapNotNull { it.text("keyword") ?: it.text("name") }.filter { it.isNotBlank() }
         }.getOrNull()
         if (!hotTabKeywords.isNullOrEmpty()) return hotTabKeywords.distinct()
+        val cdnHotKeywords = runCatching {
+            val resp = transport.callAdvanced(
+                path = "/api/v3/search/hot_tab",
+                host = "http://msearchcdn.kugou.com",
+                query = mapOf("signature" to "ee44edb9d7155821412d220bcaf509dd", "appid" to "1005", "clientver" to "10026", "plat" to "0"),
+                sign = false,
+                includeDefaultParams = false
+            ).requireSuccess()
+            resp.data.objects("list").flatMap { it.objects("keywords") }
+                .mapNotNull { it.text("keyword") ?: it.text("name") }
+                .filter { it.isNotBlank() }
+        }.getOrNull()
+        if (!cdnHotKeywords.isNullOrEmpty()) return cdnHotKeywords.distinct()
+        val rankHotSongs = runCatching {
+            rankSongs(6666, page = 1, pageSize = 20).ifEmpty { rankSongs(8888, page = 1, pageSize = 20) }
+                .map { it.title.trim() }.filter { it.isNotBlank() && it != "未知歌曲" }.distinct()
+        }.getOrNull()
+        if (!rankHotSongs.isNullOrEmpty()) return rankHotSongs
 
         return try {
             val response = transport.callAdvanced(
@@ -7753,7 +7771,7 @@ class MusicApiRepository(
     )
 
     private fun defaultHotKeywords(): List<String> = listOf(
-        "周杰伦", "林俊杰", "陈奕迅", "邓紫棋", "告五人", "陶喆", "薛之谦", "毛不易", "张杰", "五月天"
+        // 实时热搜榜兜底热歌歌名（不显示写死的歌手名）
     )
 
     private fun parseSongs(root: JsonObject): List<Song> {
@@ -8494,6 +8512,218 @@ class MusicApiRepository(
         }
 
         result
+    }
+
+    /**
+     * 解析官方酷狗音乐 / 酷狗概念版分享链接或口令文本，还原为可播放的 [Song] 或可浏览/导入的 [Playlist]
+     */
+    suspend fun resolveSharedMusicText(
+        rawText: String
+    ): com.concept.music.data.share.ResolvedSharedMusicTarget? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val descriptor = com.concept.music.data.share.KugouShareLinkParser.parseShareText(rawText)
+            ?: return@withContext null
+
+        when (descriptor) {
+            is com.concept.music.data.share.ParsedKugouShareDescriptor.SingleSongDescriptor -> {
+                val resolvedSong = resolveSharedSingleSong(descriptor) ?: return@withContext null
+                com.concept.music.data.share.ResolvedSharedMusicTarget.SharedSong(resolvedSong)
+            }
+            is com.concept.music.data.share.ParsedKugouShareDescriptor.PlaylistDescriptor -> {
+                val targetId = descriptor.preferredPlaylistId
+                val playlistObj = if (targetId.isNotBlank()) {
+                    runCatching { playlistInfo(targetId) }.getOrNull()
+                } else null
+
+                val fallbackSongs = if (descriptor.embeddedSongs.isNotEmpty()) {
+                    val rawList = descriptor.embeddedSongs.mapIndexed { idx, sDesc ->
+                        val h = sDesc.hash.uppercase()
+                        val aaid = sDesc.albumAudioId.toLongOrNull() ?: 0L
+                        val aid = sDesc.audioId.toLongOrNull() ?: 0L
+                        Song(
+                            id = h.ifBlank { sDesc.albumAudioId.ifBlank { "shared_$idx" } },
+                            hash = h,
+                            hash128 = h,
+                            hash320 = sDesc.hash320.uppercase(),
+                            hashFlac = sDesc.hashFlac.uppercase(),
+                            title = sDesc.titleHint.ifBlank { "未知歌曲" },
+                            artist = sDesc.artistHint.ifBlank { "未知歌手" },
+                            album = sDesc.albumNameHint,
+                            albumId = sDesc.albumId,
+                            coverUrl = imageUrl(sDesc.coverUrlHint),
+                            durationMs = sDesc.durationSecHint * 1000L,
+                            albumAudioId = aaid,
+                            audioId = aid,
+                            mixSongId = sDesc.albumAudioId
+                        )
+                    }
+                    runCatching { enrichSongsPrivilegeLite(rawList) }.getOrDefault(rawList)
+                } else emptyList()
+
+                val effectivePlaylist = playlistObj ?: if (targetId.isNotBlank() || fallbackSongs.isNotEmpty()) {
+                    Playlist(
+                        id = targetId.ifBlank { "shared_playlist_${System.currentTimeMillis()}" },
+                        title = descriptor.titleHint.ifBlank { "酷狗分享歌单" },
+                        coverUrl = imageUrl(descriptor.coverUrlHint).ifBlank { fallbackSongs.firstOrNull()?.coverUrl.orEmpty() },
+                        trackCount = fallbackSongs.size,
+                        creatorName = descriptor.creatorNameHint.ifBlank { "酷狗音乐分享" },
+                        isCreatedByMe = false,
+                        globalCollectionId = descriptor.globalCollectionId,
+                        listCreateUserid = descriptor.uid,
+                        listCreateListid = descriptor.specialId.ifBlank { descriptor.listId },
+                        listCreateGid = descriptor.globalCollectionId
+                    )
+                } else null
+
+                if (effectivePlaylist == null && targetId.isBlank()) return@withContext null
+                com.concept.music.data.share.ResolvedSharedMusicTarget.SharedPlaylist(
+                    playlistId = effectivePlaylist?.id ?: targetId,
+                    playlist = effectivePlaylist,
+                    fallbackSongs = fallbackSongs
+                )
+            }
+        }
+    }
+
+    private suspend fun resolveSharedSingleSong(
+        descriptor: com.concept.music.data.share.ParsedKugouShareDescriptor.SingleSongDescriptor
+    ): Song? {
+        val session = accounts.context()?.session
+        var hash = descriptor.hash.trim().uppercase()
+        var hash320 = descriptor.hash320.trim().uppercase()
+        var hashFlac = descriptor.hashFlac.trim().uppercase()
+        var title = descriptor.titleHint.trim()
+        var artist = descriptor.artistHint.trim()
+        var albumName = descriptor.albumNameHint.trim()
+        var albumId = descriptor.albumId.trim().takeIf { it != "0" }.orEmpty()
+        var albumAudioId = descriptor.albumAudioId.trim().toLongOrNull() ?: 0L
+        var audioId = descriptor.audioId.trim().toLongOrNull() ?: 0L
+        var coverUrl = imageUrl(descriptor.coverUrlHint)
+        var durationMs = if (descriptor.durationSecHint > 0L) descriptor.durationSecHint * 1000L else 0L
+
+        // 1. 若有 albumAudioId 或 audioId，调用 /kmr/v2/audio 补全 hash 与基础信息
+        val entityId = albumAudioId.takeIf { it > 0L } ?: audioId.takeIf { it > 0L } ?: 0L
+        if (entityId > 0L && (hash.isBlank() || title.isBlank() || artist.isBlank() || coverUrl.isBlank())) {
+            runCatching {
+                val dataArr = JsonArray().apply {
+                    add(JsonObject().apply { addProperty("entity_id", entityId) })
+                }
+                val body = JsonObject().apply {
+                    add("data", dataArr)
+                    addProperty("fields", "base,album_info,audio_info")
+                }
+                val resp = transport.callAdvanced(
+                    path = "/kmr/v2/audio",
+                    method = "POST",
+                    session = session,
+                    body = body,
+                    headers = mapOf("x-router" to "openapi.kugou.com", "KG-TID" to "238"),
+                    sign = true,
+                    includeDefaultParams = true
+                )
+                val item = resp.data.arr("data")?.firstOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+                val baseObj = item?.obj("base")
+                val albObj = item?.obj("album_info")
+                val audioObj = item?.obj("audio_info")
+
+                if (hash.isBlank()) {
+                    hash = (audioObj?.text("hash") ?: audioObj?.text("hash_128") ?: baseObj?.text("hash") ?: "").trim().uppercase()
+                }
+                if (hash320.isBlank()) {
+                    hash320 = (audioObj?.text("hash_320") ?: audioObj?.text("320hash") ?: "").trim().uppercase()
+                }
+                if (hashFlac.isBlank()) {
+                    hashFlac = (audioObj?.text("hash_flac") ?: audioObj?.text("sqhash") ?: "").trim().uppercase()
+                }
+                if (title.isBlank()) {
+                    title = (baseObj?.text("audio_name") ?: baseObj?.text("songname") ?: item?.text("audio_name") ?: "").trim()
+                }
+                if (artist.isBlank()) {
+                    artist = (baseObj?.text("author_name") ?: baseObj?.text("singername") ?: item?.text("author_name") ?: "").trim()
+                }
+                if (albumName.isBlank()) {
+                    albumName = cleanResolvedAlbumName(albObj?.text("album_name") ?: baseObj?.text("album_name"))
+                }
+                if (albumId.isBlank()) {
+                    albumId = (albObj?.text("album_id") ?: baseObj?.text("album_id") ?: "").trim().takeIf { it != "0" }.orEmpty()
+                }
+                if (coverUrl.isBlank()) {
+                    coverUrl = imageUrl(albObj?.text("sizable_cover") ?: baseObj?.text("sizable_cover") ?: baseObj?.text("img"))
+                }
+                if (durationMs <= 0L) {
+                    val rawDur = audioObj?.number("duration")?.toLong() ?: audioObj?.number("timelength")?.toLong() ?: 0L
+                    if (rawDur > 0L) {
+                        durationMs = if (rawDur in 1L until 10000L) rawDur * 1000L else rawDur
+                    }
+                }
+            }
+        }
+
+        if (hash.isBlank() && entityId <= 0L) return null
+
+        val seedSong = Song(
+            id = hash.ifBlank { entityId.toString() },
+            hash = hash,
+            hash128 = hash,
+            hash320 = hash320,
+            hashFlac = hashFlac,
+            title = title.ifBlank { "未知歌曲" },
+            artist = artist.ifBlank { "未知歌手" },
+            album = albumName,
+            albumId = albumId,
+            coverUrl = coverUrl,
+            durationMs = durationMs,
+            albumAudioId = albumAudioId,
+            audioId = audioId,
+            mixSongId = if (albumAudioId > 0L) albumAudioId.toString() else ""
+        )
+
+        val enriched = runCatching { enrichSongsPrivilegeLite(listOf(seedSong)).firstOrNull() }.getOrNull() ?: seedSong
+
+        // 从 privilegeLiteObjCache 提取可能缺失的歌名、歌手、album_audio_id
+        val cachedPrivObj = listOf(enriched.hash, enriched.hash128, enriched.hash320, enriched.hashFlac)
+            .map { it.trim().lowercase() }
+            .firstNotNullOfOrNull { if (it.isNotBlank()) privilegeLiteObjCache[it] else null }
+
+        var finalTitle = enriched.title
+        var finalArtist = enriched.artist
+        var finalAlbumAudioId = enriched.albumAudioId
+        var finalCover = enriched.coverUrl
+
+        if (cachedPrivObj != null) {
+            val rawName = (cachedPrivObj.text("name") ?: cachedPrivObj.text("songname") ?: "").trim()
+            val rawSinger = (cachedPrivObj.text("singername") ?: cachedPrivObj.text("author_name") ?: "").trim()
+            if (finalTitle == "未知歌曲" || finalTitle.isBlank()) {
+                if (rawName.contains(" - ")) {
+                    val parts = rawName.split(" - ", limit = 2)
+                    if (finalArtist == "未知歌手" || finalArtist.isBlank()) {
+                        finalArtist = parts[0].trim()
+                    }
+                    finalTitle = parts[1].trim()
+                } else if (rawName.isNotBlank()) {
+                    finalTitle = rawName
+                }
+            }
+            if ((finalArtist == "未知歌手" || finalArtist.isBlank()) && rawSinger.isNotBlank()) {
+                finalArtist = rawSinger
+            }
+            if (finalAlbumAudioId <= 0L) {
+                finalAlbumAudioId = cachedPrivObj.number("album_audio_id")?.toLong() ?: 0L
+            }
+            if (finalCover.isBlank()) {
+                finalCover = imageUrl(
+                    cachedPrivObj.text("sizable_cover")
+                        ?: cachedPrivObj.obj("trans_param")?.text("union_cover")
+                )
+            }
+        }
+
+        return enriched.copy(
+            title = finalTitle.ifBlank { "未知歌曲" },
+            artist = finalArtist.ifBlank { "未知歌手" },
+            albumAudioId = finalAlbumAudioId,
+            mixSongId = enriched.mixSongId.ifBlank { if (finalAlbumAudioId > 0L) finalAlbumAudioId.toString() else "" },
+            coverUrl = finalCover
+        )
     }
 }
 

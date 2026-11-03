@@ -185,6 +185,7 @@ fun PlaylistDetailScreen(
 
     var showDeletePlaylistDialog by remember { mutableStateOf(false) }
     var showUncollectPlaylistDialog by remember { mutableStateOf(false) }
+    var showSharePlaylistSheet by remember { mutableStateOf(false) }
     var selectedSongForMenu by remember { mutableStateOf<Song?>(null) }
     var songToAddToPlaylist by remember { mutableStateOf<Song?>(null) }
     var showCreateDialogFromAdd by remember { mutableStateOf(false) }
@@ -257,6 +258,17 @@ fun PlaylistDetailScreen(
                                     imageVector = Icons.Rounded.DeleteOutline,
                                     contentDescription = "删除歌单",
                                     tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+
+                        if (playlistId != "history" && currentPlaylist != null) {
+                            IconButton(onClick = { showSharePlaylistSheet = true }) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Share,
+                                    contentDescription = "分享歌单",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
@@ -736,6 +748,16 @@ fun PlaylistDetailScreen(
                     iconOnlySaveButton = false,
                     accentColor = ConceptPrimary,
                     onDismiss = { showPlaylistCoverPreview = false }
+                )
+            }
+
+            if (showSharePlaylistSheet && currentPlaylist != null) {
+                com.concept.music.ui.components.ShareMusicBottomSheet(
+                    playlist = currentPlaylist.copy(
+                        coverUrl = effectivePlaylistCoverUrl,
+                        trackCount = if (currentPlaylist.trackCount > 0) currentPlaylist.trackCount else songs.size
+                    ),
+                    onDismiss = { showSharePlaylistSheet = false }
                 )
             }
         }

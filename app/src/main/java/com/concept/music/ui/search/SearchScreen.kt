@@ -83,6 +83,11 @@ fun SearchScreen(
     val selectedTab by viewModel.selectedTab.collectAsState()
     val searchHistory by viewModel.searchHistory.collectAsState()
     val hotKeywords by viewModel.hotKeywords.collectAsState()
+    LaunchedEffect(Unit) {
+        if (hotKeywords.isEmpty()) {
+            viewModel.loadHotKeywords()
+        }
+    }
     val suggestions by viewModel.suggestions.collectAsState()
     val hasSearched by viewModel.hasSearched.collectAsState()
     val lastSearchedKeyword by viewModel.lastSearchedKeyword.collectAsState()
@@ -186,7 +191,7 @@ fun SearchScreen(
                     onValueChange = viewModel::onQueryChange,
                     placeholder = {
                         Text(
-                            text = "搜索歌曲、歌手、专辑、歌单...",
+                            text = "搜索歌曲、歌手、专辑或粘贴酷狗分享链接...",
                             fontSize = 14.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )

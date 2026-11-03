@@ -79,6 +79,8 @@ class DirectKugouTransport(
             "usercenter.kugou.com",
             "update.user.kugou.com",
             "wwwapi.kugou.com",
+            "msearchcdn.kugou.com",
+            "mobilecdn.kugou.com",
             "m.kugou.com"
         )
 
@@ -232,7 +234,7 @@ class DirectKugouTransport(
         val isBodylessMethod = method.equals("GET", ignoreCase = true) || method.equals("HEAD", ignoreCase = true)
         val request = Request.Builder().url(url)
             .header("User-Agent", "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi")
-            .apply { if (includeDefaultParams) header("dfid", d.dfid).header("mid", d.mid).header("clienttime", params.getValue("clienttime")) }
+            .header("dfid", d.dfid).header("mid", d.mid).header("clienttime", params["clienttime"] ?: clock.instant().epochSecond.toString())
             .header("kg-rc", "1").header("kg-thash", "5d816a0").header("kg-rec", "1")
             .header("kg-rf", "B9EDA08A64250DEFFBCADDEE00F8F25F")
             .apply { headers.forEach { (key, value) -> header(key, value) } }
@@ -291,7 +293,7 @@ class DirectKugouTransport(
         val isBodylessMethod = method.equals("GET", ignoreCase = true) || method.equals("HEAD", ignoreCase = true)
         val request = Request.Builder().url(url)
             .header("User-Agent", "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi")
-            .apply { if (includeDefaultParams) header("dfid", d.dfid).header("mid", d.mid).header("clienttime", params.getValue("clienttime")) }
+            .header("dfid", d.dfid).header("mid", d.mid).header("clienttime", params["clienttime"] ?: clock.instant().epochSecond.toString())
             .header("kg-rc", "1").header("kg-thash", "5d816a0").header("kg-rec", "1")
             .header("kg-rf", "B9EDA08A64250DEFFBCADDEE00F8F25F")
             .apply { headers.forEach { (key, value) -> header(key, value) } }

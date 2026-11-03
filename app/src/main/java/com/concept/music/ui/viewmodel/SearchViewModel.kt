@@ -77,7 +77,7 @@ class SearchViewModel(
     init {
         // 延后在后台 IO 线程加载热搜词，避免冷启动首屏阶段与主页抢占网络与主线程资源
         viewModelScope.launch(Dispatchers.IO) {
-            delay(1200L)
+            delay(400L)
             if (_hotKeywords.value.isEmpty()) {
                 runCatching { VipManager.music.searchHot() }.getOrNull()?.let {
                     if (it.isNotEmpty()) _hotKeywords.value = it
@@ -207,6 +207,48 @@ class SearchViewModel(
         searchJob = viewModelScope.launch {
             if (!silent) _loading.value = true
             try {
+                if (com.concept.music.data.share.KugouShareLinkParser.containsKugouShareSignal(keyword)) {
+                    val sharedTarget = runCatching { VipManager.music.resolveSharedMusicText(keyword) }.getOrNull()
+                    if (sharedTarget != null) {
+                        when (sharedTarget) {
+                            is com.concept.music.data.share.ResolvedSharedMusicTarget.SharedSong -> {
+                                val songs = listOf(sharedTarget.song)
+                                lastComplexKeyword = keyword
+                                _complexResult.value = ComplexSearchResult(songs = songs)
+                                _songResults.value = songs
+                                _albumResults.value = emptyList()
+                                _playlistResults.value = emptyList()
+                                _artistResults.value = emptyList()
+                                _hasMore.value = false
+                                return@launch
+                            }
+                            is com.concept.music.data.share.ResolvedSharedMusicTarget.SharedPlaylist -> {
+                                val pl = sharedTarget.playlist
+                                val plItem = PlaylistItem(
+                                    id = sharedTarget.playlistId,
+                                    name = pl?.title ?: "酷狗分享歌单",
+                                    coverUrl = pl?.coverUrl.orEmpty(),
+                                    playCount = 0L,
+                                    trackCount = pl?.trackCount?.takeIf { it > 0 } ?: sharedTarget.fallbackSongs.size,
+                                    creatorName = pl?.creatorName.orEmpty(),
+                                    intro = pl?.description.orEmpty()
+                                )
+                                val plList = listOf(plItem)
+                                lastComplexKeyword = keyword
+                                _complexResult.value = ComplexSearchResult(
+                                    songs = sharedTarget.fallbackSongs,
+                                    playlists = plList
+                                )
+                                _songResults.value = sharedTarget.fallbackSongs
+                                _playlistResults.value = plList
+                                _albumResults.value = emptyList()
+                                _artistResults.value = emptyList()
+                                _hasMore.value = false
+                                return@launch
+                            }
+                        }
+                    }
+                }
                 when (_selectedTab.value) {
                     SearchTab.COMPLEX -> {
                         val res = VipManager.music.searchComplex(keyword)

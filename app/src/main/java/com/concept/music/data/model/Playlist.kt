@@ -23,6 +23,10 @@ data class Playlist(
 ) {
     val songCount: Int get() = trackCount
 
+    /** 是否为酷狗系统遗留的「默认收藏」歌单（is_def = 1） */
+    val isDefaultCollect: Boolean
+        get() = title.trim() == "默认收藏"
+
     /**
      * 提取歌单所有可能匹配的身份标识集合（兼容 specialId、global_collection_id、list_create_gid、list_create_listid 以及 GID 内嵌的原始 listId）
      */

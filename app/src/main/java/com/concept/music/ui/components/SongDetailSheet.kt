@@ -1,9 +1,5 @@
 package com.concept.music.ui.components
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -31,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.concept.music.data.model.SongDetailInfo
 import com.concept.music.data.vip.VipManager
+import com.concept.music.service.AppPermissionManager
 import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
 import com.concept.music.ui.theme.ConceptPrimary
 import com.concept.music.ui.theme.LocalIsDarkTheme
@@ -202,9 +199,12 @@ fun SongDetailSheet(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .softClickable {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("Song Hash", liveDetail.fileHash))
-                                    Toast.makeText(context, "音频 Hash 已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                                    AppPermissionManager.copyTextToClipboard(
+                                        context = context,
+                                        label = "Song Hash",
+                                        text = liveDetail.fileHash,
+                                        toastMessage = "音频 Hash 已复制到剪贴板"
+                                    )
                                 }
                                 .padding(vertical = 2.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,

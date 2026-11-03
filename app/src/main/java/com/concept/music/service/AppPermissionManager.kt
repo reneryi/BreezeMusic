@@ -1,6 +1,8 @@
 package com.concept.music.service
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -101,6 +103,15 @@ enum class AppPermissionType(
         purposeDescription = "用于识别有线耳机、蓝牙耳机与 USB DAC 连接状态，支持拔出耳机自动暂停、连接耳机自动续播、蓝牙歌词延迟自动补偿及有线耳机中键双击/三击切歌。",
         privacyCommitment = "仅监听音频输出路由变化与耳机按键事件，绝不调用麦克风录音或获取蓝牙位置信息。",
         disabledImpactDescription = "关闭后将停用有线耳机双击/三击切歌、拔插耳机自动暂停/播放及蓝牙音频歌词延迟自动补偿。"
+    ),
+    CLIPBOARD_ACCESS(
+        key = "perm_clipboard_access",
+        title = "剪贴板读取与写入",
+        badge = "分享口令识别与复制",
+        manifestPermissionName = "ClipboardManager · READ/WRITE_CLIPBOARD",
+        purposeDescription = "用于将歌曲/歌单分享链接、歌曲特征码 Hash 及诊断信息写入系统剪贴板，并在应用切回前台或打开搜索/歌单导入面板时自动识别剪贴板中的酷狗音乐与概念版分享链接。",
+        privacyCommitment = "仅在您主动点击复制按钮，或应用处于前台且开启本权限时检测是否存在「kugou.com / kugouyouth://」音乐分享链接；绝不后台轮询、绝不上传或留存任何非音乐链接的私人剪贴板文本。",
+        disabledImpactDescription = "关闭后将禁止应用读取剪贴板识别音乐分享口令，同时停用应用内一键复制分享链接与复制特征码功能（您仍可通过系统原生分享面板发送文本）。"
     )
 }
 
@@ -120,7 +131,8 @@ data class AppPermissionState(
     val musicDownloadEnabled: Boolean = false,
     val backgroundGuardianEnabled: Boolean = true,
     val motionOrientationEnabled: Boolean = true,
-    val audioHardwareEnabled: Boolean = true
+    val audioHardwareEnabled: Boolean = true,
+    val clipboardAccessEnabled: Boolean = true
 ) {
     fun isEnabled(type: AppPermissionType): Boolean = when (type) {
         AppPermissionType.NETWORK_ACCESS -> networkAccessEnabled
@@ -131,6 +143,7 @@ data class AppPermissionState(
         AppPermissionType.BACKGROUND_GUARDIAN -> backgroundGuardianEnabled
         AppPermissionType.MOTION_ORIENTATION -> motionOrientationEnabled
         AppPermissionType.AUDIO_HARDWARE -> audioHardwareEnabled
+        AppPermissionType.CLIPBOARD_ACCESS -> clipboardAccessEnabled
     }
 
     val enabledCount: Int
@@ -148,18 +161,24 @@ data class AppPermissionState(
         AppPermissionType.BACKGROUND_GUARDIAN -> copy(backgroundGuardianEnabled = enabled)
         AppPermissionType.MOTION_ORIENTATION -> copy(motionOrientationEnabled = enabled)
         AppPermissionType.AUDIO_HARDWARE -> copy(audioHardwareEnabled = enabled)
+        AppPermissionType.CLIPBOARD_ACCESS -> copy(clipboardAccessEnabled = enabled)
     }
 }
 
 /**
  * 全局权限公开说明与自主开关管控中心：
- * 1. 统一维护应用内 7 大类权限的自主开关状态并持久化至 SharedPreferences；
+ * 1. 统一维护应用内各项权限的自主开关状态并持久化至 SharedPreferences；
  * 2. 当用户关闭某项权限开关时，实时联动停用或拦截对应业务功能；
  * 3. 提供系统级授权状态查询与一键跳转系统授权设置页能力。
  */
 object AppPermissionManager {
     private const val PREFS_NAME = "concept_permission_prefs"
+    private const val KEY_LAST_HANDLED_CLIPBOARD_SIG = "last_handled_clipboard_sig"
     private var prefs: SharedPreferences? = null
+    @Volatile
+    private var lastSelfCopiedSignature: Int = 0
+    @Volatile
+    private var lastHandledClipboardSignature: Int = 0
 
     private val _state = MutableStateFlow(AppPermissionState())
     val state = _state.asStateFlow()
@@ -171,6 +190,7 @@ object AppPermissionManager {
         val appCtx = context.applicationContext ?: context
         val p = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs = p
+        lastHandledClipboardSignature = p.getInt(KEY_LAST_HANDLED_CLIPBOARD_SIG, 0)
 
         val legacyMotionEnabled = if (runCatching { p.contains(AppPermissionType.MOTION_ORIENTATION.key) }.getOrDefault(false)) {
             true
@@ -187,7 +207,8 @@ object AppPermissionManager {
             musicDownloadEnabled = p.getBoolean(AppPermissionType.MUSIC_DOWNLOAD.key, false),
             backgroundGuardianEnabled = p.getBoolean(AppPermissionType.BACKGROUND_GUARDIAN.key, true),
             motionOrientationEnabled = p.getBoolean(AppPermissionType.MOTION_ORIENTATION.key, legacyMotionEnabled),
-            audioHardwareEnabled = p.getBoolean(AppPermissionType.AUDIO_HARDWARE.key, true)
+            audioHardwareEnabled = p.getBoolean(AppPermissionType.AUDIO_HARDWARE.key, true),
+            clipboardAccessEnabled = p.getBoolean(AppPermissionType.CLIPBOARD_ACCESS.key, true)
         )
         _state.value = loaded
     }
@@ -249,6 +270,8 @@ object AppPermissionManager {
 
     fun resetForTest() {
         _state.value = AppPermissionState()
+        lastSelfCopiedSignature = 0
+        lastHandledClipboardSignature = 0
     }
 
     /**
@@ -420,7 +443,82 @@ object AppPermissionManager {
                 isSystemGranted = true,
                 actionButtonLabel = null
             )
+            AppPermissionType.CLIPBOARD_ACCESS -> SystemPermissionGrantStatus(
+                statusLabel = "系统剪贴板服务就绪",
+                isSystemGranted = true,
+                actionButtonLabel = null
+            )
         }
+    }
+
+    /**
+     * 受「设置 - 权限管理 - 剪贴板读取与写入」开关管控的统一剪贴板写入方法
+     */
+    fun copyTextToClipboard(
+        context: Context,
+        label: String,
+        text: String,
+        toastMessage: String? = "已复制到剪贴板"
+    ): Boolean {
+        if (!isPermissionEnabled(AppPermissionType.CLIPBOARD_ACCESS)) {
+            Toast.makeText(
+                context,
+                "已在「设置 - 权限管理」中关闭剪贴板读写权限",
+                Toast.LENGTH_SHORT
+            ).show()
+            return false
+        }
+        return runCatching {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                ?: return false
+            clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+            val sig = text.trim().hashCode()
+            lastSelfCopiedSignature = sig
+            markClipboardTextHandled(text)
+            if (!toastMessage.isNullOrBlank()) {
+                Toast.makeText(context, toastMessage, Toast.LENGTH_SHORT).show()
+            }
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
+     * 受「设置 - 权限管理 - 剪贴板读取与写入」开关管控的统一剪贴板读取方法
+     */
+    fun readTextFromClipboard(
+        context: Context,
+        notifyIfDisabled: Boolean = false
+    ): String? {
+        if (!isPermissionEnabled(AppPermissionType.CLIPBOARD_ACCESS)) {
+            if (notifyIfDisabled) {
+                Toast.makeText(
+                    context,
+                    "已在「设置 - 权限管理」中关闭剪贴板读写权限",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            return null
+        }
+        return runCatching {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                ?: return null
+            if (!clipboard.hasPrimaryClip()) return null
+            val item = clipboard.primaryClip?.getItemAt(0) ?: return null
+            item.coerceToText(context)?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+        }.getOrNull()
+    }
+
+    fun markClipboardTextHandled(text: String) {
+        val sig = text.trim().hashCode()
+        if (sig == 0) return
+        lastHandledClipboardSignature = sig
+        prefs?.edit()?.putInt(KEY_LAST_HANDLED_CLIPBOARD_SIG, sig)?.apply()
+    }
+
+    fun isClipboardTextAlreadyHandled(text: String): Boolean {
+        val sig = text.trim().hashCode()
+        if (sig == 0) return true
+        return sig == lastSelfCopiedSignature || sig == lastHandledClipboardSignature
     }
 
     fun openSystemPermissionSetting(context: Context, type: AppPermissionType) {

@@ -411,11 +411,11 @@ class DiscoverLocalCache(context: Context? = null) {
 
     fun getUserPlaylists(userId: String?): List<Playlist> {
         val key = "user_playlists_${userId ?: "guest"}"
-        memoryPlaylistList[key]?.let { return it }
+        memoryPlaylistList[key]?.let { list -> return list.filterNot { it.isDefaultCollect } }
         return runCatching {
             val sp = prefs ?: return emptyList()
             val raw = sp.getString(key, null) ?: return emptyList()
-            val list: List<Playlist> = KugouSigner.gson.fromJson(raw, playlistListType) ?: emptyList()
+            val list: List<Playlist> = (KugouSigner.gson.fromJson(raw, playlistListType) ?: emptyList<Playlist>()).filterNot { it.isDefaultCollect }
             memoryPlaylistList[key] = list
             list
         }.getOrDefault(emptyList())
@@ -424,10 +424,10 @@ class DiscoverLocalCache(context: Context? = null) {
     fun saveUserPlaylists(userId: String?, playlists: List<Playlist>, allowEmpty: Boolean = true) {
         if (playlists.isEmpty() && !allowEmpty) return
         val key = "user_playlists_${userId ?: "guest"}"
-        memoryPlaylistList[key] = playlists
+        val cleaned = playlists.filterNot { it.isDefaultCollect }; memoryPlaylistList[key] = cleaned
         cacheIoScope.launch {
             runCatching {
-                prefs?.edit()?.putString(key, KugouSigner.gson.toJson(playlists))?.apply()
+                prefs?.edit()?.putString(key, KugouSigner.gson.toJson(cleaned))?.apply()
             }
         }
     }

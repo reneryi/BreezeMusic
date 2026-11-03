@@ -56,6 +56,7 @@ fun SongActionBottomSheet(
     onPlayNext: () -> Unit,
     onToggleFavorite: () -> Unit,
     onAddToPlaylist: () -> Unit,
+    onShareSong: (() -> Unit)? = null,
     onSaveSongCover: (() -> Unit)? = null,
     onDownloadSong: (() -> Unit)? = null,
     onOpenComments: (() -> Unit)? = null,
@@ -196,7 +197,7 @@ fun SongActionBottomSheet(
                         Spacer(modifier = Modifier.height(14.dp))
                     }
 
-                    // 1. 歌曲头部名片
+                    // 1. 歌曲头部名片（右上角为分享按钮，替换原有的重复收藏按钮）
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -266,13 +267,21 @@ fun SongActionBottomSheet(
 
                         IconButton(
                             onClick = {
-                                dismissWithAction { onToggleFavorite() }
+                                if (onShareSong != null) {
+                                    dismissWithAction { onShareSong() }
+                                } else {
+                                    val payload = com.concept.music.data.share.KugouShareManager.buildSongSharePayload(song)
+                                    dismissWithAction {
+                                        com.concept.music.data.share.KugouShareManager.shareViaSystemSheet(context, payload)
+                                    }
+                                }
                             }
                         ) {
                             Icon(
-                                imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                                contentDescription = if (isFavorite) "取消喜欢" else "我喜欢",
-                                tint = if (isFavorite) Color(0xFFFF5252) else MaterialTheme.colorScheme.onSurfaceVariant
+                                imageVector = Icons.Rounded.Share,
+                                contentDescription = "分享歌曲",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }

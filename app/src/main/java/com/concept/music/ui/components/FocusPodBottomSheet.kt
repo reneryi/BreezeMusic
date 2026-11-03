@@ -120,7 +120,7 @@ fun FocusPodBottomSheet(
                     .widthIn(max = 500.dp)
                     .fillMaxWidth()
                     .wrapContentHeight()
-                    .heightIn(max = 600.dp)
+                    .heightIn(max = 640.dp)
             } else {
                 Modifier.fillMaxWidth()
             }
@@ -133,7 +133,7 @@ fun FocusPodBottomSheet(
                             Modifier.wrapContentHeight().padding(horizontal = 18.dp, vertical = 10.dp)
                         } else {
                             Modifier
-                                .wrapContentHeight().heightIn(max = 640.dp)
+                                .wrapContentHeight().heightIn(max = 680.dp)
                                 .padding(horizontal = 20.dp)
                                 .navigationBarsPadding()
                         }

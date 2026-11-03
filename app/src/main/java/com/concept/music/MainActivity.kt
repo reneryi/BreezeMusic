@@ -97,6 +97,30 @@ private fun mainTabIndex(route: String): Int = when (route) {
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        internal val incomingSharedTextFlow = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    }
+
+    private fun handleIncomingShareIntent(intent: android.content.Intent?) {
+        if (intent == null) return
+        val textCandidate = when (intent.action) {
+            android.content.Intent.ACTION_SEND -> intent.getStringExtra(android.content.Intent.EXTRA_TEXT)
+            android.content.Intent.ACTION_VIEW -> intent.dataString
+            else -> null
+        }?.trim()
+        if (!textCandidate.isNullOrBlank() &&
+            com.concept.music.data.share.KugouShareLinkParser.containsKugouShareSignal(textCandidate)
+        ) {
+            incomingSharedTextFlow.value = textCandidate
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingShareIntent(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // 读取 App 内部独立主题设置（完全独立于手机系统深浅模式）
         val isAppDark = com.concept.music.ui.theme.ThemeManager.isDarkTheme(this)
@@ -123,6 +147,7 @@ class MainActivity : ComponentActivity() {
         }
         com.concept.music.ui.theme.ThemeManager.syncSystemSplashAndNightMode(this, activeThemeMode)
         super.onCreate(savedInstanceState)
+        handleIncomingShareIntent(intent)
         // 严格区分手机版安装包 (phone) 与平板版安装包 (tablet)：
         // - 平板版安装包 (BuildConfig.IS_TABLET_FLAVOR == true)：遵循 Android 16 (API 36) 大屏规范，支持全方向自由旋转与分屏多窗口
         // - 手机版安装包 (BuildConfig.IS_TABLET_FLAVOR == false)：主界面及常规页面严格锁定竖屏，仅在播放页进入横屏时切换
@@ -252,11 +277,69 @@ fun MainContent(
     var showCreatePlaylistFromGlobal by remember { mutableStateOf(false) }
     var detailSheetSong by remember { mutableStateOf<Song?>(null) }
     var songToDownload by remember { mutableStateOf<Song?>(null) }
+    var songToShare by remember { mutableStateOf<Song?>(null) }
+    var lyricPosterSongFromShare by remember { mutableStateOf<Song?>(null) }
+    var detectedSharedTarget by remember { mutableStateOf<com.concept.music.data.share.ResolvedSharedMusicTarget?>(null) }
     var multiArtistPickerSong by remember { mutableStateOf<Song?>(null) }
     var isHomeSubSheetOpen by remember { mutableStateOf(false) }
     var isLibrarySubSheetOpen by remember { mutableStateOf(false) }
     val isMainSubSheetOpen = isHomeSubSheetOpen || isLibrarySubSheetOpen
     val mainScope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val incomingIntentShareText by MainActivity.incomingSharedTextFlow.collectAsState()
+
+    // 1. 响应系统分享菜单 (ACTION_SEND) 传入的酷狗分享链接
+    LaunchedEffect(incomingIntentShareText) {
+        val raw = incomingIntentShareText ?: return@LaunchedEffect
+        MainActivity.incomingSharedTextFlow.value = null
+        com.concept.music.service.AppPermissionManager.markClipboardTextHandled(raw)
+        val resolved = withContext(Dispatchers.IO) {
+            runCatching { VipManager.music.resolveSharedMusicText(raw) }.getOrNull()
+        }
+        if (resolved != null) {
+            detectedSharedTarget = resolved
+        } else {
+            Toast.makeText(context, "未能解析该分享链接", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 2. 响应应用切回前台时剪贴板中的酷狗/概念版分享口令（严格受设置-权限管理中「剪贴板读取与写入」开关管控）
+    DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                mainScope.launch {
+                    kotlinx.coroutines.delay(400L)
+                    if (!com.concept.music.service.AppPermissionManager.isPermissionEnabled(
+                            com.concept.music.service.AppPermissionType.CLIPBOARD_ACCESS
+                        )
+                    ) {
+                        return@launch
+                    }
+                    val clipText = com.concept.music.service.AppPermissionManager.readTextFromClipboard(
+                        context = context,
+                        notifyIfDisabled = false
+                    ) ?: return@launch
+                    if (com.concept.music.service.AppPermissionManager.isClipboardTextAlreadyHandled(clipText)) {
+                        return@launch
+                    }
+                    if (!com.concept.music.data.share.KugouShareLinkParser.containsKugouShareSignal(clipText)) {
+                        return@launch
+                    }
+                    com.concept.music.service.AppPermissionManager.markClipboardTextHandled(clipText)
+                    val resolved = withContext(Dispatchers.IO) {
+                        runCatching { VipManager.music.resolveSharedMusicText(clipText) }.getOrNull()
+                    }
+                    if (resolved != null) {
+                        detectedSharedTarget = resolved
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val openSubRouteFromContext: (String) -> Unit = { targetRoute ->
         val wasInPlayer = showNowPlaying
@@ -1218,6 +1301,9 @@ fun MainContent(
                 onAddToPlaylist = {
                     songToAddToPlaylist = targetSong
                 },
+                onShareSong = {
+                    songToShare = targetSong
+                },
                 onDownloadSong = {
                     songToDownload = targetSong
                 },
@@ -1299,6 +1385,69 @@ fun MainContent(
                     songToDownload = null
                     showNowPlaying = false
                     navController.navigate("settings") { launchSingleTop = true }
+                }
+            )
+        }
+
+        if (songToShare != null) {
+            val shareTarget = songToShare!!
+            com.concept.music.ui.components.ShareMusicBottomSheet(
+                song = shareTarget,
+                onDismiss = { songToShare = null },
+                onOpenLyricPoster = {
+                    songToShare = null
+                    lyricPosterSongFromShare = shareTarget
+                }
+            )
+        }
+
+        if (lyricPosterSongFromShare != null) {
+            val posterSong = lyricPosterSongFromShare!!
+            val isCurrentPlayingSong = currentSong?.id == posterSong.id ||
+                (currentSong?.hash?.isNotBlank() == true && currentSong?.hash.equals(posterSong.hash, ignoreCase = true))
+            val posterLyricData by produceState(
+                initialValue = if (isCurrentPlayingSong) playerStateHolder.value.currentLyric else com.concept.music.data.model.LyricData(),
+                key1 = posterSong.id,
+                key2 = posterSong.hash
+            ) {
+                if (!isCurrentPlayingSong || value.lines.isEmpty()) {
+                    val fetched = withContext(Dispatchers.IO) {
+                        runCatching { VipManager.lyric.getLyric(posterSong) }.getOrNull()
+                    }
+                    if (fetched != null && fetched.lines.isNotEmpty()) {
+                        value = fetched
+                    }
+                }
+            }
+            com.concept.music.ui.components.LyricPosterDialog(
+                song = posterSong,
+                lyricData = posterLyricData,
+                currentLyricIndex = if (isCurrentPlayingSong) playerStateHolder.value.currentLyricIndex else 0,
+                onDismiss = { lyricPosterSongFromShare = null }
+            )
+        }
+
+        if (detectedSharedTarget != null) {
+            val target = detectedSharedTarget!!
+            com.concept.music.ui.components.DetectedShareLinkDialog(
+                target = target,
+                onDismiss = { detectedSharedTarget = null },
+                onPlaySongNow = { sharedSong ->
+                    musicPlayerViewModel.playSongInCurrentQueue(sharedSong)
+                    showNowPlaying = true
+                },
+                onPlaySongNext = { sharedSong ->
+                    musicPlayerViewModel.playNext(sharedSong)
+                    Toast.makeText(context, "已加入下一首播放：${sharedSong.title}", Toast.LENGTH_SHORT).show()
+                },
+                onOpenPlaylist = { playlistId, _, fallbackSongs ->
+                    if (playlistId.isNotBlank() && !playlistId.startsWith("shared_playlist_")) {
+                        showNowPlaying = false
+                        navController.navigate("playlist_detail/$playlistId") { launchSingleTop = true }
+                    } else if (fallbackSongs.isNotEmpty()) {
+                        musicPlayerViewModel.playSong(fallbackSongs.first(), fallbackSongs)
+                        showNowPlaying = true
+                    }
                 }
             )
         }

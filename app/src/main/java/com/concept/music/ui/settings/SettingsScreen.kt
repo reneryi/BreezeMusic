@@ -270,16 +270,17 @@ internal fun openExternalUrl(context: Context, url: String) {
         }
         context.startActivity(intent)
     }.onFailure {
-        copyTextToClipboard(context, "链接", url)
-        Toast.makeText(context, "未找到浏览器，已将链接复制到剪贴板：$url", Toast.LENGTH_SHORT).show()
+        AppPermissionManager.copyTextToClipboard(
+            context = context,
+            label = "链接",
+            text = url,
+            toastMessage = "未找到浏览器，已将链接复制到剪贴板：$url"
+        )
     }
 }
 
 internal fun copyTextToClipboard(context: Context, label: String, text: String) {
-    runCatching {
-        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        cm?.setPrimaryClip(ClipData.newPlainText(label, text))
-    }
+    AppPermissionManager.copyTextToClipboard(context, label, text, toastMessage = null)
 }
 
 internal fun resolveUpdateCheckFromApiOrRedirect(
