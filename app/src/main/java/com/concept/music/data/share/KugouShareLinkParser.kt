@@ -278,7 +278,7 @@ object KugouShareLinkParser {
             url.contains("/songlist/", ignoreCase = true) -> "gcid_$rawSrcCid"
             else -> ""
         }
-        val gcid = (
+        val rawGcid = (
             params["global_collection_id"]
                 ?: params["global_specialid"]
                 ?: params["gcid"]
@@ -287,8 +287,21 @@ object KugouShareLinkParser {
             .ifBlank { pathGcid }
             .ifBlank { normalizedSrcCid }
             .ifBlank { plistPathId.takeIf { it.startsWith("collection_", ignoreCase = true) || it.startsWith("gcid_", ignoreCase = true) }.orEmpty() }
+        val gcid = if (rawGcid.startsWith("gcid_", ignoreCase = true)) {
+            decodeKugouGcidToCollectionId(rawGcid).ifBlank { rawGcid }
+        } else {
+            rawGcid
+        }
         val specialId = (params["specialid"] ?: params["special_id"] ?: params["specialID"]).orEmpty().trim()
-            .ifBlank { plistPathId.takeIf { it.all(Char::isDigit) }.orEmpty() }
+            .ifBlank {
+                when {
+                    plistPathId.isBlank() -> ""
+                    plistPathId.all(Char::isDigit) -> plistPathId
+                    !plistPathId.startsWith("collection_", ignoreCase = true) && !plistPathId.startsWith("gcid_", ignoreCase = true) ->
+                        decodeKugouBase36WithChecksum(plistPathId)
+                    else -> ""
+                }
+            }
         val listId = (params["listid"] ?: params["list_id"] ?: params["listID"]).orEmpty().trim()
         val uid = (params["uid"] ?: params["userid"] ?: params["userID"]).orEmpty().trim()
         val isPlaylistPath = url.contains("zlist.html", ignoreCase = true) ||
@@ -316,14 +329,21 @@ object KugouShareLinkParser {
             )
         }
 
-        // 4) 检查单曲标识参数 (hash / album_audio_id / mixsongid)
+        // 4) 检查单曲标识参数 (hash / album_audio_id / e_album_audio_id / mixsongid / /mixsong/xxx.html)
         val hash = (params["hash"] ?: params["Hash"] ?: params["fileHash"]).orEmpty().trim().uppercase()
         val albumId = (params["album_id"] ?: params["albumId"] ?: params["albumid"]).orEmpty().trim()
+        val mixsongPathToken = MIXSONG_PATH_REGEX.find(url)?.groupValues?.getOrNull(1)?.trim().orEmpty()
+        val decodedEncodedMixId = params["e_album_audio_id"]?.trim()?.let(::decodeKugouBase36WithChecksum)
+            ?.ifBlank { null }
+            ?: mixsongPathToken.takeIf { it.isNotBlank() }?.let { token ->
+                if (token.all(Char::isDigit)) token else decodeKugouBase36WithChecksum(token)
+            }
         val albumAudioId = (
             params["album_audio_id"]
                 ?: params["albumAudioId"]
                 ?: params["mixsongid"]
                 ?: params["mix_song_id"]
+                ?: decodedEncodedMixId
             ).orEmpty().trim()
         val audioId = (params["audio_id"] ?: params["audioId"]).orEmpty().trim()
 
@@ -539,9 +559,13 @@ object KugouShareLinkParser {
                     .orEmpty()
                     .ifBlank { songInfoData?.stringOrEmpty("author_name").orEmpty() }
                 val albumName = songInfoData?.stringOrEmpty("album_name").orEmpty()
-                val imgUrl = songInfoData?.stringOrEmpty("imgUrl")
-                    ?.replace("{size}", "480")
-                    .orEmpty()
+                val rawAlbumImg = songInfoData?.stringOrEmpty("album_img")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: obj.stringOrEmpty("album_img").takeIf { it.isNotBlank() }
+                val rawImgUrl = songInfoData?.stringOrEmpty("imgUrl")
+                    ?.takeIf { it.isNotBlank() && !it.contains("singerimg", ignoreCase = true) }
+                val imgUrl = (rawAlbumImg ?: rawImgUrl.orEmpty())
+                    .replace("{size}", "480")
                 val durationSec = songInfoData?.longOrZero("timeLength") ?: 0L
 
                 val (parsedArtist, parsedTitle) = splitArtistAndTitle(fileName)
@@ -862,6 +886,36 @@ object KugouShareLinkParser {
         } else {
             "" to clean
         }
+    }
+
+    /**
+     * 解码酷狗 H5 URL 中的带 2 位校验后缀的 Base36 编码 ID（如 `e_album_audio_id=xrojbed` -> `56718839`、`/plist/list/3sf9931/` -> `6364989`）
+     */
+    internal fun decodeKugouBase36WithChecksum(raw: String): String {
+        val clean = raw.trim().lowercase()
+        if (clean.length <= 2) return ""
+        val body = clean.dropLast(2)
+        if (!body.all { it in '0'..'9' || it in 'a'..'z' }) return ""
+        val decoded = body.toLongOrNull(36) ?: return ""
+        return if (decoded > 0L) decoded.toString() else ""
+    }
+
+    /**
+     * 解码酷狗音乐歌单分享链接中的 `gcid_xxx`（采用 `z` 作分隔符 + Base35 编码 + 2 位校验后缀）：
+     * 如 `gcid_3z15kqlufz7yz04d` -> `collection_3_2132029040_279_0`
+     */
+    internal fun decodeKugouGcidToCollectionId(rawGcid: String): String {
+        val clean = rawGcid.trim().lowercase().removePrefix("gcid_")
+        if (clean.length <= 4 || !clean.contains('z')) return ""
+        val body = clean.dropLast(2)
+        val parts = body.split('z')
+        if (parts.size < 3) return ""
+        val decodedParts = parts.map { part ->
+            if (part.isEmpty() || !part.all { it in '0'..'9' || it in 'a'..'y' }) return ""
+            val num = part.toLongOrNull(35) ?: return ""
+            num.toString()
+        }
+        return "collection_" + decodedParts.joinToString("_")
     }
 
     private fun JsonObject.stringOrEmpty(key: String): String {

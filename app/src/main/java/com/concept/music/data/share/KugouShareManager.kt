@@ -193,7 +193,6 @@ object KugouShareManager {
             append(mp3Hash.lowercase())
             append("&album_id=").append(cleanAlbumId)
             append("&album_audio_id=").append(resolvedAlbumAudioId)
-            append("&kgsscty1=qq_client")
         }
         val conceptMiddleH5Url =
             "https://activity.kugou.com/middle2native/v-c8ba3018/index.html?cmd=103301&params=${urlEncode(conceptInnerJson.toString())}&data=$encodedConceptOuter"
@@ -203,7 +202,6 @@ object KugouShareManager {
             append(mp3Hash.lowercase())
             append("&album_id=").append(cleanAlbumId)
             append("&album_audio_id=").append(resolvedAlbumAudioId)
-            append("&chl=qq_client&kgsscty1=qq_client")
         }
         val standardWeixinH5Url =
             "https://m3ws.kugou.com/share/weixin.html?data=$encodedStandardOuter"
@@ -313,11 +311,11 @@ object KugouShareManager {
             add("jsonStr", conceptInnerJson)
         }
 
-        // 2. 官方酷狗音乐标准版歌单专属唤醒载荷 (cmd = 302，对齐 zlist-816792c7b3.js)
+        // 2. 官方酷狗音乐标准版歌单专属唤醒载荷 (cmd = 302，对齐 m.kugou.com/plist/list/ openClientPlayList)
         val standardInnerJson = JsonObject().apply {
             addProperty("listName", cleanTitle)
             addProperty("userID", creatorUid)
-            addProperty("listID", numericListId)
+            addProperty("listID", specialIdLong)
             addProperty("ctype", "1")
             addProperty("isplay", "2")
             addProperty("specialID", specialIdLong)
@@ -352,16 +350,10 @@ object KugouShareManager {
             "https://activity.kugou.com/middle2native/v-c8ba3018/index.html?cmd=103302&params=${urlEncode(conceptInnerJson.toString())}&data=$encodedConceptOuter"
 
         val standardWakeupWebUrl = buildString {
-            append("https://m.kugou.com/share/zlist.html?listid=")
-            append(if (numericListId > 0L) numericListId.toString() else "2")
-            append("&type=0&uid=").append(creatorUid)
+            append("https://m.kugou.com/plist/list/").append(specialIdLong).append("/")
             if (gid.isNotBlank()) {
-                append("&global_collection_id=").append(urlEncode(gid))
+                append("?global_collection_id=").append(urlEncode(gid))
             }
-            if (specialIdLong > 0L) {
-                append("&specialid=").append(specialIdLong)
-            }
-            append("&share_type=collect&chl=qq_client&kgsscty1=qq_client")
         }
         val standardWeixinH5Url =
             "https://m3ws.kugou.com/share/weixin.html?data=$encodedStandardOuter"

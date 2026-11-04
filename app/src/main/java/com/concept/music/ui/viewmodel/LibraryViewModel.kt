@@ -294,7 +294,10 @@ class LibraryViewModel(
                         } else emptyList()
                     }
                     val selected = lists.firstOrNull { it.matchesIdentifier(targetPlaylistId) }
-                    val extInfoDef = async { runCatching { VipManager.music.playlistInfo(targetPlaylistId) }.getOrNull() }
+                    val effectiveInfoQueryId = selected?.listCreateGid?.takeIf { it.startsWith("collection_", ignoreCase = true) }
+                        ?: selected?.specialId?.takeIf { it.isNotBlank() && it != "0" }
+                        ?: targetPlaylistId
+                    val extInfoDef = async { runCatching { VipManager.music.playlistInfo(effectiveInfoQueryId) }.getOrNull() }
                     val progressCallback: (List<Song>) -> Unit = { partial ->
                         if (partial.isNotEmpty()) {
                             _librarySongs.value = partial
@@ -306,30 +309,41 @@ class LibraryViewModel(
                         val tracks = runCatching {
                             VipManager.music.playlistSongs(selected, onProgress = progressCallback)
                         }.getOrDefault(emptyList())
+                        val extInfo = extInfoDef.await()
                         val finalTracks = if (tracks.isNotEmpty()) {
                             tracks
                         } else {
                             runCatching {
-                                VipManager.music.fetchPlaylistSongsAll(targetPlaylistId, onProgress = progressCallback)
+                                VipManager.music.fetchPlaylistSongsAll(
+                                    collectionId = effectiveInfoQueryId,
+                                    onProgress = progressCallback,
+                                    specialIdHint = selected.specialId.ifBlank { extInfo?.specialId.orEmpty() }
+                                )
                             }.getOrDefault(emptyList())
                         }
                         _librarySongs.value = finalTracks
-                        VipManager.discoverCache.savePlaylistSongs(targetPlaylistId, finalTracks, allowEmpty = true)
-                        val extInfo = extInfoDef.await()
+                        if (finalTracks.isNotEmpty()) {
+                            VipManager.discoverCache.savePlaylistSongs(targetPlaylistId, finalTracks, allowEmpty = false)
+                        }
                         val enriched = selected.copy(
                             description = selected.description.ifBlank { extInfo?.description.orEmpty() },
                             coverUrl = selected.coverUrl.ifBlank { extInfo?.coverUrl?.ifBlank { finalTracks.firstOrNull()?.coverUrl.orEmpty() } ?: finalTracks.firstOrNull()?.coverUrl.orEmpty() },
                             creatorName = selected.creatorName.ifBlank { extInfo?.creatorName.orEmpty() },
-                            trackCount = if (finalTracks.isNotEmpty()) finalTracks.size else if (selected.trackCount > 0) selected.trackCount else (extInfo?.trackCount ?: 0)
+                            trackCount = if (finalTracks.isNotEmpty()) finalTracks.size else if (selected.trackCount > 0) selected.trackCount else (extInfo?.trackCount ?: 0),
+                            specialId = selected.specialId.ifBlank { extInfo?.specialId.orEmpty() }
                         )
                         VipManager.music.cacheCollectedPlaylistMeta(enriched)
                         _playlists.value = _playlists.value.map { if (it.isSamePlaylistAs(selected)) enriched else it }
                         VipManager.discoverCache.saveUserPlaylists(userId, _playlists.value)
                     } else {
-                        val trackList = runCatching {
-                            VipManager.music.fetchPlaylistSongsAll(targetPlaylistId, onProgress = progressCallback)
-                        }.getOrDefault(emptyList())
                         val extPlaylist = extInfoDef.await()
+                        val trackList = runCatching {
+                            VipManager.music.fetchPlaylistSongsAll(
+                                collectionId = extPlaylist?.globalCollectionId?.ifBlank { targetPlaylistId } ?: targetPlaylistId,
+                                onProgress = progressCallback,
+                                specialIdHint = extPlaylist?.specialId.orEmpty()
+                            )
+                        }.getOrDefault(emptyList())
                         val baseResolved = (extPlaylist ?: Playlist(
                             id = targetPlaylistId,
                             title = "精选歌单",
@@ -365,7 +379,8 @@ class LibraryViewModel(
                                         globalCollectionId = it.globalCollectionId.ifBlank { resolvedPl.globalCollectionId },
                                         listCreateGid = it.listCreateGid.ifBlank { resolvedPl.listCreateGid },
                                         listCreateListid = it.listCreateListid.ifBlank { resolvedPl.listCreateListid },
-                                        listCreateUserid = it.listCreateUserid.ifBlank { resolvedPl.listCreateUserid }
+                                        listCreateUserid = it.listCreateUserid.ifBlank { resolvedPl.listCreateUserid },
+                                        specialId = it.specialId.ifBlank { resolvedPl.specialId }
                                     )
                                 } else it
                             }
@@ -375,7 +390,9 @@ class LibraryViewModel(
                             } + resolvedPl
                         }
                         _librarySongs.value = trackList
-                        VipManager.discoverCache.savePlaylistSongs(targetPlaylistId, trackList, allowEmpty = true)
+                        if (trackList.isNotEmpty()) {
+                            VipManager.discoverCache.savePlaylistSongs(targetPlaylistId, trackList, allowEmpty = false)
+                        }
                     }
                 } catch (e: Exception) {
                     if (_librarySongs.value.isEmpty()) {
@@ -518,7 +535,34 @@ class LibraryViewModel(
                 when (resolved) {
                     is com.concept.music.data.share.ResolvedSharedMusicTarget.SharedPlaylist -> {
                         val pl = resolved.playlist
-                        if (pl != null && name.isBlank()) {
+                        val songs = runCatching {
+                            if (pl != null) {
+                                VipManager.music.playlistSongs(pl)
+                            } else {
+                                VipManager.music.fetchPlaylistSongsAll(resolved.playlistId)
+                            }
+                        }.getOrDefault(emptyList()).ifEmpty { resolved.fallbackSongs }
+
+                        if (songs.isNotEmpty()) {
+                            VipManager.discoverCache.savePlaylistSongs(resolved.playlistId, songs, allowEmpty = false)
+                            if (pl != null && pl.id.isNotBlank()) {
+                                VipManager.discoverCache.savePlaylistSongs(pl.id, songs, allowEmpty = false)
+                            }
+                        }
+
+                        if (songs.isNotEmpty()) {
+                            val targetName = name.ifBlank { pl?.title ?: "导入分享歌单" }
+                            val count = runCatching {
+                                VipManager.music.importPlaylistSongsDirect(targetName, songs)
+                            }.getOrDefault(0)
+                            if (count > 0) {
+                                loadMusicLibrary()
+                                onResult(true, "成功从分享链接导入 $count 首歌曲至自建歌单「$targetName」")
+                                return@launch
+                            }
+                        }
+
+                        if (pl != null) {
                             val collected = runCatching { VipManager.music.collectPlaylist(pl) }.getOrDefault(false)
                             if (collected) {
                                 loadMusicLibrary()
@@ -526,25 +570,14 @@ class LibraryViewModel(
                                 return@launch
                             }
                         }
-                        val songs = runCatching {
-                            VipManager.music.fetchPlaylistSongsAll(resolved.playlistId)
-                        }.getOrDefault(emptyList()).ifEmpty { resolved.fallbackSongs }
-                        if (songs.isNotEmpty()) {
-                            val targetName = name.ifBlank { pl?.title ?: "导入分享歌单" }
-                            val songLines = songs.map { "${it.title} - ${it.artist}" }
-                            val count = runCatching { VipManager.music.importExternalPlaylist(targetName, songLines) }.getOrDefault(0)
-                            if (count > 0) {
-                                loadMusicLibrary()
-                                onResult(true, "成功从分享链接导入 $count 首歌曲至「$targetName」")
-                                return@launch
-                            }
-                        }
+                        onResult(false, "未能从该分享链接中获取可导入的曲目")
+                        return@launch
                     }
                     is com.concept.music.data.share.ResolvedSharedMusicTarget.SharedSong -> {
                         val s = resolved.song
                         val targetName = name.ifBlank { "导入分享歌单" }
                         val count = runCatching {
-                            VipManager.music.importExternalPlaylist(targetName, listOf("${s.title} - ${s.artist}"))
+                            VipManager.music.importPlaylistSongsDirect(targetName, listOf(s))
                         }.getOrDefault(0)
                         if (count > 0) {
                             loadMusicLibrary()
@@ -552,7 +585,10 @@ class LibraryViewModel(
                             return@launch
                         }
                     }
-                    null -> {}
+                    null -> {
+                        onResult(false, "无法解析该酷狗分享链接，请检查链接是否完整")
+                        return@launch
+                    }
                 }
             }
 

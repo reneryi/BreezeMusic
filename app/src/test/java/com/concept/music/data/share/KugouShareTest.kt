@@ -94,8 +94,9 @@ class KugouShareTest {
         assertTrue(payload.conceptWakeupWebUrl.startsWith("https://activity.kugou.com/share/v-a00a45b0/index.html"))
         assertTrue(payload.conceptWakeupWebUrl.contains("specialid=6364989"))
         assertTrue(payload.conceptWakeupWebUrl.contains("global_specialid=collection_3_2132029040_279_0"))
-        assertTrue(payload.standardWakeupWebUrl.startsWith("https://m.kugou.com/share/zlist.html"))
+        assertTrue(payload.standardWakeupWebUrl.startsWith("https://m.kugou.com/plist/list/6364989/"))
         assertTrue(payload.standardWakeupWebUrl.contains("global_collection_id=collection_3_2132029040_279_0"))
+        assertFalse(payload.shareTextUniversal.contains("qq_client"))
 
         val parsedFromConceptScheme = KugouShareLinkParser.parseShareTextDirectly(payload.conceptSchemeUri)
             as? ParsedKugouShareDescriptor.PlaylistDescriptor
@@ -112,15 +113,14 @@ class KugouShareTest {
 
     @Test
     fun `内向解析器支持解析官方酷狗音乐歌单songlist_gcid与window_output及概念版H5链接`() {
-        // 1. 测试官方酷狗音乐歌单长链与 window.$output HTML 解析
+        // 1. 测试官方酷狗音乐歌单长链 (gcid_xxx 零网络离线解码还原为 collection_xxx) 与 window.$output HTML 解析
         val kugouStandardPlaylistUrl =
             "https://m.kugou.com/songlist/gcid_3z15kqlufz7yz04d/?src_cid=3z15kqlufz7yz04d&uid=1503516299&chl=qq_client&iszlist=1"
         val partialDesc = KugouShareLinkParser.parseUrlParametersOnly(kugouStandardPlaylistUrl)
             as? ParsedKugouShareDescriptor.PlaylistDescriptor
         assertNotNull(partialDesc)
-        assertEquals("gcid_3z15kqlufz7yz04d", partialDesc!!.globalCollectionId)
-        // 仅含 gcid_xxx 时标记为未完成，触发抓取 HTML 提取真实 specialid
-        assertFalse(partialDesc.isComplete)
+        assertEquals("collection_3_2132029040_279_0", partialDesc!!.globalCollectionId)
+        assertTrue(partialDesc.isComplete)
 
         val songlistHtml = """
             <!DOCTYPE html>
@@ -150,12 +150,20 @@ class KugouShareTest {
         assertEquals("collection_3_2132029040_279_0", conceptPlDesc.globalCollectionId)
         assertEquals("6364989", conceptPlDesc.specialId)
 
-        // 3. 测试移动端单曲页 phpParam 解析
+        // 3. 测试官方酷狗音乐单曲分享链接 e_album_audio_id=xrojbed 离线解码与 phpParam 优先提取 album_img 而非歌手头像
+        val standardSongShareUrl =
+            "https://m.kugou.com/share/?action=single&hash=6fb3eb3f13cd64df6e9784f6e487bab1&album_id=2059004&e_album_audio_id=xrojbed"
+        val stdSongDesc = KugouShareLinkParser.parseShareTextDirectly(standardSongShareUrl)
+            as? ParsedKugouShareDescriptor.SingleSongDescriptor
+        assertNotNull(stdSongDesc)
+        assertEquals("6FB3EB3F13CD64DF6E9784F6E487BAB1", stdSongDesc!!.hash)
+        assertEquals("56718839", stdSongDesc.albumAudioId)
+
         val mixSongHtml = """
             <!DOCTYPE html>
             <html>
             <head><script>
-            var phpParam = {"hash":"70C858B654B89B75A5381022E5F29D54","album_id":"554433","album_audio_id":"99887766","song_info":{"data":{"hash":"70C858B654B89B75A5381022E5F29D54","320hash":"11223344556677889900AABBCCDDEEFF","sqhash":"FFEEDDCCBBAA00998877665544332211","songName":"兰亭序","singerName":"周杰伦","album_name":"魔杰座","timeLength":253}}};
+            var phpParam = {"hash":"70C858B654B89B75A5381022E5F29D54","album_id":"554433","album_audio_id":"99887766","song_info":{"data":{"hash":"70C858B654B89B75A5381022E5F29D54","320hash":"11223344556677889900AABBCCDDEEFF","sqhash":"FFEEDDCCBBAA00998877665544332211","songName":"兰亭序","singerName":"周杰伦","album_name":"魔杰座","imgUrl":"http://singerimg.kugou.com/uploadpic/softhead/{size}/20241225/20241225182920226714.jpg","album_img":"http://imge.kugou.com/stdmusic/{size}/20250217/20250217144212257577.jpg","timeLength":253}}};
             </script></head><body></body></html>
         """.trimIndent()
 
@@ -171,6 +179,7 @@ class KugouShareTest {
         assertEquals("99887766", songDesc.albumAudioId)
         assertEquals("兰亭序", songDesc.titleHint)
         assertEquals("周杰伦", songDesc.artistHint)
+        assertEquals("http://imge.kugou.com/stdmusic/480/20250217/20250217144212257577.jpg", songDesc.coverUrlHint)
         assertEquals(253L, songDesc.durationSecHint)
     }
 

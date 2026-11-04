@@ -516,10 +516,20 @@ class MusicApiRepository(
             val listId = item.text("listid")?.toLongOrNull() ?: 0L
             val listCreateUserid = item.text("list_create_userid") ?: ""
             val listCreateListid = item.text("list_create_listid") ?: ""
-            val listCreateGid = item.text("list_create_gid") ?: ""
-            val global = (item.text("global_collection_id") ?: "").ifBlank { listCreateGid }
+            val rawListCreateGid = item.text("list_create_gid") ?: ""
+            val listCreateGid = if (rawListCreateGid.startsWith("gcid_", ignoreCase = true)) {
+                com.concept.music.data.share.KugouShareLinkParser.decodeKugouGcidToCollectionId(rawListCreateGid)
+                    .ifBlank { rawListCreateGid }
+            } else {
+                rawListCreateGid
+            }
             val isDefault = item.number("is_def") == 2 || name == "我喜欢"
             val isFav = item.text("type") == "1"
+            val global = if (isFav && listCreateGid.startsWith("collection_", ignoreCase = true)) {
+                listCreateGid
+            } else {
+                (item.text("global_collection_id") ?: "").ifBlank { listCreateGid }
+            }
             val basePl = Playlist(
                 id = global.ifBlank { listCreateListid.ifBlank { listId.toString() } },
                 title = name,
@@ -1013,8 +1023,20 @@ class MusicApiRepository(
         playlist: Playlist,
         onProgress: ((List<Song>) -> Unit)? = null
     ): List<Song> = auth { ctx ->
-        val collectionId = playlist.globalCollectionId.ifBlank { playlist.id }
-        val list = fetchPlaylistSongsAll(collectionId, ctx.session, onProgress = onProgress)
+        if (playlist.isFavorite || !playlist.isCreatedByMe) {
+            cacheCollectedPlaylistMeta(playlist)
+        }
+        val collectionId = if (playlist.isFavorite && playlist.listCreateGid.startsWith("collection_", ignoreCase = true)) {
+            playlist.listCreateGid
+        } else {
+            playlist.globalCollectionId.ifBlank { playlist.listCreateGid.ifBlank { playlist.id } }
+        }
+        val list = fetchPlaylistSongsAll(
+            collectionId = collectionId,
+            session = ctx.session,
+            onProgress = onProgress,
+            specialIdHint = playlist.specialId
+        )
         if (playlist.isLiked || playlist.title.contains("喜欢")) {
             recordUserTasteSeeds(list.take(80))
         }
@@ -1024,7 +1046,8 @@ class MusicApiRepository(
     suspend fun fetchPlaylistSongsAll(
         collectionId: String,
         session: KugouSession? = accounts.context()?.session,
-        onProgress: ((List<Song>) -> Unit)? = null
+        onProgress: ((List<Song>) -> Unit)? = null,
+        specialIdHint: String = ""
     ): List<Song> {
         if (collectionId.isBlank()) return emptyList()
 
@@ -1128,8 +1151,12 @@ class MusicApiRepository(
             return v4Songs
         }
 
-        // 备用 2：提取 specialid 走 CDN 歌单曲目接口 (/api/v3/special/song) 多页拉取
-        val numericSpecialId = collectionId.takeIf { it.all { ch -> ch.isDigit() } }
+        // 备用 2：提取真实 specialid（优先从缓存或 /v3/get_list_info 反查，切勿将 collection_3_uid_279_0 中的 279 误当成 specialid）走 CDN 歌单曲目接口 (/api/v3/special/song) 多页拉取
+        val numericSpecialId = specialIdHint.trim().takeIf { it.isNotBlank() && it != "0" && it.all(Char::isDigit) }
+            ?: collectionId.trim().takeIf { it.isNotBlank() && it != "0" && it.all(Char::isDigit) }
+            ?: collectedPlaylistMetaCache[collectionId.trim().lowercase()]?.specialId?.trim()?.takeIf { it.isNotBlank() && it != "0" && it.all(Char::isDigit) }
+            ?: collectedPlaylistMetaCache[effectiveGid.trim().lowercase()]?.specialId?.trim()?.takeIf { it.isNotBlank() && it != "0" && it.all(Char::isDigit) }
+            ?: runCatching { playlistInfo(effectiveGid)?.specialId?.trim() }.getOrNull()?.takeIf { it.isNotBlank() && it != "0" && it.all(Char::isDigit) }
             ?: effectiveGid.split("_").getOrNull(3)?.takeIf { it.all { ch -> ch.isDigit() } }
         if (!numericSpecialId.isNullOrBlank()) {
             val cdnSongs = mutableListOf<Song>()
@@ -1214,7 +1241,7 @@ class MusicApiRepository(
             val createUid = infoObj.text("list_create_userid") ?: infoObj.text("userid") ?: ""
             val specialIdVal = infoObj.text("specialid")?.takeIf { it != "0" }.orEmpty()
             val createListId = infoObj.text("list_create_listid") ?: infoObj.text("listid") ?: specialIdVal
-            val creator = infoObj.text("nickname") ?: infoObj.text("username") ?: infoObj.text("user_name") ?: ""
+            val creator = infoObj.text("nickname") ?: infoObj.text("username") ?: infoObj.text("user_name") ?: infoObj.text("list_create_username") ?: ""
 
             if (name.isBlank() && pic.isNullOrBlank() && count <= 0) {
                 null
@@ -1239,13 +1266,14 @@ class MusicApiRepository(
             }
         }.getOrNull()
 
-        if (gatewayPlaylist != null &&
-            gatewayPlaylist.description.isNotBlank() &&
-            gatewayPlaylist.specialId.isNotBlank() &&
-            gatewayPlaylist.globalCollectionId.startsWith("collection_", ignoreCase = true)
-        ) {
+        if (gatewayPlaylist != null) {
             cacheCollectedPlaylistMeta(gatewayPlaylist)
-            return gatewayPlaylist
+            if (gatewayPlaylist.description.isNotBlank() &&
+                gatewayPlaylist.specialId.isNotBlank() &&
+                gatewayPlaylist.globalCollectionId.startsWith("collection_", ignoreCase = true)
+            ) {
+                return gatewayPlaylist
+            }
         }
 
         // 备用：CDN 歌单详情接口 (/api/v3/special/info)
@@ -6727,6 +6755,29 @@ class MusicApiRepository(
         anySuccess
     }
 
+        // 外部歌单已知 Song 列表直接批量导入（用于酷狗分享歌单直接转存为自建歌单）
+    suspend fun importPlaylistSongsDirect(name: String, songs: List<Song>): Int = auth { _ ->
+        val cleanName = name.trim().ifBlank { "导入歌单" }
+        if (songs.isEmpty()) return@auth 0
+
+        createPlaylist(cleanName)
+        val targetPlaylist = runCatching {
+            userPlaylists().firstOrNull { it.isCreatedByMe && it.title == cleanName }
+        }.getOrNull() ?: return@auth 0
+
+        val batchCount = runCatching {
+            addSongsToPlaylistBatch(targetPlaylist.listId, songs)
+        }.getOrDefault(0)
+        if (batchCount > 0) return@auth batchCount
+
+        var importedCount = 0
+        for (song in songs) {
+            val added = runCatching { addSongToPlaylist(targetPlaylist.listId, song) }.getOrDefault(false)
+            if (added) importedCount++
+        }
+        importedCount
+    }
+
     // 外部歌单文本批量匹配导入
     suspend fun importExternalPlaylist(name: String, rawLines: List<String>): Int = auth { _ ->
         val cleanName = name.trim().ifBlank { "导入歌单" }
@@ -8798,7 +8849,8 @@ class MusicApiRepository(
         var albumId = descriptor.albumId.trim().takeIf { it != "0" }.orEmpty()
         var albumAudioId = descriptor.albumAudioId.trim().toLongOrNull() ?: 0L
         var audioId = descriptor.audioId.trim().toLongOrNull() ?: 0L
-        var coverUrl = imageUrl(descriptor.coverUrlHint)
+        val rawHintCover = imageUrl(descriptor.coverUrlHint)
+        var coverUrl = rawHintCover.takeUnless { it.contains("singerimg", ignoreCase = true) }.orEmpty()
         var durationMs = if (descriptor.durationSecHint > 0L) descriptor.durationSecHint * 1000L else 0L
 
         // 1. 若有 albumAudioId 或 audioId，调用 /kmr/v2/audio 补全 hash 与基础信息
@@ -8848,7 +8900,12 @@ class MusicApiRepository(
                     albumId = (albObj?.text("album_id") ?: baseObj?.text("album_id") ?: "").trim().takeIf { it != "0" }.orEmpty()
                 }
                 if (coverUrl.isBlank()) {
-                    coverUrl = imageUrl(albObj?.text("sizable_cover") ?: baseObj?.text("sizable_cover") ?: baseObj?.text("img"))
+                    coverUrl = imageUrl(
+                        albObj?.text("sizable_cover")
+                            ?: albObj?.text("cover")
+                            ?: baseObj?.text("sizable_cover")
+                            ?: baseObj?.text("img")
+                    ).takeUnless { it.contains("singerimg", ignoreCase = true) }.orEmpty()
                 }
                 if (durationMs <= 0L) {
                     val rawDur = audioObj?.number("duration")?.toLong() ?: audioObj?.number("timelength")?.toLong() ?: 0L
@@ -8888,7 +8945,7 @@ class MusicApiRepository(
         var finalTitle = enriched.title
         var finalArtist = enriched.artist
         var finalAlbumAudioId = enriched.albumAudioId
-        var finalCover = enriched.coverUrl
+        var finalCover = enriched.coverUrl.takeUnless { it.contains("singerimg", ignoreCase = true) }.orEmpty()
 
         if (cachedPrivObj != null) {
             val rawName = (cachedPrivObj.text("name") ?: cachedPrivObj.text("songname") ?: "").trim()
@@ -8923,7 +8980,7 @@ class MusicApiRepository(
             artist = finalArtist.ifBlank { "未知歌手" },
             albumAudioId = finalAlbumAudioId,
             mixSongId = enriched.mixSongId.ifBlank { if (finalAlbumAudioId > 0L) finalAlbumAudioId.toString() else "" },
-            coverUrl = finalCover
+            coverUrl = finalCover.ifBlank { rawHintCover }
         )
     }
 }
