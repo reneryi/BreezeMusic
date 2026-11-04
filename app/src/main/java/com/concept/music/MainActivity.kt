@@ -278,12 +278,13 @@ fun MainContent(
     var detailSheetSong by remember { mutableStateOf<Song?>(null) }
     var songToDownload by remember { mutableStateOf<Song?>(null) }
     var songToShare by remember { mutableStateOf<Song?>(null) }
+    var playlistToShare by remember { mutableStateOf<com.concept.music.data.model.Playlist?>(null) }
     var lyricPosterSongFromShare by remember { mutableStateOf<Song?>(null) }
     var detectedSharedTarget by remember { mutableStateOf<com.concept.music.data.share.ResolvedSharedMusicTarget?>(null) }
     var multiArtistPickerSong by remember { mutableStateOf<Song?>(null) }
     var isHomeSubSheetOpen by remember { mutableStateOf(false) }
     var isLibrarySubSheetOpen by remember { mutableStateOf(false) }
-    val isMainSubSheetOpen = isHomeSubSheetOpen || isLibrarySubSheetOpen
+    val isMainSubSheetOpen = isHomeSubSheetOpen || isLibrarySubSheetOpen || actionSheetSong != null || songToShare != null || playlistToShare != null
     val mainScope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     val incomingIntentShareText by MainActivity.incomingSharedTextFlow.collectAsState()
@@ -972,6 +973,9 @@ fun MainContent(
                         onSongMoreClick = { song, removeCallback ->
                             actionSheetSong = song
                             actionSheetRemoveCallback = removeCallback
+                        },
+                        onSharePlaylist = { targetPlaylist ->
+                            playlistToShare = targetPlaylist
                         }
                     )
                 }
@@ -1398,6 +1402,14 @@ fun MainContent(
                     songToShare = null
                     lyricPosterSongFromShare = shareTarget
                 }
+            )
+        }
+
+        if (playlistToShare != null) {
+            val sharePlaylistTarget = playlistToShare!!
+            com.concept.music.ui.components.ShareMusicBottomSheet(
+                playlist = sharePlaylistTarget,
+                onDismiss = { playlistToShare = null }
             )
         }
 

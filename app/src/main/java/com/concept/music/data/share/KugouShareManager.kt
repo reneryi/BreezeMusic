@@ -82,37 +82,85 @@ object KugouShareManager {
         }.getOrDefault(value)
     }
 
-    private fun bestHashOf(song: Song): String {
+    private fun bestStandardMp3HashOf(song: Song): String {
         return listOf(
-            song.hash,
+            song.mp3Hash128,
             song.hash128,
+            song.hash,
             song.hash320,
-            song.hashFlac,
-            song.hashHiRes
+            song.hashFlac
         ).firstOrNull { it.trim().length >= 32 }?.trim()?.uppercase().orEmpty()
     }
 
     /**
-     * 构建单曲分享与官方双端唤醒载荷 (`cmd = 212, type = 1, action = 1`)
+     * 构建单曲分享与官方双端唤醒载荷
+     * - 酷狗概念版 (`com.kugou.android.lite`): `cmd = 103301` + 官方概念版 H5 (`h5.kugou.com/v2/v-5a15aeb1/`)
+     * - 酷狗标准版 (`com.kugou.android`): `cmd = 212, type = 1, action = 1` + 官方标准版 H5 (`m.kugou.com/share/?action=single`)
      */
     fun buildSongSharePayload(song: Song): ShareMusicPayload {
         val cleanTitle = song.title.trim().ifBlank { "未知歌曲" }
         val cleanArtist = song.artist.trim().ifBlank { "未知歌手" }
-        val cleanHash = bestHashOf(song)
+        val mp3Hash = bestStandardMp3HashOf(song)
+        val hash320 = song.hash320.trim().takeIf { it.length >= 32 }?.uppercase().orEmpty()
+        val hashFlac = song.hashFlac.trim().takeIf { it.length >= 32 }?.uppercase().orEmpty()
         val cleanAlbumId = song.albumId.trim().takeIf { it.isNotEmpty() && it != "0" } ?: "0"
-        val resolvedAlbumAudioId = song.mixSongId.trim().takeIf { it.isNotEmpty() && it != "0" }
-            ?: song.albumAudioId.takeIf { it > 0L }?.toString()
-            ?: song.audioId.takeIf { it > 0L }?.toString()
-            ?: "0"
-        val durationSec = ((song.durationMs / 1000L).takeIf { it > 0L } ?: 210L)
+        val albumIdLong = cleanAlbumId.toLongOrNull() ?: 0L
+        val resolvedAlbumAudioId = (
+            song.albumAudioId.takeIf { it > 0L && it != song.audioId }
+                ?: song.mixSongId.trim().toLongOrNull()?.takeIf { it > 0L && it != song.audioId }
+                ?: song.albumAudioId.takeIf { it > 0L }
+                ?: song.mixSongId.trim().toLongOrNull()?.takeIf { it > 0L }
+                ?: song.audioId.takeIf { it > 0L }
+                ?: 0L
+            ).toString()
+        val durationSec = ((song.durationMs / 1000L).takeIf { it > 0L } ?: 213L)
+        val fileSize128 = song.fileSize128.takeIf { it > 0L }
+            ?: (durationSec * 16_000L)
+        val fileSize320 = song.fileSize320.takeIf { it > 0L }
+            ?: if (hash320.isNotBlank()) (durationSec * 40_000L) else 0L
+        val fileSizeFlac = song.fileSizeFlac.takeIf { it > 0L }
+            ?: if (hashFlac.isNotBlank()) (durationSec * 115_000L) else 0L
         val fileName = "$cleanArtist - $cleanTitle"
 
-        val innerJson = JsonObject().apply {
-            addProperty("hash", cleanHash)
+        // 1. 官方酷狗概念版专属唤醒载荷 (cmd = 103301，对齐 h5.kugou.com/v2/v-5a15aeb1/ index.39fe443c.chunk.js)
+        val conceptInnerJson = JsonObject().apply {
             addProperty("filename", fileName)
+            addProperty("filesize", fileSize128)
+            addProperty("hash", mp3Hash)
+            addProperty("bitrate", 128)
+            addProperty("extname", "mp3")
+            addProperty("duration", durationSec)
+            addProperty("mvhash", "")
+            addProperty("320hash", hash320)
+            addProperty("320filesize", fileSize320)
+            addProperty("sqhash", hashFlac)
+            addProperty("sqfilesize", fileSizeFlac)
+            addProperty("isplay", 1)
+            addProperty("action", 1)
+            addProperty("320privilege", 10)
+            addProperty("privilege", 10)
+            addProperty("sqprivilege", 10)
+            addProperty("album_id", albumIdLong)
+            addProperty("album_audio_id", resolvedAlbumAudioId)
+        }
+        val conceptOuterJson = JsonObject().apply {
+            addProperty("cmd", 103301)
+            add("jsonStr", conceptInnerJson)
+        }
+
+        // 2. 官方酷狗音乐标准版专属唤醒载荷 (cmd = 212，对齐 openKugouApp_0.12.4.min.js)
+        val standardInnerJson = JsonObject().apply {
+            addProperty("hash", mp3Hash)
+            addProperty("filename", fileName)
+            addProperty("filesize", fileSize128)
             addProperty("bitrate", 128)
             addProperty("duration", durationSec)
             addProperty("extname", "mp3")
+            addProperty("mvhash", "")
+            addProperty("320hash", hash320)
+            addProperty("320filesize", fileSize320)
+            addProperty("sqhash", hashFlac)
+            addProperty("sqfilesize", fileSizeFlac)
             addProperty("privilege", 10)
             addProperty("320privilege", 10)
             addProperty("sqprivilege", 10)
@@ -123,34 +171,44 @@ object KugouShareManager {
             addProperty("needfav", false)
             addProperty("share_subtype", 0)
         }
-
-        val outerJson = JsonObject().apply {
+        val standardOuterJson = JsonObject().apply {
             addProperty("cmd", 212)
             addProperty("type", 1)
             addProperty("action", 1)
             addProperty("need_toast", 0)
-            add("jsonStr", innerJson)
+            add("jsonStr", standardInnerJson)
         }
 
-        val rawInnerStr = innerJson.toString()
-        val rawOuterStr = outerJson.toString()
-        val encodedOuter = urlEncode(rawOuterStr)
-        val encodedInner = urlEncode(rawInnerStr)
+        val rawInnerStr = standardInnerJson.toString()
+        val rawOuterStr = standardOuterJson.toString()
+        val encodedConceptOuter = urlEncode(conceptOuterJson.toString())
+        val encodedStandardOuter = urlEncode(rawOuterStr)
 
-        val conceptScheme = "kugouyouth://start.weixin?$encodedOuter"
-        val standardScheme = "kugou://start.weixin?$encodedOuter"
+        val conceptScheme = "kugouyouth://start.weixin?$encodedConceptOuter"
+        val standardScheme = "kugou://start.weixin?$encodedStandardOuter"
 
-        val conceptWakeupWebUrl =
-            "https://a.app.qq.com/o/simple.jsp?pkgname=$PKG_KUGOU_CONCEPT&ckey=$CKEY_CONCEPT&android_schema=${urlEncode(conceptScheme)}&schema_version=7950"
+        // 使用酷狗官方 H5 落地页替代 a.app.qq.com，彻底消除 ColorOS 误识别为「儿歌点点」的问题
+        val conceptWakeupWebUrl = buildString {
+            append("https://h5.kugou.com/v2/v-5a15aeb1/index.html?hash=")
+            append(mp3Hash.lowercase())
+            append("&album_id=").append(cleanAlbumId)
+            append("&album_audio_id=").append(resolvedAlbumAudioId)
+            append("&kgsscty1=qq_client")
+        }
         val conceptMiddleH5Url =
-            "https://activity.kugou.com/middle2native/v-c8ba3018/index.html?cmd=212&params=$encodedInner&data=$encodedOuter"
+            "https://activity.kugou.com/middle2native/v-c8ba3018/index.html?cmd=103301&params=${urlEncode(conceptInnerJson.toString())}&data=$encodedConceptOuter"
 
-        val standardWakeupWebUrl =
-            "https://a.app.qq.com/o/simple.jsp?pkgname=$PKG_KUGOU_STANDARD&ckey=$CKEY_STANDARD&android_schema=${urlEncode(standardScheme)}"
+        val standardWakeupWebUrl = buildString {
+            append("https://m.kugou.com/share/?action=single&hash=")
+            append(mp3Hash.lowercase())
+            append("&album_id=").append(cleanAlbumId)
+            append("&album_audio_id=").append(resolvedAlbumAudioId)
+            append("&chl=qq_client&kgsscty1=qq_client")
+        }
         val standardWeixinH5Url =
-            "https://m3ws.kugou.com/share/weixin.html?data=$encodedOuter"
+            "https://m3ws.kugou.com/share/weixin.html?data=$encodedStandardOuter"
         val standardH5PlayUrl = buildString {
-            append("https://www.kugou.com/song/#hash=").append(cleanHash)
+            append("https://www.kugou.com/song/#hash=").append(mp3Hash)
             if (cleanAlbumId != "0") {
                 append("&album_id=").append(cleanAlbumId)
             }
@@ -168,21 +226,18 @@ object KugouShareManager {
 
         val shareTextForConcept = buildString {
             append("🎵 分享歌曲：").append(cleanArtist).append("《").append(cleanTitle).append("》\n")
-            append("👉 唤起酷狗概念版收听：").append(conceptWakeupWebUrl).append("\n")
-            append("🌐 网页试听：").append(standardH5PlayUrl)
+            append("👉 酷狗概念版收听：").append(conceptWakeupWebUrl)
         }
 
         val shareTextForStandard = buildString {
             append("🎵 分享歌曲：").append(cleanArtist).append("《").append(cleanTitle).append("》\n")
-            append("👉 唤起酷狗音乐收听：").append(standardWakeupWebUrl).append("\n")
-            append("🌐 网页试听：").append(standardH5PlayUrl)
+            append("👉 酷狗音乐收听：").append(standardWakeupWebUrl)
         }
 
         val shareTextUniversal = buildString {
             append("🎵 分享 ").append(cleanArtist).append(" 的歌曲《").append(cleanTitle).append("》\n")
             append("✨ 酷狗概念版直达：").append(conceptWakeupWebUrl).append("\n")
-            append("🎧 酷狗音乐直达：").append(standardWakeupWebUrl).append("\n")
-            append("🌐 网页试听：").append(standardH5PlayUrl)
+            append("🎧 酷狗音乐直达：").append(standardWakeupWebUrl)
         }
 
         return ShareMusicPayload(
@@ -206,13 +261,15 @@ object KugouShareManager {
     }
 
     /**
-     * 构建歌单分享与官方双端唤醒载荷 (`cmd = 302, type = 9, action = 0`)
+     * 构建歌单分享与官方双端唤醒载荷
+     * - 酷狗概念版 (`com.kugou.android.lite`): `cmd = 103302` + 官方概念版歌单 H5 (`activity.kugou.com/share/v-a00a45b0/`)
+     * - 酷狗标准版 (`com.kugou.android`): `cmd = 302, type = 9, action = 0` + 官方标准版歌单 H5 (`m.kugou.com/share/zlist.html`)
      */
     fun buildPlaylistSharePayload(playlist: Playlist): ShareMusicPayload {
         val cleanTitle = playlist.title.trim().ifBlank { "精选歌单" }
         val gid = playlist.globalCollectionId.trim()
             .ifBlank { playlist.listCreateGid.trim() }
-            .ifBlank { playlist.id.trim() }
+            .ifBlank { playlist.id.trim().takeIf { it.startsWith("collection_", ignoreCase = true) }.orEmpty() }
 
         val embeddedNumericFromGid = if (gid.startsWith("collection_", ignoreCase = true)) {
             gid.split("_").getOrNull(3)?.trim()?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
@@ -225,60 +282,90 @@ object KugouShareManager {
             null
         }
 
-        val numericListIdStr = playlist.listCreateListid.trim().takeIf { it.isNotEmpty() && it != "0" && it.all(Char::isDigit) }
-            ?: embeddedNumericFromGid
+        val numericListIdStr = embeddedNumericFromGid
+            ?: playlist.listCreateListid.trim().takeIf { it.isNotEmpty() && it != "0" && it.all(Char::isDigit) }
             ?: playlist.listId.takeIf { it > 0L }?.toString()
-            ?: playlist.id.trim().takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
-            ?: "0"
-        val numericListId = numericListIdStr.toLongOrNull() ?: 0L
+            ?: "2"
+        val numericListId = numericListIdStr.toLongOrNull() ?: 2L
+
+        val specialIdStr = playlist.specialId.trim().takeIf { it.isNotEmpty() && it != "0" && it.all(Char::isDigit) }
+            ?: playlist.id.trim().takeIf { it.isNotEmpty() && it != "0" && it.all(Char::isDigit) }
+            ?: playlist.listCreateListid.trim().takeIf { it.isNotEmpty() && it != "0" && it.all(Char::isDigit) && it != embeddedNumericFromGid }
+            ?: numericListIdStr
+        val specialIdLong = specialIdStr.toLongOrNull() ?: numericListId
 
         val creatorUid = playlist.listCreateUserid.trim().takeIf { it.isNotEmpty() && it != "0" }
             ?: embeddedCreatorFromGid
             ?: "0"
 
-        val innerJson = JsonObject().apply {
+        // 1. 官方酷狗概念版歌单专属唤醒载荷 (cmd = 103302，对齐 activity.kugou.com/share/v-a00a45b0/ index.31270fba.chunk.js)
+        val conceptInnerJson = JsonObject().apply {
+            addProperty("listName", cleanTitle)
+            addProperty("userID", creatorUid)
+            addProperty("listID", numericListId)
+            addProperty("specialID", specialIdLong)
+            addProperty("globalCollectionId", gid)
+            addProperty("ctype", 1)
+            addProperty("isplay", 1)
+        }
+        val conceptOuterJson = JsonObject().apply {
+            addProperty("cmd", 103302)
+            add("jsonStr", conceptInnerJson)
+        }
+
+        // 2. 官方酷狗音乐标准版歌单专属唤醒载荷 (cmd = 302，对齐 zlist-816792c7b3.js)
+        val standardInnerJson = JsonObject().apply {
             addProperty("listName", cleanTitle)
             addProperty("userID", creatorUid)
             addProperty("listID", numericListId)
             addProperty("ctype", "1")
             addProperty("isplay", "2")
-            addProperty("specialID", numericListId)
+            addProperty("specialID", specialIdLong)
             addProperty("globalCollectionId", gid)
             addProperty("share_subtype", "0")
         }
-
-        val outerJson = JsonObject().apply {
+        val standardOuterJson = JsonObject().apply {
             addProperty("cmd", 302)
             addProperty("type", 9)
             addProperty("action", 0)
             addProperty("need_toast", 0)
-            add("jsonStr", innerJson)
+            add("jsonStr", standardInnerJson)
         }
 
-        val rawInnerStr = innerJson.toString()
-        val rawOuterStr = outerJson.toString()
-        val encodedOuter = urlEncode(rawOuterStr)
-        val encodedInner = urlEncode(rawInnerStr)
+        val rawInnerStr = standardInnerJson.toString()
+        val rawOuterStr = standardOuterJson.toString()
+        val encodedConceptOuter = urlEncode(conceptOuterJson.toString())
+        val encodedStandardOuter = urlEncode(rawOuterStr)
 
-        val conceptScheme = "kugouyouth://start.weixin?$encodedOuter"
-        val standardScheme = "kugou://start.weixin?$encodedOuter"
+        val conceptScheme = "kugouyouth://start.weixin?$encodedConceptOuter"
+        val standardScheme = "kugou://start.weixin?$encodedStandardOuter"
 
-        val conceptWakeupWebUrl =
-            "https://a.app.qq.com/o/simple.jsp?pkgname=$PKG_KUGOU_CONCEPT&ckey=$CKEY_CONCEPT&android_schema=${urlEncode(conceptScheme)}&schema_version=7950"
+        val conceptWakeupWebUrl = buildString {
+            append("https://activity.kugou.com/share/v-a00a45b0/index.html?specialid=")
+            append(specialIdLong)
+            if (gid.isNotBlank()) {
+                append("&global_specialid=").append(urlEncode(gid))
+            }
+            append("&cType=1")
+        }
         val conceptMiddleH5Url =
-            "https://activity.kugou.com/middle2native/v-c8ba3018/index.html?cmd=302&params=$encodedInner&data=$encodedOuter"
+            "https://activity.kugou.com/middle2native/v-c8ba3018/index.html?cmd=103302&params=${urlEncode(conceptInnerJson.toString())}&data=$encodedConceptOuter"
 
-        val standardWakeupWebUrl =
-            "https://a.app.qq.com/o/simple.jsp?pkgname=$PKG_KUGOU_STANDARD&ckey=$CKEY_STANDARD&android_schema=${urlEncode(standardScheme)}"
-        val standardWeixinH5Url =
-            "https://m3ws.kugou.com/share/weixin.html?data=$encodedOuter"
-        val standardH5PlayUrl = buildString {
-            append("https://www.kugou.com/share/zlist.html?listid=")
+        val standardWakeupWebUrl = buildString {
+            append("https://m.kugou.com/share/zlist.html?listid=")
             append(if (numericListId > 0L) numericListId.toString() else "2")
             append("&type=0&uid=").append(creatorUid)
-            append("&global_collection_id=").append(urlEncode(gid))
-            append("&share_type=collect")
+            if (gid.isNotBlank()) {
+                append("&global_collection_id=").append(urlEncode(gid))
+            }
+            if (specialIdLong > 0L) {
+                append("&specialid=").append(specialIdLong)
+            }
+            append("&share_type=collect&chl=qq_client&kgsscty1=qq_client")
         }
+        val standardWeixinH5Url =
+            "https://m3ws.kugou.com/share/weixin.html?data=$encodedStandardOuter"
+        val standardH5PlayUrl = standardWakeupWebUrl
 
         val displaySubtitle = buildString {
             if (playlist.creatorName.isNotBlank()) {
@@ -295,16 +382,14 @@ object KugouShareManager {
             append("📀 分享歌单《").append(cleanTitle).append("》")
             if (playlist.trackCount > 0) append("（共 ").append(playlist.trackCount).append(" 首）")
             append("\n")
-            append("👉 唤起酷狗概念版打开：").append(conceptWakeupWebUrl).append("\n")
-            append("🌐 网页查看：").append(standardH5PlayUrl)
+            append("👉 酷狗概念版打开：").append(conceptWakeupWebUrl)
         }
 
         val shareTextForStandard = buildString {
             append("📀 分享歌单《").append(cleanTitle).append("》")
             if (playlist.trackCount > 0) append("（共 ").append(playlist.trackCount).append(" 首）")
             append("\n")
-            append("👉 唤起酷狗音乐打开：").append(standardWakeupWebUrl).append("\n")
-            append("🌐 网页查看：").append(standardH5PlayUrl)
+            append("👉 酷狗音乐打开：").append(standardWakeupWebUrl)
         }
 
         val shareTextUniversal = buildString {
@@ -312,8 +397,7 @@ object KugouShareManager {
             if (playlist.trackCount > 0) append("（共 ").append(playlist.trackCount).append(" 首）")
             append("\n")
             append("✨ 酷狗概念版直达：").append(conceptWakeupWebUrl).append("\n")
-            append("🎧 酷狗音乐直达：").append(standardWakeupWebUrl).append("\n")
-            append("🌐 网页查看：").append(standardH5PlayUrl)
+            append("🎧 酷狗音乐直达：").append(standardWakeupWebUrl)
         }
 
         return ShareMusicPayload(

@@ -19,7 +19,8 @@ data class Playlist(
     val totalVersion: Long = 0L,
     val listCreateUserid: String = "",
     val listCreateListid: String = "",
-    val listCreateGid: String = ""
+    val listCreateGid: String = "",
+    val specialId: String = ""
 ) {
     val songCount: Int get() = trackCount
 
@@ -48,6 +49,7 @@ data class Playlist(
             }
         }
         addKey(id)
+        addKey(specialId)
         addKey(globalCollectionId)
         addKey(listCreateGid)
         addKey(listCreateListid)
@@ -107,6 +109,7 @@ data class Playlist(
         totalVersion = totalVersion,
         listCreateUserid = (listCreateUserid as String?) ?: "",
         listCreateListid = (listCreateListid as String?) ?: "",
-        listCreateGid = (listCreateGid as String?) ?: ""
+        listCreateGid = (listCreateGid as String?) ?: "",
+        specialId = (specialId as String?) ?: ""
     )
 }

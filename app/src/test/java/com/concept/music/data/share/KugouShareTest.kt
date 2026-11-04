@@ -13,78 +13,144 @@ import org.junit.Test
 class KugouShareTest {
 
     @Test
-    fun `单曲分享载荷生成支持同时唤醒官方酷狗与官方概念版`() {
+    fun `单曲分享载荷生成支持同时唤醒官方酷狗与官方概念版且不含应用宝误识别域名`() {
         val song = Song(
-            id = "38291042",
-            hash = "b0ef8b90e4eae3a9ebc2b02f1b2b3d4e",
-            title = "晴天",
-            artist = "周杰伦",
-            album = "叶惠美",
-            albumId = "979871",
-            durationMs = 269_000L,
-            albumAudioId = 32155307L,
-            mixSongId = "32155307"
+            id = "18758291",
+            hash = "944CB2E541CDB0A6DD77364A561C97EE",
+            hash128 = "CD890FD40B13EF3A2BE78CA99119C79F",
+            mp3Hash128 = "6FB3EB3F13CD64DF6E9784F6E487BAB1",
+            hash320 = "24EC0CBAE11A3E8D014A22219A6AFEE6",
+            hashFlac = "A57CD29CB103445F42F3826819F837C7",
+            hashHiRes = "944CB2E541CDB0A6DD77364A561C97EE",
+            fileSize128 = 3423691L,
+            fileSize320 = 8558947L,
+            fileSizeFlac = 24903667L,
+            title = "勋章",
+            artist = "鹿晗",
+            album = "Reloaded 重启",
+            albumId = "2059004",
+            durationMs = 213_000L,
+            audioId = 18758291L,
+            albumAudioId = 56718839L,
+            mixSongId = "56718839"
         )
 
         val payload = KugouShareManager.buildSongSharePayload(song)
         assertFalse(payload.isPlaylist)
-        assertEquals("晴天", payload.title)
+        assertEquals("勋章", payload.title)
         assertTrue(payload.conceptSchemeUri.startsWith("kugouyouth://start.weixin?"))
         assertTrue(payload.standardSchemeUri.startsWith("kugou://start.weixin?"))
-        assertTrue(payload.conceptWakeupWebUrl.contains("pkgname=com.kugou.android.lite"))
-        assertTrue(payload.conceptWakeupWebUrl.contains("ckey=CK1486481175239"))
-        assertTrue(payload.standardWakeupWebUrl.contains("pkgname=com.kugou.android"))
-        assertTrue(payload.standardWakeupWebUrl.contains("ckey=CK1350585625598"))
-        assertTrue(payload.standardH5PlayUrl.contains("hash=B0EF8B90E4EAE3A9EBC2B02F1B2B3D4E"))
-        assertTrue(payload.standardH5PlayUrl.contains("album_id=979871"))
-        assertTrue(payload.standardH5PlayUrl.contains("album_audio_id=32155307"))
+
+        // 验证概念版 Scheme 使用 cmd=103301，标准版 Scheme 使用 cmd=212
+        val parsedConceptScheme = KugouShareLinkParser.parseShareTextDirectly(payload.conceptSchemeUri)
+            as? ParsedKugouShareDescriptor.SingleSongDescriptor
+        assertNotNull(parsedConceptScheme)
+        assertEquals("6FB3EB3F13CD64DF6E9784F6E487BAB1", parsedConceptScheme!!.hash)
+        assertEquals("24EC0CBAE11A3E8D014A22219A6AFEE6", parsedConceptScheme.hash320)
+        assertEquals("A57CD29CB103445F42F3826819F837C7", parsedConceptScheme.hashFlac)
+        assertEquals("56718839", parsedConceptScheme.albumAudioId)
+        assertEquals("2059004", parsedConceptScheme.albumId)
+
+        // 验证分享文案全部使用官方酷狗域名，彻底剔除 a.app.qq.com
+        assertFalse(payload.shareTextUniversal.contains("a.app.qq.com"))
+        assertTrue(payload.conceptWakeupWebUrl.startsWith("https://h5.kugou.com/v2/v-5a15aeb1/index.html"))
+        assertTrue(payload.standardWakeupWebUrl.startsWith("https://m.kugou.com/share/?action=single"))
+        assertTrue(payload.standardH5PlayUrl.contains("hash=6FB3EB3F13CD64DF6E9784F6E487BAB1"))
+        assertTrue(payload.standardH5PlayUrl.contains("album_id=2059004"))
+        assertTrue(payload.standardH5PlayUrl.contains("album_audio_id=56718839"))
 
         // 验证生成的概念版与标准版分享文案均可被 KugouShareLinkParser 零网络逆向还原
         val parsedFromConcept = KugouShareLinkParser.parseShareTextDirectly(payload.shareTextForConcept)
             as? ParsedKugouShareDescriptor.SingleSongDescriptor
         assertNotNull(parsedFromConcept)
-        assertEquals("B0EF8B90E4EAE3A9EBC2B02F1B2B3D4E", parsedFromConcept!!.hash)
-        assertEquals("32155307", parsedFromConcept.albumAudioId)
-        assertEquals("晴天", parsedFromConcept.titleHint)
-        assertEquals("周杰伦", parsedFromConcept.artistHint)
+        assertEquals("6FB3EB3F13CD64DF6E9784F6E487BAB1", parsedFromConcept!!.hash)
+        assertEquals("56718839", parsedFromConcept.albumAudioId)
 
         val parsedFromStandard = KugouShareLinkParser.parseShareTextDirectly(payload.shareTextForStandard)
             as? ParsedKugouShareDescriptor.SingleSongDescriptor
         assertNotNull(parsedFromStandard)
-        assertEquals("B0EF8B90E4EAE3A9EBC2B02F1B2B3D4E", parsedFromStandard!!.hash)
-        assertEquals("32155307", parsedFromStandard.albumAudioId)
+        assertEquals("6FB3EB3F13CD64DF6E9784F6E487BAB1", parsedFromStandard!!.hash)
+        assertEquals("56718839", parsedFromStandard.albumAudioId)
     }
 
     @Test
     fun `歌单分享载荷生成支持同时唤醒官方酷狗与官方概念版`() {
         val playlist = Playlist(
-            id = "collection_3_1340777928_4113434_0",
-            title = "深夜微风独立电子精选",
-            trackCount = 42,
-            creatorName = "微风音乐人",
-            globalCollectionId = "collection_3_1340777928_4113434_0",
-            listCreateUserid = "1340777928",
-            listCreateListid = "4113434"
+            id = "collection_3_2132029040_279_0",
+            title = "2026最火伤感歌曲：刀刀催人泪，句句皆心碎",
+            trackCount = 96,
+            creatorName = "南音",
+            globalCollectionId = "collection_3_2132029040_279_0",
+            listCreateUserid = "2132029040",
+            listCreateListid = "279",
+            specialId = "6364989"
         )
 
         val payload = KugouShareManager.buildPlaylistSharePayload(playlist)
         assertTrue(payload.isPlaylist)
         assertTrue(payload.conceptSchemeUri.startsWith("kugouyouth://start.weixin?"))
         assertTrue(payload.standardSchemeUri.startsWith("kugou://start.weixin?"))
-        assertTrue(payload.conceptWakeupWebUrl.contains("pkgname=com.kugou.android.lite"))
-        assertTrue(payload.standardWakeupWebUrl.contains("pkgname=com.kugou.android"))
-        assertTrue(payload.standardH5PlayUrl.contains("global_collection_id=collection_3_1340777928_4113434_0"))
+        assertFalse(payload.shareTextUniversal.contains("a.app.qq.com"))
+        assertTrue(payload.conceptWakeupWebUrl.startsWith("https://activity.kugou.com/share/v-a00a45b0/index.html"))
+        assertTrue(payload.conceptWakeupWebUrl.contains("specialid=6364989"))
+        assertTrue(payload.conceptWakeupWebUrl.contains("global_specialid=collection_3_2132029040_279_0"))
+        assertTrue(payload.standardWakeupWebUrl.startsWith("https://m.kugou.com/share/zlist.html"))
+        assertTrue(payload.standardWakeupWebUrl.contains("global_collection_id=collection_3_2132029040_279_0"))
+
+        val parsedFromConceptScheme = KugouShareLinkParser.parseShareTextDirectly(payload.conceptSchemeUri)
+            as? ParsedKugouShareDescriptor.PlaylistDescriptor
+        assertNotNull(parsedFromConceptScheme)
+        assertEquals("collection_3_2132029040_279_0", parsedFromConceptScheme!!.globalCollectionId)
+        assertEquals("6364989", parsedFromConceptScheme.specialId)
 
         val parsedFromUniversal = KugouShareLinkParser.parseShareTextDirectly(payload.shareTextUniversal)
             as? ParsedKugouShareDescriptor.PlaylistDescriptor
         assertNotNull(parsedFromUniversal)
-        assertEquals("collection_3_1340777928_4113434_0", parsedFromUniversal!!.globalCollectionId)
-        assertEquals("4113434", parsedFromUniversal.specialId)
-        assertEquals("深夜微风独立电子精选", parsedFromUniversal.titleHint)
+        assertEquals("collection_3_2132029040_279_0", parsedFromUniversal!!.globalCollectionId)
+        assertEquals("6364989", parsedFromUniversal.specialId)
     }
 
     @Test
-    fun `内向解析器支持解析官方移动端单曲落地页phpParam与歌单页globalCollectionId`() {
+    fun `内向解析器支持解析官方酷狗音乐歌单songlist_gcid与window_output及概念版H5链接`() {
+        // 1. 测试官方酷狗音乐歌单长链与 window.$output HTML 解析
+        val kugouStandardPlaylistUrl =
+            "https://m.kugou.com/songlist/gcid_3z15kqlufz7yz04d/?src_cid=3z15kqlufz7yz04d&uid=1503516299&chl=qq_client&iszlist=1"
+        val partialDesc = KugouShareLinkParser.parseUrlParametersOnly(kugouStandardPlaylistUrl)
+            as? ParsedKugouShareDescriptor.PlaylistDescriptor
+        assertNotNull(partialDesc)
+        assertEquals("gcid_3z15kqlufz7yz04d", partialDesc!!.globalCollectionId)
+        // 仅含 gcid_xxx 时标记为未完成，触发抓取 HTML 提取真实 specialid
+        assertFalse(partialDesc.isComplete)
+
+        val songlistHtml = """
+            <!DOCTYPE html>
+            <html><head><script>
+            window.${'$'}output = {"status":1,"gcid":"gcid_3z15kqlufz7yz04d","info":{"listinfo":{"id":"gcid_3z15kqlufz7yz04d","specialid":6364989,"name":"2026最火伤感歌曲：刀刀催人泪，句句皆心碎","count":96,"username":"南音","img":"http://imge.kugou.com/soft/collection/{size}/20240223/20240223163701362709.jpg"},"list":[{"hash":"2F1AE2A3697270C80BB2DB1AEBF89B4D","name":"任夏 - 祝你","timelen":211000,"album_id":84829248,"audio_id":302627804}]}};
+            </script></head><body></body></html>
+        """.trimIndent()
+
+        val htmlDesc = KugouShareLinkParser.parseHtmlContent(songlistHtml, kugouStandardPlaylistUrl)
+            as? ParsedKugouShareDescriptor.PlaylistDescriptor
+        assertNotNull(htmlDesc)
+        assertTrue(htmlDesc!!.isComplete)
+        assertEquals("6364989", htmlDesc.specialId)
+        assertEquals("6364989", htmlDesc.preferredPlaylistId)
+        assertEquals("2026最火伤感歌曲：刀刀催人泪，句句皆心碎", htmlDesc.titleHint)
+        assertEquals("南音", htmlDesc.creatorNameHint)
+        assertEquals(1, htmlDesc.embeddedSongs.size)
+        assertEquals("2F1AE2A3697270C80BB2DB1AEBF89B4D", htmlDesc.embeddedSongs.first().hash)
+
+        // 2. 测试官方酷狗概念版歌单长链解析
+        val conceptPlaylistUrl =
+            "https://activity.kugou.com/share/v-a00a45b0/index.html?specialid=6364989&global_specialid=collection_3_2132029040_279_0&src_uid=1503516299&cType=1"
+        val conceptPlDesc = KugouShareLinkParser.parseShareTextDirectly(conceptPlaylistUrl)
+            as? ParsedKugouShareDescriptor.PlaylistDescriptor
+        assertNotNull(conceptPlDesc)
+        assertTrue(conceptPlDesc!!.isComplete)
+        assertEquals("collection_3_2132029040_279_0", conceptPlDesc.globalCollectionId)
+        assertEquals("6364989", conceptPlDesc.specialId)
+
+        // 3. 测试移动端单曲页 phpParam 解析
         val mixSongHtml = """
             <!DOCTYPE html>
             <html>
@@ -106,26 +172,6 @@ class KugouShareTest {
         assertEquals("兰亭序", songDesc.titleHint)
         assertEquals("周杰伦", songDesc.artistHint)
         assertEquals(253L, songDesc.durationSecHint)
-
-        val mobilePlistHtml = """
-            <html>
-            <body data-global-collection-id="Y29sbGVjdGlvbl8zXzEzNDA3Nzc5MjhfNDExMzQzNF8w">
-            <script>
-            var specialid = Number("4113434"),
-                specialname = "官方概念版宝藏歌单",
-                globalCollectionId = "collection_3_1340777928_4113434_0";
-            </script>
-            </body></html>
-        """.trimIndent()
-
-        val plistDesc = KugouShareLinkParser.parseHtmlContent(
-            mobilePlistHtml,
-            "https://m3ws.kugou.com/plist/list/2g5y2ee"
-        ) as? ParsedKugouShareDescriptor.PlaylistDescriptor
-        assertNotNull(plistDesc)
-        assertEquals("collection_3_1340777928_4113434_0", plistDesc!!.globalCollectionId)
-        assertEquals("4113434", plistDesc.specialId)
-        assertEquals("官方概念版宝藏歌单", plistDesc.titleHint)
     }
 
     @Test

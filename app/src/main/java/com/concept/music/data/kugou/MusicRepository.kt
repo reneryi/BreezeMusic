@@ -68,7 +68,8 @@ class MusicApiRepository(
                 globalCollectionId = playlist.globalCollectionId.ifBlank { prev.globalCollectionId },
                 listCreateUserid = playlist.listCreateUserid.ifBlank { prev.listCreateUserid },
                 listCreateListid = playlist.listCreateListid.ifBlank { prev.listCreateListid },
-                listCreateGid = playlist.listCreateGid.ifBlank { prev.listCreateGid }
+                listCreateGid = playlist.listCreateGid.ifBlank { prev.listCreateGid },
+                specialId = playlist.specialId.ifBlank { prev.specialId }
             )
         } else {
             playlist
@@ -548,7 +549,8 @@ class MusicApiRepository(
                         globalCollectionId = basePl.globalCollectionId.ifBlank { cachedMeta.globalCollectionId },
                         listCreateGid = basePl.listCreateGid.ifBlank { cachedMeta.listCreateGid },
                         listCreateListid = basePl.listCreateListid.ifBlank { cachedMeta.listCreateListid },
-                        listCreateUserid = basePl.listCreateUserid.ifBlank { cachedMeta.listCreateUserid }
+                        listCreateUserid = basePl.listCreateUserid.ifBlank { cachedMeta.listCreateUserid },
+                        specialId = basePl.specialId.ifBlank { cachedMeta.specialId }
                     )
                 } else {
                     basePl
@@ -1210,7 +1212,8 @@ class MusicApiRepository(
             val desc = infoObj.text("intro") ?: infoObj.text("description") ?: infoObj.text("special_desc") ?: ""
             val playCnt = infoObj.text("play_count") ?: infoObj.text("playcount") ?: ""
             val createUid = infoObj.text("list_create_userid") ?: infoObj.text("userid") ?: ""
-            val createListId = infoObj.text("list_create_listid") ?: infoObj.text("listid") ?: infoObj.text("specialid") ?: ""
+            val specialIdVal = infoObj.text("specialid")?.takeIf { it != "0" }.orEmpty()
+            val createListId = infoObj.text("list_create_listid") ?: infoObj.text("listid") ?: specialIdVal
             val creator = infoObj.text("nickname") ?: infoObj.text("username") ?: infoObj.text("user_name") ?: ""
 
             if (name.isBlank() && pic.isNullOrBlank() && count <= 0) {
@@ -1230,15 +1233,24 @@ class MusicApiRepository(
                     globalCollectionId = gid.ifBlank { playlistId },
                     listCreateUserid = createUid,
                     listCreateListid = createListId,
-                    listCreateGid = gid.ifBlank { playlistId }
+                    listCreateGid = gid.ifBlank { playlistId },
+                    specialId = specialIdVal
                 )
             }
         }.getOrNull()
 
-        if (gatewayPlaylist != null && gatewayPlaylist.description.isNotBlank()) return gatewayPlaylist
+        if (gatewayPlaylist != null &&
+            gatewayPlaylist.description.isNotBlank() &&
+            gatewayPlaylist.specialId.isNotBlank() &&
+            gatewayPlaylist.globalCollectionId.startsWith("collection_", ignoreCase = true)
+        ) {
+            cacheCollectedPlaylistMeta(gatewayPlaylist)
+            return gatewayPlaylist
+        }
 
         // 备用：CDN 歌单详情接口 (/api/v3/special/info)
-        val numericSpecialId = playlistId.takeIf { it.all { ch -> ch.isDigit() } }
+        val numericSpecialId = gatewayPlaylist?.specialId?.takeIf { it.isNotBlank() && it.all { ch -> ch.isDigit() } }
+            ?: playlistId.takeIf { it.all { ch -> ch.isDigit() } }
             ?: playlistId.split("_").getOrNull(3)?.takeIf { it.all { ch -> ch.isDigit() } }
         if (!numericSpecialId.isNullOrBlank()) {
             val cdnPlaylist = runCatching {
@@ -1258,10 +1270,11 @@ class MusicApiRepository(
                     .replace("<em>", "").replace("</em>", "").trim()
                 val pic = infoObj.text("imgurl") ?: infoObj.text("pic") ?: infoObj.text("cover")
                 val count = infoObj.number("songcount") ?: infoObj.number("count") ?: 0
-                val gid = infoObj.text("global_collection_id") ?: infoObj.text("gid") ?: playlistId
+                val gid = infoObj.text("global_collection_id") ?: infoObj.text("global_specialid") ?: infoObj.text("gid") ?: playlistId
                 val desc = infoObj.text("intro") ?: ""
                 val playCnt = infoObj.text("playcount") ?: ""
                 val createUid = infoObj.text("suid") ?: infoObj.text("userid") ?: infoObj.text("uid") ?: ""
+                val createListId = infoObj.text("slid")?.takeIf { it != "0" } ?: numericSpecialId
                 val creator = infoObj.text("nickname") ?: infoObj.text("username") ?: infoObj.text("user_name") ?: ""
                 Playlist(
                     id = gid.ifBlank { playlistId },
@@ -1276,18 +1289,27 @@ class MusicApiRepository(
                     isLiked = false,
                     globalCollectionId = gid.ifBlank { playlistId },
                     listCreateUserid = createUid,
-                    listCreateListid = numericSpecialId,
-                    listCreateGid = gid.ifBlank { playlistId }
+                    listCreateListid = createListId,
+                    listCreateGid = gid.ifBlank { playlistId },
+                    specialId = numericSpecialId
                 )
             }.getOrNull()
             if (cdnPlaylist != null) {
                 val mergedCdn = if (gatewayPlaylist != null) {
+                    val effectiveGid = if (gatewayPlaylist.globalCollectionId.startsWith("collection_", ignoreCase = true)) {
+                        gatewayPlaylist.globalCollectionId
+                    } else {
+                        cdnPlaylist.globalCollectionId.ifBlank { gatewayPlaylist.globalCollectionId }
+                    }
                     gatewayPlaylist.copy(
                         description = gatewayPlaylist.description.ifBlank { cdnPlaylist.description },
                         coverUrl = gatewayPlaylist.coverUrl.ifBlank { cdnPlaylist.coverUrl },
                         trackCount = if (gatewayPlaylist.trackCount > 0) gatewayPlaylist.trackCount else cdnPlaylist.trackCount,
+                        globalCollectionId = effectiveGid,
+                        listCreateGid = effectiveGid,
                         listCreateUserid = gatewayPlaylist.listCreateUserid.ifBlank { cdnPlaylist.listCreateUserid },
-                        listCreateListid = gatewayPlaylist.listCreateListid.ifBlank { cdnPlaylist.listCreateListid }
+                        listCreateListid = gatewayPlaylist.listCreateListid.ifBlank { cdnPlaylist.listCreateListid },
+                        specialId = gatewayPlaylist.specialId.ifBlank { cdnPlaylist.specialId }
                     )
                 } else cdnPlaylist
                 cacheCollectedPlaylistMeta(mergedCdn)
@@ -1436,13 +1458,15 @@ class MusicApiRepository(
             val ogg320Size = (transParam?.number("ogg_320_filesize") ?: 0).toLong()
 
             var stdHash = ogg128Hash.ifBlank { s.hash128 }
+            var mp3StdHash = s.mp3Hash128.takeIf { isValidHash(it) }.orEmpty()
+            var mp3StdSize = s.fileSize128
             var hqHash = s.hash320.ifBlank { ogg320Hash }
             var sqHash = s.hashFlac
             var resHash = s.hashHiRes
             var resSize = if (s.isHiRes && s.fileSizeByte > 0L) s.fileSizeByte else 0L
-            var sqSize = if (!s.isHiRes && s.isLossless && s.fileSizeByte > 0L) s.fileSizeByte else 0L
-            var hqSize = ogg320Size
-            var stdSize = ogg128Size
+            var sqSize = if (!s.isHiRes && s.isLossless && s.fileSizeByte > 0L) s.fileSizeByte else s.fileSizeFlac
+            var hqSize = if (ogg320Size > 0L) ogg320Size else s.fileSize320
+            var stdSize = if (ogg128Size > 0L) ogg128Size else s.fileSize128
             var resKbps = if (s.isHiRes && s.bitrateKbps > 0) s.bitrateKbps else 0
             var sqKbps = if (!s.isHiRes && s.isLossless && s.bitrateKbps > 0) s.bitrateKbps else 0
             var hqKbps = if (hqSize > 0L) 320 else 0
@@ -1569,6 +1593,14 @@ class MusicApiRepository(
                     }
                     // 对齐 privilege_lite.js: 128 优先 level=1 / ogg_128_hash（概念版播放的 ogg 版本），其次 level=2（mp3 版本）
                     level == 1 || level == 2 || qStr == "128" -> {
+                        if (level == 2 || (qStr == "128" && level != 1 && extStr != "ogg")) {
+                            if (mp3StdHash.isBlank() || level == 2) {
+                                mp3StdHash = rgHash
+                            }
+                            if (sz > 0L) {
+                                mp3StdSize = sz
+                            }
+                        }
                         if (level == 1 || !hasLevel1OggStd) {
                             if (level == 1) hasLevel1OggStd = true
                             val useOgg128 = ogg128Hash.isNotBlank() && ogg128Size > 0L
@@ -1702,14 +1734,24 @@ class MusicApiRepository(
                 )
             )
 
+            val resolvedAlbumAudioId = s.albumAudioId.takeIf { it > 0L && it != s.audioId }
+                ?: privObj.number("album_audio_id")?.toLong()?.takeIf { it > 0L }
+                ?: s.albumAudioId
+
             s.copy(
                 hash = primaryHash,
                 hash128 = stdHash,
+                mp3Hash128 = mp3StdHash.ifBlank { s.mp3Hash128.ifBlank { stdHash } },
                 hash320 = hqHash,
                 hashFlac = sqHash,
                 hashHiRes = if (hasHiRes) resHash else "",
+                fileSize128 = if (mp3StdSize > 0L) mp3StdSize else if (stdSize > 0L) stdSize else s.fileSize128,
+                fileSize320 = if (hqSize > 0L) hqSize else s.fileSize320,
+                fileSizeFlac = if (sqSize > 0L) sqSize else s.fileSizeFlac,
                 album = mergedAlbumName,
                 albumId = resolvedAid,
+                albumAudioId = resolvedAlbumAudioId,
+                mixSongId = if (resolvedAlbumAudioId > 0L) resolvedAlbumAudioId.toString() else s.mixSongId,
                 coverUrl = s.coverUrl.ifBlank { privCover },
                 durationMs = effectiveDurMs,
                 isHiRes = hasHiRes,
@@ -3546,7 +3588,8 @@ class MusicApiRepository(
                     globalCollectionId = gid.ifBlank { id },
                     listCreateUserid = o.text("suid") ?: o.text("userid") ?: "",
                     listCreateListid = specialId,
-                    listCreateGid = gid.ifBlank { id }
+                    listCreateGid = gid.ifBlank { id },
+                    specialId = specialId
                 )
             )
             PlaylistItem(
@@ -7974,9 +8017,11 @@ class MusicApiRepository(
             hasRelateVip
 
         val audioId = (o.text("audio_id") ?: o.text("Audioid") ?: o.text("songid")
-            ?: base?.text("audio_id") ?: audioInfo?.text("audio_id") ?: o.text("mixsongid"))?.toLongOrNull() ?: 0L
-        val albumAudioId = (o.text("album_audio_id") ?: o.text("AlbumAudioId") ?: o.text("mixsongid") ?: o.text("scid")
-            ?: base?.text("album_audio_id") ?: audioInfo?.text("album_audio_id") ?: o.text("id"))?.toLongOrNull() ?: audioId
+            ?: base?.text("audio_id") ?: audioInfo?.text("audio_id") ?: o.text("mixsongid") ?: o.text("MixSongID"))?.toLongOrNull() ?: 0L
+        val albumAudioId = (o.text("album_audio_id") ?: o.text("AlbumAudioId") ?: o.text("AlbumAudioID")
+            ?: o.text("mixsongid") ?: o.text("MixSongID") ?: o.text("MixSongId") ?: o.text("scid")
+            ?: base?.text("album_audio_id") ?: audioInfo?.text("album_audio_id")
+            ?: o.text("id") ?: o.text("ID"))?.toLongOrNull() ?: audioId
 
         // 严格对齐 MakcRe/KuGouMusicApi module/privilege_lite.js 的 relate_goods 等级规范：
         // level: 1/2 = 128k, 4 = 320k(HQ), 5 = flac(SQ 无损), 6 = Hi-Res, 0/7 = 正式版酷狗 suvip 蝰蛇/多轨合成音效（非概念版音质）
@@ -7984,11 +8029,13 @@ class MusicApiRepository(
         var relateSqHash = ""
         var relateHqHash = ""
         var relateStdHash = ""
+        var relateMp3StdHash = ""
         var relateAccHash = ""
         var relateResSize = 0L
         var relateSqSize = 0L
         var relateHqSize = 0L
         var relateStdSize = 0L
+        var relateMp3StdSize = 0L
         var effectiveDurMs = durationMs
         val allRelateGoods = o.objects("relate_goods") + audioInfo?.objects("relate_goods").orEmpty() +
             base?.objects("relate_goods").orEmpty() + replaceObj?.objects("relate_goods").orEmpty()
@@ -8063,6 +8110,10 @@ class MusicApiRepository(
                 }
                 // 标准 128K: level == 1 / 2 或标记为 128
                 levelNum == 1 || levelNum == 2 || qStr.contains("128") -> {
+                    if (levelNum == 2 || (qStr.contains("128") && levelNum != 1 && !nameStr.contains("ogg"))) {
+                        if (relateMp3StdHash.isBlank() || levelNum == 2) relateMp3StdHash = h
+                        if (relateMp3StdSize <= 0L && sz > 0L) relateMp3StdSize = sz
+                    }
                     if (relateStdHash.isBlank()) relateStdHash = h
                     if (relateStdSize <= 0L && sz > 0L) relateStdSize = sz
                 }
@@ -8155,21 +8206,30 @@ class MusicApiRepository(
             ?: transParam?.text("ogg_320_hash")?.takeIf { isValidHash(it) }
             ?: relateHqHash
 
-        val stdHash = transParam?.text("ogg_128_hash")?.takeIf { isValidHash(it) }
-            ?: o.text("FileHash")?.takeIf { isValidHash(it) }
-            ?: o.text("hash")?.takeIf { isValidHash(it) }
-            ?: o.text("Hash")?.takeIf { isValidHash(it) }
+        val rawMp3Hash128 = o.text("FileHash")?.takeIf { isValidHash(it) }
+            ?: o.text("128hash")?.takeIf { isValidHash(it) }
             ?: o.text("hash_128")?.takeIf { isValidHash(it) }
             ?: o.text("hash128")?.takeIf { isValidHash(it) }
+            ?: o.text("hash")?.takeIf { isValidHash(it) }
+            ?: o.text("Hash")?.takeIf { isValidHash(it) }
             ?: o.text("audio_hash")?.takeIf { isValidHash(it) }
-            ?: base?.text("hash")?.takeIf { isValidHash(it) }
             ?: base?.text("hash_128")?.takeIf { isValidHash(it) }
+            ?: base?.text("hash")?.takeIf { isValidHash(it) }
             ?: replaceAudioInfo?.text("hash_128")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("hash_128")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("hash")?.takeIf { isValidHash(it) }
             ?: audioInfo?.text("FileHash")?.takeIf { isValidHash(it) }
             ?: deprecated?.text("hash")?.takeIf { isValidHash(it) }
+            ?: relateMp3StdHash.takeIf { isValidHash(it) }
             ?: relateStdHash
+
+        val rawMp3Size128 = (o.number("FileSize") ?: o.number("filesize") ?: o.number("128filesize") ?: o.number("filesize_128")
+            ?: audioInfo?.number("filesize_128") ?: audioInfo?.number("filesize")
+            ?: replaceAudioInfo?.number("filesize_128")
+            ?: relateMp3StdSize.takeIf { it > 0 } ?: stdSize).toLong()
+
+        val stdHash = transParam?.text("ogg_128_hash")?.takeIf { isValidHash(it) }
+            ?: rawMp3Hash128
 
         val rawResSize = if (topExplicitResSize > 0L) topExplicitResSize else relateResSize
         val resSize = if (rawResSize > 0L) rawResSize else if (isKmrHighActuallyHiRes) audioInfoHighSize else 0L
@@ -8285,10 +8345,14 @@ class MusicApiRepository(
             id = resolvedSongId,
             hash = primaryHash,
             hash128 = stdHash,
+            mp3Hash128 = rawMp3Hash128.ifBlank { stdHash },
             hash320 = hqHash,
             hashFlac = sqHash,
             hashHiRes = resHash,
             accompanyHash = accHash,
+            fileSize128 = rawMp3Size128,
+            fileSize320 = hqSize,
+            fileSizeFlac = sqSize,
             title = title,
             artist = artist,
             artistId = artistId,
@@ -8529,10 +8593,31 @@ class MusicApiRepository(
                 com.concept.music.data.share.ResolvedSharedMusicTarget.SharedSong(resolvedSong)
             }
             is com.concept.music.data.share.ParsedKugouShareDescriptor.PlaylistDescriptor -> {
-                val targetId = descriptor.preferredPlaylistId
-                val playlistObj = if (targetId.isNotBlank()) {
-                    runCatching { playlistInfo(targetId) }.getOrNull()
-                } else null
+                val candidateIds = buildList {
+                    if (descriptor.globalCollectionId.startsWith("collection_", ignoreCase = true)) {
+                        add(descriptor.globalCollectionId)
+                    }
+                    if (descriptor.specialId.isNotBlank() && descriptor.specialId != "0") {
+                        add(descriptor.specialId)
+                    }
+                    if (descriptor.globalCollectionId.isNotBlank() && !descriptor.globalCollectionId.startsWith("collection_", ignoreCase = true)) {
+                        add(descriptor.globalCollectionId)
+                    }
+                    if (descriptor.listId.isNotBlank() && descriptor.listId != "0") {
+                        add(descriptor.listId)
+                    }
+                }.distinct()
+
+                var playlistObj: Playlist? = null
+                for (cid in candidateIds) {
+                    val info = runCatching { playlistInfo(cid) }.getOrNull()
+                    if (info != null) {
+                        playlistObj = info
+                        break
+                    }
+                }
+                val targetId = playlistObj?.id?.takeIf { it.isNotBlank() }
+                    ?: candidateIds.firstOrNull().orEmpty()
 
                 val fallbackSongs = if (descriptor.embeddedSongs.isNotEmpty()) {
                     val rawList = descriptor.embeddedSongs.mapIndexed { idx, sDesc ->
@@ -8543,6 +8628,7 @@ class MusicApiRepository(
                             id = h.ifBlank { sDesc.albumAudioId.ifBlank { "shared_$idx" } },
                             hash = h,
                             hash128 = h,
+                            mp3Hash128 = h,
                             hash320 = sDesc.hash320.uppercase(),
                             hashFlac = sDesc.hashFlac.uppercase(),
                             title = sDesc.titleHint.ifBlank { "未知歌曲" },
@@ -8560,21 +8646,28 @@ class MusicApiRepository(
                 } else emptyList()
 
                 val effectivePlaylist = playlistObj ?: if (targetId.isNotBlank() || fallbackSongs.isNotEmpty()) {
-                    Playlist(
-                        id = targetId.ifBlank { "shared_playlist_${System.currentTimeMillis()}" },
+                    val resolvedId = descriptor.specialId.ifBlank { targetId.ifBlank { "shared_playlist_${System.currentTimeMillis()}" } }
+                    val fallbackPl = Playlist(
+                        id = resolvedId,
                         title = descriptor.titleHint.ifBlank { "酷狗分享歌单" },
                         coverUrl = imageUrl(descriptor.coverUrlHint).ifBlank { fallbackSongs.firstOrNull()?.coverUrl.orEmpty() },
                         trackCount = fallbackSongs.size,
                         creatorName = descriptor.creatorNameHint.ifBlank { "酷狗音乐分享" },
                         isCreatedByMe = false,
-                        globalCollectionId = descriptor.globalCollectionId,
+                        globalCollectionId = descriptor.globalCollectionId.takeIf { it.startsWith("collection_", ignoreCase = true) }.orEmpty(),
                         listCreateUserid = descriptor.uid,
-                        listCreateListid = descriptor.specialId.ifBlank { descriptor.listId },
-                        listCreateGid = descriptor.globalCollectionId
+                        listCreateListid = descriptor.listId.ifBlank { descriptor.specialId },
+                        listCreateGid = descriptor.globalCollectionId,
+                        specialId = descriptor.specialId
                     )
+                    cacheCollectedPlaylistMeta(fallbackPl)
+                    fallbackPl
                 } else null
 
                 if (effectivePlaylist == null && targetId.isBlank()) return@withContext null
+                if (effectivePlaylist != null) {
+                    cacheCollectedPlaylistMeta(effectivePlaylist)
+                }
                 com.concept.music.data.share.ResolvedSharedMusicTarget.SharedPlaylist(
                     playlistId = effectivePlaylist?.id ?: targetId,
                     playlist = effectivePlaylist,
@@ -8582,6 +8675,114 @@ class MusicApiRepository(
                 )
             }
         }
+    }
+
+    /**
+     * 分享歌曲前实时校准官方酷狗标准版 128k MP3 hash、各档位精确 filesize、album_id 与真实 album_audio_id（MixSongID）。
+     * 通过酷狗官方 H5 免鉴权接口 `m3ws.kugou.com/api/v1/song/get_by_hashs_album` 实现任意音质 hash -> 标准 MP3 128k 分享元数据的精确映射。
+     */
+    suspend fun enrichSongForShare(song: Song): Song = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val candidateHash = song.mp3Hash128
+            .ifBlank { song.hash128 }
+            .ifBlank { song.hash320 }
+            .ifBlank { song.hashFlac }
+            .ifBlank { song.hash }
+            .trim()
+            .uppercase()
+
+        if (candidateHash.isBlank()) return@withContext song
+        val albumIdLong = song.albumId.trim().toLongOrNull() ?: 0L
+
+        val m3wsUpdated = runCatching {
+            val paramsJson = "[{\"hash\":\"$candidateHash\",\"albumid\":$albumIdLong}]"
+            val resp = transport.callAdvanced(
+                path = "/api/v1/song/get_by_hashs_album",
+                host = "https://m3ws.kugou.com",
+                query = mapOf("params" to paramsJson),
+                sign = false,
+                includeDefaultParams = false
+            )
+            val item = resp.data.arr("data")?.firstOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+                ?: return@runCatching null
+            val extra = item.obj("extra")
+            val mp3Hash = (extra?.text("128hash") ?: item.text("hash"))
+                ?.takeIf { isValidHash(it) }?.uppercase().orEmpty()
+            val mp3Size = (extra?.number("128filesize") ?: item.number("filesize") ?: 0).toLong()
+            val h320 = extra?.text("320hash")?.takeIf { isValidHash(it) }?.uppercase().orEmpty()
+            val s320 = (extra?.number("320filesize") ?: 0).toLong()
+            val hSq = extra?.text("sqhash")?.takeIf { isValidHash(it) }?.uppercase().orEmpty()
+            val sSq = (extra?.number("sqfilesize") ?: 0).toLong()
+            val resolvedAlbumId = (item.text("albumid") ?: item.text("album_id"))
+                ?.takeIf { it != "0" && it.isNotBlank() }.orEmpty()
+            val resolvedAlbumAudioId = (item.number("album_audio_id") ?: 0).toLong()
+            val durSec = (item.number("duration") ?: extra?.number("timelength")?.let { it / 1000 } ?: 0).toLong()
+
+            song.copy(
+                mp3Hash128 = mp3Hash.ifBlank { song.mp3Hash128.ifBlank { song.hash128.ifBlank { song.hash } } },
+                fileSize128 = if (mp3Size > 0L) mp3Size else song.fileSize128,
+                hash320 = h320.ifBlank { song.hash320 },
+                fileSize320 = if (s320 > 0L) s320 else song.fileSize320,
+                hashFlac = hSq.ifBlank { song.hashFlac },
+                fileSizeFlac = if (sSq > 0L) sSq else song.fileSizeFlac,
+                albumId = resolvedAlbumId.ifBlank { song.albumId },
+                albumAudioId = if (resolvedAlbumAudioId > 0L) resolvedAlbumAudioId else song.albumAudioId,
+                mixSongId = if (resolvedAlbumAudioId > 0L) resolvedAlbumAudioId.toString() else song.mixSongId,
+                durationMs = if (song.durationMs > 0L) song.durationMs else if (durSec > 0L) durSec * 1000L else 0L
+            )
+        }.getOrNull()
+
+        if (m3wsUpdated != null) return@withContext m3wsUpdated
+
+        // 兜底：若 m3ws 未命中，走 privilege_lite 补全
+        runCatching { enrichSongsPrivilegeLite(listOf(song)).firstOrNull() }.getOrNull() ?: song
+    }
+
+    /**
+     * 分享歌单前实时补全歌单的 specialId、globalCollectionId、listCreateUserid 与 listCreateListid，
+     * 确保概念版 (cmd=103302) 与标准版 (cmd=302) 唤醒参数及 H5 落地页参数 100% 完整。
+     */
+    suspend fun enrichPlaylistForShare(playlist: Playlist): Playlist = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val cached = peekCollectedPlaylistMeta(playlist)
+        val mergedCached = if (cached != null) {
+            playlist.copy(
+                coverUrl = playlist.coverUrl.ifBlank { cached.coverUrl },
+                description = playlist.description.ifBlank { cached.description },
+                creatorName = playlist.creatorName.ifBlank { cached.creatorName },
+                globalCollectionId = playlist.globalCollectionId.ifBlank { cached.globalCollectionId },
+                listCreateUserid = playlist.listCreateUserid.ifBlank { cached.listCreateUserid },
+                listCreateListid = playlist.listCreateListid.ifBlank { cached.listCreateListid },
+                listCreateGid = playlist.listCreateGid.ifBlank { cached.listCreateGid },
+                specialId = playlist.specialId.ifBlank { cached.specialId }
+            )
+        } else playlist
+
+        val hasGid = mergedCached.globalCollectionId.startsWith("collection_", ignoreCase = true) ||
+            mergedCached.listCreateGid.startsWith("collection_", ignoreCase = true)
+        val hasSpecialId = mergedCached.specialId.isNotBlank() && mergedCached.specialId != "0"
+
+        if (hasGid && hasSpecialId) return@withContext mergedCached
+
+        val queryId = mergedCached.globalCollectionId.takeIf { it.startsWith("collection_", ignoreCase = true) }
+            ?: mergedCached.listCreateGid.takeIf { it.startsWith("collection_", ignoreCase = true) }
+            ?: mergedCached.specialId.takeIf { it.isNotBlank() && it != "0" }
+            ?: mergedCached.id.takeIf { it.isNotBlank() && it != "0" }
+            ?: return@withContext mergedCached
+
+        val remote = runCatching { playlistInfo(queryId) }.getOrNull() ?: return@withContext mergedCached
+        val finalPl = mergedCached.copy(
+            coverUrl = mergedCached.coverUrl.ifBlank { remote.coverUrl },
+            description = mergedCached.description.ifBlank { remote.description },
+            creatorName = mergedCached.creatorName.ifBlank { remote.creatorName },
+            globalCollectionId = mergedCached.globalCollectionId.takeIf { it.startsWith("collection_", ignoreCase = true) }
+                ?: remote.globalCollectionId.ifBlank { mergedCached.globalCollectionId },
+            listCreateUserid = mergedCached.listCreateUserid.ifBlank { remote.listCreateUserid },
+            listCreateListid = mergedCached.listCreateListid.ifBlank { remote.listCreateListid },
+            listCreateGid = mergedCached.listCreateGid.takeIf { it.startsWith("collection_", ignoreCase = true) }
+                ?: remote.listCreateGid.ifBlank { mergedCached.listCreateGid },
+            specialId = mergedCached.specialId.ifBlank { remote.specialId }
+        )
+        cacheCollectedPlaylistMeta(finalPl)
+        finalPl
     }
 
     private suspend fun resolveSharedSingleSong(

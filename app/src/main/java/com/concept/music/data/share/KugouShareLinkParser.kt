@@ -46,10 +46,14 @@ sealed class ParsedKugouShareDescriptor {
         val sourceUrl: String = ""
     ) : ParsedKugouShareDescriptor() {
         val preferredPlaylistId: String
-            get() = globalCollectionId.ifBlank { specialId }.ifBlank { listId }
+            get() = globalCollectionId.takeIf { it.startsWith("collection_", ignoreCase = true) }
+                ?: specialId.takeIf { it.isNotBlank() && it != "0" }
+                ?: globalCollectionId.ifBlank { listId }
 
         val isComplete: Boolean
-            get() = preferredPlaylistId.isNotBlank() || embeddedSongs.isNotEmpty()
+            get() = globalCollectionId.startsWith("collection_", ignoreCase = true) ||
+                (specialId.isNotBlank() && specialId != "0" && specialId.all(Char::isDigit)) ||
+                embeddedSongs.isNotEmpty()
     }
 }
 
@@ -113,6 +117,26 @@ object KugouShareLinkParser {
 
     private val DATA_GCID_ATTR_REGEX = Regex(
         """data-global-collection-id\s*=\s*["']([^"']+)["']"""
+    )
+
+    private val JSON_SPECIAL_ID_REGEX = Regex(
+        """"specialid"\s*:\s*["']?(\d{4,})["']?""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val JSON_GLOBAL_COLLECTION_ID_REGEX = Regex(
+        """"global_(?:special|collection)_id"\s*:\s*["'](collection_[^"']+)["']""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val SONGLIST_GCID_PATH_REGEX = Regex(
+        """/songlist/(gcid_[a-zA-Z0-9_]+)""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val PLIST_PATH_REGEX = Regex(
+        """/plist/list/([a-zA-Z0-9_]+)""",
+        RegexOption.IGNORE_CASE
     )
 
     private val MIXSONG_PATH_REGEX = Regex(
@@ -244,15 +268,36 @@ object KugouShareLinkParser {
             }
         }
 
-        // 3) 检查歌单标识参数 (global_collection_id / gcid / specialid / listid)
-        val gcid = (params["global_collection_id"] ?: params["gcid"] ?: params["globalCollectionId"]).orEmpty().trim()
+        // 3) 检查歌单标识参数 (global_collection_id / global_specialid / gcid / src_cid / specialid / listid / /songlist/gcid_xxx)
+        val pathGcid = SONGLIST_GCID_PATH_REGEX.find(url)?.groupValues?.getOrNull(1)?.trim().orEmpty()
+        val plistPathId = PLIST_PATH_REGEX.find(url)?.groupValues?.getOrNull(1)?.trim().orEmpty()
+        val rawSrcCid = params["src_cid"]?.trim().orEmpty()
+        val normalizedSrcCid = when {
+            rawSrcCid.isBlank() -> ""
+            rawSrcCid.startsWith("gcid_", ignoreCase = true) || rawSrcCid.startsWith("collection_", ignoreCase = true) -> rawSrcCid
+            url.contains("/songlist/", ignoreCase = true) -> "gcid_$rawSrcCid"
+            else -> ""
+        }
+        val gcid = (
+            params["global_collection_id"]
+                ?: params["global_specialid"]
+                ?: params["gcid"]
+                ?: params["globalCollectionId"]
+            ).orEmpty().trim()
+            .ifBlank { pathGcid }
+            .ifBlank { normalizedSrcCid }
+            .ifBlank { plistPathId.takeIf { it.startsWith("collection_", ignoreCase = true) || it.startsWith("gcid_", ignoreCase = true) }.orEmpty() }
         val specialId = (params["specialid"] ?: params["special_id"] ?: params["specialID"]).orEmpty().trim()
+            .ifBlank { plistPathId.takeIf { it.all(Char::isDigit) }.orEmpty() }
         val listId = (params["listid"] ?: params["list_id"] ?: params["listID"]).orEmpty().trim()
         val uid = (params["uid"] ?: params["userid"] ?: params["userID"]).orEmpty().trim()
         val isPlaylistPath = url.contains("zlist.html", ignoreCase = true) ||
             url.contains("/plist/", ignoreCase = true) ||
+            url.contains("/songlist/", ignoreCase = true) ||
+            url.contains("v-a00a45b0", ignoreCase = true) ||
             params["share_type"].equals("collect", ignoreCase = true) ||
-            params["ctype"] == "1"
+            params["ctype"] == "1" ||
+            params["cType"] == "1"
 
         if (gcid.isNotBlank() || specialId.isNotBlank() || (isPlaylistPath && listId.isNotBlank())) {
             val resolvedSpecialId = specialId.ifBlank {
@@ -331,9 +376,9 @@ object KugouShareLinkParser {
             .ifBlank { innerObj.stringOrEmpty("userid") }
             .ifBlank { innerObj.stringOrEmpty("uid") }
 
-        if (cmdStr == "302" || gcid.isNotBlank() || (specialId.isNotBlank() && specialId != "0")) {
+        if (cmdStr in listOf("302", "103302", "314") || gcid.isNotBlank() || (specialId.isNotBlank() && specialId != "0")) {
             val cleanSpecialId = specialId.takeIf { it != "0" }
-                ?: listId.takeIf { it != "0" }
+                ?: listId.takeIf { it != "0" && it != "2" }
                 ?: if (gcid.startsWith("collection_", ignoreCase = true)) {
                     gcid.split("_").getOrNull(3)?.takeIf { it.all(Char::isDigit) }.orEmpty()
                 } else ""
@@ -351,6 +396,8 @@ object KugouShareLinkParser {
         val hash = innerObj.stringOrEmpty("hash")
             .ifBlank { innerObj.stringOrEmpty("Hash") }
             .uppercase()
+        val hash320 = innerObj.stringOrEmpty("320hash").uppercase()
+        val hashFlac = innerObj.stringOrEmpty("sqhash").uppercase()
         val albumAudioId = innerObj.stringOrEmpty("album_audio_id")
             .ifBlank { innerObj.stringOrEmpty("albumAudioId") }
             .ifBlank { innerObj.stringOrEmpty("mixsongid") }
@@ -361,12 +408,14 @@ object KugouShareLinkParser {
         val durationSec = innerObj.longOrZero("duration")
             .takeIf { it > 0L } ?: innerObj.longOrZero("timelength")
 
-        if (cmdStr == "212" || (hash.length == 32 && HEX_32_REGEX.matches(hash)) ||
+        if (cmdStr in listOf("212", "103301", "103326") || (hash.length == 32 && HEX_32_REGEX.matches(hash)) ||
             (albumAudioId.isNotBlank() && albumAudioId != "0")
         ) {
             val (artistHint, titleHint) = splitArtistAndTitle(fileName)
             return ParsedKugouShareDescriptor.SingleSongDescriptor(
                 hash = if (HEX_32_REGEX.matches(hash)) hash else "",
+                hash320 = if (HEX_32_REGEX.matches(hash320)) hash320 else "",
+                hashFlac = if (HEX_32_REGEX.matches(hashFlac)) hashFlac else "",
                 albumId = albumId.takeIf { it != "0" }.orEmpty(),
                 albumAudioId = albumAudioId.takeIf { it != "0" }.orEmpty(),
                 titleHint = titleHint,
@@ -392,8 +441,81 @@ object KugouShareLinkParser {
     fun parseHtmlContent(html: String, currentUrl: String = ""): ParsedKugouShareDescriptor? {
         if (html.isBlank()) return null
 
+        // 0. 匹配官方酷狗音乐歌单分享页 `window.$output = {...}` (如 m.kugou.com/songlist/gcid_xxx/)
+        extractBalancedJsonObject(html, "window.\$output")?.let { outputJsonStr ->
+            val rootObj = runCatching { JsonParser.parseString(outputJsonStr).asJsonObject }.getOrNull()
+            if (rootObj != null) {
+                val gcid = rootObj.stringOrEmpty("gcid")
+                val infoObj = rootObj.getAsJsonObject("info")
+                val listInfoObj = infoObj?.getAsJsonObject("listinfo")
+                val specialId = listInfoObj?.stringOrEmpty("specialid")
+                    ?.ifBlank { rootObj.stringOrEmpty("specialid") }
+                    .orEmpty()
+                val title = listInfoObj?.stringOrEmpty("name")
+                    ?.ifBlank { listInfoObj.stringOrEmpty("specialname") }
+                    .orEmpty()
+                val creator = listInfoObj?.stringOrEmpty("username")
+                    ?.ifBlank { listInfoObj.stringOrEmpty("nickname") }
+                    .orEmpty()
+                val cover = listInfoObj?.stringOrEmpty("img")
+                    ?.ifBlank { listInfoObj.stringOrEmpty("pic") }
+                    ?.replace("{size}", "480")
+                    .orEmpty()
+
+                val embeddedSongs = mutableListOf<ParsedKugouShareDescriptor.SingleSongDescriptor>()
+                val listArr = infoObj?.getAsJsonArray("list")
+                if (listArr != null) {
+                    for (el in listArr) {
+                        if (!el.isJsonObject) continue
+                        val sObj = el.asJsonObject
+                        val h = sObj.stringOrEmpty("hash").uppercase()
+                        val rawName = sObj.stringOrEmpty("name").ifBlank { sObj.stringOrEmpty("filename") }
+                        val (sArtist, sTitle) = splitArtistAndTitle(rawName)
+                        val aId = sObj.stringOrEmpty("album_id")
+                        val auId = sObj.stringOrEmpty("audio_id")
+                        val mixId = sObj.stringOrEmpty("album_audio_id").ifBlank { sObj.stringOrEmpty("mixsongid") }
+                        val timelen = sObj.longOrZero("timelen").takeIf { it > 0L } ?: sObj.longOrZero("duration")
+                        val durSec = if (timelen > 1000L) timelen / 1000L else timelen
+                        val transParam = if (sObj.has("trans_param") && sObj.get("trans_param").isJsonObject) {
+                            sObj.getAsJsonObject("trans_param")
+                        } else null
+                        val sCover = transParam?.stringOrEmpty("union_cover")?.replace("{size}", "480").orEmpty()
+                        if (HEX_32_REGEX.matches(h) || mixId.isNotBlank() || auId.isNotBlank()) {
+                            embeddedSongs.add(
+                                ParsedKugouShareDescriptor.SingleSongDescriptor(
+                                    hash = if (HEX_32_REGEX.matches(h)) h else "",
+                                    albumId = aId.takeIf { it != "0" }.orEmpty(),
+                                    albumAudioId = mixId.takeIf { it != "0" }.orEmpty(),
+                                    audioId = auId.takeIf { it != "0" }.orEmpty(),
+                                    titleHint = sTitle.ifBlank { rawName },
+                                    artistHint = sArtist,
+                                    coverUrlHint = sCover,
+                                    durationSecHint = durSec,
+                                    sourceUrl = currentUrl
+                                )
+                            )
+                        }
+                    }
+                }
+
+                if ((specialId.isNotBlank() && specialId != "0") || gcid.isNotBlank() || embeddedSongs.isNotEmpty()) {
+                    return ParsedKugouShareDescriptor.PlaylistDescriptor(
+                        globalCollectionId = gcid,
+                        specialId = specialId.takeIf { it != "0" }.orEmpty(),
+                        titleHint = title,
+                        creatorNameHint = creator,
+                        coverUrlHint = cover,
+                        embeddedSongs = embeddedSongs,
+                        sourceUrl = currentUrl
+                    )
+                }
+            }
+        }
+
         // 1. 匹配移动端单曲页 `var phpParam = {...};`
-        PHP_PARAM_REGEX.find(html)?.groupValues?.getOrNull(1)?.let { jsonStr ->
+        val phpParamJsonStr = PHP_PARAM_REGEX.find(html)?.groupValues?.getOrNull(1)
+            ?: extractBalancedJsonObject(html, "phpParam")
+        phpParamJsonStr?.let { jsonStr ->
             val obj = runCatching { JsonParser.parseString(jsonStr).asJsonObject }.getOrNull()
             if (obj != null) {
                 val songInfoData = obj.getAsJsonObject("song_info")?.getAsJsonObject("data")
@@ -445,17 +567,19 @@ object KugouShareLinkParser {
             }
         }
 
-        // 2. 匹配移动端歌单页 `var globalCollectionId = "..."` / `var specialid = Number("...")` / `data-global-collection-id`
+        // 2. 匹配移动端歌单页 `var globalCollectionId = "..."` / `var specialid = Number("...")` / `data-global-collection-id` / 内嵌 JSON
         val gcidFromVar = GLOBAL_COLLECTION_ID_VAR_REGEX.find(html)?.groupValues?.getOrNull(1)?.trim().orEmpty()
         val gcidFromBase64Attr = DATA_GCID_ATTR_REGEX.find(html)?.groupValues?.getOrNull(1)?.trim()?.let { b64 ->
             runCatching {
                 String(Base64.getDecoder().decode(b64), Charsets.UTF_8).trim()
             }.getOrNull()
         }.orEmpty()
+        val gcidFromJson = JSON_GLOBAL_COLLECTION_ID_REGEX.find(html)?.groupValues?.getOrNull(1)?.trim().orEmpty()
         val specialIdFromVar = SPECIAL_ID_VAR_REGEX.find(html)?.groupValues?.getOrNull(1)?.trim().orEmpty()
+            .ifBlank { JSON_SPECIAL_ID_REGEX.find(html)?.groupValues?.getOrNull(1)?.trim().orEmpty() }
         val specialNameFromVar = SPECIAL_NAME_VAR_REGEX.find(html)?.groupValues?.getOrNull(1)?.trim().orEmpty()
 
-        val resolvedGcid = gcidFromVar.ifBlank { gcidFromBase64Attr }
+        val resolvedGcid = gcidFromVar.ifBlank { gcidFromBase64Attr }.ifBlank { gcidFromJson }
         if (resolvedGcid.isNotBlank() || (specialIdFromVar.isNotBlank() && specialIdFromVar != "0")) {
             return ParsedKugouShareDescriptor.PlaylistDescriptor(
                 globalCollectionId = resolvedGcid,
@@ -614,10 +738,48 @@ object KugouShareLinkParser {
                 descriptor.hash.length == 32 && !MIXSONG_PATH_REGEX.containsMatchIn(url)
             }
             is ParsedKugouShareDescriptor.PlaylistDescriptor -> {
-                descriptor.globalCollectionId.isNotBlank() ||
-                    (descriptor.specialId.isNotBlank() && descriptor.specialId != "0")
+                // 注意：若仅有 gcid_xxx 编码串而无 collection_xxx 或纯数字 specialId，必须继续请求 HTML 提取 window.$output 中的 specialid
+                descriptor.globalCollectionId.startsWith("collection_", ignoreCase = true) ||
+                    (descriptor.specialId.isNotBlank() && descriptor.specialId != "0" && descriptor.specialId.all(Char::isDigit))
             }
         }
+    }
+
+    private fun extractBalancedJsonObject(text: String, variableAnchor: String): String? {
+        val anchorIdx = text.indexOf(variableAnchor)
+        if (anchorIdx < 0) return null
+        val startBraceIdx = text.indexOf('{', anchorIdx + variableAnchor.length)
+        if (startBraceIdx < 0) return null
+
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (i in startBraceIdx until text.length) {
+            val ch = text[i]
+            if (escaped) {
+                escaped = false
+                continue
+            }
+            if (ch == '\\' && inString) {
+                escaped = true
+                continue
+            }
+            if (ch == '"') {
+                inString = !inString
+                continue
+            }
+            if (!inString) {
+                if (ch == '{') {
+                    depth++
+                } else if (ch == '}') {
+                    depth--
+                    if (depth == 0) {
+                        return text.substring(startBraceIdx, i + 1)
+                    }
+                }
+            }
+        }
+        return null
     }
 
     private fun mergeDescriptors(

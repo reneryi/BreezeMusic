@@ -93,6 +93,7 @@ fun PlaylistDetailScreen(
     onSongClick: (Song, List<Song>) -> Unit,
     currentSong: Song? = null,
     onSongMoreClick: ((Song, (() -> Unit)?) -> Unit)? = null,
+    onSharePlaylist: ((Playlist) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -263,7 +264,19 @@ fun PlaylistDetailScreen(
                         }
 
                         if (playlistId != "history" && currentPlaylist != null) {
-                            IconButton(onClick = { showSharePlaylistSheet = true }) {
+                            IconButton(
+                                onClick = {
+                                    val shareTarget = currentPlaylist.copy(
+                                        coverUrl = effectivePlaylistCoverUrl,
+                                        trackCount = if (currentPlaylist.trackCount > 0) currentPlaylist.trackCount else songs.size
+                                    )
+                                    if (onSharePlaylist != null) {
+                                        onSharePlaylist(shareTarget)
+                                    } else {
+                                        showSharePlaylistSheet = true
+                                    }
+                                }
+                            ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Share,
                                     contentDescription = "分享歌单",

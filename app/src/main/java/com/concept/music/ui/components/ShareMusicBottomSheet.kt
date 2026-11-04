@@ -36,6 +36,7 @@ import com.concept.music.data.share.KugouShareManager
 import com.concept.music.data.share.ResolvedSharedMusicTarget
 import com.concept.music.data.share.ShareMusicPayload
 import com.concept.music.data.share.ShareTargetEdition
+import com.concept.music.data.vip.VipManager
 import com.concept.music.service.AppPermissionManager
 import com.concept.music.ui.theme.ConceptAmberAccent
 import com.concept.music.ui.theme.ConceptAnimatedOverlaySheet
@@ -55,10 +56,21 @@ fun ShareMusicBottomSheet(
     onDismiss: () -> Unit,
     onOpenLyricPoster: (() -> Unit)? = null
 ) {
-    val payload = remember(song, playlist) {
+    val enrichedSong by produceState(initialValue = song, key1 = song) {
+        if (song != null) {
+            value = runCatching { VipManager.music.enrichSongForShare(song) }.getOrDefault(song)
+        }
+    }
+    val enrichedPlaylist by produceState(initialValue = playlist, key1 = playlist) {
+        if (playlist != null) {
+            value = runCatching { VipManager.music.enrichPlaylistForShare(playlist) }.getOrDefault(playlist)
+        }
+    }
+
+    val payload = remember(enrichedSong, enrichedPlaylist) {
         when {
-            song != null -> KugouShareManager.buildSongSharePayload(song)
-            playlist != null -> KugouShareManager.buildPlaylistSharePayload(playlist)
+            enrichedSong != null -> KugouShareManager.buildSongSharePayload(enrichedSong!!)
+            enrichedPlaylist != null -> KugouShareManager.buildPlaylistSharePayload(enrichedPlaylist!!)
             else -> null
         }
     } ?: return
