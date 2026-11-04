@@ -82,7 +82,7 @@ fun ShareMusicBottomSheet(
     val useCenteredCompactDialog = isLandscape || adaptiveInfo.isLargeScreenDevice
     val permissionState by AppPermissionManager.state.collectAsState()
 
-    var selectedEdition by remember { mutableStateOf(ShareTargetEdition.UNIVERSAL) }
+    var selectedEdition by remember { mutableStateOf(ShareTargetEdition.STANDARD_EDITION) }
     var pendingAfterDismiss by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     val panelShape = if (useCenteredCompactDialog) {
@@ -268,24 +268,19 @@ fun ShareMusicBottomSheet(
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = if (selected) {
-                                    ConceptPrimary.copy(alpha = 0.16f)
+                                    ConceptPrimary.copy(alpha = 0.22f)
                                 } else {
                                     conceptElevatedSurfaceColor()
                                 },
                                 modifier = Modifier
                                     .weight(1f)
-                                    .border(
-                                        width = if (selected) 1.dp else 0.dp,
-                                        color = if (selected) ConceptPrimary.copy(alpha = 0.65f) else Color.Transparent,
-                                        shape = RoundedCornerShape(12.dp)
-                                    )
                                     .softCardClickable(
                                         shape = RoundedCornerShape(12.dp),
                                         onClick = { selectedEdition = edition }
                                     )
                             ) {
                                 Column(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
@@ -342,130 +337,6 @@ fun ShareMusicBottomSheet(
                             }
                         }
                     )
-
-                    // 双端直接唤醒按钮行
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = conceptElevatedSurfaceColor(),
-                            modifier = Modifier
-                                .weight(1f)
-                                .softCardClickable(
-                                    shape = RoundedCornerShape(16.dp),
-                                    onClick = {
-                                        dismissWithAction {
-                                            KugouShareManager.launchOfficialKugouConcept(context, payload)
-                                        }
-                                    }
-                                )
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(ConceptCyanAccent.copy(alpha = 0.15f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
-                                        contentDescription = null,
-                                        tint = ConceptCyanAccent,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "唤起概念版",
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 13.sp
-                                        ),
-                                        maxLines = 1
-                                    )
-                                    Text(
-                                        text = "官方酷狗概念版",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 10.5.sp,
-                                        maxLines = 1
-                                    )
-                                }
-                            }
-                        }
-
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = conceptElevatedSurfaceColor(),
-                            modifier = Modifier
-                                .weight(1f)
-                                .softCardClickable(
-                                    shape = RoundedCornerShape(16.dp),
-                                    onClick = {
-                                        dismissWithAction {
-                                            KugouShareManager.launchOfficialKugouStandard(context, payload)
-                                        }
-                                    }
-                                )
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(ConceptVioletAccent.copy(alpha = 0.15f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
-                                        contentDescription = null,
-                                        tint = ConceptVioletAccent,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "唤起酷狗音乐",
-                                        style = MaterialTheme.typography.bodyMedium.copy(
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 13.sp
-                                        ),
-                                        maxLines = 1
-                                    )
-                                    Text(
-                                        text = "官方酷狗标准版",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontSize = 10.5.sp,
-                                        maxLines = 1
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    if (!payload.isPlaylist && onOpenLyricPoster != null) {
-                        ShareActionRowCard(
-                            icon = Icons.Rounded.PhotoFilter,
-                            title = "生成 2K 歌词分享海报",
-                            subtitle = "定制专辑流光艺术海报并保存至手机相册或直接分享图片",
-                            accentColor = ConceptAmberAccent,
-                            onClick = {
-                                dismissWithAction { onOpenLyricPoster() }
-                            }
-                        )
-                    }
 
                     Spacer(modifier = Modifier.height(6.dp))
                 }

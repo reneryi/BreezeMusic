@@ -16,20 +16,20 @@ enum class ShareTargetEdition(
     val shortBadge: String,
     val description: String
 ) {
-    UNIVERSAL(
-        label = "双端通用唤醒（推荐）",
-        shortBadge = "概念版 + 标准版",
-        description = "同时附带酷狗概念版与酷狗音乐标准版唤醒链接及网页试听页，对方安装任一版本均可直接唤起播放"
+    STANDARD_EDITION(
+        label = "酷狗标准版专属唤醒（默认）",
+        shortBadge = "酷狗音乐",
+        description = "直接唤醒对方手机上的官方「酷狗音乐」(com.kugou.android) 定位播放"
     ),
     CONCEPT_EDITION(
         label = "酷狗概念版专属唤醒",
         shortBadge = "酷狗概念版",
         description = "直接唤醒对方手机上的官方「酷狗概念版」(com.kugou.android.lite) 定位播放"
     ),
-    STANDARD_EDITION(
-        label = "酷狗标准版专属唤醒",
-        shortBadge = "酷狗音乐",
-        description = "直接唤醒对方手机上的官方「酷狗音乐」(com.kugou.android) 定位播放"
+    UNIVERSAL(
+        label = "双端通用唤醒",
+        shortBadge = "概念版 + 标准版",
+        description = "同时附带酷狗概念版与酷狗音乐标准版唤醒链接及网页试听页，对方安装任一版本均可直接唤起播放"
     )
 }
 
@@ -418,7 +418,7 @@ object KugouShareManager {
     fun shareViaSystemSheet(
         context: Context,
         payload: ShareMusicPayload,
-        edition: ShareTargetEdition = ShareTargetEdition.UNIVERSAL
+        edition: ShareTargetEdition = ShareTargetEdition.STANDARD_EDITION
     ) {
         val shareText = payload.shareTextForEdition(edition)
         runCatching {
@@ -442,7 +442,7 @@ object KugouShareManager {
     fun copyShareText(
         context: Context,
         payload: ShareMusicPayload,
-        edition: ShareTargetEdition = ShareTargetEdition.UNIVERSAL
+        edition: ShareTargetEdition = ShareTargetEdition.STANDARD_EDITION
     ): Boolean {
         val text = payload.shareTextForEdition(edition)
         return AppPermissionManager.copyTextToClipboard(

@@ -184,6 +184,18 @@ class KugouShareTest {
     }
 
     @Test
+    fun `分享目标版本枚举首项默认为酷狗音乐且顺序已调换`() {
+        val entries = ShareTargetEdition.entries
+        assertEquals(3, entries.size)
+        assertEquals(ShareTargetEdition.STANDARD_EDITION, entries[0])
+        assertEquals("酷狗音乐", entries[0].shortBadge)
+        assertEquals(ShareTargetEdition.CONCEPT_EDITION, entries[1])
+        assertEquals("酷狗概念版", entries[1].shortBadge)
+        assertEquals(ShareTargetEdition.UNIVERSAL, entries[2])
+        assertEquals("概念版 + 标准版", entries[2].shortBadge)
+    }
+
+    @Test
     fun `剪贴板权限已同步至AppPermissionManager并支持独立开关控制`() {
         AppPermissionManager.resetForTest()
         try {

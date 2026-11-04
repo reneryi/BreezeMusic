@@ -279,7 +279,6 @@ fun MainContent(
     var songToDownload by remember { mutableStateOf<Song?>(null) }
     var songToShare by remember { mutableStateOf<Song?>(null) }
     var playlistToShare by remember { mutableStateOf<com.concept.music.data.model.Playlist?>(null) }
-    var lyricPosterSongFromShare by remember { mutableStateOf<Song?>(null) }
     var detectedSharedTarget by remember { mutableStateOf<com.concept.music.data.share.ResolvedSharedMusicTarget?>(null) }
     var multiArtistPickerSong by remember { mutableStateOf<Song?>(null) }
     var isHomeSubSheetOpen by remember { mutableStateOf(false) }
@@ -1397,11 +1396,7 @@ fun MainContent(
             val shareTarget = songToShare!!
             com.concept.music.ui.components.ShareMusicBottomSheet(
                 song = shareTarget,
-                onDismiss = { songToShare = null },
-                onOpenLyricPoster = {
-                    songToShare = null
-                    lyricPosterSongFromShare = shareTarget
-                }
+                onDismiss = { songToShare = null }
             )
         }
 
@@ -1410,32 +1405,6 @@ fun MainContent(
             com.concept.music.ui.components.ShareMusicBottomSheet(
                 playlist = sharePlaylistTarget,
                 onDismiss = { playlistToShare = null }
-            )
-        }
-
-        if (lyricPosterSongFromShare != null) {
-            val posterSong = lyricPosterSongFromShare!!
-            val isCurrentPlayingSong = currentSong?.id == posterSong.id ||
-                (currentSong?.hash?.isNotBlank() == true && currentSong?.hash.equals(posterSong.hash, ignoreCase = true))
-            val posterLyricData by produceState(
-                initialValue = if (isCurrentPlayingSong) playerStateHolder.value.currentLyric else com.concept.music.data.model.LyricData(),
-                key1 = posterSong.id,
-                key2 = posterSong.hash
-            ) {
-                if (!isCurrentPlayingSong || value.lines.isEmpty()) {
-                    val fetched = withContext(Dispatchers.IO) {
-                        runCatching { VipManager.lyric.getLyric(posterSong) }.getOrNull()
-                    }
-                    if (fetched != null && fetched.lines.isNotEmpty()) {
-                        value = fetched
-                    }
-                }
-            }
-            com.concept.music.ui.components.LyricPosterDialog(
-                song = posterSong,
-                lyricData = posterLyricData,
-                currentLyricIndex = if (isCurrentPlayingSong) playerStateHolder.value.currentLyricIndex else 0,
-                onDismiss = { lyricPosterSongFromShare = null }
             )
         }
 
