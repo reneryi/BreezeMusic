@@ -1130,7 +1130,7 @@ class UiAlignmentRegressionTest {
         assertTrue(issueTemplate.contains("### 复现步骤 (Steps to Reproduce)"))
         assertTrue(issueTemplate.contains("BreezeMusic v1.0.0 (Build 1)"))
 
-        assertEquals(8, com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.size)
+        assertEquals(9, com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.size)
         val latestRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.first()
         val initialRelease = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.last()
         assertEquals("v${BuildConfig.VERSION_NAME.removeSuffix("-tablet")}", latestRelease.version)
@@ -1605,7 +1605,7 @@ class UiAlignmentRegressionTest {
         assertEquals("v2.1.0 正式版 · Build 12", customVer.fullBadgeText)
 
         val history = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY
-        assertEquals("更新日志完整记录全部 8 个发布版本 (v1.0.0 ~ v1.3.2)", 8, history.size)
+        assertEquals("更新日志完整记录全部 9 个发布版本 (v1.0.0 ~ v1.3.3)", 9, history.size)
         val latest = history.first()
         assertEquals("v${BuildConfig.VERSION_NAME.removeSuffix("-tablet")}", latest.version)
         assertTrue(latest.moduleGroups.size >= 4)
@@ -1803,14 +1803,14 @@ class UiAlignmentRegressionTest {
         assertTrue("我的页 VIP 权益中心卡片应使用精简无重复的小字文案", vipCardCode.contains("每日签到 · 畅享无损") && vipCardCode.contains("免费领取"))
 
         val gradleCode = java.io.File(projectRoot, "app/build.gradle.kts").readText(Charsets.UTF_8)
-        assertEquals("1.3.2", com.concept.music.ui.settings.extractVersionFromGradleText(gradleCode))
+        assertEquals("1.3.3", com.concept.music.ui.settings.extractVersionFromGradleText(gradleCode))
     }
 
     @Test
     fun `v1_2_0全版本更新日志与KRC歌词HTML实体反转义及高清封面分类验证`() {
         // 1. 验证更新日志完整记录每次发布的版本：v1.2.0, v1.1.0, v1.0.2, v1.0.1, v1.0.0
         val versions = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY.map { it.version }
-        assertEquals(listOf("v1.3.2", "v1.3.1", "v1.3.0", "v1.2.0", "v1.1.0", "v1.0.2", "v1.0.1", "v1.0.0"), versions)
+        assertEquals(listOf("v1.3.3", "v1.3.2", "v1.3.1", "v1.3.0", "v1.2.0", "v1.1.0", "v1.0.2", "v1.0.1", "v1.0.0"), versions)
 
         // 2. 验证 KRC / LRC 歌词 HTML 实体（如 &apos;）自动反转义（解决图三 Vibe 英文歌词显示 &apos; 问题）
         val rawKrcLine = "[1000,3000]<0,500,0>And <500,800,0>it&apos;s <1300,700,0>goin&apos; <2000,1000,0>home"
@@ -2055,15 +2055,15 @@ class UiAlignmentRegressionTest {
         assertTrue("PlaylistDetailScreen 切换排序标题时下方曲目列表应挂载 rememberCategorySwitchGraphicModifier(sortMode.ordinal)", plDetailCode.contains("rememberCategorySwitchGraphicModifier(sortMode.ordinal)"))
         assertFalse("PlaylistDetailScreen 排序标题栏不应带有 horizontalCategorySwipe 左右滑动切换功能", plDetailCode.contains(".horizontalCategorySwipe("))
 
-        // 3. 验证全版本更新日志防覆盖归档机制（完整包含 v1.3.0、v1.3.1、v1.3.2 等全部 8 个版本且未来新版本自动前置不覆盖）
+        // 3. 验证全版本更新日志防覆盖归档机制（完整包含 v1.3.0、v1.3.1、v1.3.2、v1.3.3 等全部 9 个版本且未来新版本自动前置不覆盖）
         val changelogHistory = com.concept.music.ui.settings.PROJECT_CHANGELOG_HISTORY
-        assertEquals(listOf("v1.3.2", "v1.3.1", "v1.3.0", "v1.2.0", "v1.1.0", "v1.0.2", "v1.0.1", "v1.0.0"), changelogHistory.map { it.version })
+        assertEquals(listOf("v1.3.3", "v1.3.2", "v1.3.1", "v1.3.0", "v1.2.0", "v1.1.0", "v1.0.2", "v1.0.1", "v1.0.0"), changelogHistory.map { it.version })
         val futureResolved = com.concept.music.ui.settings.resolveChangelogHistory(
-            com.concept.music.ui.components.AppVersionInfo(rawVersionName = "1.4.0", versionCode = 9L)
+            com.concept.music.ui.components.AppVersionInfo(rawVersionName = "1.4.0", versionCode = 10L)
         )
-        assertEquals("未来发布新版本时应自动前置追加而不覆盖 v1.3.2 或 v1.3.0", 9, futureResolved.size)
+        assertEquals("未来发布新版本时应自动前置追加而不覆盖 v1.3.3 或 v1.3.0", 10, futureResolved.size)
         assertEquals("v1.4.0", futureResolved[0].version)
-        assertEquals("v1.3.2", futureResolved[1].version)
+        assertEquals("v1.3.3", futureResolved[1].version)
         assertTrue("v1.3.0 必须始终保留在历史更新日志中", futureResolved.any { it.version == "v1.3.0" })
 
         // 4. 验证检查更新多通道并发竞速且 HasUpdate 仅展示新版本号而不直接输出 Markdown 更新内容

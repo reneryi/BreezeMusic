@@ -139,6 +139,48 @@ data class ChangelogVersionItem(
  */
 internal val PROJECT_CHANGELOG_HISTORY = listOf(
     ChangelogVersionItem(
+        version = "v1.3.3",
+        date = "2026-11-04",
+        tag = "正式版 · 酷狗双端双向分享与解析、实时热搜榜、权限管理与界面体验精修",
+        summary = "新增官方酷狗音乐与酷狗概念版双向唤醒分享与内向链接解析（支持单曲立即播放/下一首播放与外部歌单预览/一键全量导入）；默认选中「酷狗音乐」唤醒版本并采用无边框色块高亮；新增「剪贴板读取与写入」权限独立开关并优化权限卡片平滑展开收起动效；搜索页接入官方实时热搜榜；移除「我的」页冗余「默认收藏」歌单并精修心流舱高度与分享弹窗层级",
+        highlights = listOf(
+            "酷狗双端双向唤醒分享体系（默认「酷狗音乐」）：支持分享单曲与歌单时唤醒对方手机上的官方「酷狗音乐」(cmd=212/302, CKEY=CK1350585625598) 与「酷狗概念版」(cmd=103301/103302, CKEY=CK1486481175239)；单曲分享通过 m3ws.kugou.com 校准标准版 128k MP3 hash，歌单分享生成官方 SSR 网页直链 (m.kugou.com/plist/list/{specialid}/?global_collection_id=...)，确保微信/QQ 内置浏览器正常加载预览并精准跳转播放；唤醒版本默认选中首项「酷狗音乐」并采用无边框柔和色块高亮",
+            "内向酷狗分享链接智能解析与外部歌单全量导入：内置 KugouShareLinkParser 零网络离线解码引擎（支持 Base36 混淆 gcid_xxx 还原为 collection_3_userid_listid_0、e_album_audio_id 离线还原为数字 album_audio_id、短链重定向追踪与 window.\$output / phpParam 网页抓取）；解析官方酷狗音乐单曲分享时优先提取 album_img 高清专辑封面而非歌手头像；识别到分享歌单支持直接打开完整曲目列表或一键将全部歌曲批量导入为自建歌单",
+            "剪贴板权限透明管控与权限卡片丝滑展开动效：在「设置 -> 权限管理」新增第 9 项「剪贴板读取与写入」独立开关，复制分享口令与前台剪贴板分享链接自动识别严格受该开关管控；重构权限管理卡片展开/收起过渡为 ConceptMotion.spatialPageSpring 物理弹簧与 FastOutSlowInEasing 渐变，消除文字重排跳变",
+            "搜索页接入官方实时热搜榜与「我的」页/心流舱细节打磨：搜索页移除写死的静态热门歌手列表，接入酷狗官方实时热搜接口（/v3/search/hot 聚合网关回退）展示 Top 12 实时热搜单曲/词条；「我的」页自建歌单过滤冗余的「默认收藏」歌单（与顶部「我喜欢的音乐」英雄卡片去重）；微调心流舱竖屏抽屉间距使其刚好完整展示「心流专注定时」而无需滚动，并提升歌单分享弹窗 Z 轴层级（zIndex = 94f）使其浮于底部迷你播放条之上"
+        ),
+        moduleGroups = listOf(
+            ChangelogModuleGroup(
+                moduleTitle = "一、酷狗音乐 / 酷狗概念版双向唤醒分享与弹窗精简",
+                points = listOf(
+                    "单曲「更多」菜单右上角与竖屏播放页顶栏右上角、歌单详情页顶栏提供分享入口；分享弹窗顶部唤醒版本顺序调整为「酷狗音乐（默认） / 酷狗概念版 / 概念版 + 标准版」，选中态采用无边框纯色块填充高亮，并移除弹窗内冗余的分享海报与本机直接唤起按钮",
+                    "对齐官方酷狗双端 URL Scheme 与 H5 唤醒协议，彻底剔除易被系统误识别为其他应用的应用宝域名与固定 qq_client 渠道后缀，通过 m3ws.kugou.com/api/v1/song/get_song_info_v2 校准标准版 MP3 hash，并使用 m.kugou.com/plist/list/{specialid} 保障微信/QQ 歌单预览与唤醒直达"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "二、内向分享链接零网络解码、专辑封面优选与歌单一键导入",
+                points = listOf(
+                    "支持应用切回前台剪贴板自动识别与系统分享菜单（ACTION_SEND）传入酷狗音乐/概念版分享口令，内置 KugouShareLinkParser 实现 gcid_xxx 与 e_album_audio_id 零网络离线解码，并修复标准版单曲分享优先读取 album_img 专辑封面而非 singerimg 歌手头像",
+                    "修复内向解析歌单详情页曲目加载与「导入到自建歌单」功能，通过 specialId / globalCollectionId 预拉取完整曲目并借助 /v5/playlist_song/add 一次性批量写入新建云端歌单"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "三、剪贴板读写权限同步与权限卡片平滑展开动效",
+                points = listOf(
+                    "AppPermissionManager 新增 CLIPBOARD_ACCESS（剪贴板读取与写入）权限项并同步至「设置 -> 权限管理」，复制分享口令与切回前台自动识别分享链接均严格遵循该开关",
+                    "重构权限管理卡片展开/收起过渡为 ConceptMotion.spatialPageSpring 物理弹簧与 FastOutSlowInEasing 渐变，消除文字重排跳变"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "四、官方实时热搜榜接入、「默认收藏」去重与心流舱精修",
+                points = listOf(
+                    "SearchViewModel 移除写死的静态歌手列表，接入 getHotSearchKeywords() 动态拉取酷狗官方实时热搜榜 Top 12 词条",
+                    "LibraryViewModel 自动过滤自建歌单中冗余的「默认收藏」（与顶部「我喜欢的音乐」英雄卡片去重）；FocusPodBottomSheet 微调间距使竖屏一屏完整呈现心流专注定时面板"
+                )
+            )
+        )
+    ),
+    ChangelogVersionItem(
         version = "v1.3.2",
         date = "2026-11-01",
         tag = "正式版 · 我的页歌单与切换动效打磨、全量更新日志归档与极速检查更新",

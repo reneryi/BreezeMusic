@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-<img src="https://img.shields.io/badge/Version-v1.3.2-00E5FF?style=flat-square" alt="Version" />
+<img src="https://img.shields.io/badge/Version-v1.3.3-00E5FF?style=flat-square" alt="Version" />
 <img src="https://img.shields.io/badge/Platform-Android%208.0%2B%20(API%2026--34)-3898FF?style=flat-square" alt="Platform" />
 <img src="https://img.shields.io/badge/Language-Kotlin%201.9-7F52FF?style=flat-square" alt="Kotlin" />
 <img src="https://img.shields.io/badge/UI-Jetpack%20Compose%20%2B%20120fps%20Spring%20Motion-00E5FF?style=flat-square" alt="Compose" />
@@ -86,7 +86,7 @@
 ```
 BreezeMusic/
 ├── app/
-│   ├── build.gradle.kts                         # 模块级 Gradle 构建配置 (versionName = "1.3.2", phone/tablet 双变体独立签名)
+│   ├── build.gradle.kts                         # 模块级 Gradle 构建配置 (versionName = "1.3.3", phone/tablet 双变体独立签名)
 │   ├── proguard-rules.pro                       # Release 混淆与 R8 压缩保留规则
 │   └── src/
 │       ├── main/
@@ -124,7 +124,7 @@ BreezeMusic/
 │       │   │   │   ├── SystemLyricBridge.kt     # 跨应用全局悬浮桌面歌词窗口管理、零分配渲染与穿透锁定
 │       │   │   │   ├── FocusPodManager.kt       # 心流专注舱番茄钟倒计时与白噪音联动状态中心
 │       │   │   │   ├── AmbientSoundManager.kt   # 实时程序化环境白噪音合成引擎
-│       │   │   │   ├── AppPermissionManager.kt  # 8 大权限公开透明说明、系统授权跳转与独立开关管控
+│       │   │   │   ├── AppPermissionManager.kt  # 9 大权限公开透明说明（含剪贴板读写）、系统授权跳转与独立开关管控
 │       │   │   │   ├── VipGuardianManager.kt    # JobScheduler 每日静默自动领取概念版 VIP 后台任务
 │       │   │   │   └── ConceptMusicWidgetUpdater.kt # 桌面音乐小组件状态同步与远程视图渲染
 │       │   │   └── ui/                          # Jetpack Compose 声明式界面层（按职责模块化拆分）
@@ -151,7 +151,7 @@ BreezeMusic/
 │       │   │       ├── search/                  # 搜索页、热搜榜、历史记录与多维综合搜索结果页
 │       │   │       ├── settings/                # 模块化二级设置中心
 │       │   │       │   ├── SettingsScreen.kt                # 设置主框架、外观/音质/外设控制、无边框组件与多源版本更新检查
-│       │   │       │   ├── SettingsDownloadAndPermissions.kt # 独立下载设置、下载记录子页、四维存储缓存明细与 8 大权限透明管控中心
+│       │   │       │   ├── SettingsDownloadAndPermissions.kt # 独立下载设置、下载记录子页、四维存储缓存明细与 9 大权限透明管控中心
 │       │   │       │   └── SettingsChangelogAndAbout.kt     # 全版本可折叠更新日志、GitHub Issue 可视化反馈指南与关于页面
 │       │   │       ├── theme/                   # 深浅双主题、WindowSizeClass 平板自适应断点、封面 13 级动态取色与 ConceptMotion 弹性动效引擎
 │       │   │       └── viewmodel/               # 播放器（含前后台自适应节流）、发现页、音乐库与搜索 ViewModel
