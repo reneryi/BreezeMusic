@@ -47,6 +47,14 @@ class HomeViewModel : ViewModel() {
     val newSongsLoading: StateFlow<Boolean> = _newSongsLoading.asStateFlow()
 
     private val newSongCache = ConcurrentHashMap<String, List<Song>>()
+    private val rankSongsCache = ConcurrentHashMap<Int, List<Song>>()
+    private val fmChannelSongsCache = ConcurrentHashMap<String, List<Song>>()
+    private val refreshedRanksInSession = ConcurrentHashMap.newKeySet<Int>()
+    private val refreshedFmChannelsInSession = ConcurrentHashMap.newKeySet<String>()
+
+    companion object {
+        private val ALL_NEW_SONG_PERIOD_KEYS = listOf("CHINESE", "WESTERN", "JPKR", "CANTON")
+    }
 
     // 实时场景电台列表 (FM Channels)
     private val _fmChannels = MutableStateFlow<List<FmChannel>>(emptyList())
@@ -66,6 +74,7 @@ class HomeViewModel : ViewModel() {
     val vipStatus = VipManager.vip.state.map { it.snapshot }
 
     private var request: Job? = null
+    private var silentPreloadJob: Job? = null
     private var loadedUser: String? = "__UNINITIALIZED__"
     private var hasInitialLoaded: Boolean = false
 
@@ -110,11 +119,13 @@ class HomeViewModel : ViewModel() {
             _personalFmSongs.value = cachedFm
         }
 
-        val activePeriod = _selectedNewSongPeriod.value
-        val cachedActivePeriod = cache.getNewSongs(activePeriod)
-        if (cachedActivePeriod.isNotEmpty() && newSongCache[activePeriod].isNullOrEmpty()) {
-            newSongCache[activePeriod] = cachedActivePeriod
+        for (periodKey in ALL_NEW_SONG_PERIOD_KEYS) {
+            val cachedPeriod = cache.getNewSongs(periodKey)
+            if (cachedPeriod.isNotEmpty() && newSongCache[periodKey].isNullOrEmpty()) {
+                newSongCache[periodKey] = cachedPeriod
+            }
         }
+        val activePeriod = _selectedNewSongPeriod.value
         if (_currentNewSongs.value.isEmpty() && !newSongCache[activePeriod].isNullOrEmpty()) {
             _currentNewSongs.value = newSongCache[activePeriod].orEmpty()
         }
@@ -123,10 +134,22 @@ class HomeViewModel : ViewModel() {
         if (_ranks.value.isEmpty() && cachedRanks.isNotEmpty()) {
             _ranks.value = cachedRanks
         }
+        for (rank in _ranks.value) {
+            val cachedSongs = cache.getRankSongs(rank.rankId)
+            if (cachedSongs.isNotEmpty() && rankSongsCache[rank.rankId].isNullOrEmpty()) {
+                rankSongsCache[rank.rankId] = cachedSongs
+            }
+        }
 
         val cachedChannels = cache.getFmChannels()
         if (_fmChannels.value.isEmpty() && cachedChannels.isNotEmpty()) {
             _fmChannels.value = cachedChannels
+        }
+        for (ch in _fmChannels.value) {
+            val cachedChSongs = cache.getFmChannelSongs(ch.id)
+            if (cachedChSongs.isNotEmpty() && fmChannelSongsCache[ch.id].isNullOrEmpty()) {
+                fmChannelSongsCache[ch.id] = cachedChSongs
+            }
         }
     }
 
@@ -219,6 +242,7 @@ class HomeViewModel : ViewModel() {
                 newSongJob.join()
                 radioJob.join()
                 rankJob.join()
+                scheduleStaggeredSilentPreload(currentUserId)
             } catch (e: Exception) {
                 if (accountState.value.currentId == currentUserId && !hasAnyContentLoaded()) {
                     _error.value = e.message ?: "发现页内容加载失败"
@@ -335,17 +359,105 @@ class HomeViewModel : ViewModel() {
         }
     }
 
+    /**
+     * 启动进入首页后错峰逐项静默预加载全量板块（单并发队列 + 帧间间隔延迟）：
+     * 1. 依次静默刷新新歌速递其余语种 Tag（欧美、日韩、粤语等）
+     * 2. 依次静默刷新所有巅峰排行榜的实时曲目与卡片前三名预览，不再仅刷新前两个榜单
+     * 3. 依次静默刷新所有精选场景电台的实时曲目流与真实封面，不再仅刷新前两个电台
+     * 全程在 Dispatchers.IO 单纤程串行加 180ms 呼吸间隔执行，不抢占首屏带宽与主线程渲染帧率。
+     */
+    private fun scheduleStaggeredSilentPreload(expectedUserId: String?) {
+        silentPreloadJob?.cancel()
+        silentPreloadJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(480L)
+            if (accountState.value.currentId != expectedUserId) return@launch
+
+            // 1. 逐项静默刷新「新歌速递」其余语种分类
+            val initialPeriod = _selectedNewSongPeriod.value
+            for (periodKey in ALL_NEW_SONG_PERIOD_KEYS) {
+                if (accountState.value.currentId != expectedUserId) return@launch
+                if (periodKey == initialPeriod && !newSongCache[periodKey].isNullOrEmpty()) continue
+                val songs = runCatching { VipManager.music.newSongExpress(periodKey = periodKey) }.getOrDefault(emptyList())
+                if (songs.isNotEmpty() && accountState.value.currentId == expectedUserId) {
+                    newSongCache[periodKey] = songs
+                    VipManager.discoverCache.saveNewSongs(periodKey, songs)
+                    if (_selectedNewSongPeriod.value == periodKey && _currentNewSongs.value != songs) {
+                        _currentNewSongs.value = songs
+                    }
+                }
+                delay(180L)
+            }
+
+            // 2. 逐项静默刷新全部「巅峰排行榜」曲目与卡片预览
+            val currentRanks = _ranks.value
+            for (rank in currentRanks) {
+                if (accountState.value.currentId != expectedUserId) return@launch
+                val rankSongs = runCatching {
+                    VipManager.music.rankSongs(rank.rankId, page = 1, pageSize = 100)
+                }.getOrDefault(emptyList())
+                if (rankSongs.isNotEmpty() && accountState.value.currentId == expectedUserId) {
+                    rankSongsCache[rank.rankId] = rankSongs
+                    refreshedRanksInSession.add(rank.rankId)
+                    VipManager.discoverCache.saveRankSongs(rank.rankId, rankSongs)
+                    val previewLines = rankSongs.take(3).mapIndexed { i, s -> "${i + 1}. ${s.title} - ${s.artist}" }
+                    val liveCover = rankSongs.firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl.orEmpty()
+                    val updatedList = _ranks.value.map { item ->
+                        if (item.rankId == rank.rankId) {
+                            item.copy(
+                                topSongsPreview = if (previewLines.isNotEmpty()) previewLines else item.topSongsPreview,
+                                coverUrl = if (liveCover.isNotBlank() && (item.coverUrl.isBlank() || item.coverUrl.contains("20210729"))) liveCover else item.coverUrl
+                            )
+                        } else item
+                    }
+                    if (_ranks.value != updatedList) {
+                        _ranks.value = updatedList
+                        VipManager.discoverCache.saveRanks(updatedList)
+                    }
+                }
+                delay(180L)
+            }
+
+            // 3. 逐项静默刷新全部「精选场景电台」曲目与封面
+            val currentChannels = _fmChannels.value
+            for (channel in currentChannels) {
+                if (accountState.value.currentId != expectedUserId) return@launch
+                val chSongs = runCatching {
+                    VipManager.music.fmSongs(channel.id, size = 20, forceNextBatch = true)
+                }.getOrDefault(emptyList())
+                if (chSongs.isNotEmpty() && accountState.value.currentId == expectedUserId) {
+                    fmChannelSongsCache[channel.id] = chSongs
+                    refreshedFmChannelsInSession.add(channel.id)
+                    VipManager.discoverCache.saveFmChannelSongs(channel.id, chSongs)
+                    val liveCover = chSongs.firstOrNull { it.coverUrl.isNotBlank() }?.coverUrl.orEmpty()
+                    if (liveCover.isNotBlank() && (channel.coverUrl.isBlank() || channel.coverUrl.contains("20210519"))) {
+                        val updatedChannels = _fmChannels.value.map { item ->
+                            if (item.id == channel.id) item.copy(coverUrl = liveCover) else item
+                        }
+                        if (_fmChannels.value != updatedChannels) {
+                            _fmChannels.value = updatedChannels
+                            VipManager.discoverCache.saveFmChannels(updatedChannels)
+                        }
+                    }
+                }
+                delay(180L)
+            }
+        }
+    }
+
     fun getCachedFmChannelSongs(channelId: String): List<Song> {
-        return VipManager.discoverCache.getFmChannelSongs(channelId)
+        return fmChannelSongsCache[channelId]?.takeIf { it.isNotEmpty() }
+            ?: VipManager.discoverCache.getFmChannelSongs(channelId)
     }
 
     suspend fun getFmChannelSongs(channelId: String, size: Int = 20, forceNextBatch: Boolean = true): List<Song> = withContext(Dispatchers.IO) {
-        if (!forceNextBatch) {
-            val cached = VipManager.discoverCache.getFmChannelSongs(channelId)
+        if (!forceNextBatch && refreshedFmChannelsInSession.contains(channelId)) {
+            val cached = getCachedFmChannelSongs(channelId)
             if (cached.isNotEmpty()) return@withContext cached
         }
-        val fresh = VipManager.music.fmSongs(channelId, size = size, forceNextBatch = forceNextBatch)
+        val fresh = VipManager.music.fmSongs(channelId, size = size, forceNextBatch = true)
         if (fresh.isNotEmpty()) {
+            fmChannelSongsCache[channelId] = fresh
+            refreshedFmChannelsInSession.add(channelId)
             VipManager.discoverCache.saveFmChannelSongs(channelId, fresh)
         }
         fresh
@@ -356,12 +468,15 @@ class HomeViewModel : ViewModel() {
     }
 
     fun getCachedRankSongs(rankId: Int): List<Song> {
-        return VipManager.discoverCache.getRankSongs(rankId)
+        return rankSongsCache[rankId]?.takeIf { it.isNotEmpty() }
+            ?: VipManager.discoverCache.getRankSongs(rankId)
     }
 
     suspend fun getRankSongs(rankId: Int): List<Song> = withContext(Dispatchers.IO) {
         val list = VipManager.music.rankSongs(rankId, page = 1, pageSize = 100)
         if (list.isNotEmpty()) {
+            rankSongsCache[rankId] = list
+            refreshedRanksInSession.add(rankId)
             VipManager.discoverCache.saveRankSongs(rankId, list)
         }
         list
@@ -379,6 +494,8 @@ class HomeViewModel : ViewModel() {
             onProgress = onProgress
         )
         if (list.isNotEmpty()) {
+            rankSongsCache[rankId] = list
+            refreshedRanksInSession.add(rankId)
             VipManager.discoverCache.saveRankSongs(rankId, list)
         }
         list

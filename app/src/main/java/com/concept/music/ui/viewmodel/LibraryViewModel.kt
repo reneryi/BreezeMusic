@@ -82,6 +82,7 @@ class LibraryViewModel(
     val favoriteAlbums = _favoriteAlbums.asStateFlow()
     private var accountJob: Job? = null
     private var musicLibraryJob: Job? = null
+    private var librarySilentPreloadJob: Job? = null
     private var purchasedAssetsJob: Job? = null
     private var claimJob: Job? = null
     private var loginJob: Job? = null
@@ -112,6 +113,13 @@ class LibraryViewModel(
                             delay(80L)
                         }
                         loadMusicLibrary()
+                        val curAcc = state.current
+                        if (foreground && state.auth == AuthState.READY &&
+                            curAcc != null && curAcc.autoClaim && curAcc.completedDay != today() &&
+                            accountJob?.isActive != true && claimJob?.isActive != true
+                        ) {
+                            refreshAccount()
+                        }
                     }
                 }
             }
@@ -694,18 +702,6 @@ class LibraryViewModel(
         musicLibraryJob = viewModelScope.launch {
             _libraryLoading.value = true; _libraryError.value = null
             try {
-                // 并行启动听歌等级、已购资产（独立 Job 防止被歌单切换取消）与关注歌手查询
-                launch {
-                    ListeningGradeManager.syncGrade(forceRefresh = false)
-                }
-                refreshPurchasedAssets()
-                launch {
-                    val artists = runCatching { VipManager.music.followedArtists() }.getOrDefault(emptyList())
-                    if (accounts.state.value.currentId == userId) {
-                        _followedArtists.value = artists
-                    }
-                }
-
                 val targetPlaylistId: String? = if (section.startsWith("歌单:")) section.removePrefix("歌单:") else null
                 val extInfoDef: Deferred<Playlist?>? = if (targetPlaylistId != null) {
                     async<Playlist?> { runCatching { VipManager.music.playlistInfo(targetPlaylistId) }.getOrNull() }
@@ -799,9 +795,66 @@ class LibraryViewModel(
                         }
                     }
                 }
+                scheduleStaggeredLibrarySilentPreload(userId, lists)
             } catch (e: Exception) {
                 if (accounts.state.value.currentId == userId) _libraryError.value = e.message ?: "音乐库加载失败"
             } finally { if (accounts.state.value.currentId == userId) _libraryLoading.value = false }
+        }
+    }
+
+    /**
+     * 启动进入页面后错峰逐项静默加载「我的」其余子板块（听歌等级、关注歌手、已购资产、云端最近播放、自建/收藏歌单曲目），
+     * 保证每次启动所有板块均完成最新刷新，且全程单并发 + 帧间让出，完全不影响启动速度与前台流畅度。
+     */
+    private fun scheduleStaggeredLibrarySilentPreload(userId: String, playlists: List<Playlist>) {
+        librarySilentPreloadJob?.cancel()
+        librarySilentPreloadJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(450L)
+            if (accounts.state.value.currentId != userId || accountState.value.auth != AuthState.READY) return@launch
+
+            // 1. 静默同步听歌等级
+            runCatching { ListeningGradeManager.syncGrade(forceRefresh = false) }
+            delay(220L)
+            if (accounts.state.value.currentId != userId) return@launch
+
+            // 2. 静默刷新关注歌手列表
+            val artists = runCatching { VipManager.music.followedArtists() }.getOrDefault(emptyList())
+            if (accounts.state.value.currentId == userId) {
+                _followedArtists.value = artists
+            }
+            delay(220L)
+            if (accounts.state.value.currentId != userId) return@launch
+
+            // 3. 静默刷新已购单曲与已购专辑
+            refreshPurchasedAssets()
+            delay(260L)
+            if (accounts.state.value.currentId != userId) return@launch
+
+            // 4. 静默刷新「最近播放」板块（合并本地与云端最新播放记录）
+            runCatching {
+                val localHistory = VipManager.history.get(userId)
+                val cloudLatest = VipManager.music.latestListenSongs(pageSize = 200)
+                if (cloudLatest.isNotEmpty() && accounts.state.value.currentId == userId) {
+                    val merged = deduplicateAndMergeSongs(localHistory + cloudLatest)
+                    VipManager.history.saveAll(userId, merged)
+                    if (_librarySection.value == "最近") {
+                        _librarySongs.value = merged
+                    }
+                }
+            }
+            delay(260L)
+
+            // 5. 逐个静默预热用户前排自建/收藏歌单曲目
+            for (pl in playlists.filter { !it.isLiked }.take(6)) {
+                if (accounts.state.value.currentId != userId) break
+                runCatching {
+                    val tracks = VipManager.music.playlistSongs(pl)
+                    if (tracks.isNotEmpty() && accounts.state.value.currentId == userId) {
+                        VipManager.discoverCache.savePlaylistSongs(pl.id, tracks, allowEmpty = false)
+                    }
+                }
+                delay(240L)
+            }
         }
     }
 
@@ -1166,17 +1219,30 @@ class LibraryViewModel(
             val context = accounts.context() ?: return@launch
             if (accountState.value.auth == AuthState.NEEDS_LOGIN) return@launch
             supervisorScope {
-                launch { accounts.refreshProfile(context) }
-                launch { vip.refresh(context) }
+                val profileJob = launch { accounts.refreshProfile(context) }
+                val vipJob = launch { vip.refresh(context) }
+                profileJob.join()
+                vipJob.join()
             }
             accounts.ensureCurrent(context)
             val current = accountState.value.current ?: return@launch
-            val key = "${current.userId}@${today()}"
+            val todayStr = today()
+            val key = "${current.userId}@$todayStr"
             val now = System.currentTimeMillis()
-            if (foreground && current.autoClaim && current.completedDay != today() &&
-                now - (autoAttempts[key] ?: 0) > 60_000 && accountState.value.auth == AuthState.READY) {
+            val needsDailyAutoClaim = current.completedDay != todayStr || !vip.state.value.snapshot.active("svip")
+            if (foreground && current.autoClaim && needsDailyAutoClaim &&
+                now - (autoAttempts[key] ?: 0) > 45_000 && accountState.value.auth == AuthState.READY) {
                 autoAttempts[key] = now
-                vip.claim(context, automatic = true)
+                var res = vip.claim(context, automatic = true)
+                if (res.outcome == ClaimOutcome.PENDING) {
+                    delay(1800L)
+                    res = vip.claim(context, automatic = true)
+                }
+                if (res.outcome == ClaimOutcome.SUCCESS || res.outcome == ClaimOutcome.ALREADY_DONE) {
+                    runCatching {
+                        com.concept.music.service.VipGuardianManager.recordAutoClaimSuccess(todayStr, res.message)
+                    }
+                }
             }
         }
     }

@@ -133,8 +133,15 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
                 }
             }
             if (vip.isVip) onVipActivated()
-            return if (upgradeFailure != null) publish(context, ClaimOutcome.UPGRADE_FAILED, "已领取畅听权益，但升级失败：${upgradeFailure.message}")
-            else publish(context, ClaimOutcome.PENDING, "请求已处理，权益尚未同步确认，请稍后刷新")
+            if (upgradeFailure != null) {
+                return publish(context, ClaimOutcome.UPGRADE_FAILED, "已领取畅听权益，但升级失败：${upgradeFailure.message}")
+            }
+            if (history.any { it.day == day && it.received } && vip.isVip) {
+                accounts.completed(context, day)
+                onVipActivated()
+                return publish(context, ClaimOutcome.SUCCESS, "领取并升级成功，今日概念版 VIP 权益已生效")
+            }
+            return publish(context, ClaimOutcome.PENDING, "请求已处理，权益尚未同步确认，请稍后刷新")
         } catch (e: CancellationException) { throw e }
         catch (e: IOException) {
             refresh(context)
@@ -159,11 +166,44 @@ class VipRepository(private val transport: KugouTransport, private val accounts:
     }
     private suspend fun mutate(context: AccountContext, automatic: Boolean, path: String,
         query: Map<String, String>, alreadyCodes: Set<Int>): ApiResponse = accounts.authenticated(context) { session ->
+        val reqHeaders = when {
+            path.endsWith("receive_vip_listen_song") -> mapOf(
+                "content-type" to "application/x-www-form-urlencoded"
+            )
+            path.endsWith("upgrade_vip_reward") -> mapOf(
+                "User-Agent" to "Android15-1070-11440-130-0-VIPCENTER-wifi",
+                "content-type" to "application/x-www-form-urlencoded"
+            )
+            else -> emptyMap()
+        }
         verification.execute(session, interactive = !automatic, guard = { accounts.ensureCurrent(context) }) {
             accounts.ensureCurrent(context)
-            transport.call(path, session, query = query, method = "POST",
-                headers = if (path.endsWith("receive_vip_listen_song")) mapOf("content-type" to "application/x-www-form-urlencoded") else emptyMap())
-                .also { if (!it.success && it.code !in alreadyCodes) it.requireSuccess() }
+            val firstResp = transport.call(path, session, query = query, method = "POST", headers = reqHeaders)
+            val finalResp = if (!firstResp.success && firstResp.code == 20028) {
+                // 遇到 20028 风控挑战时（无论自动领取还是手动点击），先通过模拟 sid/edt 行为指纹静默过检并以干净 dfid="-" 重试一次
+                val dev = accounts.device()
+                suspendRunCatching {
+                    verification.trySilentSimulateVerification(
+                        session = session,
+                        eventId = firstResp.ssaCode,
+                        mid = dev.mid,
+                        dfid = dev.dfid
+                    )
+                }
+                accounts.ensureCurrent(context)
+                transport.call(
+                    path = path,
+                    session = session,
+                    query = query,
+                    method = "POST",
+                    headers = reqHeaders,
+                    device = dev.copy(dfid = "-")
+                )
+            } else {
+                firstResp
+            }
+            if (!finalResp.success && finalResp.code !in alreadyCodes) finalResp.requireSuccess()
+            finalResp
         }
     }
     private fun publish(context: AccountContext, outcome: ClaimOutcome, message: String): VipClaimResult {

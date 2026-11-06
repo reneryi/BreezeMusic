@@ -49,6 +49,7 @@ class MusicApiRepository(
     private val userTasteSeedsCache = java.util.concurrent.CopyOnWriteArrayList<Song>()
     private val rankLatestVolMap = ConcurrentHashMap<String, Int>()
     private val albumPublishDateCache = ConcurrentHashMap<String, String>()
+    private val albumLanguageCache = ConcurrentHashMap<String, String>()
     private val albumCompanyCache = ConcurrentHashMap<String, String>()
     private val albumNameCache = ConcurrentHashMap<String, String>()
     private val collectedPlaylistMetaCache = ConcurrentHashMap<String, Playlist>()
@@ -1829,7 +1830,7 @@ class MusicApiRepository(
                             val body = JsonObject().apply {
                                 add("data", itemArr)
                                 addProperty("is_buy", 0)
-                                addProperty("fields", "album_id,album_name,publish_date,sizable_cover,author_name,publish_company")
+                                addProperty("fields", "album_id,album_name,publish_date,sizable_cover,author_name,publish_company,language")
                             }
                             val resp = transport.callAdvanced(
                                 path = "/kmr/v2/albums",
@@ -1851,10 +1852,12 @@ class MusicApiRepository(
                                     obj.text("publish_date") ?: obj.text("publishtime") ?: obj.text("publish_time")
                                 )
                                 val comp = (obj.text("publish_company") ?: obj.text("company") ?: "").trim()
+                                val lang = (obj.text("language") ?: "").trim()
                                 if (aid.isNotBlank() && aid != "0") {
                                     if (aName.isNotBlank()) albumNameCache[aid] = aName
                                     if (pub.isNotBlank()) albumPublishDateCache[aid] = pub
                                     if (comp.isNotBlank()) albumCompanyCache[aid] = comp
+                                    if (lang.isNotBlank()) albumLanguageCache[aid] = lang
                                 }
                             }
                         }
@@ -4691,7 +4694,7 @@ class MusicApiRepository(
                             val body = JsonObject().apply {
                                 add("data", itemArr)
                                 addProperty("is_buy", 0)
-                                addProperty("fields", "album_id,album_name,publish_date,sizable_cover,author_name")
+                                addProperty("fields", "album_id,album_name,publish_date,sizable_cover,author_name,language")
                             }
                             val resp = transport.callAdvanced(
                                 path = "/kmr/v2/albums",
@@ -4711,8 +4714,12 @@ class MusicApiRepository(
                                 val pub = normalizePublishDate(
                                     obj.text("publish_date") ?: obj.text("publishtime") ?: obj.text("publish_time")
                                 )
+                                val lang = (obj.text("language") ?: "").trim()
                                 if (aid.isNotBlank() && pub.isNotBlank()) {
                                     albumPublishDateCache[aid] = pub
+                                }
+                                if (aid.isNotBlank() && lang.isNotBlank()) {
+                                    albumLanguageCache[aid] = lang
                                 }
                             }
                         }
@@ -4772,8 +4779,12 @@ class MusicApiRepository(
                             baseObj.text("publish_date") ?: baseObj.text("publish_time")
                                 ?: albObj?.text("publish_date") ?: item.text("publish_date")
                         )
+                        val lang = (baseObj.text("language") ?: albObj?.text("language") ?: item.text("language") ?: "").trim()
                         if (aaid > 0L && pub.isNotBlank()) {
                             albumPublishDateCache["aaid_$aaid"] = pub
+                        }
+                        if (aaid > 0L && lang.isNotBlank()) {
+                            albumLanguageCache["aaid_$aaid"] = lang
                         }
                     }
                 }
@@ -4789,6 +4800,111 @@ class MusicApiRepository(
         }
     }
 
+    private fun containsJapaneseKana(text: String): Boolean {
+        return text.any { ch ->
+            ch.code in 0x3040..0x309F || ch.code in 0x30A0..0x30FF || ch.code in 0x31F0..0x31FF
+        }
+    }
+
+    private fun containsKoreanHangul(text: String): Boolean {
+        return text.any { ch ->
+            ch.code in 0xAC00..0xD7AF || ch.code in 0x1100..0x11FF || ch.code in 0x3130..0x318F
+        }
+    }
+
+    private fun containsCjkIdeograph(text: String): Boolean {
+        return text.any { ch -> ch.code in 0x4E00..0x9FFF }
+    }
+
+    private fun isJapaneseSongCandidate(song: Song, explicitSourceRankId: Int = 0): Boolean {
+        if (explicitSourceRankId == 31312 || explicitSourceRankId == 4673) return true
+        val rawLang = (
+            albumLanguageCache[song.albumId.trim()]
+                ?: albumLanguageCache["aaid_${song.albumAudioId}"]
+                ?: ""
+            ).lowercase()
+        if (rawLang.contains("日") || rawLang.contains("jp") || rawLang.contains("japan")) return true
+        val combined = "${song.title} ${song.artist} ${song.album}"
+        return containsJapaneseKana(combined)
+    }
+
+    private fun matchesNewSongTag(
+        song: Song,
+        normalizedTag: String,
+        isFromPrimaryContainer: Boolean,
+        sourceChartRankId: Int = 0
+    ): Boolean {
+        val rawLang = (
+            albumLanguageCache[song.albumId.trim()]
+                ?: albumLanguageCache["aaid_${song.albumAudioId}"]
+                ?: ""
+            ).trim().lowercase()
+        val combinedText = "${song.title} ${song.artist} ${song.album}"
+        val hasKana = containsJapaneseKana(combinedText)
+        val hasHangul = containsKoreanHangul(combinedText)
+        val hasHan = containsCjkIdeograph(combinedText)
+        val hasLatin = combinedText.any { it in 'a'..'z' || it in 'A'..'Z' }
+
+        return when (normalizedTag) {
+            "CHINESE" -> {
+                if (hasKana || hasHangul) return false
+                if (rawLang.isNotBlank()) {
+                    if (rawLang.contains("日") || rawLang.contains("韩") || rawLang.contains("英") ||
+                        rawLang.contains("法") || rawLang.contains("德") || rawLang.contains("西") ||
+                        rawLang.contains("俄") || rawLang.contains("泰")
+                    ) return false
+                    if (rawLang.contains("国") || rawLang.contains("华") || rawLang.contains("中") || rawLang.contains("普")) {
+                        return true
+                    }
+                }
+                if (isFromPrimaryContainer) true else hasHan
+            }
+            "WESTERN" -> {
+                if (hasKana || hasHangul) return false
+                if (rawLang.isNotBlank()) {
+                    if (rawLang.contains("国") || rawLang.contains("华") || rawLang.contains("粤") ||
+                        rawLang.contains("日") || rawLang.contains("韩") || rawLang.contains("中") ||
+                        rawLang.contains("闽")
+                    ) return false
+                    if (rawLang.contains("英") || rawLang.contains("欧") || rawLang.contains("美") ||
+                        rawLang.contains("法") || rawLang.contains("西") || rawLang.contains("德") ||
+                        rawLang.contains("意") || rawLang.contains("拉丁")
+                    ) return true
+                }
+                if (isFromPrimaryContainer) {
+                    !(hasHan && !song.artist.any { it in 'a'..'z' || it in 'A'..'Z' })
+                } else {
+                    hasLatin && !containsCjkIdeograph(song.artist)
+                }
+            }
+            "JPKR" -> {
+                if (rawLang.isNotBlank()) {
+                    if (rawLang.contains("日") || rawLang.contains("韩")) return true
+                    if (rawLang.contains("国") || rawLang.contains("华") || rawLang.contains("粤") ||
+                        rawLang.contains("中") || rawLang.contains("闽")
+                    ) return false
+                }
+                if (hasKana || hasHangul) return true
+                if (sourceChartRankId in listOf(31312, 4673, 31311, 38623) || isFromPrimaryContainer) {
+                    !rawLang.contains("国") && !rawLang.contains("华") && !rawLang.contains("粤")
+                } else {
+                    false
+                }
+            }
+            "CANTON" -> {
+                if (hasKana || hasHangul) return false
+                if (rawLang.isNotBlank()) {
+                    if (rawLang.contains("粤")) return true
+                    if (rawLang.contains("日") || rawLang.contains("韩") || rawLang.contains("英") ||
+                        rawLang.contains("国") || rawLang.contains("普")
+                    ) return false
+                }
+                if (isFromPrimaryContainer || sourceChartRankId == 31313) true else hasHan
+            }
+            else -> true
+        }
+    }
+
     suspend fun newSongExpress(
         periodKey: String = "CHINESE",
         size: Int = 200,
@@ -4798,6 +4914,12 @@ class MusicApiRepository(
         val session = accounts.context()?.session
         val uidNum = session?.userId?.toLongOrNull() ?: 0L
         val windowStartDate = referenceDate.minusDays(6) // 当天往前推 6 天，共 7 天窗口
+        val normalizedTag = when (periodKey.uppercase()) {
+            "WESTERN", "21609" -> "WESTERN"
+            "JPKR", "21610" -> "JPKR"
+            "CANTON", "21611" -> "CANTON"
+            else -> "CHINESE"
+        }
 
         suspend fun fetchOfficialTopSongPublish(rankId: Int, targetPage: Int, pageSize: Int = 40): List<Song> {
             return runCatching {
@@ -4821,70 +4943,170 @@ class MusicApiRepository(
             }.getOrDefault(emptyList())
         }
 
-        suspend fun fetchCandidatePoolForRank(rankId: Int, fallbackChartRankId: Int, pageCount: Int = 4): List<Song> = coroutineScope {
-            val publishDefs = (1..pageCount).map { p ->
-                async { fetchOfficialTopSongPublish(rankId, targetPage = p, pageSize = 40) }
+        data class TaggedCandidate(
+            val song: Song,
+            val fromPrimaryContainer: Boolean,
+            val sourceChartRankId: Int = 0
+        )
+
+        fun interleaveCandidateLists(lists: List<List<TaggedCandidate>>): List<TaggedCandidate> {
+            val maxLen = lists.maxOfOrNull { it.size } ?: 0
+            val out = ArrayList<TaggedCandidate>(lists.sumOf { it.size })
+            for (i in 0 until maxLen) {
+                for (l in lists) {
+                    if (i < l.size) out.add(l[i])
+                }
             }
-            val chartDef = async {
-                runCatching { rankSongs(fallbackChartRankId, page = 1, pageSize = 80, enrichPrivilege = false) }
-                    .getOrDefault(emptyList())
-            }
-            publishDefs.flatMap { it.await() } + chartDef.await()
+            return out
         }
 
-        val rawCandidates: List<Song> = when (periodKey.uppercase()) {
-            "CHINESE", "21608" -> {
-                fetchCandidatePoolForRank(rankId = 21608, fallbackChartRankId = 31308, pageCount = 2)
+        val taggedCandidates: List<TaggedCandidate> = when (normalizedTag) {
+            "CHINESE" -> {
+                val pubDefs = (1..3).map { p -> async { fetchOfficialTopSongPublish(21608, targetPage = p, pageSize = 40) } }
+                val chartDef = async {
+                    runCatching { rankSongs(31308, page = 1, pageSize = 80, enrichPrivilege = false) }.getOrDefault(emptyList())
+                }
+                val primary = pubDefs.flatMap { it.await() }.map { TaggedCandidate(it, fromPrimaryContainer = true, sourceChartRankId = 21608) }
+                val chart = chartDef.await().map { TaggedCandidate(it, fromPrimaryContainer = false, sourceChartRankId = 31308) }
+                primary + chart
             }
-            "WESTERN", "21609" -> {
-                fetchCandidatePoolForRank(rankId = 21609, fallbackChartRankId = 31310, pageCount = 2)
+            "WESTERN" -> {
+                val pubDefs = (1..3).map { p -> async { fetchOfficialTopSongPublish(21609, targetPage = p, pageSize = 40) } }
+                val chartDef = async {
+                    runCatching { rankSongs(31310, page = 1, pageSize = 80, enrichPrivilege = false) }.getOrDefault(emptyList())
+                }
+                val billboardDef = async {
+                    runCatching { rankSongs(4681, page = 1, pageSize = 40, enrichPrivilege = false) }.getOrDefault(emptyList())
+                }
+                val primary = pubDefs.flatMap { it.await() }.map { TaggedCandidate(it, fromPrimaryContainer = true, sourceChartRankId = 21609) }
+                val chart = chartDef.await().map { TaggedCandidate(it, fromPrimaryContainer = false, sourceChartRankId = 31310) }
+                val bb = billboardDef.await().map { TaggedCandidate(it, fromPrimaryContainer = false, sourceChartRankId = 4681) }
+                primary + chart + bb
             }
-            "JPKR", "21610" -> {
-                fetchCandidatePoolForRank(rankId = 21610, fallbackChartRankId = 31311, pageCount = 2)
-            }
-            "CANTON", "21611" -> {
-                fetchCandidatePoolForRank(rankId = 21611, fallbackChartRankId = 31313, pageCount = 2)
+            "JPKR" -> {
+                // 同时拉取官方日韩新歌速递(21610)、日本新歌榜(31312)、韩国新歌榜(31311)、日本公信榜(4673)、韩国Melon榜(38623)，
+                // 并将日语新歌与韩语新歌交错编排，彻底解决「日韩分类下没有日语歌」的问题
+                val pubDefs = (1..2).map { p -> async { fetchOfficialTopSongPublish(21610, targetPage = p, pageSize = 40) } }
+                val jpNewChartDef = async {
+                    runCatching { rankSongs(31312, page = 1, pageSize = 80, enrichPrivilege = false) }.getOrDefault(emptyList())
+                }
+                val krNewChartDef = async {
+                    runCatching { rankSongs(31311, page = 1, pageSize = 80, enrichPrivilege = false) }.getOrDefault(emptyList())
+                }
+                val jpOriconDef = async {
+                    runCatching { rankSongs(4673, page = 1, pageSize = 50, enrichPrivilege = false) }.getOrDefault(emptyList())
+                }
+                val krMelonDef = async {
+                    runCatching { rankSongs(38623, page = 1, pageSize = 40, enrichPrivilege = false) }.getOrDefault(emptyList())
+                }
+                val primary = pubDefs.flatMap { it.await() }.map { TaggedCandidate(it, fromPrimaryContainer = true, sourceChartRankId = 21610) }
+                val jpNew = jpNewChartDef.await().map { TaggedCandidate(it, fromPrimaryContainer = false, sourceChartRankId = 31312) }
+                val krNew = krNewChartDef.await().map { TaggedCandidate(it, fromPrimaryContainer = false, sourceChartRankId = 31311) }
+                val jpOricon = jpOriconDef.await().map { TaggedCandidate(it, fromPrimaryContainer = false, sourceChartRankId = 4673) }
+                val krMelon = krMelonDef.await().map { TaggedCandidate(it, fromPrimaryContainer = false, sourceChartRankId = 38623) }
+                interleaveCandidateLists(listOf(primary, jpNew, krNew, jpOricon, krMelon))
             }
             else -> {
-                // 综合首发：并发汇总华语(21608)、欧美(21609)、日韩(21610)、粤语(21611) 近7日候选新歌
-                val cnDef = async { fetchCandidatePoolForRank(rankId = 21608, fallbackChartRankId = 31308, pageCount = 2) }
-                val westDef = async { fetchCandidatePoolForRank(rankId = 21609, fallbackChartRankId = 31310, pageCount = 1) }
-                val jpkrDef = async { fetchCandidatePoolForRank(rankId = 21610, fallbackChartRankId = 31311, pageCount = 1) }
-                val cantonDef = async { fetchCandidatePoolForRank(rankId = 21611, fallbackChartRankId = 31313, pageCount = 1) }
-                cnDef.await() + westDef.await() + jpkrDef.await() + cantonDef.await()
+                // CANTON (粤语)
+                val pubDefs = (1..3).map { p -> async { fetchOfficialTopSongPublish(21611, targetPage = p, pageSize = 40) } }
+                val chartDef = async {
+                    runCatching { rankSongs(31313, page = 1, pageSize = 80, enrichPrivilege = false) }.getOrDefault(emptyList())
+                }
+                val primary = pubDefs.flatMap { it.await() }.map { TaggedCandidate(it, fromPrimaryContainer = true, sourceChartRankId = 21611) }
+                val chart = chartDef.await().map { TaggedCandidate(it, fromPrimaryContainer = false, sourceChartRankId = 31313) }
+                primary + chart
             }
         }
 
-        val seen = HashSet<String>()
-        val deduped = rawCandidates.filter { s ->
+        val originMap = HashMap<String, TaggedCandidate>()
+        val deduped = ArrayList<Song>(taggedCandidates.size)
+        for (tc in taggedCandidates) {
+            val s = tc.song
             val key = s.hash.ifBlank { s.id }.lowercase()
-            key.isNotBlank() && seen.add(key)
+            if (key.isNotBlank() && !originMap.containsKey(key)) {
+                originMap[key] = tc
+                deduped.add(s)
+            }
         }
 
-        // 先通过 privilege/lite 与 /kmr/v2/albums 批量补全每首歌的真实发行时间 publishDate 与音质标签
+        // 先通过 privilege/lite 与 /kmr/v2/albums 批量补全每首歌的真实发行时间 publishDate、语种 language 与音质标签
         val privEnriched = runCatching { enrichSongsPrivilegeLite(deduped) }.getOrDefault(deduped)
         val dateEnriched = runCatching { enrichSongsPublishDateByAlbums(privEnriched) }.getOrDefault(privEnriched)
 
-        // 严格审核发行日期：仅保留发行日期处于 [referenceDate.minusDays(6), referenceDate] 共 7 天内的新歌
-        val auditedSevenDaySongs = dateEnriched.filter { song ->
-            if (song.publishDate.isBlank()) return@filter false
-            val pubLocal = runCatching { java.time.LocalDate.parse(song.publishDate) }.getOrNull() ?: return@filter false
-            !pubLocal.isBefore(windowStartDate) && !pubLocal.isAfter(referenceDate)
+        fun isWithinSevenDays(pubDateStr: String): Boolean {
+            if (pubDateStr.isBlank()) return false
+            val pubLocal = runCatching { java.time.LocalDate.parse(pubDateStr) }.getOrNull() ?: return false
+            return !pubLocal.isBefore(windowStartDate) && !pubLocal.isAfter(referenceDate)
         }
 
-        // 若当前分类下部分容器歌曲只返回了当周新上架但未携带独立 album_id 导致 auditedSevenDaySongs 偏少，
-        // 对缺少 publishDate 的容器前排首发新歌通过单曲详情或新碟检索进一步核验发行时间
+        // 严格审核发行日期与语种 Tag：仅保留发行日期处于 [referenceDate.minusDays(6), referenceDate] 共 7 天内且符合当前 Tag 的新歌
+        val auditedSevenDaySongs = dateEnriched.filter { song ->
+            if (!isWithinSevenDays(song.publishDate)) return@filter false
+            val key = song.hash.ifBlank { song.id }.lowercase()
+            val origin = originMap[key]
+            matchesNewSongTag(
+                song = song,
+                normalizedTag = normalizedTag,
+                isFromPrimaryContainer = origin?.fromPrimaryContainer ?: true,
+                sourceChartRankId = origin?.sourceChartRankId ?: 0
+            )
+        }.toMutableList()
+
+        // 针对「日韩 (JPKR)」分类：若首轮 7 日严审后日语新歌数量不足（如部分日语新歌仅在最新日语专辑中发布），
+        // 专项检索近 7 日最新发行的日语专辑与日语新歌并做严格 7 日 + 日语核验，确保日韩分类稳定包含最新日语歌曲
+        if (normalizedTag == "JPKR") {
+            val currentJpCount = auditedSevenDaySongs.count { s ->
+                val origin = originMap[s.hash.ifBlank { s.id }.lowercase()]
+                isJapaneseSongCandidate(s, origin?.sourceChartRankId ?: 0)
+            }
+            if (currentJpCount < 5) {
+                val yearStr = referenceDate.year.toString()
+                val jpExtraCandidates = coroutineScope {
+                    val jpAlbumsDef = async {
+                        val albums = runCatching { searchAlbums("$yearStr 日语", page = 1, pageSize = 25) }.getOrDefault(emptyList())
+                            .filter { isWithinSevenDays(normalizePublishDate(it.publishDate)) }
+                        albums.take(6).map { alb ->
+                            async {
+                                val normDate = normalizePublishDate(alb.publishDate)
+                                runCatching { albumSongs(alb.id) }.getOrDefault(emptyList()).map { s ->
+                                    if (alb.id.isNotBlank()) albumLanguageCache[alb.id] = "日语"
+                                    s.copy(
+                                        publishDate = s.publishDate.ifBlank { normDate },
+                                        coverUrl = s.coverUrl.ifBlank { alb.coverUrl }
+                                    )
+                                }
+                            }
+                        }.flatMap { it.await() }
+                    }
+                    val jpSearchDef = async {
+                        runCatching { searchSongs("日语 $yearStr", page = 1, pageSize = 35).songs }.getOrDefault(emptyList())
+                    }
+                    jpAlbumsDef.await() + jpSearchDef.await()
+                }
+                if (jpExtraCandidates.isNotEmpty()) {
+                    val jpPriv = runCatching { enrichSongsPrivilegeLite(jpExtraCandidates) }.getOrDefault(jpExtraCandidates)
+                    val jpDated = runCatching { enrichSongsPublishDateByAlbums(jpPriv) }.getOrDefault(jpPriv)
+                    val validJpSongs = jpDated.filter { s ->
+                        isWithinSevenDays(s.publishDate) && isJapaneseSongCandidate(s, 31312)
+                    }
+                    auditedSevenDaySongs.addAll(validJpSongs)
+                }
+            }
+        }
+
+        // 若特定分类在离线或网关未返回 publish_date 时为空，按对应语种检索近 7 日新发行专辑曲目
         val finalVerifiedSongs = if (auditedSevenDaySongs.isNotEmpty()) {
             auditedSevenDaySongs
         } else {
-            // 若网关在离线或特定环境下未返回 publish_date 字段，尝试从最新发行专辑接口 (/v1/search/album) 检索近7日新歌
             val yearStr = referenceDate.year.toString()
-            val recentAlbums = runCatching { searchAlbums(yearStr, page = 1, pageSize = 30) }.getOrDefault(emptyList())
-                .filter { alb ->
-                    val norm = normalizePublishDate(alb.publishDate)
-                    val d = runCatching { java.time.LocalDate.parse(norm) }.getOrNull()
-                    d != null && !d.isBefore(windowStartDate) && !d.isAfter(referenceDate)
-                }
+            val tagAlbumQuery = when (normalizedTag) {
+                "WESTERN" -> "$yearStr 欧美"
+                "JPKR" -> "$yearStr 日语 韩语"
+                "CANTON" -> "$yearStr 粤语"
+                else -> "$yearStr 华语"
+            }
+            val recentAlbums = runCatching { searchAlbums(tagAlbumQuery, page = 1, pageSize = 30) }.getOrDefault(emptyList())
+                .filter { alb -> isWithinSevenDays(normalizePublishDate(alb.publishDate)) }
             val fromRecentAlbums = coroutineScope {
                 recentAlbums.take(8).map { alb ->
                     async {
@@ -4899,8 +5121,8 @@ class MusicApiRepository(
                 }.flatMap { it.await() }
             }
             fromRecentAlbums.filter { s ->
-                val d = runCatching { java.time.LocalDate.parse(s.publishDate) }.getOrNull()
-                d != null && !d.isBefore(windowStartDate) && !d.isAfter(referenceDate)
+                isWithinSevenDays(s.publishDate) &&
+                    matchesNewSongTag(s, normalizedTag, isFromPrimaryContainer = false, sourceChartRankId = 0)
             }
         }
 

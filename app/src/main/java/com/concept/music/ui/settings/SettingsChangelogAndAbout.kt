@@ -139,6 +139,48 @@ data class ChangelogVersionItem(
  */
 internal val PROJECT_CHANGELOG_HISTORY = listOf(
     ChangelogVersionItem(
+        version = "v1.3.4",
+        date = "2026-11-07",
+        tag = "正式版 · VIP 无感一键/每日自动领取、新歌速递四大精准语种与吸顶时间轴、全板块错峰静默预加载",
+        summary = "深度对齐 MakcRe/KuGouMusicApi 升级 VIP 一键无感领取与每日打开 App 稳定自动领取（内置 generate_simulate 贝塞尔行为指纹 sid/edt 静默过检与伪造 dfid 自愈清理）；新歌速递移除「全部」Tag 保留四大语种分类，补齐日本新歌榜/公信榜音源与语种严审确保日韩分类稳定包含近一周日语新歌，并新增滑动日期栏 stickyHeader 吸顶停留；发现页与我的页全板块接入启动错峰单并发静默预加载；日推更新时间标识调整为每日 0:00 更新",
+        highlights = listOf(
+            "VIP 一键无感领取与每日自动领取修复：深度对齐 MakcRe/KuGouMusicApi (youth_day_vip / youth_day_vip_upgrade / register_dev / sidedt / generate_simulate)，纯端侧实现三阶贝塞尔轨迹行为指纹 (sid / edt) 加密生成与 20028 挑战后台静默过检，自动清理旧版伪造 2... dfid 并对齐官方设备注册协议，点击即可无感领取；修复启动时账号状态流转与前台/守护双保险触发机制，开启自动领取后每日打开 App 稳定自动完成领取与 SVIP 升级，且绝不调用 listen_song 污染听歌时长",
+            "新歌速递四大精准语种分类与日语新歌补齐：移除冗余的「全部 (TODAY)」Tag，保留「华语 / 欧美 / 日韩 / 粤语」四大精准分类；日韩分类同时拉取官方日韩新歌容器(21610)、日本新歌榜(31312)、韩国新歌榜(31311)、日本公信榜(4673)与韩国Melon榜(38623)并交错混排，结合 /kmr/v2/albums 官方 language 字段与近 7 日发行时间双重核验，彻底解决日韩分类缺少日语新歌及跨语种混入问题",
+            "新歌速递日期栏滑动吸顶停留 (Sticky Header)：新歌速递全屏页时间轴日期分组头升级为 LazyColumn stickyHeader 吸顶停留并配备主题融合背景遮罩，上下滑动浏览时当前日期栏暂时固定于顶部，滑至下一日期分组时自动被新日期平滑顶替，随时清晰掌握当前浏览曲目的发行日期",
+            "全板块启动错峰静默预加载与日推 0:00 更新标识：在首屏核心内容渲染就绪后，后台基于 Dispatchers.IO 单并发 + 180ms 帧间呼吸间隔依次静默预加载新歌速递其余语种 Tag、全部巅峰排行榜实时曲目与卡片前三预览、全部精选场景电台漫游曲目及「我的」页关注歌手/已购资产/云端最近播放/前排歌单曲目，兼顾全板块实时刷新与 120fps 满帧流畅度；每日推荐更新时间文案统一调整为「每日 0:00 更新」"
+        ),
+        moduleGroups = listOf(
+            ChangelogModuleGroup(
+                moduleTitle = "一、VIP 权益中心：无感一键领取与每日打开稳定自动领取",
+                points = listOf(
+                    "1:1 移植 MakcRe/KuGouMusicApi/util/generate_simulate.js 行为指纹算法（贝塞尔触控轨迹编码 + AES-128-CBC edt + RSA-OAEP-SHA256 sid），并在遇到 20028 风控校验时通过 /verifyservice/v3/get_verify_info 与 /v4/verify_user_info 静默完成验证并重试，告别手动验证弹窗",
+                    "SessionStore 自动检测并清理历史版本本地合成的伪造 dfid，未注册前严格使用 '-' 并对齐 /risk/v2/r_register_dev (platid=1)；修复 AccountRepository.restore 状态流转与 LibraryViewModel.refreshAccount / VipGuardianManager 启动双保险协同，确保开启自动领取后每日打开 App 稳定自动领取"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "二、新歌速递：四大精准语种分类与日语新歌音源补齐",
+                points = listOf(
+                    "移除冗余的「全部 (TODAY)」Tag，保留华语、欧美、日韩、粤语四大分类；日韩分类聚合 21610、日本新歌榜(31312)、韩国新歌榜(31311)、日本公信榜(4673)等交错混排",
+                    "结合 /kmr/v2/albums 官方专辑 language 元数据、曲目语种字段与近 7 日发行时间双重核验，彻底解决日韩分类缺少日语新歌与跨语种混入问题"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "三、新歌速递日期栏滑动吸顶停留与日推更新时间标识",
+                points = listOf(
+                    "NewSongExpressScreen 日期分组栏升级为 LazyColumn stickyHeader 吸顶设计，配备主题自适应遮罩背景，滑动浏览时当前日期栏暂留顶部直至滑至下一日期平滑替换",
+                    "DailyRecommendScreen 每日推荐更新时间文案由「每日 6:00 更新」统一调整为「每日 0:00 更新」"
+                )
+            ),
+            ChangelogModuleGroup(
+                moduleTitle = "四、全板块启动错峰静默预加载架构（零性能损耗）",
+                points = listOf(
+                    "HomeViewModel 新增 scheduleStaggeredSilentPreload，在首屏渲染完成后以单并发串行队列依次静默刷新新歌速递其余语种、全部排行榜曲目与卡片预览、全部场景电台曲目与封面",
+                    "LibraryViewModel 新增 scheduleStaggeredLibrarySilentPreload，错峰静默同步听歌等级、关注歌手、已购单曲/专辑、云端最近播放及前排自建/收藏歌单曲目"
+                )
+            )
+        )
+    ),
+    ChangelogVersionItem(
         version = "v1.3.3",
         date = "2026-11-04",
         tag = "正式版 · 酷狗双端双向分享与解析、实时热搜榜、权限管理与界面体验精修",

@@ -25,14 +25,35 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
 
         // 1. 首选通道：对齐上游 register_dev.js -> https://userservice.kugou.com/risk/v2/r_register_dev
         val riskV2Dfid = suspendRunCatching {
-            val dataPlain = KugouSigner.gson.toJson(
-                json(
-                    "mid" to current.mid,
-                    "uuid" to current.guid,
-                    "appid" to "1014",
-                    "userid" to activeUserId
-                )
+            val dataObj = json(
+                "availableRamSize" to 4983533568L,
+                "availableRomSize" to 52114419L,
+                "availableSDSize" to 52114419L,
+                "basebandVer" to "",
+                "batteryLevel" to 100,
+                "batteryStatus" to 3,
+                "brand" to "Redmi",
+                "buildSerial" to "unknown",
+                "device" to "marble",
+                "imei" to current.guid,
+                "imsi" to "",
+                "manufacturer" to "Xiaomi",
+                "uuid" to current.guid,
+                "accelerometer" to "0.098761976,9.653418,1.7669204",
+                "gravity" to "0.6056588,9.629955,1.8126096",
+                "gyroscope" to "-0.0010689613,5.3448064E-4,5.3448064E-4",
+                "light" to "152.04935",
+                "magnetic" to "-21.375,-12.5625,-34.9875",
+                "orientation" to "269.07898,-10.056603,3.5241492",
+                "pressure" to "1008.38965",
+                "step_counter" to "1508.0",
+                "temperature" to "0.0",
+                "uid" to activeUserId,
+                "mid" to current.mid,
+                "userid" to activeUserId,
+                "appid" to "1014"
             )
+            val dataPlain = KugouSigner.gson.toJson(dataObj)
             val (aesKey, aesCipher) = KugouSigner.playlistAesEncrypt(dataPlain)
             val pInner = KugouSigner.gson.toJson(
                 json(
@@ -41,7 +62,7 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
                     "token" to activeToken
                 )
             )
-            val pRsa = KugouSigner.rsaPkcs1(pInner, lite = true).uppercase()
+            val pRsa = KugouSigner.rsaPkcs1(pInner, lite = true)
             val rawBytes = transport.requestRawBytes(
                 path = "/risk/v2/r_register_dev",
                 host = "https://userservice.kugou.com",
@@ -49,12 +70,13 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
                 session = activeSession,
                 query = mapOf(
                     "part" to "1",
-                    "plat" to "1",
+                    "platid" to "1",
                     "p" to pRsa
                 ),
                 rawBody = aesCipher,
                 sign = true,
-                includeDefaultParams = true
+                includeDefaultParams = true,
+                device = current.copy(dfid = "-")
             )
             if (rawBytes.isNotEmpty()) {
                 val utf8Text = String(rawBytes, Charsets.UTF_8).trim()
@@ -67,8 +89,8 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
                         }
                     decrypted?.let { runCatching { JsonParser.parseString(it).asJsonObject }.getOrNull() }
                 }
-                val dataObj = parsedObj?.obj("data") ?: parsedObj
-                dataObj?.text("dfid")?.takeIf { it.isNotBlank() && it != "-" }
+                val respData = parsedObj?.obj("data") ?: parsedObj
+                respData?.text("dfid")?.takeIf { it.isNotBlank() && it != "-" }
             } else {
                 null
             }
@@ -132,12 +154,9 @@ class AuthRepository(private val transport: KugouTransport, private val store: S
             return remoteDfid
         }
 
-        val salt = if (forceRefresh) nowSec.toString() else "v1"
-        val fallbackDfid = "2" + KugouSigner.md5("kugou_lite_${current.guid}_${current.mid}_$salt").lowercase().take(23)
-        if (current.dfid.isBlank() || current.dfid == "-") {
-            store.saveDfid(fallbackDfid)
-        }
-        return current.dfid.takeIf { it.isNotBlank() && it != "-" } ?: fallbackDfid
+        // 对齐 MakcRe/KuGouMusicApi util/request.js: 未能从风控服务端注册到真实 dfid 时保持 "-"，
+        // 绝不将本地伪造的 2... 字符串标记为已注册，避免触发酷狗网关 20028 安全验证拦截
+        return current.dfid.takeIf { store.isDfidRegistered() && it.isNotBlank() && it != "-" } ?: "-"
     }
 
     /**

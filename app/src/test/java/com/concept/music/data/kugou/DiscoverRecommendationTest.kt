@@ -716,4 +716,118 @@ class DiscoverRecommendationTest {
         assertTrue("Artist detail songs with VIP lossless/Hi-Res tiers must carry isVip = true", songs.first().isVip)
         assertTrue(songs.first().isHiRes)
     }
+
+    @Test
+    fun newSongExpressJpkrIncludesJapaneseAndKoreanSongsWithinSevenDaysAndRemovesTodayTab() = runTest {
+        val tabs = com.concept.music.ui.home.NEW_SONG_PERIOD_TABS
+        assertEquals(listOf("CHINESE", "WESTERN", "JPKR", "CANTON"), tabs.map { it.key })
+        assertTrue("全部(TODAY) tag must be removed", tabs.none { it.key == "TODAY" || it.label == "全部" })
+
+        val refDate = LocalDate.of(2026, 10, 17)
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String,
+                session: KugouSession?,
+                query: Map<String, String>,
+                body: JsonObject?,
+                host: String,
+                method: String,
+                web: Boolean,
+                headers: Map<String, String>,
+                device: DeviceIdentity?
+            ): ApiResponse = ApiResponse(JsonObject())
+
+            override suspend fun callAdvanced(
+                path: String,
+                session: KugouSession?,
+                query: Map<String, String>,
+                body: JsonObject?,
+                host: String,
+                method: String,
+                web: Boolean,
+                headers: Map<String, String>,
+                device: DeviceIdentity?,
+                sign: Boolean,
+                includeDefaultParams: Boolean
+            ): ApiResponse {
+                if (path == "/musicadservice/container/v1/newsong_publish" && body?.number("rank_id") == 21610 && body.number("page") == 1) {
+                    val mockKr = """
+                        {
+                            "status": 1,
+                            "data": {
+                                "list": [
+                                    {
+                                        "songname": "Whiplash (위플래시)",
+                                        "singername": "aespa",
+                                        "hash": "33333333333333333333333333333301",
+                                        "audio_id": 91001,
+                                        "publish_date": "2026-10-16"
+                                    }
+                                ]
+                            }
+                        }
+                    """.trimIndent()
+                    return ApiResponse(JsonParser.parseString(mockKr).asJsonObject)
+                }
+                if (path == "/api/v3/rank/song" && query["rankid"] == "31312") {
+                    val mockJp = """
+                        {
+                            "status": 1,
+                            "data": {
+                                "info": [
+                                    {
+                                        "filename": "YOASOBI - 舞台に立って",
+                                        "hash": "33333333333333333333333333333302",
+                                        "album_id": "55001",
+                                        "audio_id": 91002
+                                    },
+                                    {
+                                        "filename": "米津玄師 - さよーならまたいつか!",
+                                        "hash": "33333333333333333333333333333303",
+                                        "album_id": "55002",
+                                        "audio_id": 91003
+                                    }
+                                ]
+                            }
+                        }
+                    """.trimIndent()
+                    return ApiResponse(JsonParser.parseString(mockJp).asJsonObject)
+                }
+                if (path == "/kmr/v2/albums") {
+                    val mockAlbums = """
+                        {
+                            "status": 1,
+                            "data": [
+                                {
+                                    "album_id": "55001",
+                                    "album_name": "舞台に立って",
+                                    "publish_date": "2026-10-17",
+                                    "language": "日语"
+                                },
+                                {
+                                    "album_id": "55002",
+                                    "album_name": "さよーならまたいつか!",
+                                    "publish_date": "2026-09-01",
+                                    "language": "日语"
+                                }
+                            ]
+                        }
+                    """.trimIndent()
+                    return ApiResponse(JsonParser.parseString(mockAlbums).asJsonObject)
+                }
+                return ApiResponse(JsonParser.parseString("""{"status":1,"data":[]}""").asJsonObject)
+            }
+        }
+
+        val store = MemoryStore()
+        val auth = AuthRepository(transport, store)
+        val accounts = AccountRepository(store, auth, transport)
+        val repo = MusicApiRepository(transport, accounts)
+
+        val jpkrSongs = repo.newSongExpress("JPKR", referenceDate = refDate)
+        assertEquals(2, jpkrSongs.size)
+        assertTrue("JPKR must contain Japanese song within 7-day window", jpkrSongs.any { it.title.contains("舞台に立って") })
+        assertTrue("JPKR must contain Korean song within 7-day window", jpkrSongs.any { it.title.contains("Whiplash") })
+        assertFalse("JPKR must exclude Japanese song older than 7 days", jpkrSongs.any { it.title.contains("さよーなら") })
+    }
 }

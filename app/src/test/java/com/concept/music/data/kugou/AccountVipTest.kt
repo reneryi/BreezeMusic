@@ -120,4 +120,54 @@ class AccountVipTest {
         assertTrue(store.rows.single().autoClaim)
         assertNotNull(store.session("123"))
     }
+    @Test fun silentSimulateVerificationAutomaticallyResolves20028WithoutDialog() = runTest {
+        val sim = KugouSigner.generateSimulate("mid123", "123", "-")
+        assertTrue(sim.edt.isNotBlank())
+        assertTrue(sim.sid.isNotBlank())
+        val fakeSynthesized = "2" + KugouSigner.md5("kugou_lite_dfid_g1_d1").lowercase().take(23)
+        assertTrue(isLegacySynthesizedDfid("g1", "d1", "m1", fakeSynthesized))
+        assertFalse(isLegacySynthesizedDfid("g1", "d1", "m1", "3realserverdfid12345678"))
+
+        var verifiedSilently = false
+        val store = MemoryStore()
+        val transport = object : KugouTransport {
+            override suspend fun call(
+                path: String, session: KugouSession?, query: Map<String, String>, body: JsonObject?,
+                host: String, method: String, web: Boolean, headers: Map<String, String>, device: DeviceIdentity?
+            ): ApiResponse {
+                return when {
+                    path.endsWith("get_month_vip_record") -> ApiResponse(
+                        JsonParser.parseString("""{"status":1,"data":{"list":[{"day":"2026-10-04","receive_vip":1,"vip_type":"${if (verifiedSilently) "svip" else "tvip"}"}]}}""").asJsonObject
+                    )
+                    path.endsWith("get_union_vip") -> ApiResponse(
+                        JsonParser.parseString("""{"status":1,"data":{"busi_vip":[{"product_type":"svip","is_vip":${if (verifiedSilently) 1 else 0},"vip_end_time":"2026-10-05 23:00:00"}]}}""").asJsonObject
+                    )
+                    path.endsWith("upgrade_vip_reward") -> {
+                        if (!verifiedSilently) {
+                            ApiResponse(json("status" to 0, "error_code" to 20028), "evt_1001")
+                        } else {
+                            ApiResponse(JsonParser.parseString("""{"status":1,"error_code":0}""").asJsonObject)
+                        }
+                    }
+                    path.endsWith("get_verify_info") -> {
+                        ApiResponse(JsonParser.parseString("""{"status":1,"error_code":0,"data":{"v_type":93,"verify_token":"vt_abc"}}""").asJsonObject)
+                    }
+                    path.endsWith("verify_user_info") -> {
+                        assertTrue(!body?.text("sid").isNullOrBlank())
+                        assertTrue(!body?.text("edt").isNullOrBlank())
+                        verifiedSilently = true
+                        ApiResponse(JsonParser.parseString("""{"status":1,"error_code":0,"data":{"verify_token":"vt_abc"}}""").asJsonObject)
+                    }
+                    else -> ApiResponse(JsonParser.parseString("""{"status":1,"error_code":0}""").asJsonObject)
+                }
+            }
+        }
+        val accounts = AccountRepository(store, AuthRepository(transport, store), transport)
+        val verification = VerificationCoordinator(transport)
+        val vip = VipRepository(transport, accounts, verification, clock, 0)
+        val res = vip.claim(accounts.context()!!, automatic = false)
+        assertEquals(ClaimOutcome.SUCCESS, res.outcome)
+        assertTrue(verifiedSilently)
+        assertNull(verification.pending.value)
+    }
 }

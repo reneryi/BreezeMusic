@@ -102,13 +102,12 @@ internal data class NewSongPeriodTab(
     val badge: String
 )
 
-// 对齐 MakcRe/KuGouMusicApi module/top_song.js: 21608华语 / 21609欧美 / 21610日韩 / 21611粤语 + 综合首发
+// 对齐 MakcRe/KuGouMusicApi module/top_song.js: 21608华语 / 21609欧美 / 21610日韩 / 21611粤语（移除“全部”Tag，保留四大精准语种分类）
 internal val NEW_SONG_PERIOD_TABS = listOf(
     NewSongPeriodTab("CHINESE", "华语", "华语"),
     NewSongPeriodTab("WESTERN", "欧美", "欧美"),
     NewSongPeriodTab("JPKR", "日韩", "日韩"),
-    NewSongPeriodTab("CANTON", "粤语", "粤语"),
-    NewSongPeriodTab("TODAY", "全部", "全部")
+    NewSongPeriodTab("CANTON", "粤语", "粤语")
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2149,7 +2148,7 @@ fun DailyRecommendScreen(
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "循着你的听歌轨迹 · 每日 6:00 更新",
+                                text = "循着你的听歌轨迹 · 每日 0:00 更新",
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -2255,7 +2254,7 @@ fun DailyRecommendScreen(
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "循着你的听歌轨迹 · 每日 6:00 更新",
+                                text = "循着你的听歌轨迹 · 每日 0:00 更新",
                                 style = MaterialTheme.typography.bodySmall.copy(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

@@ -7,6 +7,7 @@ import android.app.job.JobService
 import android.content.ComponentName
 import android.content.Context
 import android.content.SharedPreferences
+import com.concept.music.data.kugou.AuthState
 import com.concept.music.data.kugou.ClaimOutcome
 import com.concept.music.data.kugou.today
 import com.concept.music.data.vip.VipManager
@@ -15,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -65,9 +67,41 @@ object VipGuardianManager {
 
         if (enabled) {
             schedulePeriodicJob(appCtx)
+            scope.launch {
+                delay(1800L)
+                var waitAttempts = 0
+                while (waitAttempts < 10 &&
+                    runCatching { VipManager.accounts.state.value.auth == AuthState.RESTORING }.getOrDefault(false)
+                ) {
+                    delay(500L)
+                    waitAttempts++
+                }
+                val currentAcc = runCatching { VipManager.accounts.state.value.current }.getOrNull()
+                val currentDay = today()
+                if (currentAcc != null && currentAcc.autoClaim && currentAcc.completedDay != currentDay) {
+                    triggerGuardianNow(appCtx, isManual = false)
+                }
+            }
         } else {
             val scheduler = appCtx.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler
             scheduler?.cancel(JOB_ID_VIP_GUARDIAN)
+        }
+    }
+
+    fun recordAutoClaimSuccess(day: String, summary: String = "今日概念版 VIP 已激活") {
+        val nowStr = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date())
+        prefs?.edit()
+            ?.putString("last_run_day", day)
+            ?.putString("last_run_time", nowStr)
+            ?.putString("last_summary", summary)
+            ?.apply()
+        _state.update {
+            it.copy(
+                running = false,
+                lastRunDay = day,
+                lastRunTimeFormatted = nowStr,
+                lastResultSummary = summary
+            )
         }
     }
 
@@ -134,16 +168,27 @@ object VipGuardianManager {
                         "未登录账号"
                     } else if (!isManual && !(VipManager.accounts.state.value.current?.autoClaim ?: _state.value.enabled)) {
                         "自动领取已关闭"
-                    } else if (VipManager.vip.state.value.busy) {
-                        "正在同步 VIP 权益"
                     } else {
-                        val claimRes = VipManager.vip.claim(accountCtx, automatic = !isManual)
-                        when (claimRes.outcome) {
-                            ClaimOutcome.SUCCESS, ClaimOutcome.ALREADY_DONE -> {
-                                prefs?.edit()?.putString("last_run_day", currentDay)?.apply()
-                                "今日概念版 VIP 已激活"
+                        var busyWait = 0
+                        while (busyWait < 6 && VipManager.vip.state.value.busy) {
+                            delay(1000L)
+                            busyWait++
+                        }
+                        val refreshedAcc = VipManager.accounts.state.value.current
+                        if (!isManual && refreshedAcc?.completedDay == currentDay && VipManager.vip.state.value.snapshot.isVip) {
+                            prefs?.edit()?.putString("last_run_day", currentDay)?.apply()
+                            "今日概念版 VIP 已激活"
+                        } else if (VipManager.vip.state.value.busy) {
+                            "正在同步 VIP 权益"
+                        } else {
+                            val claimRes = VipManager.vip.claim(accountCtx, automatic = !isManual)
+                            when (claimRes.outcome) {
+                                ClaimOutcome.SUCCESS, ClaimOutcome.ALREADY_DONE -> {
+                                    prefs?.edit()?.putString("last_run_day", currentDay)?.apply()
+                                    "今日概念版 VIP 已激活"
+                                }
+                                else -> claimRes.message
                             }
-                            else -> claimRes.message
                         }
                     }
                 } catch (c: CancellationException) {

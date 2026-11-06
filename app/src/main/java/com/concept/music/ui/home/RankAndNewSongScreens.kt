@@ -18,6 +18,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -111,7 +112,7 @@ private data class DateSongGroup(
  * - 语种切换采用开放式底部指示条，去除外框胶囊
  * - 日期分组采用开放式彩色竖线时间轴头（点击平滑折叠/展开），彻底告别层层灰盒堆叠
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun NewSongExpressScreen(
     viewModel: HomeViewModel,
@@ -346,12 +347,17 @@ fun NewSongExpressScreen(
                     }
                 }
 
-                // 3. 开放式时间轴日期分组（搭载 spatialPageSpring 连续高度折叠/展开物理弹簧动画 + expressiveSpring 箭头旋转）
+                // 3. 开放式时间轴日期分组（搭载 stickyHeader 滑动吸顶停留：当前日期栏在滑动浏览时暂时固定于顶部，直到滑至下一日期分组时被新日期栏平滑顶替）
+                val stickyDateHeaderBg = if (isDark) {
+                    Color(0xFF0B101D).copy(alpha = 0.96f)
+                } else {
+                    Color(0xFFF4F8FF).copy(alpha = 0.97f)
+                }
                 dateGroups.forEach { group ->
                     val pubDate = group.date
                     val isCollapsed = collapsedDates[pubDate] == true
 
-                    item(key = "header_$pubDate", contentType = "date_header") {
+                    stickyHeader(key = "header_${selectedPeriod}_$pubDate", contentType = "date_header") {
                         val arrowRotation by animateFloatAsState(
                             targetValue = if (isCollapsed) -90f else 0f,
                             animationSpec = ConceptMotion.expressiveSpring(),
@@ -361,6 +367,7 @@ fun NewSongExpressScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .background(stickyDateHeaderBg)
                                 .then(periodSwitchAnimMod)
                                 .softClickable { collapsedDates[pubDate] = !isCollapsed }
                                 .padding(horizontal = 16.dp)

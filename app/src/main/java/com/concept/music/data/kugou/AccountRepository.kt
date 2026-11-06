@@ -17,6 +17,7 @@ class AccountRepository(private val store: SessionStore, private val auth: AuthR
     private val mutable = MutableStateFlow(AccountState(accounts = store.accounts(), currentId = store.activeId()))
     val state = mutable.asStateFlow()
     init { select(store.activeId()) }
+    fun device(): DeviceIdentity = store.device()
     fun context(): AccountContext? = state.value.currentId?.let { id -> store.session(id)?.let { AccountContext(it, generation.get()) } }
     fun isCurrent(context: AccountContext): Boolean = state.value.currentId == context.session.userId && generation.get() == context.generation
     fun ensureCurrent(context: AccountContext) { if (!isCurrent(context)) throw CancellationException("账号已切换") }
@@ -60,8 +61,19 @@ class AccountRepository(private val store: SessionStore, private val auth: AuthR
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
             ensureCurrent(context)
-            if (e is ApiFailure && e.invalidSession) invalidate(context)
-            else mutable.update { it.copy(message = "会话刷新失败，可重试：${e.message}") }
+            if (e is ApiFailure && e.invalidSession) {
+                invalidate(context)
+            } else {
+                // 当本地存有合法登录凭证且并非会话过期 (invalidSession) 时，容忍 /v5/login_by_token 的瞬时失败并进入 READY 状态，
+                // 避免冷启动因 token 刷新接口偶发波动而卡在 RESTORING 导致每日自动领取 VIP 不触发
+                val hasValidLocalToken = context.session.token.isNotBlank()
+                mutable.update {
+                    it.copy(
+                        auth = if (hasValidLocalToken) AuthState.READY else it.auth,
+                        message = "会话刷新失败，可重试：${e.message}"
+                    )
+                }
+            }
         }
     }
     suspend fun refreshSession(context: AccountContext): KugouSession = refreshMutex.withLock {

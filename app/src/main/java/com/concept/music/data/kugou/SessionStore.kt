@@ -27,6 +27,19 @@ interface SessionStore {
     fun isDfidRegistered(): Boolean = true
 }
 
+internal fun isLegacySynthesizedDfid(guid: String, dev: String, mid: String, candidate: String): Boolean {
+    if (candidate.isBlank() || candidate == "-") return true
+    val fake1 = "2" + KugouSigner.md5("kugou_lite_dfid_${guid}_$dev").lowercase().take(23)
+    val fake2 = "2" + KugouSigner.md5("kugou_lite_dfid_${guid}_$mid").lowercase().take(23)
+    val fake3 = "2" + KugouSigner.md5("concept_dfid_${guid}_$mid").lowercase().take(23)
+    val fake4 = "2" + KugouSigner.md5("kugou_lite_${guid}_${mid}_v1").lowercase().take(23)
+    return candidate.equals(fake1, ignoreCase = true) ||
+        candidate.equals(fake2, ignoreCase = true) ||
+        candidate.equals(fake3, ignoreCase = true) ||
+        candidate.equals(fake4, ignoreCase = true) ||
+        candidate.startsWith("2localfallback", ignoreCase = true)
+}
+
 class EncryptedSessionStore(context: Context) : SessionStore {
     companion object {
         private const val KEY_ALIAS = "concept_music_accounts"
@@ -115,38 +128,33 @@ class EncryptedSessionStore(context: Context) : SessionStore {
         }
     }
 
-    private fun synthesizeFallbackDfid(guid: String, dev: String): String {
-        val raw = KugouSigner.md5("kugou_lite_dfid_${guid}_$dev").lowercase()
-        return "2" + raw.take(23)
-    }
-
     init {
         dfidRegistered = metadata.getBoolean("device.dfid_registered", false)
         if (!metadata.contains("guid")) {
             val guid = KugouSigner.md5(UUID.randomUUID().toString())
             val dev = KugouSigner.random(10).uppercase()
-            val initialDfid = synthesizeFallbackDfid(guid, dev)
             metadata.edit()
                 .putString("guid", guid)
                 .putString("dev", dev)
-                .putString("dfid", initialDfid)
+                .putString("dfid", "-")
                 .putBoolean("device.dfid_registered", false)
                 .putBoolean("legacy_session_migrated", true)
                 .apply()
-            cachedDevice = DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = initialDfid)
+            dfidRegistered = false
+            cachedDevice = DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = "-")
         } else {
             val guid = metadata.getString("guid", null).orEmpty().ifBlank { KugouSigner.md5(UUID.randomUUID().toString()) }
             val dev = metadata.getString("dev", null).orEmpty().ifBlank { KugouSigner.random(10).uppercase() }
-            val existingDfid = metadata.getString("dfid", "-") ?: "-"
-            val resolvedDfid = if (existingDfid.isBlank() || existingDfid == "-") {
-                val fallbackDfid = synthesizeFallbackDfid(guid, dev)
-                metadata.edit().putString("dfid", fallbackDfid).putBoolean("device.dfid_registered", false).apply()
+            val mid = KugouSigner.mid(guid)
+            val existingDfid = metadata.getString("dfid", "-")?.trim().orEmpty()
+            val resolvedDfid = if (!dfidRegistered || isLegacySynthesizedDfid(guid, dev, mid, existingDfid)) {
+                metadata.edit().putString("dfid", "-").putBoolean("device.dfid_registered", false).apply()
                 dfidRegistered = false
-                fallbackDfid
+                "-"
             } else {
                 existingDfid
             }
-            cachedDevice = DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = resolvedDfid)
+            cachedDevice = DeviceIdentity(guid, mid, dev, dfid = resolvedDfid)
         }
         if (!metadata.getBoolean("legacy_session_migrated", false)) {
             val old = appContext.getSharedPreferences("kugou_session", Context.MODE_PRIVATE)
@@ -265,26 +273,32 @@ class EncryptedSessionStore(context: Context) : SessionStore {
         val dev = metadata.getString("dev", null).orEmpty().ifBlank {
             KugouSigner.random(10).uppercase().also { metadata.edit().putString("dev", it).apply() }
         }
-        val rawDfid = metadata.getString("dfid", "-") ?: "-"
-        val dfid = if (rawDfid.isBlank() || rawDfid == "-") {
-            synthesizeFallbackDfid(guid, dev).also { metadata.edit().putString("dfid", it).apply() }
+        val mid = KugouSigner.mid(guid)
+        val rawDfid = metadata.getString("dfid", "-")?.trim().orEmpty()
+        val dfid = if (!dfidRegistered || isLegacySynthesizedDfid(guid, dev, mid, rawDfid)) {
+            "-"
         } else {
             rawDfid
         }
-        return DeviceIdentity(guid, KugouSigner.mid(guid), dev, dfid = dfid).also {
+        return DeviceIdentity(guid, mid, dev, dfid = dfid).also {
             cachedDevice = it
         }
     }
 
     @Synchronized
     override fun saveDfid(dfid: String) {
-        if (dfid.isNotBlank() && dfid != "-") {
-            cachedDevice = device().copy(dfid = dfid)
+        val clean = dfid.trim()
+        if (clean.isNotBlank() && clean != "-") {
+            cachedDevice = device().copy(dfid = clean)
             dfidRegistered = true
-            metadata.edit().putString("dfid", dfid).putBoolean("device.dfid_registered", true).apply()
+            metadata.edit().putString("dfid", clean).putBoolean("device.dfid_registered", true).apply()
+        } else {
+            cachedDevice = device().copy(dfid = "-")
+            dfidRegistered = false
+            metadata.edit().putString("dfid", "-").putBoolean("device.dfid_registered", false).apply()
         }
     }
 
     @Synchronized
-    override fun isDfidRegistered(): Boolean = dfidRegistered
+    override fun isDfidRegistered(): Boolean = dfidRegistered && (cachedDevice?.dfid ?: "-").let { it.isNotBlank() && it != "-" }
 }
